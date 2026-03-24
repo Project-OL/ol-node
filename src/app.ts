@@ -1,0 +1,119 @@
+import Fastify from 'fastify'
+import crypto from 'crypto'
+import helmet from '@fastify/helmet'
+import cors from '@fastify/cors'
+import rateLimit from '@fastify/rate-limit'
+import jwt from '@fastify/jwt'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
+import compress from '@fastify/compress'
+
+import { env } from './config/env'
+import { logger } from './config/logger'
+import { redisClient } from './config/redis'
+import { errorHandler } from './middlewares/errorHandler'
+import { notFoundHandler } from './middlewares/notFoundHandler'
+import { requestIdHook, requestLoggerHook } from './middlewares/requestLogger'
+
+import authRoutes from './routes/v1/auth.routes'
+import securityPasswordRoutes from './routes/v1/security-password.routes'
+import deviceRoutes from './routes/v1/device.routes'
+import privacyRoutes from './routes/v1/privacy.routes'
+import accountDeletionRoutes from './routes/v1/account-deletion.routes'
+import uploadRoutes from './routes/v1/upload.routes'
+import healthRoutes from './routes/v1/health.routes'
+import socialRoutes from './routes/v1/social.routes'
+import usersRoutes from './routes/v1/users.routes'
+import settingsRoutes from './routes/v1/settings.routes'
+import postRoutes from './routes/v1/post.routes'
+import conversationRoutes from './routes/v1/conversation.routes'
+import messageRoutes from './routes/v1/message.routes'
+import blockRoutes from './routes/v1/block.routes'
+import reportRoutes from './routes/v1/report.routes'
+import reminderRoutes from './routes/v1/reminder.routes'
+
+const REQUEST_TIMEOUT_MS = 30_000
+
+export async function buildApp() {
+  const app = Fastify({
+    logger,
+    genReqId: () => crypto.randomUUID(),
+    trustProxy: true,
+    connectionTimeout: REQUEST_TIMEOUT_MS,
+    keepAliveTimeout: 30_000,
+    bodyLimit: env.REQUEST_BODY_LIMIT_BYTES,
+  })
+
+  await app.register(compress, { global: true, encodings: ['gzip', 'deflate', 'br'] })
+
+  if (env.NODE_ENV !== 'production') {
+    await app.register(swagger, {
+      openapi: {
+        openapi: '3.0.3',
+        info: { title: 'Vone REST API', version: env.API_VERSION, description: 'Vone VoIP REST API' },
+        servers: [{ url: `/api/${env.API_VERSION}`, description: 'API v1' }],
+      },
+    })
+    await app.register(swaggerUi, { routePrefix: '/docs', uiConfig: { docExpansion: 'list' } })
+  }
+
+  await app.register(jwt, {
+    secret: env.JWT_ACCESS_SECRET,
+    sign: { algorithm: 'HS256', expiresIn: env.JWT_ACCESS_EXPIRES_IN },
+  })
+
+  await app.register(helmet, {
+    contentSecurityPolicy: env.NODE_ENV === 'production',
+  })
+
+  await app.register(cors, {
+    origin: env.ALLOWED_ORIGINS,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  })
+
+  await app.register(rateLimit, {
+    max: env.RATE_LIMIT_MAX,
+    timeWindow: env.RATE_LIMIT_TIME_WINDOW,
+    redis: redisClient,
+    skipOnError: true,
+    keyGenerator: (req) => {
+      const xff = req.headers['x-forwarded-for']
+      if (typeof xff === 'string' && xff.length > 0) {
+        return xff.split(',')[0]!.trim()
+      }
+      return req.ip
+    },
+    errorResponseBuilder: () => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: 'Rate limit exceeded. Please try again later.',
+    }),
+  })
+
+  app.addHook('onRequest', requestIdHook)
+  app.addHook('onRequest', requestLoggerHook)
+
+  app.setErrorHandler(errorHandler)
+  app.setNotFoundHandler(notFoundHandler)
+
+  const prefix = `/api/${env.API_VERSION}`
+  await app.register(healthRoutes, { prefix: '/health' })
+  await app.register(authRoutes, { prefix: `${prefix}/auth` })
+  await app.register(securityPasswordRoutes, { prefix: `${prefix}/security` })
+  await app.register(deviceRoutes, { prefix: `${prefix}/devices` })
+  await app.register(privacyRoutes, { prefix: `${prefix}/privacy` })
+  await app.register(accountDeletionRoutes, { prefix: `${prefix}/account` })
+  await app.register(uploadRoutes, { prefix: `${prefix}/upload` })
+  await app.register(socialRoutes, { prefix: `${prefix}/social` })
+  await app.register(usersRoutes, { prefix: `${prefix}/users` })
+  await app.register(settingsRoutes, { prefix: `${prefix}/settings` })
+  await app.register(postRoutes, { prefix: `${prefix}/posts` })
+  await app.register(conversationRoutes, { prefix: `${prefix}/conversations` })
+  await app.register(messageRoutes, { prefix: `${prefix}/messages` })
+  await app.register(blockRoutes, { prefix: `${prefix}/blocks` })
+  await app.register(reportRoutes, { prefix: `${prefix}/reports` })
+  await app.register(reminderRoutes, { prefix: `${prefix}/reminders` })
+
+  return app
+}

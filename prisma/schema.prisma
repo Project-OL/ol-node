@@ -1,0 +1,653 @@
+// Production auth system – design: 02_COMPLETE_AUTH_SYSTEM_DESIGN.md
+// Users use UUID; public_id sequential from 34216589; VIP and sessions supported.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── 1. USERS (core identity, public IDs, VIP, profile) ───
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  username  String   @db.VarChar(255)
+  publicId  BigInt   @unique @map("public_id")
+  defaultPublicId BigInt @unique @map("default_public_id")
+
+  firstName String?  @map("first_name") @db.VarChar(255)
+  lastName  String?  @map("last_name") @db.VarChar(255)
+  dateOfBirth DateTime? @map("date_of_birth") @db.Date
+  country   String?  @db.VarChar(100)
+  gender    String?  @db.VarChar(50) // male, female, other
+  avatarUrl String?  @map("avatar_url") @db.VarChar(500)
+
+  status    String   @default("new") @db.VarChar(50) // new, active, suspended, deactivating, deleted
+  passwordSet Boolean @default(false) @map("password_set")
+  profileCompletedAt DateTime? @map("profile_completed_at")
+
+  currentVipPublicId BigInt? @unique @map("current_vip_public_id")
+  vipPublicIdExpiresAt DateTime? @map("vip_public_id_expires_at")
+  vipPurchaseAt DateTime? @map("vip_purchase_at")
+
+  // Permanent base public ID from registration (sequence); VIP overlay is separate.
+  originalPublicId BigInt? @unique @map("original_public_id")
+
+  vipSubscriptionActive   Boolean   @default(false) @map("vip_subscription_active")
+  vipSubscriptionStartAt DateTime? @map("vip_subscription_start_at")
+  vipSubscriptionExpiresAt DateTime? @map("vip_subscription_expires_at")
+
+  privacyInvisibleVisitor Boolean @default(false) @map("privacy_invisible_visitor")
+  privacyMysteryLive      Boolean @default(false) @map("privacy_mystery_live")
+  privacyMysteryRank     Boolean @default(false) @map("privacy_mystery_rank")
+  privacyInvisibleOnline Boolean @default(false) @map("privacy_invisible_online")
+  hideMicStatus          Boolean @default(false) @map("hide_mic_status")
+  privacyUpdatedAt       DateTime? @map("privacy_updated_at")
+
+  lastIpAddress String? @map("last_ip_address") @db.VarChar(45)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  authIdentifiers   AuthIdentifier[]
+  authPassword      AuthPassword?
+  securityPassword  SecurityPassword?
+  otpTokens         OtpToken[]
+  sessions          Session[]
+  deviceRegistry    DeviceRegistry[]
+  auditLogs         AuditLog[]
+  ownedVipIds       VipPublicId[] @relation("VipOwner")
+  vipAssignments    UserVipAssignment[]
+  accountDeletion   AccountDeletion? @relation("AccountDeletion")
+  userSettings      UserSettings?
+  linkedDeviceAccounts DeviceLinkedAccount[]
+  followers         UserFollow[] @relation("Following")
+  following         UserFollow[] @relation("Follower")
+  profileVisitors   ProfileVisitor[] @relation("ProfileOwner")
+  visitHistory      ProfileVisitor[] @relation("ProfileVisitor")
+  userLevel         UserLevel?
+  subscribers       UserSubscriber[] @relation("Creator")
+  subscriptions     UserSubscriber[] @relation("Subscriber")
+  posts             Post[] @relation("UserPosts")
+  taggedIn          PostTag[] @relation("TaggedIn")
+  postLikes         PostLike[] @relation("PostLikes")
+  conversationMembers ConversationMember[]
+  sentMessages       Message[]              @relation("SentMessages")
+  messageReactions   MessageReaction[]
+  blockedBy          BlockList[]             @relation("BlockedBy")
+  blockedUsers      BlockList[]             @relation("BlockedUsers")
+  reporterReports   MessageReport[]         @relation("Reporter")
+  reportedReports   MessageReport[]         @relation("Reported")
+  reminderOwner     BroadcastReminder[]     @relation("ReminderOwner")
+  reminderCreator   BroadcastReminder[]     @relation("ReminderCreator")
+
+  @@index([publicId])
+  @@index([defaultPublicId])
+  @@index([username])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+}
+
+// ─── 2. AUTH_IDENTIFIERS (email, phone, google, facebook, apple) ───
+model AuthIdentifier {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  provider   String   @db.VarChar(50) // email, phone, google, facebook, apple
+  identifier String   @db.VarChar(255)
+  isVerified Boolean  @default(false) @map("is_verified")
+  verifiedAt DateTime? @map("verified_at")
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  version    Int      @default(1)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, identifier])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@index([provider])
+  @@index([identifier])
+  @@map("auth_identifiers")
+}
+
+// ─── 3. AUTH_PASSWORDS (bcrypt, one per user) ───
+model AuthPassword {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @unique @map("user_id") @db.Uuid
+  passwordHash         String   @map("password_hash") @db.VarChar(255)
+  previousPasswordHashes String[] @map("previous_password_hashes")
+  lastChangedAt        DateTime @default(now()) @map("last_changed_at")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_passwords")
+}
+
+// ─── 3b. SECURITY_PASSWORDS (separate from login password; for purchases, destructive ops) ───
+model SecurityPassword {
+  id                  String    @id @default(cuid())
+  userId              String    @unique @map("user_id") @db.Uuid
+  passwordHash        String    @map("password_hash") @db.VarChar(255)
+  setAt               DateTime  @default(now()) @map("set_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  failedAttempts      Int       @default(0) @map("failed_attempts")
+  lastFailedAttemptAt DateTime? @map("last_failed_attempt_at")
+  lockedUntil         DateTime? @map("locked_until")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([lockedUntil])
+  @@map("security_passwords")
+}
+
+// ─── 4. OTP_TOKENS (hashed OTP, purpose, 5 min expiry) ───
+model OtpToken {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @map("user_id") @db.Uuid // null for signup (no user yet)
+  otpHash          String   @map("otp_hash") @db.VarChar(255)
+  otpPurpose       String   @map("otp_purpose") @db.VarChar(50)
+  targetIdentifier String   @map("target_identifier") @db.VarChar(255)
+  isUsed           Boolean  @default(false) @map("is_used")
+  attemptCount     Int      @default(0) @map("attempt_count")
+  expiresAt        DateTime @map("expires_at")
+  verifiedAt       DateTime? @map("verified_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([otpPurpose])
+  @@index([targetIdentifier, otpPurpose])
+  @@map("otp_tokens")
+}
+
+// ─── 5. SESSIONS (device, refresh token hash, max 3 per user) ───
+model Session {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  deviceName       String   @map("device_name") @db.VarChar(255)
+  deviceId         String   @map("device_id") @db.VarChar(255)
+  deviceFingerprint String? @map("device_fingerprint") @db.VarChar(500)
+  refreshTokenHash String   @unique @map("refresh_token_hash") @db.VarChar(255)
+  ipAddress        String   @map("ip_address") @db.VarChar(45)
+  userAgent        String?  @map("user_agent") @db.VarChar(500)
+  isActive         Boolean  @default(true) @map("is_active")
+  isRevoked        Boolean  @default(false) @map("is_revoked")
+  lastActiveAt     DateTime @default(now()) @map("last_active_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  expiresAt        DateTime @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  loginType        String?  @map("login_type") @db.VarChar(50) // password, google, facebook, apple
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([deviceId])
+  @@index([isActive])
+  @@index([expiresAt])
+  @@index([userId, deviceId])
+  @@map("sessions")
+}
+
+// ─── 6. DEVICE_REGISTRY (device history, device management) ───
+model DeviceRegistry {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  deviceId     String   @map("device_id") @db.VarChar(255)
+  deviceName   String   @map("device_name") @db.VarChar(255)
+  deviceType   String?  @map("device_type") @db.VarChar(50)
+  platform     String   @default("web") @db.VarChar(20)
+  loginAt      DateTime @default(now()) @map("login_at")
+  lastActiveAt DateTime @default(now()) @map("last_active_at")
+  ipAddress    String?  @map("ip_address") @db.VarChar(45)
+  userAgent    String?  @map("user_agent") @db.VarChar(500)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@index([userId, lastActiveAt])
+  @@map("device_registry")
+}
+
+// ─── 6b. DEVICE_LINKED_ACCOUNTS (accounts linked to a physical/device identifier) ───
+model DeviceLinkedAccount {
+  id         String   @id @default(cuid())
+  deviceId   String   @map("device_id") @db.VarChar(255)
+  userId     String   @map("user_id") @db.Uuid
+  linkedAt   DateTime @default(now()) @map("linked_at")
+  lastUsedAt DateTime @default(now()) @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, userId])
+  @@index([deviceId])
+  @@index([userId])
+  @@map("device_linked_accounts")
+}
+
+// ─── 7. VIP_PUBLIC_IDS (reserved patterns) ───
+model VipPublicId {
+  id             String   @id @default(uuid()) @db.Uuid
+  publicId       BigInt   @unique @map("public_id")
+  tier           String   @default("NONE") @map("tier") @db.VarChar(50)
+  priceGroup     String   @default("STANDARD") @map("price_group") @db.VarChar(50)
+  rarityScore    Int      @default(0) @map("rarity_score")
+  matchedRules   String[] @default([]) @map("matched_rules")
+  detectedAt     DateTime @default(now()) @map("detected_at")
+  assignedAt     DateTime? @map("assigned_at")
+  patternType    String?  @map("pattern_type") @db.VarChar(50)
+  isAvailable    Boolean  @default(true) @map("is_available")
+  currentOwnerId String?  @map("current_owner_id") @db.Uuid
+  priceCredits   Int?     @map("price_credits")
+  purchasedAt    DateTime? @map("purchased_at")
+  expiresAt      DateTime? @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  currentOwner User? @relation("VipOwner", fields: [currentOwnerId], references: [id], onDelete: SetNull)
+  assignments  UserVipAssignment[]
+
+  @@index([isAvailable])
+  @@index([currentOwnerId])
+  @@index([expiresAt])
+  @@index([tier, assignedAt])
+  @@index([assignedAt])
+  @@map("vip_public_ids")
+}
+
+// ─── 7b. USER_VIP_ASSIGNMENTS (time-boxed VIP public ID use) ───
+model UserVipAssignment {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id") @db.Uuid
+  publicId  BigInt    @map("public_id")
+  startsAt  DateTime  @default(now()) @map("starts_at")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  isActive  Boolean   @default(true) @map("is_active")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vipPublicId VipPublicId @relation(fields: [publicId], references: [publicId])
+
+  @@index([userId, isActive])
+  @@index([expiresAt, isActive])
+  @@map("user_vip_assignments")
+}
+
+// ─── 8. AUDIT_LOGS (90-day retention) ───
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String?  @map("user_id") @db.Uuid
+  actionType   String   @map("action_type") @db.VarChar(100)
+  actionStatus String   @map("action_status") @db.VarChar(50) // success, failed
+  actionDetails Json?   @map("action_details")
+  ipAddress    String?  @map("ip_address") @db.VarChar(45)
+  userAgent    String?  @map("user_agent") @db.VarChar(500)
+  deviceId     String?  @map("device_id") @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([actionType])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ─── 9. ACCOUNT_DELETIONS (schedule, grace period, permanent delete) ───
+model AccountDeletion {
+  id                 String    @id @default(cuid())
+  userId             String    @unique @map("user_id") @db.Uuid
+  scheduledAt        DateTime  @default(now()) @map("scheduled_at")
+  deactivationUntil  DateTime  @map("deactivation_until")
+  deletionAt         DateTime  @map("deletion_at")
+  isCancelled        Boolean   @default(false) @map("is_cancelled")
+  cancelledAt        DateTime? @map("cancelled_at")
+  isDeleted          Boolean   @default(false) @map("is_deleted")
+  deletedAt         DateTime? @map("deleted_at")
+  reason             String?   @db.VarChar(500)
+  ipAddress          String?   @map("ip_address") @db.VarChar(45)
+  user               User      @relation("AccountDeletion", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledAt])
+  @@index([deactivationUntil])
+  @@index([deletionAt])
+  @@index([isDeleted])
+  @@index([userId])
+  @@map("account_deletions")
+}
+
+// ─── 10. NEXT_PUBLIC_ID_SEQUENCE (single row, id=1) ───
+model NextPublicIdSequence {
+  id        Int   @id
+  nextValue BigInt @map("next_value") // default 34216589 via seed
+
+  @@map("next_public_id_sequence")
+}
+
+// ─── 11. USER_SETTINGS (per-user messaging and language preferences) ───
+model UserSettings {
+  id        String   @id @default(cuid())
+  userId    String   @unique @map("user_id") @db.Uuid
+  language  String   @default("en") @db.VarChar(10)
+  allowMsgFromMutual    Boolean @default(true)  @map("allow_msg_from_mutual")
+  allowMsgFromFollowing Boolean @default(true)  @map("allow_msg_from_following")
+  allowMsgFromStranger  Boolean @default(false) @map("allow_msg_from_stranger")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_settings")
+}
+
+// ─── 12. USER_FOLLOWS (social graph: follow relationships) ───
+model UserFollow {
+  id          String   @id @default(cuid())
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+  @@map("user_follows")
+}
+
+// ─── 13. PROFILE_VISITORS (who visited which profile) ───
+model ProfileVisitor {
+  id         String   @id @default(cuid())
+  profileId  String   @map("profile_id") @db.Uuid
+  visitorId  String   @map("visitor_id") @db.Uuid
+  visitedAt  DateTime @default(now()) @map("visited_at")
+
+  profile User   @relation("ProfileOwner", fields: [profileId], references: [id], onDelete: Cascade)
+  visitor User   @relation("ProfileVisitor", fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, visitorId])
+  @@index([profileId, visitedAt])
+  @@index([visitorId, visitedAt])
+  @@map("profile_visitors")
+}
+
+// ─── 14. USER_SUBSCRIBERS (creator/subscriber relationships) ───
+model UserSubscriber {
+  id           String   @id @default(cuid())
+  subscriberId String   @map("subscriber_id") @db.Uuid
+  creatorId    String   @map("creator_id") @db.Uuid
+  subscribedAt DateTime @default(now()) @map("subscribed_at")
+
+  subscriber User @relation("Subscriber", fields: [subscriberId], references: [id], onDelete: Cascade)
+  creator    User @relation("Creator", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriberId, creatorId])
+  @@index([creatorId])
+  @@index([subscriberId])
+  @@map("user_subscribers")
+}
+
+// ─── 15. USER_LEVELS (per-user livestream/wealth levels and XP) ───
+model UserLevel {
+  id            String   @id @default(cuid())
+  userId        String   @unique @map("user_id") @db.Uuid
+  livestreamLevel Int    @default(0) @map("livestream_level")
+  wealthLevel     Int    @default(0) @map("wealth_level")
+  livestreamXp    BigInt @default(0) @map("livestream_xp")
+  wealthXp        BigInt @default(0) @map("wealth_xp")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_levels")
+}
+
+// ─── 16. LEVEL_CONFIG (config for level thresholds) ───
+model LevelConfig {
+  id       String   @id @default(cuid())
+  levelType String  @map("level_type") @db.VarChar(50) // 'livestream' | 'wealth'
+  level     Int
+  minXp     BigInt  @map("min_xp")
+  maxXp     BigInt  @map("max_xp")
+  label     String  @db.VarChar(255)
+  iconUrl   String? @map("icon_url") @db.VarChar(500)
+
+  @@unique([levelType, level])
+  @@index([levelType])
+  @@map("level_config")
+}
+
+
+// ─── 17. POSTS (media posts with tagging and likes) ───
+
+enum PostVisibility {
+  PUBLIC
+  SUBSCRIBERS_ONLY
+}
+
+model Post {
+  id          String         @id @default(cuid())
+  userId      String         @map("user_id") @db.Uuid
+  mediaKey    String         @map("media_key") @db.VarChar(500)
+  mediaUrl    String         @map("media_url") @db.VarChar(1000)
+  caption     String?        @db.Text
+  visibility  PostVisibility @default(SUBSCRIBERS_ONLY)
+  likesCount  Int            @default(0) @map("likes_count")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  user  User     @relation("UserPosts", fields: [userId], references: [id], onDelete: Cascade)
+  tags  PostTag[]
+  likes PostLike[]
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("posts")
+}
+
+model PostTag {
+  id           String   @id @default(cuid())
+  postId       String   @map("post_id")
+  taggedUserId String   @map("tagged_user_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  post       Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  taggedUser User @relation("TaggedIn", fields: [taggedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, taggedUserId])
+  @@index([postId])
+  @@index([taggedUserId])
+  @@map("post_tags")
+}
+
+model PostLike {
+  id       String   @id @default(cuid())
+  postId   String   @map("post_id")
+  userId   String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation("PostLikes", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@index([userId])
+  @@map("post_likes")
+}
+
+// ─── MESSAGING ───
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  SYSTEM
+}
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+}
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  INAPPROPRIATE_CONTENT
+  FAKE_ACCOUNT
+  VIOLENCE
+  OTHER
+}
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
+}
+
+model Conversation {
+  id             String               @id @default(cuid())
+  type           ConversationType
+  lastMessageAt DateTime?            @map("last_message_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  members        ConversationMember[]
+  messages       Message[]
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id             String        @id @default(cuid())
+  conversationId String        @map("conversation_id")
+  userId         String        @map("user_id") @db.Uuid
+  joinedAt       DateTime      @default(now()) @map("joined_at")
+  lastReadAt     DateTime?     @map("last_read_at")
+  isMuted        Boolean       @default(false) @map("is_muted")
+  mutedUntil     DateTime?     @map("muted_until")
+  isDeleted      Boolean       @default(false) @map("is_deleted")
+  deletedAt      DateTime?     @map("deleted_at")
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+  @@map("conversation_members")
+}
+
+model Message {
+  id             String            @id @default(cuid())
+  conversationId String            @map("conversation_id")
+  senderId       String            @map("sender_id") @db.Uuid
+  type           MessageType
+  content        String?           @db.Text
+  replyToId      String?           @map("reply_to_id")
+  isDeleted      Boolean           @default(false) @map("is_deleted")
+  deletedAt      DateTime?         @map("deleted_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  conversation   Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User              @relation("SentMessages", fields: [senderId], references: [id])
+  replyTo        Message?          @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies        Message[]         @relation("MessageReplies")
+  mediaItems     MessageMedia[]
+  reactions      MessageReaction[]
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@map("messages")
+}
+
+model MessageMedia {
+  id          String    @id @default(cuid())
+  messageId   String    @map("message_id")
+  mediaType   MediaType @map("media_type")
+  s3Key       String    @map("s3_key") @db.VarChar(500)
+  s3Bucket    String    @map("s3_bucket") @db.VarChar(255)
+  fileName    String?   @map("file_name") @db.VarChar(255)
+  mimeType    String?   @map("mime_type") @db.VarChar(100)
+  sizeBytes   Int?      @map("size_bytes")
+  durationSec Int?      @map("duration_sec")
+  width       Int?
+  height      Int?
+  order       Int       @default(0)
+  message     Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  @@index([messageId])
+  @@map("message_media")
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id") @db.Uuid
+  emoji     String   @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@map("message_reactions")
+}
+
+model BlockList {
+  id        String   @id @default(cuid())
+  blockerId String   @map("blocker_id") @db.Uuid
+  blockedId String   @map("blocked_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  blocker   User     @relation("BlockedBy", fields: [blockerId], references: [id])
+  blocked   User     @relation("BlockedUsers", fields: [blockedId], references: [id])
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+  @@map("block_lists")
+}
+
+model MessageReport {
+  id             String       @id @default(cuid())
+  reporterId     String       @map("reporter_id") @db.Uuid
+  reportedUserId String       @map("reported_user_id") @db.Uuid
+  conversationId String?      @map("conversation_id")
+  messageId      String?      @map("message_id")
+  reason         ReportReason
+  additionalInfo String?      @map("additional_info") @db.Text
+  evidenceS3Keys String[]      @map("evidence_s3_keys")
+  status         ReportStatus @default(PENDING)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  reporter       User         @relation("Reporter", fields: [reporterId], references: [id])
+  reportedUser   User         @relation("Reported", fields: [reportedUserId], references: [id])
+  @@index([reporterId])
+  @@index([reportedUserId])
+  @@index([createdAt])
+  @@map("message_reports")
+}
+
+model BroadcastReminder {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  creatorId String   @map("creator_id") @db.Uuid
+  remindAt  DateTime @map("remind_at")
+  isSent    Boolean  @default(false) @map("is_sent")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation("ReminderOwner", fields: [userId], references: [id])
+  creator   User     @relation("ReminderCreator", fields: [creatorId], references: [id])
+  @@unique([userId, creatorId])
+  @@index([remindAt, isSent])
+  @@map("broadcast_reminders")
+}
+
+

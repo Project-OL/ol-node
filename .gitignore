@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+coverage/
+docs/
+postman/
+# Environment files
+.env
+.env.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+# Planning / local (keep docs for code review checklist)
+# docs/
+Planning/
+.cursor/
+TODO/
+package-lock.json
+k6-auth-tests/

@@ -1,0 +1,27 @@
+import { z } from 'zod'
+
+export const getDevicesSchema = z.object({
+  sortBy: z.enum(['lastActive', 'loginTime', 'name']).default('lastActive'),
+  page: z.coerce.number().int().min(1).default(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20).optional(),
+})
+
+export const revokeDeviceParamsSchema = z.object({
+  deviceId: z.string().uuid('Invalid device id'),
+})
+
+export const logoutAllSchema = z.object({
+  securityPassword: z.string().min(1, 'Security password required'),
+})
+
+export const renameDeviceSchema = z.object({
+  deviceName: z.string().min(1, 'Device name required').max(50, 'Device name too long'),
+})
+
+export const renameDeviceParamsSchema = z.object({
+  deviceId: z.string().uuid('Invalid device id'),
+})
+
+export type GetDevicesQuery = z.infer<typeof getDevicesSchema>
+export type LogoutAllBody = z.infer<typeof logoutAllSchema>
+export type RenameDeviceBody = z.infer<typeof renameDeviceSchema>

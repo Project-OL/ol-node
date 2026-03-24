@@ -1,0 +1,469 @@
+import { conversationRepository } from '../repositories/conversation.repository'
+import { messageRepository, type MessageWithDetails } from '../repositories/message.repository'
+import { blockRepository } from '../repositories/block.repository'
+import { followRepository } from '../repositories/follow.repository'
+import { userSettingsService } from './userSettings.service'
+import { followService } from './follow.service'
+import { cacheService } from './cache.service'
+import { auditService } from './audit.service'
+import { userSearchService } from './userSearch.service'
+import { redisClient } from '../config/redis'
+import { RedisKeys, MSG_HOT_TTL, CONV_LIST_TTL } from '../config/redis'
+import { AppError } from '../middlewares/errorHandler'
+import { publishToConversation } from '../utils/ws-publisher'
+import type { SendMessageInput } from '../models/messaging.schemas'
+
+export type DmContact = {
+  userId: string
+  username: string
+  publicId: string
+  avatar: string | null
+  isOnline: boolean
+  isMutual: boolean
+  existingConversationId: string | null
+}
+
+export type PaginatedMessages = {
+  messages: MessageWithDetails[]
+  nextCursor: string | null
+}
+
+export type PaginatedConversations = {
+  conversations: Awaited<
+    ReturnType<typeof conversationRepository.listConversationsForUser>
+  >['conversations']
+  nextCursor: string | null
+}
+
+export const messagingService = {
+  async canUserMessage(senderId: string, recipientId: string): Promise<void> {
+    if (await blockRepository.isBlocked(recipientId, senderId)) {
+      throw new AppError(403, 'User has blocked you', 'USER_BLOCKED')
+    }
+    if (await blockRepository.isBlocked(senderId, recipientId)) {
+      throw new AppError(403, 'You have blocked this user', 'YOU_ARE_BLOCKED')
+    }
+    const settings = await userSettingsService.getOrCreateSettings(recipientId)
+    const allowAny =
+      settings.allowMsgFromMutual ||
+      settings.allowMsgFromFollowing ||
+      settings.allowMsgFromStranger
+    if (!allowAny) {
+      throw new AppError(403, 'Messaging not allowed', 'MESSAGING_NOT_ALLOWED')
+    }
+    if (settings.allowMsgFromStranger) return
+
+    const allowedCacheKey = RedisKeys.allowedMessaging(recipientId, senderId)
+    const cachedAllowed = await redisClient.get(allowedCacheKey)
+    if (cachedAllowed === '1') return
+
+    const [following, friends] = await Promise.all([
+      followRepository.getFollowingIds(recipientId, 500),
+      followRepository.getFriendIds(senderId, 500),
+    ])
+    const recipientFollowsSender = following.includes(senderId)
+    const isMutual = friends.includes(recipientId)
+    if (settings.allowMsgFromFollowing && recipientFollowsSender) {
+      await redisClient.set(allowedCacheKey, '1', 'EX', 60)
+      return
+    }
+    if (settings.allowMsgFromMutual && isMutual) {
+      await redisClient.set(allowedCacheKey, '1', 'EX', 60)
+      return
+    }
+    throw new AppError(403, 'Messaging not allowed', 'MESSAGING_NOT_ALLOWED')
+  },
+
+  async getOrCreateDirectConversation(
+    initiatorId: string,
+    recipientPublicId: string,
+  ): Promise<{
+    conversation: Awaited<ReturnType<typeof conversationRepository.createConversation>>
+    isNew: boolean
+  }> {
+    const recipient = await userSearchService.searchByPublicId(
+      recipientPublicId,
+      initiatorId,
+    )
+    if (!recipient) {
+      throw new AppError(404, 'User not found', 'NOT_FOUND')
+    }
+    const recipientId = recipient.userId
+    await this.canUserMessage(initiatorId, recipientId)
+
+    const existing = await conversationRepository.findDirectConversation(
+      initiatorId,
+      recipientId,
+    )
+    if (existing) {
+      const withMembers = await conversationRepository.findConversationById(
+        existing.id,
+        initiatorId,
+      )
+      if (!withMembers) throw new AppError(403, 'Forbidden', 'FORBIDDEN')
+      return { conversation: withMembers as any, isNew: false }
+    }
+
+    const conversation = await conversationRepository.createConversation({
+      type: 'DIRECT',
+      memberIds: [initiatorId, recipientId],
+    })
+    await cacheService.delete(RedisKeys.userConversations(initiatorId))
+    await cacheService.delete(RedisKeys.userConversations(recipientId))
+    return { conversation, isNew: true }
+  },
+
+  async sendMessage(
+    senderId: string,
+    conversationId: string,
+    input: SendMessageInput,
+  ): Promise<MessageWithDetails> {
+    const conv = await conversationRepository.findConversationById(
+      conversationId,
+      senderId,
+    )
+    if (!conv) {
+      throw new AppError(403, 'Not a member', 'FORBIDDEN')
+    }
+    const otherMemberIds = conv.members
+      .filter((m) => m.userId !== senderId)
+      .map((m) => m.userId)
+    for (const otherId of otherMemberIds) {
+      await this.canUserMessage(senderId, otherId)
+    }
+    if (input.replyToId) {
+      const replyTo = await messageRepository.findMessageById(input.replyToId)
+      if (
+        !replyTo ||
+        replyTo.conversationId !== conversationId
+      ) {
+        throw new AppError(400, 'Invalid reply target', 'INVALID_REPLY')
+      }
+    }
+    const msg = await messageRepository.createMessage({
+      conversationId,
+      senderId,
+      type: input.type as any,
+      content: input.content,
+      replyToId: input.replyToId,
+      mediaItems: input.mediaItems as any,
+    })
+    await conversationRepository.updateLastMessageAt(conversationId, msg.createdAt)
+    await Promise.all(
+      conv.members.map((m: { userId: string }) =>
+        cacheService.delete(RedisKeys.userConversations(m.userId)),
+      ),
+    )
+    const msgKey = RedisKeys.convMessages(conversationId)
+    const msgJson = JSON.stringify({
+      ...msg,
+      createdAt: msg.createdAt.toISOString(),
+    })
+    await redisClient.zadd(
+      msgKey,
+      msg.createdAt.getTime(),
+      msgJson,
+    )
+    await redisClient.expire(msgKey, MSG_HOT_TTL)
+    await redisClient.zremrangebyrank(msgKey, 0, -101)
+    await publishToConversation(conversationId, {
+      type: 'NEW_MESSAGE',
+      conversationId,
+      message: msg,
+    })
+    for (const userId of otherMemberIds) {
+      await redisClient.incr(RedisKeys.unreadCount(userId, conversationId))
+    }
+    return msg
+  },
+
+  async listMessages(
+    userId: string,
+    conversationId: string,
+    cursor?: string,
+    limit = 30,
+  ): Promise<PaginatedMessages> {
+    const conv = await conversationRepository.findConversationById(
+      conversationId,
+      userId,
+    )
+    if (!conv) {
+      throw new AppError(403, 'Not a member', 'FORBIDDEN')
+    }
+    if (!cursor) {
+      const raw = await redisClient.zrevrange(
+        RedisKeys.convMessages(conversationId),
+        0,
+        limit - 1,
+        'WITHSCORES',
+      )
+      if (raw.length > 0) {
+        const messages: MessageWithDetails[] = []
+        for (let i = 0; i < raw.length; i += 2) {
+          const json = raw[i]
+          if (typeof json !== 'string') continue
+          const parsed = JSON.parse(json) as MessageWithDetails & { createdAt: string }
+          parsed.createdAt = new Date(parsed.createdAt) as any
+          messages.push(parsed as MessageWithDetails)
+        }
+        const nextCursor =
+          messages.length > 0
+            ? (messages[messages.length - 1]?.createdAt as Date)?.toISOString() ?? null
+            : null
+        await messageRepository.markAsRead(conversationId, userId)
+        await redisClient.set(
+          RedisKeys.unreadCount(userId, conversationId),
+          '0',
+          'EX',
+          86400,
+        )
+        return { messages, nextCursor }
+      }
+    }
+    const result = await messageRepository.listMessages(
+      conversationId,
+      userId,
+      cursor,
+      limit,
+    )
+    await messageRepository.markAsRead(conversationId, userId)
+    await redisClient.set(
+      RedisKeys.unreadCount(userId, conversationId),
+      '0',
+      'EX',
+      86400,
+    )
+    return result
+  },
+
+  async listConversations(
+    userId: string,
+    cursor?: string,
+    limit = 20,
+  ): Promise<PaginatedConversations> {
+    if (!cursor) {
+      const cached = await redisClient.get(
+        RedisKeys.userConversations(userId),
+      )
+      if (cached) {
+        return JSON.parse(cached) as PaginatedConversations
+      }
+    }
+    const result = await conversationRepository.listConversationsForUser(
+      userId,
+      cursor,
+      limit,
+    )
+    const unreadKeys = result.conversations.map((c) =>
+      RedisKeys.unreadCount(userId, c.id),
+    )
+    const unreadValues = unreadKeys.length
+      ? await redisClient.mget(...unreadKeys)
+      : []
+    type ConvPreview = (typeof result.conversations)[number]
+    const unreadCounts = new Map(
+      result.conversations.map((c: ConvPreview, i: number) => [
+        c.id,
+        unreadValues[i] ? parseInt(String(unreadValues[i]), 10) : null,
+      ]),
+    )
+    for (const conv of result.conversations) {
+      const cached = unreadCounts.get(conv.id)
+      if (cached === null || cached === undefined) {
+        const count = await messageRepository.getUnreadCount(
+          conv.id,
+          userId,
+        )
+        unreadCounts.set(conv.id, count)
+        await redisClient.set(
+          RedisKeys.unreadCount(userId, conv.id),
+          String(count),
+          'EX',
+          86400,
+        )
+      }
+    }
+    const withUnread = result.conversations.map((c: ConvPreview) => ({
+      ...c,
+      unreadCount: unreadCounts.get(c.id) ?? 0,
+    }))
+    const payload: PaginatedConversations = {
+      conversations: withUnread as any,
+      nextCursor: result.nextCursor,
+    }
+    if (!cursor) {
+      await redisClient.set(
+        RedisKeys.userConversations(userId),
+        JSON.stringify(payload),
+        'EX',
+        CONV_LIST_TTL,
+      )
+    }
+    return payload
+  },
+
+  async clearChatHistory(
+    userId: string,
+    conversationId: string,
+  ): Promise<void> {
+    const conv = await conversationRepository.findConversationById(
+      conversationId,
+      userId,
+    )
+    if (!conv) {
+      throw new AppError(403, 'Not a member', 'FORBIDDEN')
+    }
+    await conversationRepository.markConversationDeleted(
+      conversationId,
+      userId,
+    )
+    await cacheService.delete(RedisKeys.userConversations(userId))
+    await auditService.log({
+      actionType: 'CLEAR_CHAT',
+      actionStatus: 'success',
+      userId,
+      actionDetails: { conversationId },
+    })
+  },
+
+  async muteConversation(
+    userId: string,
+    conversationId: string,
+    mutedUntil?: string | null,
+  ): Promise<void> {
+    const conv = await conversationRepository.findConversationById(
+      conversationId,
+      userId,
+    )
+    if (!conv) {
+      throw new AppError(403, 'Not a member', 'FORBIDDEN')
+    }
+    const isMuted = mutedUntil !== null
+    await conversationRepository.updateMuteStatus(
+      conversationId,
+      userId,
+      isMuted,
+      mutedUntil ? new Date(mutedUntil) : null,
+    )
+    await publishToConversation(conversationId, {
+      type: 'CONV_MUTED',
+      conversationId,
+      userId,
+      mutedUntil: mutedUntil ?? null,
+    })
+  },
+
+  async addReaction(
+    userId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<void> {
+    const msg = await messageRepository.findMessageById(messageId)
+    if (!msg) {
+      throw new AppError(404, 'Message not found', 'NOT_FOUND')
+    }
+    await messageRepository.upsertReaction(messageId, userId, emoji)
+    await cacheService.delete(RedisKeys.convMessages(msg.conversationId))
+    await publishToConversation(msg.conversationId, {
+      type: 'REACTION_ADDED',
+      conversationId: msg.conversationId,
+      messageId,
+      userId,
+      emoji,
+    })
+  },
+
+  async removeReaction(
+    userId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<void> {
+    const msg = await messageRepository.findMessageById(messageId)
+    if (!msg) {
+      throw new AppError(404, 'Message not found', 'NOT_FOUND')
+    }
+    await messageRepository.removeReaction(messageId, userId, emoji)
+    await publishToConversation(msg.conversationId, {
+      type: 'REACTION_REMOVED',
+      conversationId: msg.conversationId,
+      messageId,
+      userId,
+      emoji,
+    })
+  },
+
+  async deleteMessage(userId: string, messageId: string): Promise<void> {
+    const msg = await messageRepository.softDeleteMessage(
+      messageId,
+      userId,
+    )
+    await cacheService.delete(RedisKeys.convMessages(msg.conversationId))
+    await redisClient.del(RedisKeys.convMessages(msg.conversationId))
+    await publishToConversation(msg.conversationId, {
+      type: 'MESSAGE_DELETED',
+      conversationId: msg.conversationId,
+      messageId,
+    })
+  },
+
+  async getDmContacts(userId: string): Promise<DmContact[]> {
+    const cacheKey = `dm-contacts:${userId}`
+    const cached = await redisClient.get(cacheKey)
+    if (cached) {
+      return JSON.parse(cached) as DmContact[]
+    }
+    const { items: friends } = await followService.getFriends(
+      userId,
+      userId,
+      null,
+      40,
+    )
+    let contactIds = friends.map((c: { userId: string }) => c.userId)
+    let following: { userId: string; displayName: string; publicId: string; avatarUrl: string | null }[] = []
+    if (contactIds.length < 40) {
+      const res = await followService.getFollowing(
+        userId,
+        userId,
+        null,
+        40,
+      )
+      following = res.items.map((c: { userId: string; displayName: string; publicId: string; avatarUrl: string | null }) => ({
+        userId: c.userId,
+        displayName: c.displayName,
+        publicId: c.publicId,
+        avatarUrl: c.avatarUrl,
+      }))
+      const set = new Set(contactIds)
+      for (const c of following as Array<{ userId: string }>) {
+        if (set.size >= 40) break
+        set.add(c.userId)
+      }
+      contactIds = Array.from(set).slice(0, 40)
+    }
+    const existingConvs = await Promise.all(
+      contactIds.map((id: string) =>
+        conversationRepository.findDirectConversation(userId, id),
+      ),
+    )
+    const onlineKeys = contactIds.map((id: string) => RedisKeys.userOnlineStatus(id))
+    const onlineValues = onlineKeys.length
+      ? await redisClient.mget(...onlineKeys)
+      : []
+    const result: DmContact[] = contactIds.map((id: string, i: number) => {
+      const friendCard = friends.find((f: { userId: string }) => f.userId === id)
+      const followCard = following.find((f: { userId: string }) => f.userId === id)
+      const card = friendCard ?? followCard
+      return {
+        userId: id,
+        username: card?.displayName ?? '',
+        publicId: card?.publicId ?? '',
+        avatar: card?.avatarUrl ?? null,
+        isOnline: !!onlineValues[i],
+        isMutual: !!friendCard,
+        existingConversationId: existingConvs[i]?.id ?? null,
+      }
+    })
+    await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 60)
+    return result
+  },
+}
