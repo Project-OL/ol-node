@@ -4,9 +4,11 @@ import { deviceRegistryRepository } from '../repositories/device-registry.reposi
 import { redisClient, RedisKeys } from '../config/redis'
 import { signAccess, signRefresh, verifyRefresh } from '../utils/jwt'
 import { AppError } from '../middlewares/errorHandler'
+import { env } from '../config/env'
+import { displayNameFromUser } from '../utils/profileDisplay'
 
 const REFRESH_DAYS = 7
-const ACCESS_EXPIRY = '15m'
+const ACCESS_EXPIRY = env.JWT_ACCESS_EXPIRES_IN
 
 function hashRefreshToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex')
@@ -30,6 +32,8 @@ export const sessionService = {
     ipAddress: string
     userAgent?: string | null
     loginType?: string
+    displayName: string
+    avatarUrl: string | null
   }) {
     await sessionRepository.deleteOldestSessionsIfOverLimit(params.userId)
     const sessionId = crypto.randomUUID()
@@ -61,9 +65,12 @@ export const sessionService = {
     const accessJti = crypto.randomUUID()
     const accessToken = signAccess(
       {
+        sub: params.userId,
         userId: params.userId,
         publicId: params.publicId,
         passwordSet: params.passwordSet,
+        name: params.displayName,
+        avatarUrl: params.avatarUrl,
         jti: accessJti,
         deviceId: params.deviceId,
       },
@@ -116,6 +123,8 @@ export const sessionService = {
       deviceId: session.deviceId,
       ipAddress,
       loginType: session.loginType ?? undefined,
+      displayName: displayNameFromUser(user),
+      avatarUrl: user.avatarUrl,
     })
   },
 

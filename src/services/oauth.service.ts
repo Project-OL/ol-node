@@ -14,6 +14,7 @@ import { auditService } from '../services/audit.service'
 import { providerService } from '../services/provider.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { AuthProvider } from '../models/types'
+import { displayNameFromUser } from '../utils/profileDisplay'
 
 export interface OAuthUserInfo {
   email: string | null
@@ -119,6 +120,8 @@ export const oauthService = {
         ipAddress,
         userAgent,
         loginType: provider,
+        displayName: displayNameFromUser(user),
+        avatarUrl: user.avatarUrl,
       })
       await auditService.log({
         userId: user.id,
@@ -177,6 +180,8 @@ export const oauthService = {
       ipAddress,
       userAgent,
       loginType: provider,
+      displayName: displayNameFromUser(user),
+      avatarUrl: user.avatarUrl,
     })
     await auditService.log({
       userId: user.id,

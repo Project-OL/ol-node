@@ -54,6 +54,19 @@ vi.mock('../../src/config/redis', () => ({
     userAuthIdentifiers: (userId: string) => `user:${userId}:auth_identifiers`,
     userDevices: (userId: string) => `user:${userId}:devices`,
     userSessions: (userId: string) => `user:${userId}:sessions`,
+    userMe: (userId: string) => `user:me:${userId}`,
+    userProfile: (userId: string) => `user:profile:${userId}`,
+    userUsernameLock: (userId: string) => `user:username_lock:${userId}`,
+  },
+}))
+
+vi.mock('../../src/services/cacheRedis.service', () => ({
+  cacheRedisService: {
+    del: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue(undefined),
+    exists: vi.fn().mockResolvedValue(false),
+    ttl: vi.fn().mockResolvedValue(-2),
   },
 }))
 

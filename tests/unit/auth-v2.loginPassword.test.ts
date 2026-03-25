@@ -32,6 +32,13 @@ vi.mock('../../src/repositories/device.repository', () => ({
 vi.mock('../../src/services/audit.service', () => ({
   auditService: { log: vi.fn().mockResolvedValue(undefined) },
 }))
+vi.mock('../../src/services/cache.service', () => ({
+  cacheService: {
+    delete: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn(),
+    set: vi.fn(),
+  },
+}))
 vi.mock('../../src/repositories/user.repository', () => ({
   userRepository: {
     findByPublicId: vi.fn(),
@@ -48,6 +55,9 @@ const prismaMock = {
   authPassword: {
     findUnique: vi.fn(),
   },
+  user: {
+    findUnique: vi.fn(),
+  },
 }
 vi.mock('../../src/config/database', () => ({
   prisma: prismaMock,
@@ -59,6 +69,7 @@ const { authV2Service } = await import('../../src/services/auth-v2.service')
 describe('authV2Service.loginPassword', () => {
   beforeEach(() => {
     prismaMock.authPassword.findUnique.mockClear()
+    prismaMock.user.findUnique.mockClear()
     passwordCompare.mockClear()
     passwordHasPassword.mockClear()
     findByProviderAndIdentifier.mockClear()
@@ -79,6 +90,13 @@ describe('authV2Service.loginPassword', () => {
     findByProviderAndIdentifier.mockResolvedValue({
       userId: 'u1',
       user,
+    })
+    prismaMock.user.findUnique.mockResolvedValue({
+      firstName: 'Test',
+      lastName: 'User',
+      username: 'testuser',
+      avatarUrl: null,
+      passwordSet: true,
     })
 
     const result = await authV2Service.loginPassword(

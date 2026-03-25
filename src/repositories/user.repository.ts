@@ -42,15 +42,40 @@ export const userRepository = {
     })
   },
 
+  /** Lean row for GET/PATCH /me (read replica). */
+  async findForMe(userId: string) {
+    return prismaRead.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        publicId: true,
+        firstName: true,
+        lastName: true,
+        gender: true,
+        avatarUrl: true,
+        bio: true,
+        usernameUpdatedAt: true,
+        passwordSet: true,
+        authIdentifiers: {
+          select: { provider: true, identifier: true, isPrimary: true },
+          orderBy: [{ isPrimary: 'desc' }, { provider: 'asc' }],
+        },
+      },
+    })
+  },
+
   async updateProfile(
     id: string,
     data: {
       firstName?: string
-      lastName?: string
+      lastName?: string | null
       dateOfBirth?: Date | null
       country?: string
       gender?: string
       avatarUrl?: string | null
+      bio?: string | null
+      usernameUpdatedAt?: Date | null
       status?: UserStatus
       profileCompletedAt?: Date | null
       lastIpAddress?: string | null

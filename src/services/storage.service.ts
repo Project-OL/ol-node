@@ -3,6 +3,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { s3Client, s3Bucket } from '../config/s3'
 import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
+import { rootLogger } from '../utils/rootLogger'
 
 function buildPublicUrl(key: string): string {
   if (!s3Bucket) {
@@ -11,9 +12,48 @@ function buildPublicUrl(key: string): string {
   return `https://${s3Bucket}.s3.${env.AWS_REGION}.amazonaws.com/${key}`
 }
 
+function buildObjectPublicUrl(key: string): string {
+  const domain = env.CLOUDFRONT_DOMAIN?.trim()
+  if (domain) {
+    const host = domain.replace(/^https?:\/\//i, '').replace(/\/$/, '')
+    return `https://${host}/${key}`
+  }
+  return buildPublicUrl(key)
+}
+
 export const storageService = {
   getPublicUrl(key: string): string {
     return buildPublicUrl(key)
+  },
+
+  /** Public URL for avatars and assets (CloudFront when CLOUDFRONT_DOMAIN is set). */
+  getCdnOrS3PublicUrl(key: string): string {
+    return buildObjectPublicUrl(key)
+  },
+
+  async putObjectBuffer(params: {
+    key: string
+    body: Buffer
+    contentType: string
+    cacheControl?: string
+  }): Promise<void> {
+    if (!s3Bucket) {
+      throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
+    }
+    try {
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket: s3Bucket,
+          Key: params.key,
+          Body: params.body,
+          ContentType: params.contentType,
+          CacheControl: params.cacheControl ?? 'max-age=31536000',
+        }),
+      )
+    } catch (err) {
+      rootLogger.child({ module: 'storage' }).error({ err }, 'S3 PutObject failed')
+      throw new AppError(502, 'File storage temporarily unavailable', 'S3_UPLOAD_FAILED')
+    }
   },
 
   async getPresignedPutUrl(key: string, mimeType: string, expiresInSeconds: number): Promise<string> {

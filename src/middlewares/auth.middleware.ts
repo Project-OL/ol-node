@@ -38,8 +38,9 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
     throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
   }
 
-  const payload = request.user as { userId?: string; jti?: string; deviceId?: string }
-  if (!payload?.userId) {
+  const payload = request.user as { userId?: string; sub?: string; jti?: string; deviceId?: string }
+  const resolvedUserId = payload.userId ?? payload.sub
+  if (!resolvedUserId) {
     throw new AppError(401, 'Invalid token', 'INVALID_TOKEN')
   }
 
@@ -47,13 +48,13 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
     const cached = jtiNotBlacklistedCache.get(payload.jti)
     const now = Date.now()
     if (cached != null && cached > now) {
-      request.userId = payload.userId
+      request.userId = resolvedUserId
       request.jti = payload.jti
       request.deviceId = payload.deviceId
       return
     }
     if (redisCircuitBreaker.shouldSkip()) {
-      request.userId = payload.userId
+      request.userId = resolvedUserId
       request.jti = payload.jti
       request.deviceId = payload.deviceId
       return
@@ -68,7 +69,7 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
     } catch (err) {
       if (err instanceof AppError) throw err
       redisCircuitBreaker.recordFailure()
-      request.userId = payload.userId
+      request.userId = resolvedUserId
       request.jti = payload.jti
       request.deviceId = payload.deviceId
       return
@@ -77,7 +78,7 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
     jtiNotBlacklistedCache.set(payload.jti, now + JTI_NOT_BLACKLISTED_TTL_MS)
   }
 
-  request.userId = payload.userId
+  request.userId = resolvedUserId
   request.jti = payload.jti
   request.deviceId = payload.deviceId
 }

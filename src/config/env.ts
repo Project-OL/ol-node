@@ -19,6 +19,9 @@ const envSchema = z
     REDIS_URL: z.string().url(),
     REDIS_READ_URL: z.string().url().optional(),
     REDIS_PASSWORD: z.string().optional(),
+    REDIS_TTL_ME: z.coerce.number().default(900),
+    REDIS_TTL_PROFILE: z.coerce.number().default(3600),
+    REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().default(3000),
 
     JWT_ACCESS_SECRET: z.string().min(32),
     JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
@@ -29,6 +32,9 @@ const envSchema = z
     AWS_SECRET_ACCESS_KEY: z.string().optional(),
     AWS_REGION: z.string().default('ap-south-1'),
     AWS_S3_BUCKET: z.string().optional(),
+    /** If set (non-empty), avatar URLs use https://{domain}/{key}; else S3 virtual-hosted URL. */
+    CLOUDFRONT_DOMAIN: z.string().optional(),
+    MAX_AVATAR_SIZE_BYTES: z.coerce.number().default(5_242_880),
 
     FIREBASE_PROJECT_ID: z.string().optional(),
     FIREBASE_CLIENT_EMAIL: z.string().optional(),

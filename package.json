@@ -52,6 +52,7 @@
         "libphonenumber-js": "^1.11.6",
         "pino": "^9.3.2",
         "pino-pretty": "^11.2.1",
+        "sanitize-html": "^2.17.2",
         "uuid": "^10.0.0",
         "zod": "^3.23.8"
     },
@@ -59,6 +60,7 @@
         "@types/bcrypt": "^5.0.2",
         "@types/jsonwebtoken": "^9.0.10",
         "@types/node": "^20.14.11",
+        "@types/sanitize-html": "^2.16.1",
         "@types/uuid": "^10.0.0",
         "@typescript-eslint/eslint-plugin": "^7.16.1",
         "@typescript-eslint/parser": "^7.16.1",

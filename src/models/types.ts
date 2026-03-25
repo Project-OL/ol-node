@@ -9,6 +9,22 @@ export type RefreshToken = string & { readonly __brand: 'RefreshToken' }
 export const AUTH_PROVIDERS = ['email', 'phone', 'google', 'facebook', 'apple'] as const
 export type AuthProvider = (typeof AUTH_PROVIDERS)[number]
 
+/** One linked auth method for POST /auth/check-availability when exists (raw identifier for client OTP / login flows). */
+export interface CheckAvailabilityAuthIdentifier {
+  provider: AuthProvider
+  identifier: string
+}
+
+export type CheckAvailabilityResult =
+  | { exists: false; authMethods: AuthProvider[] }
+  | {
+      exists: true
+      authMethods: AuthProvider[]
+      identifiers: CheckAvailabilityAuthIdentifier[]
+      canSignup: false
+      passwordSet: boolean
+    }
+
 export const OTP_PURPOSES = [
   'signup',
   'login',
@@ -25,9 +41,14 @@ export const USER_STATUSES = ['new', 'active', 'suspended', 'deactivating', 'del
 export type UserStatus = (typeof USER_STATUSES)[number]
 
 export interface JwtAccessPayload {
+  /** Standard JWT subject; same as userId when present. */
+  sub?: string
   userId: string
   publicId: number
   passwordSet: boolean
+  /** Display name for clients that decode the access token. */
+  name?: string
+  avatarUrl?: string | null
   jti: string
   /** Hardware device id; used for device management (current device). */
   deviceId?: string

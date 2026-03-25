@@ -20,14 +20,20 @@ export function errorHandler(
   reply: FastifyReply,
 ) {
   if (error instanceof AppError) {
-    const message = env.NODE_ENV === 'production' ? undefined : error.message
     if (error.statusCode === 429 && error.details?.retryAfter != null) {
       reply.header('Retry-After', String(error.details.retryAfter))
     }
+    if (error.statusCode === 429 && error.details?.nextChangeAt != null) {
+      const next = new Date(String(error.details.nextChangeAt)).getTime()
+      const sec = Math.max(0, Math.ceil((next - Date.now()) / 1000))
+      if (sec > 0) reply.header('Retry-After', String(sec))
+    }
+    const errCode = error.code ?? 'ERROR'
     return reply.status(error.statusCode).send({
       statusCode: error.statusCode,
-      ...(message != null && { error: message }),
-      code: error.code,
+      error: errCode,
+      code: errCode,
+      message: error.message,
       ...(error.details != null && { details: error.details }),
     })
   }

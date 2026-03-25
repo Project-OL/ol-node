@@ -123,6 +123,12 @@ export const RedisKeys = {
   /** Messaging: allowed sender cache (recipientId, senderId) — 60s TTL to avoid repeated follow checks. */
   allowedMessaging: (recipientId: string, senderId: string) =>
     `allowed-messaging:${recipientId}:${senderId}`,
+  /** GET /users/me JSON cache */
+  userMe: (userId: string) => `user:me:${userId}`,
+  /** Full profile cache (same payload shape as /me for now). */
+  userProfile: (userId: string) => `user:profile:${userId}`,
+  /** Display-name change lock (TTL = seconds until next calendar month UTC). */
+  userUsernameLock: (userId: string) => `user:username_lock:${userId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */

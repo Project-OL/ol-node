@@ -30,8 +30,9 @@ import {
 import { AppError } from '../middlewares/errorHandler'
 import { invalidateJtiCache } from '../middlewares/auth.middleware'
 import { emailSchema, phoneSchema } from '../models/schemas'
-import type { AuthProvider } from '../models/types'
+import type { AuthProvider, CheckAvailabilityResult } from '../models/types'
 import { deviceService } from './device.service'
+import { displayNameFromUser } from '../utils/profileDisplay'
 
 const SIGNUP_VERIFIED_TTL = 300
 
@@ -67,10 +68,10 @@ function validateIdentifier(provider: AuthProvider, identifier: string): void {
  */
 export const authV2Service = {
   /**
-   * Check if identifier is registered. When `exists` is true, includes `passwordSet` so clients can
-   * route to password login vs recovery without calling login/password blindly.
+   * Check if identifier is registered. When `exists` is true, includes `passwordSet`, all `authMethods`,
+   * and `identifiers` (provider + raw identifier per linked row) for login/OTP/password-reset UX.
    */
-  async checkAvailability(provider: AuthProvider, identifier: string) {
+  async checkAvailability(provider: AuthProvider, identifier: string): Promise<CheckAvailabilityResult> {
     validateIdentifier(provider, identifier)
     const auth = await authIdentifierRepository.findByProviderAndIdentifier(provider, identifier)
     if (!auth) {
@@ -80,6 +81,10 @@ export const authV2Service = {
     return {
       exists: true as const,
       authMethods: all.map((a) => a.provider as AuthProvider),
+      identifiers: all.map((a) => ({
+        provider: a.provider as AuthProvider,
+        identifier: a.identifier,
+      })),
       canSignup: false,
       passwordSet: auth.user.passwordSet,
     }
@@ -168,9 +173,12 @@ export const authV2Service = {
     })
     const tempAccess = signAccess(
       {
+        sub: user.id,
         userId: user.id,
         publicId: Number(publicId),
         passwordSet: true,
+        name: username,
+        avatarUrl: null,
         jti: crypto.randomUUID(),
       },
       '10m',
@@ -231,6 +239,8 @@ export const authV2Service = {
       ipAddress: getIp(request),
       userAgent: getUserAgent(request),
       loginType: 'password',
+      displayName: displayNameFromUser(updated!),
+      avatarUrl: updated!.avatarUrl,
     })
     return {
       userId,
@@ -300,6 +310,8 @@ export const authV2Service = {
       ipAddress: getIp(request),
       userAgent: getUserAgent(request),
       loginType: 'otp',
+      displayName: displayNameFromUser(user),
+      avatarUrl: user.avatarUrl,
     })
     await auditService.log({
       userId: user.id,
@@ -364,17 +376,25 @@ export const authV2Service = {
     if (!match) throw new AppError(401, 'Invalid password', 'INVALID_CREDENTIALS')
     const publicId = Number(user.publicId)
 
+    const profile = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { firstName: true, lastName: true, username: true, avatarUrl: true, passwordSet: true },
+    })
+    if (!profile) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
     await deviceService.linkAccountToDevice(deviceId, user.id)
 
     const tokens = await sessionService.createSession({
       userId: user.id,
       publicId,
-      passwordSet: user.passwordSet,
+      passwordSet: profile.passwordSet,
       deviceName,
       deviceId,
       ipAddress: getIp(request),
       userAgent: getUserAgent(request),
       loginType: 'password',
+      displayName: displayNameFromUser(profile),
+      avatarUrl: profile.avatarUrl,
     })
     await auditService.log({
       userId: user.id,

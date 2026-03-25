@@ -22,7 +22,10 @@ model User {
   dateOfBirth DateTime? @map("date_of_birth") @db.Date
   country   String?  @db.VarChar(100)
   gender    String?  @db.VarChar(50) // male, female, other
-  avatarUrl String?  @map("avatar_url") @db.VarChar(500)
+  avatarUrl String?  @map("avatar_url") @db.Text
+  bio       String?  @db.Text
+  // Last time display name (PATCH /me `name`) changed — monthly throttle.
+  usernameUpdatedAt DateTime? @map("username_updated_at")
 
   status    String   @default("new") @db.VarChar(50) // new, active, suspended, deactivating, deleted
   passwordSet Boolean @default(false) @map("password_set")

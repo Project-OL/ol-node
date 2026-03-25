@@ -9,6 +9,7 @@ import { sessionService } from './session.service'
 import { securityPasswordService } from './security-password.service'
 import { cacheService } from './cache.service'
 import { auditService } from './audit.service'
+import { meService } from './me.service'
 import { AppError } from '../middlewares/errorHandler'
 
 const GRACE_DAYS = 30
@@ -212,6 +213,7 @@ export const accountDeletionService = {
     for (const deletion of accountsToDelete) {
       try {
         await userRepository.deleteAccountPermanently(deletion.userId, deletion.id)
+        await meService.invalidateUserCaches(deletion.userId)
       } catch (err) {
         errors.push({
           userId: deletion.userId,
@@ -240,6 +242,7 @@ export const accountDeletionService = {
 }
 
 async function invalidateUserCaches(userId: string): Promise<void> {
+  await meService.invalidateUserCaches(userId)
   await cacheService.delete(RedisKeys.userDeletionStatus(userId))
   await cacheService.delete(RedisKeys.userAuthIdentifiers(userId))
   await cacheService.delete(RedisKeys.userDevices(userId))
