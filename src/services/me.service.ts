@@ -24,7 +24,14 @@ const displayNameSchema = z
   .max(50)
   .regex(/^[\p{L}\p{N} ]+$/u, 'Name may only contain letters, numbers, and spaces')
 
-const genderSchema = z.enum(['male', 'female', 'other'])
+const dobSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((s) => {
+    const [y, mo, d] = s.split('-').map(Number)
+    const dt = new Date(Date.UTC(y, mo - 1, d))
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d
+  }, 'Invalid date of birth')
 
 function sanitizePlain(input: string, maxLen: number): string {
   return sanitizeHtml(input, { allowedTags: [], allowedAttributes: {} })
@@ -96,7 +103,7 @@ export const meService = {
 
   async patchMe(
     userId: string,
-    fields: { name?: string; gender?: string; bio?: string },
+    fields: { name?: string; dob?: string; bio?: string },
     avatarBuffer: Buffer | null,
     jwtCtx: { deviceId?: string },
   ): Promise<PatchMeResponseDto> {
@@ -107,7 +114,7 @@ export const meService = {
 
     const updatePayload: Parameters<typeof userRepository.updateProfile>[1] = {}
     let touchedName = false
-    let touchedGender = false
+    let touchedDob = false
     let touchedBio = false
     let touchedAvatar = false
 
@@ -150,14 +157,24 @@ export const meService = {
       meEndpointMetrics.bumpProfileField('name')
     }
 
-    if (fields.gender !== undefined) {
-      const g = genderSchema.safeParse(fields.gender)
-      if (!g.success) {
-        throw new AppError(400, 'Invalid gender', 'INVALID_REQUEST')
+    if (fields.dob !== undefined) {
+      const trimmed = fields.dob.trim()
+      if (trimmed === '') {
+        updatePayload.dateOfBirth = null
+      } else {
+        const parsed = dobSchema.safeParse(trimmed)
+        if (!parsed.success) {
+          throw new AppError(
+            400,
+            parsed.error.errors[0]?.message ?? 'Invalid date of birth',
+            'INVALID_REQUEST',
+          )
+        }
+        const [y, mo, d] = parsed.data.split('-').map(Number)
+        updatePayload.dateOfBirth = new Date(Date.UTC(y, mo - 1, d))
       }
-      updatePayload.gender = g.data
-      touchedGender = true
-      meEndpointMetrics.bumpProfileField('gender')
+      touchedDob = true
+      meEndpointMetrics.bumpProfileField('dob')
     }
 
     if (fields.bio !== undefined) {
@@ -202,7 +219,7 @@ export const meService = {
     if (
       Object.keys(updatePayload).length === 0 &&
       !touchedName &&
-      !touchedGender &&
+      !touchedDob &&
       !touchedBio &&
       !touchedAvatar
     ) {

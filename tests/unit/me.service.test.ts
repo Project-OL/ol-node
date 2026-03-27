@@ -166,6 +166,38 @@ describe('meService', () => {
     expect(cacheSet).toHaveBeenCalled()
   })
 
+  it('patchMe updates date of birth when valid YYYY-MM-DD', async () => {
+    findForMe.mockResolvedValueOnce(baseRow())
+    updateProfile.mockResolvedValue(undefined as never)
+    findForMe.mockResolvedValueOnce(baseRow())
+    await meService.patchMe('user-1', { dob: '1999-03-15' }, null, {})
+    expect(updateProfile).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        dateOfBirth: new Date(Date.UTC(1999, 2, 15)),
+      }),
+    )
+  })
+
+  it('patchMe clears date of birth when dob is empty', async () => {
+    findForMe.mockResolvedValueOnce(baseRow())
+    updateProfile.mockResolvedValue(undefined as never)
+    findForMe.mockResolvedValueOnce(baseRow())
+    await meService.patchMe('user-1', { dob: '   ' }, null, {})
+    expect(updateProfile).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ dateOfBirth: null }),
+    )
+  })
+
+  it('patchMe rejects invalid calendar dob', async () => {
+    findForMe.mockResolvedValueOnce(baseRow())
+    await expect(meService.patchMe('user-1', { dob: '2024-02-30' }, null, {})).rejects.toMatchObject(
+      { statusCode: 400, code: 'INVALID_REQUEST' },
+    )
+    expect(updateProfile).not.toHaveBeenCalled()
+  })
+
   it('patchMe rolls back S3 when DB update fails', async () => {
     findForMe.mockResolvedValueOnce(baseRow())
     putObjectBuffer.mockResolvedValue(undefined)

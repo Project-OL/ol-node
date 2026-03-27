@@ -7,6 +7,8 @@ import { meService } from '../../services/me.service'
 import { AppError } from '../../middlewares/errorHandler'
 import { env } from '../../config/env'
 
+const PATCH_ME_ALLOWED_FIELDS = new Set(['name', 'dob', 'bio'])
+
 export default async function usersRoutes(app: FastifyInstance) {
   await app.register(multipart, {
     limits: { fileSize: env.MAX_AVATAR_SIZE_BYTES },
@@ -49,7 +51,7 @@ export default async function usersRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Users'],
         description:
-          'Update profile (multipart): optional fields name, gender, bio; optional file avatar (JPEG/PNG/WEBP, max 5MB). Returns fresh profile + new access token.',
+          'Update profile (multipart): optional fields name, dob (YYYY-MM-DD or empty to clear), bio; optional file avatar (JPEG/PNG/WEBP, max 5MB). Returns fresh profile + new access token.',
         consumes: ['multipart/form-data'],
         response: {
           200: {
@@ -77,6 +79,13 @@ export default async function usersRoutes(app: FastifyInstance) {
             }
             avatarBuf = Buffer.concat(chunks)
           } else {
+            if (!PATCH_ME_ALLOWED_FIELDS.has(part.fieldname)) {
+              throw new AppError(
+                400,
+                `Unexpected field: ${part.fieldname}`,
+                'INVALID_REQUEST',
+              )
+            }
             fields[part.fieldname] = String(part.value ?? '')
           }
         }
@@ -95,7 +104,7 @@ export default async function usersRoutes(app: FastifyInstance) {
         userId,
         {
           name: fields.name !== undefined && fields.name !== '' ? fields.name : undefined,
-          gender: fields.gender !== undefined && fields.gender !== '' ? fields.gender : undefined,
+          dob: fields.dob !== undefined ? fields.dob : undefined,
           bio: fields.bio !== undefined ? fields.bio : undefined,
         },
         avatarBuf,
