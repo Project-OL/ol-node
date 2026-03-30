@@ -244,7 +244,6 @@ export const deviceService = {
     }
 
     await deviceRepository.update(registryId, { deviceName: newName })
-    await cacheService.invalidateUserDevicesAndSessions(userId)
 
     await auditService.log({
       userId,

@@ -50,6 +50,7 @@ model User {
   privacyUpdatedAt       DateTime? @map("privacy_updated_at")
 
   lastIpAddress String? @map("last_ip_address") @db.VarChar(45)
+  tokenVersion Int @default(0) @map("token_version") // revoke-all / password change; embedded in access JWT
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -179,6 +180,9 @@ model Session {
   deviceName       String   @map("device_name") @db.VarChar(255)
   deviceId         String   @map("device_id") @db.VarChar(255)
   deviceFingerprint String? @map("device_fingerprint") @db.VarChar(500)
+  deviceFingerprintHash String? @map("device_fingerprint_hash") @db.VarChar(64) // SHA-256 binding hash
+  ipHash           String?  @map("ip_hash") @db.VarChar(64)
+  userAgentHash    String?  @map("user_agent_hash") @db.VarChar(64)
   refreshTokenHash String   @unique @map("refresh_token_hash") @db.VarChar(255)
   ipAddress        String   @map("ip_address") @db.VarChar(45)
   userAgent        String?  @map("user_agent") @db.VarChar(500)
@@ -186,9 +190,11 @@ model Session {
   isRevoked        Boolean  @default(false) @map("is_revoked")
   lastActiveAt     DateTime @default(now()) @map("last_active_at")
   createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
   expiresAt        DateTime @map("expires_at")
   revokedAt        DateTime? @map("revoked_at")
   loginType        String?  @map("login_type") @db.VarChar(50) // password, google, facebook, apple
+  tokenVersion     Int      @default(0) @map("token_version") // bumped on refresh; matches access JWT
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -212,6 +218,9 @@ model DeviceRegistry {
   lastActiveAt DateTime @default(now()) @map("last_active_at")
   ipAddress    String?  @map("ip_address") @db.VarChar(45)
   userAgent    String?  @map("user_agent") @db.VarChar(500)
+  deviceFingerprintHash String? @map("device_fingerprint_hash") @db.VarChar(64)
+  ipHash       String?  @map("ip_hash") @db.VarChar(64)
+  userAgentHash String? @map("user_agent_hash") @db.VarChar(64)
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 

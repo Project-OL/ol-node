@@ -18,11 +18,13 @@ vi.mock('../../src/services/cacheRedis.service', () => ({
 
 const findForMe = vi.fn()
 const updateProfile = vi.fn()
+const getTokenVersion = vi.fn()
 
 vi.mock('../../src/repositories/user.repository', () => ({
   userRepository: {
     findForMe: (...a: unknown[]) => findForMe(...a),
     updateProfile: (...a: unknown[]) => updateProfile(...a),
+    getTokenVersion: (...a: unknown[]) => getTokenVersion(...a),
   },
 }))
 
@@ -69,6 +71,8 @@ describe('meService', () => {
     cacheTtl.mockReset()
     findForMe.mockReset()
     updateProfile.mockReset()
+    getTokenVersion.mockReset()
+    getTokenVersion.mockResolvedValue(0)
     putObjectBuffer.mockReset()
     deleteObject.mockReset()
   })
@@ -113,7 +117,12 @@ describe('meService', () => {
         usernameUpdatedAt: new Date(),
       }),
     )
-    const out = await meService.patchMe('user-1', { name: 'New Name' }, null, {})
+    const out = await meService.patchMe(
+      'user-1',
+      { name: 'New Name' },
+      null,
+      { tokenVersion: 0, sessionId: '550e8400-e29b-41d4-a716-446655440000', sessionTokenVersion: 0 },
+    )
     expect(out.user.name).toBe('New Name')
     expect(updateProfile).toHaveBeenCalledWith(
       'user-1',
@@ -161,7 +170,12 @@ describe('meService', () => {
     findForMe.mockResolvedValueOnce(baseRow({ bio: 'old' }))
     updateProfile.mockResolvedValue(undefined as never)
     findForMe.mockResolvedValueOnce(baseRow({ bio: 'x'.repeat(3) }))
-    await meService.patchMe('user-1', { bio: 'hey' }, null, {})
+    await meService.patchMe(
+      'user-1',
+      { bio: 'hey' },
+      null,
+      { tokenVersion: 0, sessionId: '550e8400-e29b-41d4-a716-446655440000', sessionTokenVersion: 0 },
+    )
     expect(cacheDel).toHaveBeenCalled()
     expect(cacheSet).toHaveBeenCalled()
   })
@@ -170,7 +184,12 @@ describe('meService', () => {
     findForMe.mockResolvedValueOnce(baseRow())
     updateProfile.mockResolvedValue(undefined as never)
     findForMe.mockResolvedValueOnce(baseRow())
-    await meService.patchMe('user-1', { dob: '1999-03-15' }, null, {})
+    await meService.patchMe(
+      'user-1',
+      { dob: '1999-03-15' },
+      null,
+      { tokenVersion: 0, sessionId: '550e8400-e29b-41d4-a716-446655440000', sessionTokenVersion: 0 },
+    )
     expect(updateProfile).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({
@@ -183,7 +202,12 @@ describe('meService', () => {
     findForMe.mockResolvedValueOnce(baseRow())
     updateProfile.mockResolvedValue(undefined as never)
     findForMe.mockResolvedValueOnce(baseRow())
-    await meService.patchMe('user-1', { dob: '   ' }, null, {})
+    await meService.patchMe(
+      'user-1',
+      { dob: '   ' },
+      null,
+      { tokenVersion: 0, sessionId: '550e8400-e29b-41d4-a716-446655440000', sessionTokenVersion: 0 },
+    )
     expect(updateProfile).toHaveBeenCalledWith(
       'user-1',
       expect.objectContaining({ dateOfBirth: null }),

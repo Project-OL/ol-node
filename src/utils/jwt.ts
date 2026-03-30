@@ -2,6 +2,16 @@ import jwt from 'jsonwebtoken'
 import { env } from '../config/env'
 import type { JwtAccessPayload, JwtRefreshPayload } from '../models/types'
 
+/** Parse env style expiry e.g. 8m, 15m, 7d into seconds (for Redis TTL alignment). */
+export function parseJwtExpiresToSeconds(expiresIn: string): number {
+  const m = /^(\d+)\s*([smhd])$/i.exec(expiresIn.trim())
+  if (!m) return 480
+  const n = Number(m[1])
+  const u = m[2]!.toLowerCase()
+  const mult = u === 's' ? 1 : u === 'm' ? 60 : u === 'h' ? 3600 : 86400
+  return n * mult
+}
+
 const ACCESS_SECRET = env.JWT_ACCESS_SECRET
 const REFRESH_SECRET = env.JWT_REFRESH_SECRET ?? env.JWT_ACCESS_SECRET
 

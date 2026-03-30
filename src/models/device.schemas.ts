@@ -6,8 +6,9 @@ export const getDevicesSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20).optional(),
 })
 
+/** Path param: `device_registry.id` (UUID). Legacy alias `deviceId` accepted via query `?deviceId=` for the same UUID. */
 export const revokeDeviceParamsSchema = z.object({
-  deviceId: z.string().uuid('Invalid device id'),
+  registryId: z.string().uuid('Invalid registry id'),
 })
 
 export const logoutAllSchema = z.object({
@@ -19,7 +20,7 @@ export const renameDeviceSchema = z.object({
 })
 
 export const renameDeviceParamsSchema = z.object({
-  deviceId: z.string().uuid('Invalid device id'),
+  registryId: z.string().uuid('Invalid registry id'),
 })
 
 export type GetDevicesQuery = z.infer<typeof getDevicesSchema>

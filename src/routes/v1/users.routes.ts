@@ -99,7 +99,12 @@ export default async function usersRoutes(app: FastifyInstance) {
         throw e
       }
 
-      const jwtPayload = request.user as { deviceId?: string }
+      const jwtPayload = request.user as {
+        deviceId?: string
+        sessionId?: string
+        tokenVersion?: number
+        sessionTokenVersion?: number
+      }
       const result = await meService.patchMe(
         userId,
         {
@@ -108,7 +113,12 @@ export default async function usersRoutes(app: FastifyInstance) {
           bio: fields.bio !== undefined ? fields.bio : undefined,
         },
         avatarBuf,
-        { deviceId: jwtPayload.deviceId },
+        {
+          deviceId: jwtPayload.deviceId,
+          sessionId: jwtPayload.sessionId,
+          tokenVersion: jwtPayload.tokenVersion,
+          sessionTokenVersion: jwtPayload.sessionTokenVersion,
+        },
       )
       request.log.info({
         userId,

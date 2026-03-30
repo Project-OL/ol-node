@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import type { JwtAccessPayload } from '../../models/types'
 import { authV2Service } from '../../services/auth-v2.service'
 import { sessionService } from '../../services/session.service'
 import { auditService } from '../../services/audit.service'
@@ -227,10 +228,8 @@ export default async function authRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const userId = (request as { userId?: string }).userId
       if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-      const parsed = sessionRevokeBodySchema.safeParse(request.body ?? {})
-      const sessionId = parsed.success ? parsed.data?.sessionId : undefined
-      const payload = request.user as { jti?: string; exp?: number }
-      const result = await authV2Service.logout(userId, sessionId, request, payload?.jti, payload?.exp)
+      const payload = request.user as JwtAccessPayload
+      const result = await authV2Service.logout(userId, payload, request)
       return reply.send(result)
     },
   )
@@ -250,10 +249,6 @@ export default async function authRoutes(app: FastifyInstance) {
       }
       if (parsed.data.revokeAllSessions) {
         await sessionService.revokeAllSessions(userId)
-        const payload = request.user as { jti?: string; exp?: number }
-        if (payload?.jti != null && payload?.exp != null) {
-          await authV2Service.blacklistAccessToken(payload.jti, payload.exp)
-        }
       } else if (parsed.data.sessionId) {
         await sessionService.revokeSession(parsed.data.sessionId, userId)
       } else {
@@ -302,13 +297,15 @@ export default async function authRoutes(app: FastifyInstance) {
   app.get('/settings', { preHandler: [authenticate] }, async (request, reply) => {
     const userId = (request as { userId?: string }).userId
     if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const result = await authV2Service.getSettings(userId)
+    const payload = request.user as JwtAccessPayload
+    const result = await authV2Service.getSettings(userId, payload.sessionId)
     return reply.send(result)
   })
   app.get('/devices', { preHandler: [authenticate] }, async (request, reply) => {
     const userId = (request as { userId?: string }).userId
     if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const result = await authV2Service.getDevices(userId)
+    const payload = request.user as JwtAccessPayload
+    const result = await authV2Service.getDevices(userId, payload.sessionId)
     return reply.send(result)
   })
   app.post('/password/set', { preHandler: [authenticate] }, async (request, reply) => {

@@ -12,10 +12,16 @@ import { deviceService } from '../../services/device.service'
 import { AppError } from '../../middlewares/errorHandler'
 import { unlinkDeviceAccountParamsSchema } from '../../models/schemas'
 
+/** Path uses `registryId`; query `deviceId` is a deprecated alias (same UUID). */
+function resolveRegistryIdFromRequest(request: FastifyRequest): string {
+  const p = request.params as { registryId?: string }
+  const q = request.query as { deviceId?: string; registryId?: string }
+  return (p.registryId ?? q.registryId ?? q.deviceId ?? '').trim()
+}
+
 export default async function deviceRoutes(app: FastifyInstance) {
   const preAuth = [authenticate]
 
-  // GET /api/v1/devices
   app.get(
     '/',
     {
@@ -50,7 +56,6 @@ export default async function deviceRoutes(app: FastifyInstance) {
       } else if (query.sortBy === 'name') {
         sorted.sort((a, b) => a.deviceName.localeCompare(b.deviceName))
       }
-      // default lastActive: already from DB order
 
       const page = query.page ?? 1
       const limit = query.limit ?? 20
@@ -71,44 +76,6 @@ export default async function deviceRoutes(app: FastifyInstance) {
     },
   )
 
-  // DELETE /api/v1/devices/:deviceId (deviceId = registry id UUID)
-  app.delete<{ Params: { deviceId: string } }>(
-    '/:deviceId',
-    {
-      preHandler: [...preAuth, deviceRateLimits.revoke],
-      schema: {
-        tags: ['Devices'],
-        description: 'Revoke a specific device (logout from that device)',
-        params: {
-          type: 'object',
-          required: ['deviceId'],
-          properties: { deviceId: { type: 'string', format: 'uuid' } },
-        },
-      },
-    },
-    async (request: FastifyRequest<{ Params: { deviceId: string } }>, reply: FastifyReply) => {
-      const userId = request.userId!
-      const currentDeviceId = request.deviceId
-      const params = revokeDeviceParamsSchema.safeParse(request.params)
-      if (!params.success) {
-        throw new AppError(400, params.error.errors[0]?.message ?? 'Invalid device id', 'INVALID_REQUEST')
-      }
-
-      const result = await deviceService.revokeDevice(
-        userId,
-        params.data.deviceId,
-        currentDeviceId ?? '',
-      )
-      return reply.status(200).send({
-        data: {
-          ...result,
-          message: 'Device revoked successfully',
-        },
-      })
-    },
-  )
-
-  // POST /api/v1/devices/logout-all (must be before /:deviceId/name to avoid "logout-all" as param)
   app.post(
     '/logout-all',
     {
@@ -144,58 +111,6 @@ export default async function deviceRoutes(app: FastifyInstance) {
         data: {
           ...result,
           message: 'Logged out from all other devices',
-        },
-      })
-    },
-  )
-
-  // PUT /api/v1/devices/:deviceId/name
-  app.put<{ Params: { deviceId: string }; Body: { deviceName: string } }>(
-    '/:deviceId/name',
-    {
-      preHandler: [...preAuth, deviceRateLimits.rename],
-      schema: {
-        tags: ['Devices'],
-        description: 'Rename a device',
-        params: {
-          type: 'object',
-          required: ['deviceId'],
-          properties: { deviceId: { type: 'string', format: 'uuid' } },
-        },
-        body: {
-          type: 'object',
-          required: ['deviceName'],
-          properties: { deviceName: { type: 'string', minLength: 1, maxLength: 50 } },
-        },
-      },
-    },
-    async (
-      request: FastifyRequest<{ Params: { deviceId: string }; Body: { deviceName: string } }>,
-      reply: FastifyReply,
-    ) => {
-      const userId = request.userId!
-      const params = renameDeviceParamsSchema.safeParse(request.params)
-      const body = renameDeviceSchema.safeParse(request.body)
-      if (!params.success) {
-        throw new AppError(400, params.error.errors[0]?.message ?? 'Invalid device id', 'INVALID_REQUEST')
-      }
-      if (!body.success) {
-        throw new AppError(
-          400,
-          body.error.errors[0]?.message ?? 'Validation failed',
-          'INVALID_REQUEST',
-        )
-      }
-
-      const result = await deviceService.renameDevice(
-        userId,
-        params.data.deviceId,
-        body.data.deviceName,
-      )
-      return reply.status(200).send({
-        data: {
-          ...result,
-          updatedAt: result.updatedAt.toISOString(),
         },
       })
     },
@@ -266,6 +181,100 @@ export default async function deviceRoutes(app: FastifyInstance) {
       )
 
       return reply.status(204).send()
+    },
+  )
+
+  app.put<{ Params: { registryId: string }; Body: { deviceName: string } }>(
+    '/:registryId/name',
+    {
+      preHandler: [...preAuth, deviceRateLimits.rename],
+      schema: {
+        tags: ['Devices'],
+        description: 'Rename a device (registry row id in path; optional query deviceId as alias)',
+        params: {
+          type: 'object',
+          required: ['registryId'],
+          properties: { registryId: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          required: ['deviceName'],
+          properties: { deviceName: { type: 'string', minLength: 1, maxLength: 50 } },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { registryId: string }; Body: { deviceName: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const userId = request.userId!
+      const mergedParams = {
+        registryId: resolveRegistryIdFromRequest(request) || request.params.registryId,
+      }
+      const params = renameDeviceParamsSchema.safeParse(mergedParams)
+      const body = renameDeviceSchema.safeParse(request.body)
+      if (!params.success) {
+        throw new AppError(400, params.error.errors[0]?.message ?? 'Invalid registry id', 'INVALID_REQUEST')
+      }
+      if (!body.success) {
+        throw new AppError(
+          400,
+          body.error.errors[0]?.message ?? 'Validation failed',
+          'INVALID_REQUEST',
+        )
+      }
+
+      const result = await deviceService.renameDevice(
+        userId,
+        params.data.registryId,
+        body.data.deviceName,
+      )
+      return reply.status(200).send({
+        data: {
+          ...result,
+          updatedAt: result.updatedAt.toISOString(),
+        },
+      })
+    },
+  )
+
+  app.delete<{ Params: { registryId: string } }>(
+    '/:registryId',
+    {
+      preHandler: [...preAuth, deviceRateLimits.revoke],
+      schema: {
+        tags: ['Devices'],
+        description:
+          'Revoke sessions for a device registry row (`device_registry.id`). Optional query `deviceId` = same UUID (deprecated name).',
+        params: {
+          type: 'object',
+          required: ['registryId'],
+          properties: { registryId: { type: 'string', format: 'uuid' } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { registryId: string } }>, reply: FastifyReply) => {
+      const userId = request.userId!
+      const currentDeviceId = request.deviceId
+      const mergedParams = {
+        registryId: resolveRegistryIdFromRequest(request) || request.params.registryId,
+      }
+      const params = revokeDeviceParamsSchema.safeParse(mergedParams)
+      if (!params.success) {
+        throw new AppError(400, params.error.errors[0]?.message ?? 'Invalid registry id', 'INVALID_REQUEST')
+      }
+
+      const result = await deviceService.revokeDevice(
+        userId,
+        params.data.registryId,
+        currentDeviceId ?? '',
+      )
+      return reply.status(200).send({
+        data: {
+          ...result,
+          message: 'Device revoked successfully',
+        },
+      })
     },
   )
 }

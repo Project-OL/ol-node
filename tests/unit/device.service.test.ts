@@ -343,7 +343,7 @@ describe('DeviceService', () => {
   })
 
   describe('renameDevice', () => {
-    it('updates name and invalidates cache', async () => {
+    it('updates name (relies on short TTL device cache)', async () => {
       const device = makeDevice({ id: registryId1 })
       deviceFindById.mockResolvedValue(device)
       deviceUpdate.mockResolvedValue({ ...device, deviceName: 'My iPhone' })
@@ -359,7 +359,6 @@ describe('DeviceService', () => {
       expect(deviceUpdate).toHaveBeenCalledWith(registryId1, {
         deviceName: 'My iPhone',
       })
-      expect(cacheInvalidateUserDevicesAndSessions).toHaveBeenCalledWith(userId)
       expect(auditLog).toHaveBeenCalledWith(
         expect.objectContaining({
           actionType: 'DEVICE_RENAMED',

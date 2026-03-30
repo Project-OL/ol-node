@@ -33,7 +33,6 @@ export function getRedisForRead(): Redis {
 }
 
 export const RedisKeys = {
-  blacklist:      (jti: string) => `blacklist:jti:${jti}`,
   userAuthIdentifiers: (userId: string) => `user:${userId}:auth_identifiers`,
   /** Permanent VIP inventory: IDs that are reserved (no TTL). */
   vipReserved: () => 'vip:reserved',
@@ -47,6 +46,10 @@ export const RedisKeys = {
   /** Active VIP publicId. TTL = remaining subscription seconds. When Redis drops this key the subscription has ended — fallback is automatic. */
   userActiveVipId: (userId: string) => `user:active_vip:${userId}`,
   session:        (sessionId: string) => `session:${sessionId}`,
+  /** Cached user.tokenVersion for O(1) access checks (invalidated on bump). */
+  userTokenVersion: (userId: string) => `user:${userId}:token_version`,
+  /** Single-flight lock for refresh rotation per session. */
+  refreshLock: (sessionId: string) => `lock:refresh:${sessionId}`,
   deviceLastActive: (deviceId: string) => `device:${deviceId}:lastActive`,
   rateLimitLogin: (identifier: string, ip: string) => `ratelimit:login:${identifier}:${ip}`,
   signupVerified: (provider: string, identifier: string) => `signup:verified:${provider}:${identifier}`,
@@ -135,7 +138,8 @@ export const RedisKeys = {
 export const AUTH_IDENTIFIERS_CACHE_TTL = 3600
 
 /** TTL in seconds for user devices list cache (5 min). */
-export const USER_DEVICES_CACHE_TTL = 300
+/** Short TTL to limit stampede after invalidations (see docs/auth-v2-flow.md). */
+export const USER_DEVICES_CACHE_TTL = 60
 
 /** Messaging: recent messages sorted set TTL (2h). */
 export const MSG_HOT_TTL = 60 * 60 * 2

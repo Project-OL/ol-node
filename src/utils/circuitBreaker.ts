@@ -77,7 +77,7 @@ export class CircuitBreaker {
   }
 }
 
-/** Shared Redis circuit breaker; use for blacklist check and cache get. */
+/** Shared Redis circuit breaker; use for cache get and similar read paths. */
 export const redisCircuitBreaker = new CircuitBreaker({
   failureThreshold: 5,
   openDurationMs: 10_000,

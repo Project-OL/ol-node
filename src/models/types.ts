@@ -49,9 +49,15 @@ export interface JwtAccessPayload {
   /** Display name for clients that decode the access token. */
   name?: string
   avatarUrl?: string | null
-  jti: string
+  jti?: string
   /** Hardware device id; used for device management (current device). */
   deviceId?: string
+  /** Set after full session login; omitted on bootstrap tokens. */
+  sessionId?: string
+  /** Mirrors users.token_version at mint; global invalidation on password / revoke-all. */
+  tokenVersion?: number
+  /** Mirrors sessions.token_version at mint; bumped on refresh. */
+  sessionTokenVersion?: number
   iat: number
   exp: number
 }

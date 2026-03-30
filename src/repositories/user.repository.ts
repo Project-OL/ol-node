@@ -101,6 +101,24 @@ export const userRepository = {
     })
   },
 
+  async getTokenVersion(id: string): Promise<number | null> {
+    const u = await prismaRead.user.findUnique({
+      where: { id },
+      select: { tokenVersion: true },
+    })
+    return u?.tokenVersion ?? null
+  },
+
+  /** Bump global access invalidation (revoke-all, password change). Returns new version. */
+  async incrementTokenVersion(id: string): Promise<number> {
+    const u = await prisma.user.update({
+      where: { id },
+      data: { tokenVersion: { increment: 1 } },
+      select: { tokenVersion: true },
+    })
+    return u.tokenVersion
+  },
+
   async update(
     id: string,
     data: {

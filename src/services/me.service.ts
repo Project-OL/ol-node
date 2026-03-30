@@ -105,7 +105,12 @@ export const meService = {
     userId: string,
     fields: { name?: string; dob?: string; bio?: string },
     avatarBuffer: Buffer | null,
-    jwtCtx: { deviceId?: string },
+    jwtCtx: {
+      deviceId?: string
+      sessionId?: string
+      tokenVersion?: number
+      sessionTokenVersion?: number
+    },
   ): Promise<PatchMeResponseDto> {
     const row = await userRepository.findForMe(userId)
     if (!row) {
@@ -253,19 +258,24 @@ export const meService = {
     await cacheRedisService.set(RedisKeys.userProfile(userId), data, env.REDIS_TTL_PROFILE)
 
     const displayName = displayNameFromUser(fresh)
-    const accessToken = signAccess(
-      {
-        sub: userId,
-        userId,
-        publicId: Number(fresh.publicId),
-        passwordSet: fresh.passwordSet,
-        name: displayName,
-        avatarUrl: fresh.avatarUrl,
-        jti: crypto.randomUUID(),
-        deviceId: jwtCtx.deviceId,
-      },
-      env.JWT_ACCESS_EXPIRES_IN,
-    )
+    const userTv =
+      jwtCtx.tokenVersion ?? (await userRepository.getTokenVersion(userId)) ?? 0
+    const accessPayload: Parameters<typeof signAccess>[0] = {
+      sub: userId,
+      userId,
+      publicId: Number(fresh.publicId),
+      passwordSet: fresh.passwordSet,
+      name: displayName,
+      avatarUrl: fresh.avatarUrl,
+      jti: crypto.randomUUID(),
+      deviceId: jwtCtx.deviceId,
+      tokenVersion: userTv,
+    }
+    if (jwtCtx.sessionId != null) {
+      accessPayload.sessionId = jwtCtx.sessionId
+      accessPayload.sessionTokenVersion = jwtCtx.sessionTokenVersion ?? 0
+    }
+    const accessToken = signAccess(accessPayload, env.JWT_ACCESS_EXPIRES_IN)
 
     return { user: data, accessToken }
   },

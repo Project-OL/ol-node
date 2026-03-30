@@ -1,6 +1,13 @@
-import { prisma } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 
 export const deviceRegistryRepository = {
+  async findByUserAndDevice(userId: string, deviceId: string) {
+    return prismaRead.deviceRegistry.findUnique({
+      where: { userId_deviceId: { userId, deviceId } },
+      select: { deviceFingerprintHash: true },
+    })
+  },
+
   async upsert(data: {
     userId: string
     deviceId: string
@@ -9,6 +16,9 @@ export const deviceRegistryRepository = {
     platform?: string
     ipAddress?: string | null
     userAgent?: string | null
+    deviceFingerprintHash?: string | null
+    ipHash?: string | null
+    userAgentHash?: string | null
   }) {
     return prisma.deviceRegistry.upsert({
       where: { userId_deviceId: { userId: data.userId, deviceId: data.deviceId } },
@@ -20,6 +30,9 @@ export const deviceRegistryRepository = {
         platform: data.platform ?? 'web',
         ipAddress: data.ipAddress ?? undefined,
         userAgent: data.userAgent ?? undefined,
+        deviceFingerprintHash: data.deviceFingerprintHash ?? undefined,
+        ipHash: data.ipHash ?? undefined,
+        userAgentHash: data.userAgentHash ?? undefined,
       },
       update: {
         deviceName: data.deviceName,
@@ -27,6 +40,9 @@ export const deviceRegistryRepository = {
         platform: data.platform ?? undefined,
         ipAddress: data.ipAddress ?? undefined,
         userAgent: data.userAgent ?? undefined,
+        deviceFingerprintHash: data.deviceFingerprintHash ?? undefined,
+        ipHash: data.ipHash ?? undefined,
+        userAgentHash: data.userAgentHash ?? undefined,
         lastActiveAt: new Date(),
       },
     })

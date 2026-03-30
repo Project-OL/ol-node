@@ -28,9 +28,9 @@ import {
   verifyAppleToken,
 } from './oauth.service'
 import { AppError } from '../middlewares/errorHandler'
-import { invalidateJtiCache } from '../middlewares/auth.middleware'
+import { invalidateUserTokenVersionCache } from './session.service'
 import { emailSchema, phoneSchema } from '../models/schemas'
-import type { AuthProvider, CheckAvailabilityResult } from '../models/types'
+import type { AuthProvider, CheckAvailabilityResult, JwtAccessPayload } from '../models/types'
 import { deviceService } from './device.service'
 import { displayNameFromUser } from '../utils/profileDisplay'
 
@@ -180,6 +180,7 @@ export const authV2Service = {
         name: username,
         avatarUrl: null,
         jti: crypto.randomUUID(),
+        tokenVersion: 0,
       },
       '10m',
     )
@@ -422,46 +423,31 @@ export const authV2Service = {
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
       expiresIn: result.expiresIn,
+      sessionId: result.sessionId,
     }
   },
 
   /**
-   * Logout: revoke one session or all for user. Optionally blacklist access token (pass jti + exp from JWT).
+   * Logout: always revokes the session embedded in the access JWT (refresh becomes invalid).
    */
   async logout(
     userId: string,
-    sessionId?: string,
+    accessPayload: JwtAccessPayload,
     request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
-    jti?: string,
-    tokenExp?: number,
   ) {
-    if (sessionId) {
-      await sessionService.revokeSession(sessionId, userId)
+    const sessionId = accessPayload.sessionId
+    if (!sessionId) {
+      throw new AppError(400, 'Session id missing from token', 'SESSION_ID_REQUIRED')
     }
-    if (jti != null && tokenExp != null) {
-      const ttlSeconds = Math.max(0, tokenExp - Math.floor(Date.now() / 1000))
-      if (ttlSeconds > 0) {
-        await redisClient.set(RedisKeys.blacklist(jti), '1', 'EX', ttlSeconds)
-        invalidateJtiCache(jti)
-      }
-    }
+    await sessionService.revokeSession(sessionId, userId)
     await auditService.log({
       userId,
-      actionType: 'logout',
+      actionType: 'LOGOUT_SESSION_REVOKED',
       actionStatus: 'success',
-      actionDetails: sessionId ? { sessionId } : { allSessions: true },
+      actionDetails: { sessionId },
       request: request ? { ip: getIp(request), headers: normalizeHeaders(request.headers) } : undefined,
     })
     return { message: 'Logged out successfully' }
-  },
-
-  /** Blacklist current access token by jti until exp (for revoke-all flow). */
-  async blacklistAccessToken(jti: string, exp: number): Promise<void> {
-    const ttlSeconds = Math.max(0, exp - Math.floor(Date.now() / 1000))
-    if (ttlSeconds > 0) {
-      await redisClient.set(RedisKeys.blacklist(jti), '1', 'EX', ttlSeconds)
-      invalidateJtiCache(jti)
-    }
   },
 
   // ----- Phase 3: Password reset -----
@@ -533,8 +519,13 @@ export const authV2Service = {
         where: { userId },
         data: { isActive: false, isRevoked: true, revokedAt: new Date() },
       })
+      await tx.user.update({
+        where: { id: userId },
+        data: { tokenVersion: { increment: 1 } },
+      })
     })
     for (const s of sessionIds) await redisClient.del(RedisKeys.session(s.id))
+    await invalidateUserTokenVersionCache(userId)
     await redisClient.del(RedisKeys.passwordResetToken(resetToken))
     await auditService.log({
       userId,
@@ -627,13 +618,14 @@ export const authV2Service = {
     if (!strength.ok) throw new AppError(400, strength.error, 'WEAK_PASSWORD')
     const updated = await passwordService.verifyAndUpdate(userId, currentPassword, newPassword)
     if (!updated) throw new AppError(401, 'Current password incorrect', 'INVALID_CURRENT_PASSWORD')
+    await sessionService.revokeAllSessions(userId)
     await auditService.log({
       userId,
       actionType: 'password_change',
       actionStatus: 'success',
       request: request ? { ip: getIp(request), headers: normalizeHeaders(request.headers) } : undefined,
     })
-    return { message: 'Password changed successfully', allSessionsInvalidated: false }
+    return { message: 'Password changed successfully', allSessionsInvalidated: true }
   },
 
   // ----- Email bind & modify -----
