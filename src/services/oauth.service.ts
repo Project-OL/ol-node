@@ -12,6 +12,7 @@ import { authIdentifierRepository } from '../repositories/auth-identifier.reposi
 import { publicIdService } from '../services/public-id.service'
 import { userPublicIdService } from '../services/user-public-id.service'
 import { sessionService } from '../services/session.service'
+import { deviceService } from '../services/device.service'
 import { auditService } from '../services/audit.service'
 import { cacheService } from '../services/cache.service'
 import { providerService } from '../services/provider.service'
@@ -172,6 +173,7 @@ export const oauthService = {
         throw new AppError(403, 'Account has been permanently deleted.', 'ACCOUNT_DELETED')
       }
       if (user.status === 'suspended') throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
+      await deviceService.linkAccountToDevice(deviceId, user.id)
       const tokens = await sessionService.createSession({
         userId: user.id,
         publicId: Number(user.publicId),
@@ -232,6 +234,7 @@ export const oauthService = {
         isPrimary: true,
       },
     })
+    await deviceService.linkAccountToDevice(deviceId, user.id)
     const tokens = await sessionService.createSession({
       userId: user.id,
       publicId: Number(publicId),
