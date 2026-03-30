@@ -3,7 +3,9 @@
  */
 
 import * as admin from 'firebase-admin'
+import { OAuth2Client } from 'google-auth-library'
 import axios from 'axios'
+import jwt from 'jsonwebtoken'
 import { env } from '../config/env'
 import { prisma } from '../config/database'
 import { authIdentifierRepository } from '../repositories/auth-identifier.repository'
@@ -11,6 +13,7 @@ import { publicIdService } from '../services/public-id.service'
 import { userPublicIdService } from '../services/user-public-id.service'
 import { sessionService } from '../services/session.service'
 import { auditService } from '../services/audit.service'
+import { cacheService } from '../services/cache.service'
 import { providerService } from '../services/provider.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { AuthProvider } from '../models/types'
@@ -39,16 +42,56 @@ function getFirebaseAuth(): admin.auth.Auth {
   return admin.auth()
 }
 
-/** Verify Google ID token via Firebase; returns email and provider id. */
-export async function verifyGoogleToken(idToken: string): Promise<OAuthUserInfo> {
+function googleIdTokenIss(idToken: string): string | null {
   try {
-    const auth = getFirebaseAuth()
-    const decoded = await auth.verifyIdToken(idToken) as { uid: string; email?: string }
-    const email = decoded.email ?? null
-    return { email, providerId: decoded.uid, provider: 'google' }
+    const payload = jwt.decode(idToken) as { iss?: string } | null
+    return typeof payload?.iss === 'string' ? payload.iss : null
   } catch {
-    throw new AppError(401, 'Invalid Google token', 'INVALID_OAUTH_TOKEN')
+    return null
   }
+}
+
+/**
+ * Verify Google login token and return stable subject (`sub`) as providerId.
+ * - Firebase Auth ID tokens (`iss` contains securetoken.google.com): Firebase Admin.
+ * - Google Sign-In ID tokens (`iss` accounts.google.com): OAuth2 verify with configured client IDs as audience.
+ */
+export async function verifyGoogleToken(idToken: string): Promise<OAuthUserInfo> {
+  const iss = googleIdTokenIss(idToken)
+  if (!iss) throw new AppError(401, 'Invalid Google token', 'INVALID_OAUTH_TOKEN')
+
+  if (iss.includes('securetoken.google.com')) {
+    try {
+      const auth = getFirebaseAuth()
+      const decoded = await auth.verifyIdToken(idToken)
+      const sub = decoded.sub ?? decoded.uid
+      return { email: decoded.email ?? null, providerId: sub, provider: 'google' }
+    } catch {
+      throw new AppError(401, 'Invalid Google token', 'INVALID_OAUTH_TOKEN')
+    }
+  }
+
+  if (iss === 'https://accounts.google.com' || iss === 'accounts.google.com') {
+    const audience = [
+      env.GOOGLE_OAUTH_WEB_CLIENT_ID,
+      env.GOOGLE_OAUTH_ANDROID_CLIENT_ID,
+      env.GOOGLE_OAUTH_IOS_CLIENT_ID,
+    ].filter((x): x is string => Boolean(x))
+    if (audience.length === 0) {
+      throw new AppError(503, 'OAuth not configured', 'OAUTH_NOT_CONFIGURED')
+    }
+    try {
+      const client = new OAuth2Client()
+      const ticket = await client.verifyIdToken({ idToken, audience })
+      const payload = ticket.getPayload()
+      if (!payload?.sub) throw new AppError(401, 'Invalid Google token', 'INVALID_OAUTH_TOKEN')
+      return { email: payload.email ?? null, providerId: payload.sub, provider: 'google' }
+    } catch {
+      throw new AppError(401, 'Invalid Google token', 'INVALID_OAUTH_TOKEN')
+    }
+  }
+
+  throw new AppError(401, 'Invalid Google token', 'INVALID_OAUTH_TOKEN')
 }
 
 /** Verify Facebook access token via Graph API; returns id and optional email. */
@@ -79,6 +122,18 @@ export async function verifyAppleToken(identityToken: string): Promise<OAuthUser
   }
 }
 
+async function findExistingOAuthAccount(
+  provider: 'google' | 'facebook' | 'apple',
+  userInfo: OAuthUserInfo,
+) {
+  let row = await authIdentifierRepository.findByProviderAndIdentifier(provider, userInfo.providerId)
+  if (row) return row
+  if (userInfo.email) {
+    row = await authIdentifierRepository.findByProviderAndIdentifier(provider, userInfo.email)
+  }
+  return row ?? null
+}
+
 /**
  * OAuth login/signup and provider bind/unlink. Invalidates user auth identifiers cache on bind/unbind.
  */
@@ -95,8 +150,14 @@ export const oauthService = {
     ipAddress: string,
     userAgent?: string | null,
   ) {
-    const identifier = userInfo.email ?? userInfo.providerId
-    const existing = await authIdentifierRepository.findByProviderAndIdentifier(provider, identifier)
+    let existing = await findExistingOAuthAccount(provider, userInfo)
+    if (existing && existing.identifier !== userInfo.providerId) {
+      await prisma.authIdentifier.update({
+        where: { id: existing.id },
+        data: { identifier: userInfo.providerId },
+      })
+      await cacheService.invalidateUserAuthIdentifiers(existing.userId)
+    }
     if (existing) {
       const user = existing.user
       if (user.status === 'deactivating') {
@@ -165,7 +226,7 @@ export const oauthService = {
       data: {
         userId: user.id,
         provider,
-        identifier,
+        identifier: userInfo.providerId,
         isVerified: true,
         verifiedAt: new Date(),
         isPrimary: true,
@@ -206,7 +267,7 @@ export const oauthService = {
 
   /** Link OAuth provider to user; invalidates user auth identifiers cache. */
   async bindProvider(userId: string, provider: AuthProvider, userInfo: OAuthUserInfo) {
-    const identifier = userInfo.email ?? userInfo.providerId
+    const identifier = userInfo.providerId
     await providerService.bindProvider(userId, provider, identifier, { isVerified: true, isPrimary: false })
     await auditService.log({
       userId,

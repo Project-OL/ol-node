@@ -39,6 +39,12 @@ const envSchema = z
     FIREBASE_PROJECT_ID: z.string().optional(),
     FIREBASE_CLIENT_EMAIL: z.string().optional(),
     FIREBASE_PRIVATE_KEY: z.string().optional(),
+    /** Web OAuth client ID (e.g. client_type 3 in google-services.json). Verifies Google Sign-In ID tokens when `iss` is accounts.google.com. */
+    GOOGLE_OAUTH_WEB_CLIENT_ID: z.string().optional(),
+    /** Android OAuth client ID (client_type 1). Add if ID tokens use this as `aud`. */
+    GOOGLE_OAUTH_ANDROID_CLIENT_ID: z.string().optional(),
+    /** iOS OAuth client ID (client_type 2). Add if the iOS app’s ID token uses this as `aud`. */
+    GOOGLE_OAUTH_IOS_CLIENT_ID: z.string().optional(),
 
     ML_SERVICE_URL: z.string().default('http://localhost:8000'),
     ML_SERVICE_API_KEY: z.string().optional(),
