@@ -7,6 +7,8 @@ export interface MeResponseDto {
   email: string
   avatarUrl: string | null
   bio: string | null
+  /** Calendar date in UTC, `YYYY-MM-DD`, or `null` if unset. */
+  dateOfBirth: string | null
   gender: MeGender | null
   canChangeUsername: boolean
   usernameNextChangeAt: string | null

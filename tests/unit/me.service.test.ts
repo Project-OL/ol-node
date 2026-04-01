@@ -51,6 +51,7 @@ function baseRow(over: Partial<Record<string, unknown>> = {}) {
     firstName: 'Jane',
     lastName: 'Doe',
     gender: 'female',
+    dateOfBirth: null as Date | null,
     avatarUrl: null as string | null,
     bio: null as string | null,
     usernameUpdatedAt: null as Date | null,
@@ -85,6 +86,7 @@ describe('meService', () => {
       email: 'j@example.com',
       avatarUrl: null,
       bio: null,
+      dateOfBirth: null,
       gender: 'female' as const,
       canChangeUsername: true,
       usernameNextChangeAt: null,
@@ -103,6 +105,30 @@ describe('meService', () => {
     expect(out.cache).toBe('MISS')
     expect(out.data.userId).toBe('user-1')
     expect(out.data.publicId).toBe('99')
+    expect(out.data.dateOfBirth).toBeNull()
+    expect(cacheSet).toHaveBeenCalled()
+  })
+
+  it('getMe ignores legacy Redis payload without dateOfBirth key (refetch + bust cache)', async () => {
+    const legacy = {
+      userId: 'user-1',
+      publicId: '99',
+      name: 'Jane Doe',
+      email: 'j@example.com',
+      avatarUrl: null,
+      bio: null,
+      gender: 'female' as const,
+      canChangeUsername: true,
+      usernameNextChangeAt: null,
+    }
+    cacheGet.mockResolvedValueOnce(legacy)
+    findForMe.mockResolvedValueOnce(
+      baseRow({ dateOfBirth: new Date(Date.UTC(1999, 2, 15)) }),
+    )
+    const out = await meService.getMe('user-1')
+    expect(out.cache).toBe('MISS')
+    expect(out.data.dateOfBirth).toBe('1999-03-15')
+    expect(cacheDel).toHaveBeenCalled()
     expect(cacheSet).toHaveBeenCalled()
   })
 

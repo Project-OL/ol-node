@@ -48,6 +48,14 @@ function primaryEmailFromIdentifiers(
   return primary?.identifier ?? ''
 }
 
+/** PostgreSQL `DATE` / Prisma `@db.Date` — use UTC calendar parts (avoids `toISOString` off-by-one in some TZs). */
+function formatDateOfBirthUtc(d: Date): string {
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function toDto(
   row: NonNullable<Awaited<ReturnType<typeof userRepository.findForMe>>>,
 ): MeResponseDto {
@@ -61,6 +69,7 @@ function toDto(
     email: primaryEmailFromIdentifiers(row.authIdentifiers),
     avatarUrl: row.avatarUrl,
     bio: row.bio,
+    dateOfBirth: row.dateOfBirth != null ? formatDateOfBirthUtc(row.dateOfBirth) : null,
     gender: normalizeGenderStored(row.gender),
     canChangeUsername: !locked,
     usernameNextChangeAt: locked ? startOfNextUtcMonth(now).toISOString() : null,
@@ -86,9 +95,22 @@ export const meService = {
   async getMe(userId: string): Promise<{ data: MeResponseDto; cache: 'HIT' | 'MISS' }> {
     const key = RedisKeys.userMe(userId)
     const cached = await cacheRedisService.get<MeResponseDto>(key)
-    if (cached) {
+    // Entries cached before `dateOfBirth` was added omit the key; do not treat as authoritative null.
+    const cacheHasDobShape = cached != null && typeof cached === 'object' && 'dateOfBirth' in cached
+    if (cached && cacheHasDobShape) {
       meEndpointMetrics.cacheHits += 1
-      return { data: cached, cache: 'HIT' }
+      const data: MeResponseDto = {
+        ...cached,
+        dateOfBirth: cached.dateOfBirth ?? null,
+      }
+      return { data, cache: 'HIT' }
+    }
+    if (cached && !cacheHasDobShape) {
+      try {
+        await cacheRedisService.del(key)
+      } catch {
+        /* ignore bust failure */
+      }
     }
     meEndpointMetrics.cacheMisses += 1
     const row = await userRepository.findForMe(userId)
