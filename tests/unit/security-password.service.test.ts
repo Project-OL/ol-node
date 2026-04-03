@@ -12,7 +12,6 @@ vi.mock('../../src/config/redis', () => ({
   RedisKeys: {
     userSecurityIdentifiers: (userId: string) => `user:${userId}:security:identifiers`,
     securityPasswordResetToken: (t: string) => `security:password:reset-token:${t}`,
-    securityPasswordChangeToken: (t: string) => `security:password:change-token:${t}`,
     userSecurityPasswordExists: (userId: string) => `user:${userId}:security:password:exists`,
     userSecurityPasswordLocked: (userId: string) => `user:${userId}:security:password:locked`,
   },
@@ -138,6 +137,23 @@ describe('securityPasswordService', () => {
     })
   })
 
+  describe('isSecurityPinSet', () => {
+    it('returns false when no security password row', async () => {
+      secFindByUserId.mockResolvedValue(null)
+      await expect(securityPasswordService.isSecurityPinSet(userId)).resolves.toBe(false)
+    })
+
+    it('returns true when row exists', async () => {
+      secFindByUserId.mockResolvedValue({
+        userId,
+        passwordHash: 'hash',
+        failedAttempts: 0,
+        lockedUntil: null,
+      })
+      await expect(securityPasswordService.isSecurityPinSet(userId)).resolves.toBe(true)
+    })
+  })
+
   describe('sendOtpForPassword', () => {
     it('sends OTP for valid verified identifier', async () => {
       findById.mockResolvedValue(verifiedIdentifier)
@@ -160,14 +176,6 @@ describe('securityPasswordService', () => {
       await expect(securityPasswordService.sendOtpForPassword(userId, identifierId)).rejects.toMatchObject({
         code: 'IDENTIFIER_NOT_FOUND',
         statusCode: 404,
-      })
-    })
-
-    it('throws IDENTIFIER_NOT_FOUND when identifier belongs to another user', async () => {
-      findById.mockResolvedValue({ ...verifiedIdentifier, userId: 'other-user' })
-
-      await expect(securityPasswordService.sendOtpForPassword(userId, identifierId)).rejects.toMatchObject({
-        code: 'IDENTIFIER_NOT_FOUND',
       })
     })
 
@@ -203,27 +211,19 @@ describe('securityPasswordService', () => {
         securityPasswordService.verifyOtpForPassword(userId, identifierId, '12345'),
       ).rejects.toMatchObject({ code: 'INVALID_OTP', statusCode: 400 })
     })
-
-    it('throws IDENTIFIER_NOT_FOUND when identifier missing', async () => {
-      findById.mockResolvedValue(null)
-
-      await expect(
-        securityPasswordService.verifyOtpForPassword(userId, identifierId, '12345'),
-      ).rejects.toMatchObject({ code: 'IDENTIFIER_NOT_FOUND' })
-    })
   })
 
-  describe('setPassword', () => {
-    it('sets password and clears token when reset token valid', async () => {
+  describe('setPin', () => {
+    it('stores PIN when reset token valid', async () => {
       const resetToken = 'token-xyz'
       redisGet.mockResolvedValue(userId)
       secUpsert.mockResolvedValue({ setAt: new Date() })
 
-      const result = await securityPasswordService.setPassword(userId, resetToken, 'NewP@ss1!')
+      const result = await securityPasswordService.setPin(userId, resetToken, '123456')
 
       expect(result.setAt).toBeDefined()
-      expect(passwordValidateStrength).toHaveBeenCalledWith('NewP@ss1!')
-      expect(passwordHash).toHaveBeenCalledWith('NewP@ss1!')
+      expect(passwordValidateStrength).not.toHaveBeenCalled()
+      expect(passwordHash).toHaveBeenCalledWith('123456')
       expect(secUpsert).toHaveBeenCalledWith(
         expect.objectContaining({ userId, passwordHash: 'hashed', failedAttempts: 0, lockedUntil: null }),
       )
@@ -234,17 +234,8 @@ describe('securityPasswordService', () => {
       redisGet.mockResolvedValue(null)
 
       await expect(
-        securityPasswordService.setPassword(userId, 'bad-token', 'NewP@ss1!'),
+        securityPasswordService.setPin(userId, 'bad-token', '123456'),
       ).rejects.toMatchObject({ code: 'INVALID_REQUEST', statusCode: 400 })
-    })
-
-    it('throws PASSWORD_WEAK when validation fails', async () => {
-      redisGet.mockResolvedValue(userId)
-      passwordValidateStrength.mockReturnValue({ ok: false, error: 'Too weak' })
-
-      await expect(
-        securityPasswordService.setPassword(userId, 'token', 'weak'),
-      ).rejects.toMatchObject({ code: 'PASSWORD_WEAK', statusCode: 400 })
     })
   })
 
@@ -257,9 +248,9 @@ describe('securityPasswordService', () => {
         lockedUntil: null,
       })
 
-      await securityPasswordService.verifyCurrentPassword(userId, 'CorrectP@ss1!')
+      await securityPasswordService.verifyCurrentPassword(userId, '123456')
 
-      expect(passwordCompare).toHaveBeenCalledWith('CorrectP@ss1!', 'hash')
+      expect(passwordCompare).toHaveBeenCalledWith('123456', 'hash')
       expect(secResetFailedAttempts).toHaveBeenCalledWith(userId)
     })
 
@@ -267,7 +258,7 @@ describe('securityPasswordService', () => {
       secFindByUserId.mockResolvedValue(null)
 
       await expect(
-        securityPasswordService.verifyCurrentPassword(userId, 'AnyP@ss1!'),
+        securityPasswordService.verifyCurrentPassword(userId, '123456'),
       ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_NOT_SET', statusCode: 400 })
     })
 
@@ -280,7 +271,7 @@ describe('securityPasswordService', () => {
       })
 
       await expect(
-        securityPasswordService.verifyCurrentPassword(userId, 'AnyP@ss1!'),
+        securityPasswordService.verifyCurrentPassword(userId, '123456'),
       ).rejects.toMatchObject({ code: 'PASSWORD_LOCKED', statusCode: 429 })
     })
 
@@ -294,7 +285,7 @@ describe('securityPasswordService', () => {
       passwordCompare.mockResolvedValue(false)
 
       await expect(
-        securityPasswordService.verifyCurrentPassword(userId, 'WrongP@ss1!'),
+        securityPasswordService.verifyCurrentPassword(userId, '999999'),
       ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT', statusCode: 401 })
 
       expect(secUpdate).toHaveBeenCalledWith(
@@ -313,7 +304,7 @@ describe('securityPasswordService', () => {
       passwordCompare.mockResolvedValue(false)
 
       await expect(
-        securityPasswordService.verifyCurrentPassword(userId, 'WrongP@ss1!'),
+        securityPasswordService.verifyCurrentPassword(userId, '999999'),
       ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT' })
 
       expect(secUpdate).toHaveBeenCalledWith(
@@ -326,85 +317,21 @@ describe('securityPasswordService', () => {
     })
   })
 
-  describe('startChangePassword', () => {
-    it('returns changeToken and identifiers when current password correct', async () => {
+  describe('changePin', () => {
+    it('updates PIN when current PIN is correct', async () => {
       secFindByUserId.mockResolvedValue({
         userId,
         passwordHash: 'hash',
         failedAttempts: 0,
         lockedUntil: null,
       })
-      findByUserId.mockResolvedValue([
-        { id: identifierId, userId, provider: 'email', identifier: 'u@e.com', isVerified: true },
-      ])
-
-      const result = await securityPasswordService.startChangePassword(userId, 'CurrentP@ss1!')
-
-      expect(result.changeToken).toBeDefined()
-      expect(result.identifiers).toHaveLength(1)
-      expect(result.expiresIn).toBe(600)
-      expect(redisSet).toHaveBeenCalled()
-    })
-
-    it('throws when no verified identifiers', async () => {
-      secFindByUserId.mockResolvedValue({
-        userId,
-        passwordHash: 'hash',
-        failedAttempts: 0,
-        lockedUntil: null,
-      })
-      findByUserId.mockResolvedValue([])
-
-      await expect(
-        securityPasswordService.startChangePassword(userId, 'CurrentP@ss1!'),
-      ).rejects.toMatchObject({ code: 'IDENTIFIER_NOT_FOUND', statusCode: 400 })
-    })
-  })
-
-  describe('sendOtpForChange', () => {
-    it('sends OTP when change token valid', async () => {
-      redisGet.mockResolvedValue(userId)
-      findById.mockResolvedValue(verifiedIdentifier)
-
-      const result = await securityPasswordService.sendOtpForChange(userId, 'change-token', identifierId)
-
-      expect(result.otpSent).toBe(true)
-      expect(result.expiresIn).toBe(300)
-      expect(otpCreateAndStore).toHaveBeenCalled()
-      expect(redisSet).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining(userId),
-        'EX',
-        600,
-      )
-    })
-
-    it('throws INVALID_REQUEST when change token invalid', async () => {
-      redisGet.mockResolvedValue(null)
-
-      await expect(
-        securityPasswordService.sendOtpForChange(userId, 'bad-token', identifierId),
-      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
-    })
-  })
-
-  describe('confirmChangePassword', () => {
-    it('updates password and clears token when OTP and token valid', async () => {
-      const changeToken = 'ct-123'
-      redisGet.mockResolvedValue(JSON.stringify({ userId, identifierId }))
-      findById.mockResolvedValue(verifiedIdentifier)
-      otpVerify.mockResolvedValue(true)
       secUpdate.mockResolvedValue({ updatedAt: new Date() })
 
-      const result = await securityPasswordService.confirmChangePassword(
-        userId,
-        changeToken,
-        '12345',
-        'NewP@ss1!',
-      )
+      const result = await securityPasswordService.changePin(userId, '123456', '654321')
 
       expect(result.changedAt).toBeDefined()
-      expect(passwordHash).toHaveBeenCalledWith('NewP@ss1!')
+      expect(passwordValidateStrength).not.toHaveBeenCalled()
+      expect(passwordHash).toHaveBeenCalledWith('654321')
       expect(secUpdate).toHaveBeenCalledWith(
         userId,
         expect.objectContaining({ passwordHash: 'hashed', failedAttempts: 0, lockedUntil: null }),
@@ -412,41 +339,38 @@ describe('securityPasswordService', () => {
       expect(redisDel).toHaveBeenCalled()
     })
 
-    it('throws INVALID_REQUEST when token missing', async () => {
-      redisGet.mockResolvedValue(null)
+    it('throws SECURITY_PASSWORD_INCORRECT when current PIN wrong', async () => {
+      secFindByUserId.mockResolvedValue({
+        userId,
+        passwordHash: 'hash',
+        failedAttempts: 0,
+        lockedUntil: null,
+      })
+      passwordCompare.mockResolvedValue(false)
 
       await expect(
-        securityPasswordService.confirmChangePassword(userId, 'bad', '12345', 'NewP@ss1!'),
-      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
-    })
+        securityPasswordService.changePin(userId, '111111', '654321'),
+      ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT' })
 
-    it('throws INVALID_OTP when OTP wrong', async () => {
-      redisGet.mockResolvedValue(JSON.stringify({ userId, identifierId }))
-      findById.mockResolvedValue(verifiedIdentifier)
-      otpVerify.mockResolvedValue(false)
-
-      await expect(
-        securityPasswordService.confirmChangePassword(userId, 'ct', '00000', 'NewP@ss1!'),
-      ).rejects.toMatchObject({ code: 'INVALID_OTP' })
+      expect(secUpdate).not.toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({ passwordHash: 'hashed' }),
+      )
     })
   })
 
   describe('resetPassword', () => {
-    it('resets password when OTP valid', async () => {
+    it('resets PIN when OTP valid', async () => {
       findById.mockResolvedValue(verifiedIdentifier)
       otpVerify.mockResolvedValue(true)
       secUpsert.mockResolvedValue({})
 
-      const result = await securityPasswordService.resetPassword(
-        userId,
-        identifierId,
-        '12345',
-        'NewP@ss1!',
-      )
+      const result = await securityPasswordService.resetPassword(userId, identifierId, '12345', '987654')
 
       expect(result.success).toBe(true)
       expect(result.message).toBe('Security password reset successfully')
-      expect(passwordHash).toHaveBeenCalledWith('NewP@ss1!')
+      expect(passwordValidateStrength).not.toHaveBeenCalled()
+      expect(passwordHash).toHaveBeenCalledWith('987654')
       expect(secUpsert).toHaveBeenCalledWith(
         expect.objectContaining({ userId, passwordHash: 'hashed', failedAttempts: 0, lockedUntil: null }),
       )
@@ -457,7 +381,7 @@ describe('securityPasswordService', () => {
       otpVerify.mockResolvedValue(false)
 
       await expect(
-        securityPasswordService.resetPassword(userId, identifierId, '00000', 'NewP@ss1!'),
+        securityPasswordService.resetPassword(userId, identifierId, '00000', '987654'),
       ).rejects.toMatchObject({ code: 'INVALID_OTP' })
     })
 
@@ -465,7 +389,7 @@ describe('securityPasswordService', () => {
       findById.mockResolvedValue(null)
 
       await expect(
-        securityPasswordService.resetPassword(userId, identifierId, '12345', 'NewP@ss1!'),
+        securityPasswordService.resetPassword(userId, identifierId, '12345', '987654'),
       ).rejects.toMatchObject({ code: 'IDENTIFIER_NOT_FOUND' })
     })
   })

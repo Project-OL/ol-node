@@ -3,9 +3,13 @@
  */
 
 import { z } from 'zod'
-import { passwordSchema } from './schemas'
 
 const otpFiveDigits = /^\d{5}$/
+
+/** Numeric security PIN; no account-password strength rules. */
+export const securityPinSchema = z
+  .string()
+  .regex(/^\d{4,8}$/, 'PIN must be 4 to 8 digits')
 
 export const getIdentifiersSchema = z.object({})
 
@@ -18,37 +22,43 @@ export const verifyOtpSchema = z.object({
   otp: z.string().regex(otpFiveDigits, 'OTP must be 5 digits'),
 })
 
-export const setPasswordSchema = z.object({
-  resetToken: z.string().min(1, 'Reset token required'),
-  newPassword: passwordSchema,
-})
+/** Accept legacy `newPassword` key as alias for `newPin` (same 4–8 digit PIN rules). */
+function normalizeSecuritySetBody(raw: unknown): unknown {
+  if (raw == null || typeof raw !== 'object') return raw
+  const o = { ...(raw as Record<string, unknown>) }
+  if (o.newPin == null && typeof o.newPassword === 'string') {
+    o.newPin = o.newPassword
+  }
+  return o
+}
 
-export const changeStartSchema = z.object({
-  currentPassword: z.string().min(1, 'Current password required'),
-})
+export const setPinSchema = z.preprocess(
+  normalizeSecuritySetBody,
+  z.object({
+    resetToken: z.string().min(1, 'Reset token required'),
+    newPin: securityPinSchema,
+  }),
+)
 
-export const changeSendOtpSchema = z.object({
-  changeToken: z.string().min(1, 'Change token required'),
-  identifierId: z.string().uuid('Invalid identifier ID'),
-})
-
-export const changeConfirmSchema = z.object({
-  changeToken: z.string().min(1, 'Change token required'),
-  otp: z.string().regex(otpFiveDigits, 'OTP must be 5 digits'),
-  newPassword: passwordSchema,
-})
+export const changePinSchema = z
+  .object({
+    currentPin: securityPinSchema,
+    newPin: securityPinSchema,
+  })
+  .refine((data) => data.currentPin !== data.newPin, {
+    message: 'New PIN must differ from current PIN',
+    path: ['newPin'],
+  })
 
 export const resetPasswordSchema = z.object({
   identifierId: z.string().uuid('Invalid identifier ID'),
   otp: z.string().regex(otpFiveDigits, 'OTP must be 5 digits'),
-  newPassword: passwordSchema,
+  newPin: securityPinSchema,
 })
 
 export type GetIdentifiersBody = z.infer<typeof getIdentifiersSchema>
 export type SendOtpBody = z.infer<typeof sendOtpSchema>
 export type VerifyOtpBody = z.infer<typeof verifyOtpSchema>
-export type SetPasswordBody = z.infer<typeof setPasswordSchema>
-export type ChangeStartBody = z.infer<typeof changeStartSchema>
-export type ChangeSendOtpBody = z.infer<typeof changeSendOtpSchema>
-export type ChangeConfirmBody = z.infer<typeof changeConfirmSchema>
+export type SetPinBody = z.infer<typeof setPinSchema>
+export type ChangePinBody = z.infer<typeof changePinSchema>
 export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>

@@ -57,6 +57,11 @@ export const securityPasswordService = {
     return result
   },
 
+  async isSecurityPinSet(userId: string): Promise<boolean> {
+    const sec = await securityPasswordRepository.findByUserId(userId)
+    return sec != null
+  },
+
   async sendOtpForPassword(
     userId: string,
     identifierId: string,
@@ -135,23 +140,14 @@ export const securityPasswordService = {
     }
   },
 
-  async setPassword(
-    userId: string,
-    resetToken: string,
-    newPassword: string,
-  ): Promise<{ setAt: Date }> {
+  async setPin(userId: string, resetToken: string, newPin: string): Promise<{ setAt: Date }> {
     const key = RedisKeys.securityPasswordResetToken(resetToken)
     const tokenUserId = await redisClient.get(key)
     if (!tokenUserId || tokenUserId !== userId) {
       throw new AppError(400, 'Invalid or expired reset token', 'INVALID_REQUEST')
     }
 
-    const strength = passwordService.validateStrength(newPassword)
-    if (!strength.ok) {
-      throw new AppError(400, strength.error, 'PASSWORD_WEAK')
-    }
-
-    const passwordHash = await passwordService.hash(newPassword)
+    const passwordHash = await passwordService.hash(newPin)
     const record = await securityPasswordRepository.upsert({
       userId,
       passwordHash,
@@ -210,115 +206,16 @@ export const securityPasswordService = {
     await securityPasswordRepository.resetFailedAttempts(userId)
   },
 
-  async startChangePassword(
-    userId: string,
-    currentPassword: string,
-  ): Promise<{ changeToken: string; identifiers: SecurityIdentifierView[]; expiresIn: number }> {
-    await this.verifyCurrentPassword(userId, currentPassword)
-    const identifiers = await this.getIdentifiers(userId)
-    if (identifiers.length === 0) {
-      throw new AppError(400, 'No verified identifier to send OTP', 'IDENTIFIER_NOT_FOUND')
-    }
+  async changePin(userId: string, currentPin: string, newPin: string): Promise<{ changedAt: Date }> {
+    await this.verifyCurrentPassword(userId, currentPin)
 
-    const changeToken = crypto.randomUUID()
-    const key = RedisKeys.securityPasswordChangeToken(changeToken)
-    await redisClient.set(key, userId, 'EX', RESET_TOKEN_TTL)
-
-    return {
-      changeToken,
-      identifiers,
-      expiresIn: RESET_TOKEN_TTL,
-    }
-  },
-
-  async sendOtpForChange(
-    userId: string,
-    changeToken: string,
-    identifierId: string,
-  ): Promise<{ otpSent: boolean; expiresIn: number; maskedIdentifier: string }> {
-    const key = RedisKeys.securityPasswordChangeToken(changeToken)
-    const tokenUserId = await redisClient.get(key)
-    if (!tokenUserId || tokenUserId !== userId) {
-      throw new AppError(400, 'Invalid or expired change token', 'INVALID_REQUEST')
-    }
-
-    const identifier = await authIdentifierRepository.findById(identifierId)
-    if (!identifier || identifier.userId !== userId) {
-      throw new AppError(404, 'Auth identifier not found', 'IDENTIFIER_NOT_FOUND')
-    }
-    if (!identifier.isVerified) {
-      throw new AppError(400, 'Identifier not verified', 'IDENTIFIER_NOT_VERIFIED')
-    }
-
-    await otpAuthService.createAndStore({
-      targetIdentifier: identifier.identifier,
-      purpose: 'set_security_password',
-      userId,
-    })
-
-    const payload = JSON.stringify({ userId, identifierId })
-    await redisClient.set(key, payload, 'EX', RESET_TOKEN_TTL)
-
-    return {
-      otpSent: true,
-      expiresIn: 300,
-      maskedIdentifier: maskIdentifier(identifier.identifier),
-    }
-  },
-
-  async confirmChangePassword(
-    userId: string,
-    changeToken: string,
-    otp: string,
-    newPassword: string,
-  ): Promise<{ changedAt: Date }> {
-    const key = RedisKeys.securityPasswordChangeToken(changeToken)
-    const raw = await redisClient.get(key)
-    if (!raw) {
-      throw new AppError(400, 'Invalid or expired change token', 'INVALID_REQUEST')
-    }
-    let payload: { userId: string; identifierId: string }
-    try {
-      payload = JSON.parse(raw) as { userId: string; identifierId: string }
-    } catch {
-      const tokenUserId = raw
-      if (tokenUserId !== userId) {
-        throw new AppError(400, 'Invalid or expired change token', 'INVALID_REQUEST')
-      }
-      throw new AppError(400, 'Please send OTP to an identifier first', 'INVALID_REQUEST')
-    }
-    if (payload.userId !== userId) {
-      throw new AppError(400, 'Invalid change token', 'INVALID_REQUEST')
-    }
-
-    const identifier = await authIdentifierRepository.findById(payload.identifierId)
-    if (!identifier || identifier.userId !== userId) {
-      throw new AppError(404, 'Auth identifier not found', 'IDENTIFIER_NOT_FOUND')
-    }
-
-    const verified = await otpAuthService.verify({
-      targetIdentifier: identifier.identifier,
-      purpose: 'set_security_password',
-      otp,
-      userId,
-    })
-    if (!verified) {
-      throw new AppError(400, 'Invalid or expired OTP', 'INVALID_OTP')
-    }
-
-    const strength = passwordService.validateStrength(newPassword)
-    if (!strength.ok) {
-      throw new AppError(400, strength.error, 'PASSWORD_WEAK')
-    }
-
-    const passwordHash = await passwordService.hash(newPassword)
+    const passwordHash = await passwordService.hash(newPin)
     const record = await securityPasswordRepository.update(userId, {
       passwordHash,
       failedAttempts: 0,
       lockedUntil: null,
     })
 
-    await redisClient.del(key)
     await invalidateSecurityPasswordCache(userId)
 
     await auditService.log({
@@ -334,7 +231,7 @@ export const securityPasswordService = {
     userId: string,
     identifierId: string,
     otp: string,
-    newPassword: string,
+    newPin: string,
   ): Promise<{ success: true; message: string }> {
     const identifier = await authIdentifierRepository.findById(identifierId)
     if (!identifier || identifier.userId !== userId) {
@@ -351,12 +248,7 @@ export const securityPasswordService = {
       throw new AppError(400, 'Invalid or expired OTP', 'INVALID_OTP')
     }
 
-    const strength = passwordService.validateStrength(newPassword)
-    if (!strength.ok) {
-      throw new AppError(400, strength.error, 'PASSWORD_WEAK')
-    }
-
-    const passwordHash = await passwordService.hash(newPassword)
+    const passwordHash = await passwordService.hash(newPin)
     await securityPasswordRepository.upsert({
       userId,
       passwordHash,

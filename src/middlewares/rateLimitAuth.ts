@@ -161,6 +161,11 @@ export const securityPasswordRateLimits = {
     max: 60,
     windowMs: 60000,
   }),
+  pinStatus: createSecurityRateLimit({
+    endpoint: 'security.password.status',
+    max: 60,
+    windowMs: 60000,
+  }),
   sendOtp: createSecurityRateLimit({
     endpoint: 'security.password.send_otp',
     max: 5,
@@ -176,19 +181,9 @@ export const securityPasswordRateLimits = {
     max: 5,
     windowMs: 60000,
   }),
-  changeStart: createSecurityRateLimit({
-    endpoint: 'security.password.change.start',
+  change: createSecurityRateLimit({
+    endpoint: 'security.password.change',
     max: 10,
-    windowMs: 60000,
-  }),
-  changeSendOtp: createSecurityRateLimit({
-    endpoint: 'security.password.change.send_otp',
-    max: 5,
-    windowMs: 60000,
-  }),
-  changeConfirm: createSecurityRateLimit({
-    endpoint: 'security.password.change.confirm',
-    max: 5,
     windowMs: 60000,
   }),
   reset: createSecurityRateLimit({
