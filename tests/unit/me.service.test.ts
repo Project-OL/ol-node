@@ -1,4 +1,40 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { AppError } from '../../src/middlewares/errorHandler'
+
+const debitForDisplayNameChange = vi.fn()
+
+vi.mock('../../src/services/coin-wallet.service', () => ({
+  USERNAME_CHANGE_COIN_COST: 10_000n,
+  coinWalletService: {
+    debitForDisplayNameChange: (...a: unknown[]) => debitForDisplayNameChange(...a),
+  },
+}))
+
+const getCoinBalance = vi.fn()
+const getPointBalance = vi.fn()
+
+vi.mock('../../src/services/wallet.service', () => ({
+  walletService: {
+    getCoinBalance: (...a: unknown[]) => getCoinBalance(...a),
+    getPointBalance: (...a: unknown[]) => getPointBalance(...a),
+  },
+}))
+
+const walletUserLevelGetByUser = vi.fn()
+
+vi.mock('../../src/repositories/wallet-user-level.repository', () => ({
+  walletUserLevelRepository: {
+    getByUser: (...a: unknown[]) => walletUserLevelGetByUser(...a),
+  },
+}))
+
+const vipFindMostRecent = vi.fn()
+
+vi.mock('../../src/repositories/vip-assignment.repository', () => ({
+  vipAssignmentRepository: {
+    findMostRecent: (...a: unknown[]) => vipFindMostRecent(...a),
+  },
+}))
 
 const cacheGet = vi.fn()
 const cacheSet = vi.fn()
@@ -76,7 +112,26 @@ describe('meService', () => {
     getTokenVersion.mockResolvedValue(0)
     putObjectBuffer.mockReset()
     deleteObject.mockReset()
+    debitForDisplayNameChange.mockReset()
+    getCoinBalance.mockReset()
+    getPointBalance.mockReset()
+    walletUserLevelGetByUser.mockReset()
+    vipFindMostRecent.mockReset()
+    getCoinBalance.mockResolvedValue(20_000n)
+    getPointBalance.mockResolvedValue(0n)
+    walletUserLevelGetByUser.mockResolvedValue(null)
+    vipFindMostRecent.mockResolvedValue(null)
   })
+
+  const walletSuffix = {
+    coinsBalance: '20000',
+    pointsBalance: '0',
+    livestreamLevel: 1,
+    wealthLevel: 1,
+    isVipActive: false,
+    lastVipStartedAt: null,
+    lastVipExpiresAt: null,
+  }
 
   it('getMe returns cached payload on Redis HIT', async () => {
     const cached = {
@@ -94,7 +149,7 @@ describe('meService', () => {
     cacheGet.mockResolvedValueOnce(cached)
     const out = await meService.getMe('user-1')
     expect(out.cache).toBe('HIT')
-    expect(out.data).toEqual(cached)
+    expect(out.data).toEqual({ ...cached, ...walletSuffix, canChangeUsername: true, usernameNextChangeAt: null })
     expect(findForMe).not.toHaveBeenCalled()
   })
 
@@ -106,6 +161,8 @@ describe('meService', () => {
     expect(out.data.userId).toBe('user-1')
     expect(out.data.publicId).toBe('99')
     expect(out.data.dateOfBirth).toBeNull()
+    expect(out.data.coinsBalance).toBe('20000')
+    expect(out.data.canChangeUsername).toBe(true)
     expect(cacheSet).toHaveBeenCalled()
   })
 
@@ -128,14 +185,14 @@ describe('meService', () => {
     const out = await meService.getMe('user-1')
     expect(out.cache).toBe('MISS')
     expect(out.data.dateOfBirth).toBe('1999-03-15')
+    expect(out.data.canChangeUsername).toBe(true)
     expect(cacheDel).toHaveBeenCalled()
     expect(cacheSet).toHaveBeenCalled()
   })
 
-  it('patchMe name update succeeds when no lock and usernameUpdatedAt null', async () => {
+  it('patchMe name update debits coins and updates name via wallet transaction', async () => {
     findForMe.mockResolvedValueOnce(baseRow())
-    cacheExists.mockResolvedValue(false)
-    updateProfile.mockResolvedValue(undefined as never)
+    debitForDisplayNameChange.mockResolvedValue(undefined)
     findForMe.mockResolvedValueOnce(
       baseRow({
         firstName: 'New',
@@ -150,36 +207,38 @@ describe('meService', () => {
       { tokenVersion: 0, sessionId: '550e8400-e29b-41d4-a716-446655440000', sessionTokenVersion: 0 },
     )
     expect(out.user.name).toBe('New Name')
-    expect(updateProfile).toHaveBeenCalledWith(
-      'user-1',
-      expect.objectContaining({
-        firstName: 'New',
-        lastName: 'Name',
-      }),
-    )
+    expect(debitForDisplayNameChange).toHaveBeenCalledWith('user-1', 'New', 'Name')
+    expect(updateProfile).not.toHaveBeenCalled()
     const payload = verifyAccess(out.accessToken)
     expect(payload.name).toBe('New Name')
   })
 
-  it('patchMe name throttled when Redis lock exists', async () => {
+  it('patchMe name rejects when wallet debit fails (insufficient coins)', async () => {
     findForMe.mockResolvedValueOnce(baseRow())
-    cacheExists.mockResolvedValue(true)
-    cacheTtl.mockResolvedValue(3600)
-    await expect(meService.patchMe('user-1', { name: 'Other' }, null, {})).rejects.toMatchObject({
-      code: 'USERNAME_CHANGE_THROTTLED',
-      statusCode: 429,
+    debitForDisplayNameChange.mockRejectedValueOnce(
+      new AppError(402, 'Not enough coins to change display name', 'INSUFFICIENT_COINS', {
+        required: '10000',
+        balance: '0',
+      }),
+    )
+    await expect(meService.patchMe('user-1', { name: 'Other Name' }, null, {})).rejects.toMatchObject({
+      code: 'INSUFFICIENT_COINS',
+      statusCode: 402,
     })
     expect(updateProfile).not.toHaveBeenCalled()
   })
 
-  it('patchMe name throttled when DB says same UTC month', async () => {
-    const now = new Date()
-    findForMe.mockResolvedValueOnce(baseRow({ usernameUpdatedAt: now }))
-    cacheExists.mockResolvedValue(false)
-    await expect(meService.patchMe('user-1', { name: 'Other' }, null, {})).rejects.toMatchObject({
-      code: 'USERNAME_CHANGE_THROTTLED',
-    })
-    expect(cacheSet).toHaveBeenCalled()
+  it('patchMe skips debit when display name unchanged', async () => {
+    findForMe.mockResolvedValueOnce(baseRow({ firstName: 'Jane', lastName: 'Doe' }))
+    findForMe.mockResolvedValueOnce(baseRow({ firstName: 'Jane', lastName: 'Doe' }))
+    updateProfile.mockResolvedValue(undefined as never)
+    await meService.patchMe(
+      'user-1',
+      { name: 'Jane Doe' },
+      null,
+      { tokenVersion: 0, sessionId: '550e8400-e29b-41d4-a716-446655440000', sessionTokenVersion: 0 },
+    )
+    expect(debitForDisplayNameChange).not.toHaveBeenCalled()
   })
 
   it('patchMe rejects invalid avatar magic bytes', async () => {

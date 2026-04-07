@@ -247,10 +247,13 @@ export default async function authRoutes(app: FastifyInstance) {
           message: parsed.error.errors[0]?.message ?? 'Validation failed',
         })
       }
-      if (parsed.data.revokeAllSessions) {
-        await sessionService.revokeAllSessions(userId)
-      } else if (parsed.data.sessionId) {
+      // Prefer explicit sessionId so a stray revokeAllSessions flag does not invalidate every JWT (token_version bump).
+      let revokedAll = false
+      if (parsed.data.sessionId) {
         await sessionService.revokeSession(parsed.data.sessionId, userId)
+      } else if (parsed.data.revokeAllSessions) {
+        await sessionService.revokeAllSessions(userId)
+        revokedAll = true
       } else {
         return reply.status(400).send({ code: 'INVALID_REQUEST', message: 'sessionId or revokeAllSessions required' })
       }
@@ -259,7 +262,7 @@ export default async function authRoutes(app: FastifyInstance) {
         userId,
         actionType: 'logout',
         actionStatus: 'success',
-        actionDetails: parsed.data.revokeAllSessions ? { revokeAll: true } : { sessionId: parsed.data.sessionId },
+        actionDetails: revokedAll ? { revokeAll: true } : { sessionId: parsed.data.sessionId },
         ipAddress: ip,
         userAgent: (request.headers['user-agent'] as string) ?? undefined,
       })

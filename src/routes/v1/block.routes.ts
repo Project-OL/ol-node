@@ -4,6 +4,7 @@ import { rateLimitBlock } from '../../middlewares/rateLimitAuth'
 import {
   BlockUserSchema,
   BulkUnblockSchema,
+  CheckBlockQuerySchema,
   GetBlockListSchema,
 } from '../../models/messaging.schemas'
 import { blockService } from '../../services/block.service'
@@ -31,32 +32,65 @@ export default async function blockRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      await blockService.blockUser(userId, parsed.data.userId)
+      await blockService.blockUser(userId, parsed.data.publicId)
       return reply.code(201).send({ success: true })
     },
   )
 
-  app.delete<{ Params: { userId: string } }>(
-    '/:userId',
+  app.get<{ Querystring: unknown }>(
+    '/check',
     {
       preHandler: preAuth,
       schema: {
         tags: ['Blocks'],
-        description: 'Unblock a user',
-        params: {
+        description:
+          'Check whether the authenticated user has blocked a user identified by public ID',
+        querystring: {
           type: 'object',
-          required: ['userId'],
-          properties: { userId: { type: 'string', minLength: 1 } },
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { userId: string } }>,
-      reply: FastifyReply,
-    ) => {
-      const blockerId = request.userId!
-      await blockService.unblockUser(blockerId, request.params.userId)
-      return reply.code(204).send()
+    async (request: FastifyRequest<{ Querystring: unknown }>, reply: FastifyReply) => {
+      const parsed = CheckBlockQuerySchema.safeParse(request.query)
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await blockService.checkBlock(
+        request.userId!,
+        parsed.data.publicId,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.get<{ Querystring: unknown }>(
+    '/',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Blocks'],
+        description:
+          'Get block list (searchable). Each item includes blocked user avatarUrl.',
+      },
+    },
+    async (request: FastifyRequest<{ Querystring: unknown }>, reply: FastifyReply) => {
+      const userId = request.userId!
+      const parsed = GetBlockListSchema.safeParse(request.query)
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await blockService.getBlockList(userId, parsed.data)
+      return reply.send(result)
     },
   )
 
@@ -79,32 +113,59 @@ export default async function blockRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const result = await blockService.bulkUnblock(userId, parsed.data.userIds)
+      const result = await blockService.bulkUnblock(userId, parsed.data.publicIds)
       return reply.send(result)
     },
   )
 
-  app.get<{ Querystring: unknown }>(
-    '/',
+  app.get<{ Params: { publicId: string } }>(
+    '/:publicId',
     {
       preHandler: preAuth,
       schema: {
         tags: ['Blocks'],
-        description: 'Get block list (searchable)',
+        description:
+          'Check if a user is blocked (same as GET /check?publicId=…). Prefer /check to avoid route ordering issues.',
+        params: {
+          type: 'object',
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
+        },
       },
     },
-    async (request: FastifyRequest<{ Querystring: unknown }>, reply: FastifyReply) => {
-      const userId = request.userId!
-      const parsed = GetBlockListSchema.safeParse(request.query)
-      if (!parsed.success) {
-        throw new AppError(
-          400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
-          'INVALID_REQUEST',
-        )
-      }
-      const result = await blockService.getBlockList(userId, parsed.data)
+    async (
+      request: FastifyRequest<{ Params: { publicId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const result = await blockService.checkBlock(
+        request.userId!,
+        request.params.publicId,
+      )
       return reply.send(result)
+    },
+  )
+
+  app.delete<{ Params: { publicId: string } }>(
+    '/:publicId',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Blocks'],
+        description: 'Unblock a user',
+        params: {
+          type: 'object',
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { publicId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const blockerId = request.userId!
+      await blockService.unblockUser(blockerId, request.params.publicId)
+      return reply.code(204).send()
     },
   )
 }

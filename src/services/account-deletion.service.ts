@@ -210,16 +210,24 @@ export const accountDeletionService = {
     const accountsToDelete = await accountDeletionRepository.findForDeletion(now)
     const errors: Array<{ userId: string; error: string }> = []
 
-    for (const deletion of accountsToDelete) {
-      try {
-        await userRepository.deleteAccountPermanently(deletion.userId, deletion.id)
-        await meService.invalidateUserCaches(deletion.userId)
-      } catch (err) {
-        errors.push({
-          userId: deletion.userId,
-          error: err instanceof Error ? err.message : 'Unknown error',
-        })
-      }
+    // Process in parallel chunks to avoid sequential bottleneck (previously one-by-one)
+    // while still bounding concurrency to prevent overwhelming the DB connection pool.
+    const CHUNK_SIZE = 10
+    for (let i = 0; i < accountsToDelete.length; i += CHUNK_SIZE) {
+      const chunk = accountsToDelete.slice(i, i + CHUNK_SIZE)
+      await Promise.all(
+        chunk.map(async (deletion) => {
+          try {
+            await userRepository.deleteAccountPermanently(deletion.userId, deletion.id)
+            await meService.invalidateUserCaches(deletion.userId)
+          } catch (err) {
+            errors.push({
+              userId: deletion.userId,
+              error: err instanceof Error ? err.message : 'Unknown error',
+            })
+          }
+        }),
+      )
     }
 
     await auditService.log({

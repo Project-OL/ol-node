@@ -85,6 +85,17 @@ model User {
   reportedReports   MessageReport[]         @relation("Reported")
   reminderOwner     BroadcastReminder[]     @relation("ReminderOwner")
   reminderCreator   BroadcastReminder[]     @relation("ReminderCreator")
+  wallets           Wallet[]
+  walletUserLevels  WalletUserLevel[]
+  videoCallSettings VideoCallSettings?
+  callerSessions    VideoCallSession[] @relation("CallSessionCaller")
+  creatorSessions   VideoCallSession[] @relation("CallSessionCreator")
+  giftGalleries     GiftGallery[]
+  giftGalleryFirstGifters GiftGalleryProgress[] @relation("GiftGalleryFirstGifter")
+  giftsSent         GiftTransaction[]     @relation("GiftsSent")
+  giftsReceived     GiftTransaction[]     @relation("GiftsReceived")
+  fanSpendSent      FanSpend[]            @relation("FanSpendSender")
+  fanSpendReceived  FanSpend[]            @relation("FanSpendReceiver")
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -662,4 +673,398 @@ model BroadcastReminder {
   @@map("broadcast_reminders")
 }
 
+// ── Wallet: coins & points ───────────────────────────────────────────────────
+
+enum WalletCurrencyType {
+  COIN
+  POINT
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum CoinTxType {
+  TOPUP
+  GIFT_SEND
+  GIFT_REFUND
+  TRANSFER_OUT
+  TRANSFER_IN
+  VIP_PURCHASE
+  VIP_REWARD
+  DAILY_LOGIN
+  WEEKLY_TOPUP
+  PLATFORM_REWARD
+  EXPIRE
+  ADJUSTMENT
+  VIDEO_CALL
+  USERNAME_CHANGE
+}
+
+enum PointTxType {
+  LIVESTREAM_GIFT
+  SUBSCRIPTION
+  COMMISSION
+  TRANSFER_IN
+  TRANSFER_OUT
+  MYSTERY_CHEST
+  PLATFORM_REWARD
+  WITHDRAWAL
+  WITHDRAWAL_REFUND
+  ADJUSTMENT
+  VIDEO_CALL
+  GIFT_RECEIVE
+}
+
+enum WithdrawalStatus {
+  PENDING
+  KYC_CHECK
+  APPROVED
+  PROCESSING
+  PAID
+  FAILED
+  REJECTED
+}
+
+model CoinPackage {
+  id         String   @id @default(uuid()) @db.Uuid
+  coins      Int
+  priceCents Int      @map("price_cents")
+  currency   String   @default("USD") @db.VarChar(10)
+  label      String?  @db.VarChar(100)
+  isActive   Boolean  @default(true) @map("is_active")
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  topupOrders CoinTopupOrder[]
+
+  @@index([isActive, sortOrder])
+  @@unique([coins, priceCents])
+  @@map("coin_packages")
+}
+
+model Wallet {
+  id           String             @id @default(uuid()) @db.Uuid
+  userId       String             @map("user_id") @db.Uuid
+  currencyType WalletCurrencyType @map("currency_type")
+  version      BigInt             @default(0)
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coinLedger   CoinLedgerEntry[]
+  pointLedger  PointLedgerEntry[]
+  withdrawals  Withdrawal[]
+
+  @@unique([userId, currencyType])
+  @@index([userId])
+  @@map("wallets")
+}
+
+model CoinLedgerEntry {
+  id             String          @id @default(uuid()) @db.Uuid
+  walletId       String          @map("wallet_id") @db.Uuid
+  direction      LedgerDirection
+  txType         CoinTxType      @map("tx_type")
+  amount         BigInt
+  balanceAfter   BigInt          @map("balance_after")
+  refId          String?         @map("ref_id") @db.VarChar(255)
+  counterpartyId String?         @map("counterparty_id") @db.Uuid
+  description    String?         @db.Text
+  metadata       Json?
+  idempotencyKey String          @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([walletId, txType, createdAt(sort: Desc)])
+  @@index([idempotencyKey])
+  @@map("coin_ledger_entries")
+}
+
+model PointLedgerEntry {
+  id             String          @id @default(uuid()) @db.Uuid
+  walletId       String          @map("wallet_id") @db.Uuid
+  direction      LedgerDirection
+  txType         PointTxType     @map("tx_type")
+  amount         BigInt
+  balanceAfter   BigInt          @map("balance_after")
+  refId          String?         @map("ref_id") @db.VarChar(255)
+  counterpartyId String?         @map("counterparty_id") @db.Uuid
+  description    String?         @db.Text
+  metadata       Json?
+  idempotencyKey String          @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([walletId, txType, createdAt(sort: Desc)])
+  @@index([idempotencyKey])
+  @@map("point_ledger_entries")
+}
+
+model CoinTopupOrder {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  packageId      String   @map("package_id") @db.Uuid
+  coins          Int
+  priceCents     Int      @map("price_cents")
+  currency       String   @default("USD") @db.VarChar(10)
+  gatewayRef     String?  @unique @map("gateway_ref") @db.VarChar(256)
+  status         String   @default("PENDING") @db.VarChar(50)
+  ledgerEntryId  String?  @map("ledger_entry_id") @db.Uuid
+  idempotencyKey String   @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  package CoinPackage @relation(fields: [packageId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("coin_topup_orders")
+}
+
+model Withdrawal {
+  id              String           @id @default(uuid()) @db.Uuid
+  walletId        String           @map("wallet_id") @db.Uuid
+  userId          String           @map("user_id") @db.Uuid
+  amountPoints    BigInt           @map("amount_points")
+  amountFiatCents BigInt?          @map("amount_fiat_cents")
+  currency        String           @default("USD") @db.VarChar(10)
+  status          WithdrawalStatus @default(PENDING)
+  payoutRef       String?          @map("payout_ref") @db.VarChar(256)
+  failReason      String?          @map("fail_reason") @db.Text
+  idempotencyKey  String           @unique @map("idempotency_key") @db.VarChar(200)
+  requestedAt     DateTime         @default(now()) @map("requested_at")
+  processedAt     DateTime?        @map("processed_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([walletId, requestedAt(sort: Desc)])
+  @@map("withdrawals")
+}
+
+model WalletIdempotencyLog {
+  key              String   @id @db.VarChar(200)
+  requestHash      String   @map("request_hash") @db.VarChar(128)
+  responseSnapshot Json?    @map("response_snapshot")
+  status           String   @default("PROCESSING") @db.VarChar(50)
+  expiresAt        DateTime @map("expires_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("wallet_idempotency_log")
+}
+
+// ── Wallet-driven levels (cumulative credits from ledgers) — separate from legacy user_levels XP ──
+
+enum LevelType {
+  WEALTH
+  LIVESTREAM
+}
+
+model WalletLevelConfig {
+  id        String    @id @default(uuid()) @db.Uuid
+  levelType LevelType @map("level_type")
+  level     Int
+  threshold BigInt
+  label     String?   @db.VarChar(255)
+  iconKey   String?   @map("icon_key") @db.VarChar(255)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@unique([levelType, level])
+  @@index([levelType, threshold])
+  @@map("wallet_level_configs")
+}
+
+model WalletUserLevel {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  levelType       LevelType @map("level_type")
+  currentLevel    Int       @default(1) @map("current_level")
+  cumulativeTotal BigInt    @default(0) @map("cumulative_total")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, levelType])
+  @@index([userId])
+  @@map("wallet_user_levels")
+}
+
+// ── Video Call ────────────────────────────────────────────────────────────────
+
+model VideoCallSettings {
+  id          String   @id @default(cuid())
+  userId      String   @unique @map("user_id") @db.Uuid
+  pricePerMin Int      @default(1800) @map("price_per_min") // coins per minute, min 1800
+  blockLv5    Boolean  @default(false) @map("block_lv5")   // block callers with wealthLevel ≤ 5
+  blockLv10   Boolean  @default(false) @map("block_lv10")  // block callers with wealthLevel ≤ 10
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("video_call_settings")
+}
+
+model VideoCallSession {
+  id            String    @id @default(cuid())
+  callerId      String    @map("caller_id") @db.Uuid
+  creatorId     String    @map("creator_id") @db.Uuid
+  livekitRoom   String    @unique @map("livekit_room") @db.VarChar(255)
+  pricePerMin   Int       @map("price_per_min")         // snapshot at call start
+  status        String    @default("ACTIVE") @map("status") @db.VarChar(50) // ACTIVE | ENDED | INSUFFICIENT_COINS
+  minsCharged   Int       @default(0) @map("mins_charged")
+  coinsDeducted BigInt    @default(0) @map("coins_deducted")
+  pointsAwarded BigInt    @default(0) @map("points_awarded")
+  startedAt     DateTime  @default(now()) @map("started_at")
+  endedAt       DateTime? @map("ended_at")
+  endReason     String?   @map("end_reason") @db.VarChar(100)
+
+  caller  User @relation("CallSessionCaller",  fields: [callerId],  references: [id])
+  creator User @relation("CallSessionCreator", fields: [creatorId], references: [id])
+
+  @@index([callerId,  status])
+  @@index([creatorId, status])
+  @@index([livekitRoom])
+  @@map("video_call_sessions")
+}
+
+// ── Gifts, gallery, fan ranking ───────────────────────────────────────────────
+
+model Gift {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @db.VarChar(255)
+  coinCost        Int      @map("coin_cost")
+  displayImageUrl String   @map("display_image_url") @db.Text
+  effectUrl       String?  @map("effect_url") @db.Text
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  tags                 GiftTag[]
+  gallerySectionItems  GiftGallerySectionItem[]
+  transactions         GiftTransaction[]
+  galleryProgressRows  GiftGalleryProgress[]
+
+  @@index([isActive])
+  @@map("gifts")
+}
+
+model GiftTag {
+  id     String @id @default(uuid()) @db.Uuid
+  giftId String @map("gift_id") @db.Uuid
+  tag    String @db.VarChar(64)
+
+  gift Gift @relation(fields: [giftId], references: [id], onDelete: Cascade)
+
+  @@unique([giftId, tag])
+  @@index([tag])
+  @@map("gift_tags")
+}
+
+model GiftGallery {
+  id         String   @id @default(uuid()) @db.Uuid
+  hostUserId String   @map("host_user_id") @db.Uuid
+  year       Int
+  month      Int
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  hostUser User                   @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+  sections GiftGallerySection[]
+  progress GiftGalleryProgress[]
+
+  @@unique([hostUserId, year, month])
+  @@index([hostUserId])
+  @@map("gift_galleries")
+}
+
+model GiftGallerySection {
+  id        String @id @default(uuid()) @db.Uuid
+  galleryId String @map("gallery_id") @db.Uuid
+  title     String @db.VarChar(255)
+  sortOrder Int    @default(0) @map("sort_order")
+
+  gallery GiftGallery              @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  gifts   GiftGallerySectionItem[]
+
+  @@index([galleryId])
+  @@map("gift_gallery_sections")
+}
+
+model GiftGallerySectionItem {
+  id        String @id @default(uuid()) @db.Uuid
+  sectionId String @map("section_id") @db.Uuid
+  giftId    String @map("gift_id") @db.Uuid
+  sortOrder Int    @default(0) @map("sort_order")
+
+  section GiftGallerySection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  gift    Gift               @relation(fields: [giftId], references: [id], onDelete: Cascade)
+
+  @@unique([sectionId, giftId])
+  @@index([giftId])
+  @@map("gift_gallery_section_items")
+}
+
+model GiftGalleryProgress {
+  id                String   @id @default(uuid()) @db.Uuid
+  galleryId         String   @map("gallery_id") @db.Uuid
+  giftId            String   @map("gift_id") @db.Uuid
+  firstGifterUserId String   @map("first_gifter_user_id") @db.Uuid
+  receivedAt        DateTime @default(now()) @map("received_at")
+
+  gallery     GiftGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  gift        Gift        @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  firstGifter User        @relation("GiftGalleryFirstGifter", fields: [firstGifterUserId], references: [id], onDelete: Restrict)
+
+  @@unique([galleryId, giftId])
+  @@index([galleryId])
+  @@map("gift_gallery_progress")
+}
+
+model GiftTransaction {
+  id             String   @id @default(uuid()) @db.Uuid
+  senderUserId   String   @map("sender_user_id") @db.Uuid
+  receiverUserId String   @map("receiver_user_id") @db.Uuid
+  giftId         String   @map("gift_id") @db.Uuid
+  coinCost       Int      @map("coin_cost")
+  pointsAwarded  Int      @map("points_awarded")
+  context        String   @default("direct") @db.VarChar(32)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  sender   User @relation("GiftsSent", fields: [senderUserId], references: [id], onDelete: Restrict)
+  receiver User @relation("GiftsReceived", fields: [receiverUserId], references: [id], onDelete: Restrict)
+  gift     Gift @relation(fields: [giftId], references: [id], onDelete: Restrict)
+
+  @@index([senderUserId])
+  @@index([receiverUserId])
+  @@index([createdAt])
+  @@map("gift_transactions")
+}
+
+model FanSpend {
+  id               String   @id @default(uuid()) @db.Uuid
+  senderUserId     String   @map("sender_user_id") @db.Uuid
+  receiverUserId   String   @map("receiver_user_id") @db.Uuid
+  periodType       String   @map("period_type") @db.VarChar(16)
+  periodKey        String   @map("period_key") @db.VarChar(16)
+  coinsSpent       BigInt   @default(0) @map("coins_spent")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  sender   User @relation("FanSpendSender", fields: [senderUserId], references: [id], onDelete: Cascade)
+  receiver User @relation("FanSpendReceiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  @@unique([senderUserId, receiverUserId, periodType, periodKey])
+  @@index([receiverUserId, periodType, periodKey])
+  @@map("fan_spend")
+}
 

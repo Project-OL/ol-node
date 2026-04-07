@@ -58,6 +58,10 @@ export const visitorRepository = {
     })
   },
 
+  async countVisitors(profileId: string): Promise<number> {
+    return prismaRead.profileVisitor.count({ where: { profileId } })
+  },
+
   async findVisitors(
     profileId: string,
     cursor: string | null,

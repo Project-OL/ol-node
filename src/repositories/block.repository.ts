@@ -5,7 +5,7 @@ export type BlockWithUser = BlockList & {
   blocked: {
     id: string
     username: string
-    defaultPublicId: bigint
+    defaultPublicId: string
     avatarUrl: string | null
   }
 }
@@ -100,7 +100,13 @@ export async function getBlockList(
   const page = hasMore ? blocks.slice(0, limit) : blocks
   const nextCursor = hasMore ? page[page.length - 1]?.id ?? null : null
   return {
-    blocks: page as BlockWithUser[],
+    blocks: page.map((b) => ({
+      ...b,
+      blocked: {
+        ...b.blocked,
+        defaultPublicId: String(b.blocked.defaultPublicId),
+      },
+    })) as BlockWithUser[],
     nextCursor,
   }
 }

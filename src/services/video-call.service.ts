@@ -1,0 +1,311 @@
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk'
+import { v4 as uuidv4 } from 'uuid'
+import { prisma } from '../config/database'
+import { AppError } from '../middlewares/errorHandler'
+import { env } from '../config/env'
+import { videoCallRepository } from '../repositories/video-call.repository'
+import { walletRepository } from '../repositories/wallet.repository'
+import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
+import { pointLedgerRepository } from '../repositories/point-ledger.repository'
+import { walletService } from './wallet.service'
+import { walletLevelService } from './user-level.service'
+import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
+import { userRepository } from '../repositories/user.repository'
+import { auditService } from './audit.service'
+import {
+  WalletCurrencyType,
+  CoinTxType,
+  PointTxType,
+  LedgerDirection,
+  LevelType,
+} from '@prisma/client'
+import {
+  maxPriceForLevel,
+  MIN_CALL_PRICE,
+  type UpdateCallSettingsInput,
+} from '../models/call.schemas'
+
+// ── LiveKit helpers ───────────────────────────────────────────────────────────
+
+function getLivekitClient(): RoomServiceClient {
+  if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
+    throw new AppError(503, 'Video call service not configured', 'LIVEKIT_NOT_CONFIGURED')
+  }
+  return new RoomServiceClient(env.LIVEKIT_URL, env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET)
+}
+
+async function buildToken(userId: string, roomName: string): Promise<string> {
+  if (!env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
+    throw new AppError(503, 'Video call service not configured', 'LIVEKIT_NOT_CONFIGURED')
+  }
+  const at = new AccessToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
+    identity: userId,
+    ttl: '2h',
+  })
+  at.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true })
+  return at.toJwt()
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+export const videoCallSettingsService = {
+  async get(userId: string) {
+    const settings = await videoCallRepository.getSettings(userId)
+    return settings ?? { userId, pricePerMin: MIN_CALL_PRICE, blockLv5: false, blockLv10: false }
+  },
+
+  /** Returns the full call-price cap table so the client can display it. */
+  priceTable() {
+    return [
+      { label: '≤Lv4',    maxLevel: 4,        maxPrice: 1800 },
+      { label: 'Lv5-9',   maxLevel: 9,        maxPrice: 2400 },
+      { label: 'Lv10-14', maxLevel: 14,       maxPrice: 3000 },
+      { label: 'Lv15-19', maxLevel: 19,       maxPrice: 3600 },
+      { label: 'Lv20-24', maxLevel: 24,       maxPrice: 4800 },
+      { label: 'Lv25-29', maxLevel: 29,       maxPrice: 6000 },
+      { label: 'Lv30-34', maxLevel: 34,       maxPrice: 7200 },
+      { label: 'Lv35+',   maxLevel: null,     maxPrice: 9600 },
+    ]
+  },
+
+  async update(userId: string, input: UpdateCallSettingsInput) {
+    if (input.pricePerMin !== undefined) {
+      // Validate against the creator's current livestream level
+      const record = await walletUserLevelRepository.getByUser(userId, LevelType.LIVESTREAM)
+      const livestreamLevel = record?.currentLevel ?? 1
+      const cap = maxPriceForLevel(livestreamLevel)
+
+      if (input.pricePerMin > cap) {
+        throw new AppError(
+          400,
+          `Your livestream level (Lv${livestreamLevel}) allows a max price of ${cap} coins/min`,
+          'PRICE_EXCEEDS_CAP',
+          { cap, livestreamLevel },
+        )
+      }
+    }
+
+    return videoCallRepository.upsertSettings(userId, input)
+  },
+}
+
+// ── Session ────────────────────────────────────────────────────────────────────
+
+export const videoCallSessionService = {
+  async initiate(callerId: string, creatorPublicId: string) {
+    // Resolve creator
+    const numericId = Number(creatorPublicId)
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
+    }
+    const creator = await userRepository.findByPublicId(numericId)
+    if (!creator) throw new AppError(404, 'Creator not found', 'NOT_FOUND')
+    if (creator.id === callerId) throw new AppError(400, 'Cannot call yourself', 'INVALID_REQUEST')
+
+    // Get creator call settings
+    const settings = await videoCallRepository.getSettings(creator.id)
+    const pricePerMin = settings?.pricePerMin ?? MIN_CALL_PRICE
+
+    // Check caller is not already in an active session with this creator
+    const existing = await videoCallRepository.getActiveSessionBetween(callerId, creator.id)
+    if (existing) {
+      throw new AppError(409, 'Already in an active call with this user', 'CALL_ALREADY_ACTIVE')
+    }
+
+    // Check caller wealth level against creator restrictions
+    if (settings?.blockLv5 || settings?.blockLv10) {
+      const callerLevel = await walletUserLevelRepository.getByUser(callerId, LevelType.WEALTH)
+      const wealthLevel = callerLevel?.currentLevel ?? 1
+
+      if (settings.blockLv10 && wealthLevel <= 10) {
+        throw new AppError(403, 'Your wealth level is too low to call this creator', 'LEVEL_RESTRICTED')
+      }
+      if (settings.blockLv5 && wealthLevel <= 5) {
+        throw new AppError(403, 'Your wealth level is too low to call this creator', 'LEVEL_RESTRICTED')
+      }
+    }
+
+    // Check caller has enough coins for the first minute
+    const callerBalance = await walletService.getCoinBalance(callerId)
+    if (callerBalance < BigInt(pricePerMin)) {
+      throw new AppError(402, 'Insufficient coins for a one-minute call', 'INSUFFICIENT_COINS', {
+        required: pricePerMin,
+        balance: callerBalance.toString(),
+      })
+    }
+
+    // Create LiveKit room and tokens
+    const roomName = `videocall-${uuidv4()}`
+    const lk = getLivekitClient()
+    await lk.createRoom({ name: roomName, emptyTimeout: 120, maxParticipants: 2 })
+
+    const [callerToken, creatorToken] = await Promise.all([
+      buildToken(callerId, roomName),
+      buildToken(creator.id, roomName),
+    ])
+
+    // Persist session
+    const session = await videoCallRepository.createSession({
+      callerId,
+      creatorId: creator.id,
+      livekitRoom: roomName,
+      pricePerMin,
+    })
+
+    auditService.log({
+      userId: callerId,
+      actionType: 'VIDEO_CALL_INITIATED',
+      actionStatus: 'success',
+      actionDetails: { sessionId: session.id, creatorId: creator.id, pricePerMin },
+    })
+
+    return {
+      sessionId: session.id,
+      roomName,
+      pricePerMin,
+      callerToken,
+      creatorToken,
+    }
+  },
+
+  /**
+   * Called once per minute during an active call.
+   * Deducts coins from caller, credits points to creator.
+   * Returns canContinue=false when caller cannot afford the next minute.
+   */
+  async tick(sessionId: string, callerId: string) {
+    const session = await videoCallRepository.getSession(sessionId)
+    if (!session) throw new AppError(404, 'Session not found', 'NOT_FOUND')
+    if (session.callerId !== callerId) throw new AppError(403, 'Forbidden', 'FORBIDDEN')
+    if (session.status !== 'ACTIVE') {
+      throw new AppError(409, 'Call is not active', 'CALL_NOT_ACTIVE')
+    }
+
+    const amount = BigInt(session.pricePerMin)
+    const minuteNum = session.minsCharged + 1
+    const idemBase = `videocall-${sessionId}-min-${minuteNum}`
+
+    // Debit coins from caller
+    const callerCoinWallet = await walletRepository.getOrCreate(session.callerId, WalletCurrencyType.COIN)
+    const creatorPointWallet = await walletRepository.getOrCreate(session.creatorId, WalletCurrencyType.POINT)
+
+    await prisma.$transaction(async (tx) => {
+      // Lock caller wallet
+      await walletRepository.lockForUpdate(tx, callerCoinWallet.id)
+
+      const lastCoin = await tx.coinLedgerEntry.findFirst({
+        where: { walletId: callerCoinWallet.id },
+        orderBy: { createdAt: 'desc' },
+        select: { balanceAfter: true },
+      })
+      const coinBalance = lastCoin?.balanceAfter ?? 0n
+      if (coinBalance < amount) {
+        throw new AppError(402, 'Insufficient coins', 'INSUFFICIENT_COINS')
+      }
+
+      await coinLedgerRepository.insert(tx, {
+        walletId: callerCoinWallet.id,
+        direction: LedgerDirection.DEBIT,
+        txType: CoinTxType.VIDEO_CALL,
+        amount,
+        balanceAfter: coinBalance - amount,
+        refId: sessionId,
+        counterpartyId: session.creatorId,
+        description: `Video call min #${minuteNum}`,
+        idempotencyKey: `${idemBase}-coin`,
+      })
+      await walletRepository.bumpVersion(tx, callerCoinWallet.id)
+
+      // Lock creator point wallet and credit
+      await walletRepository.lockForUpdate(tx, creatorPointWallet.id)
+
+      const lastPoint = await tx.pointLedgerEntry.findFirst({
+        where: { walletId: creatorPointWallet.id },
+        orderBy: { createdAt: 'desc' },
+        select: { balanceAfter: true },
+      })
+      const pointBalance = lastPoint?.balanceAfter ?? 0n
+
+      const levelResult = await walletLevelService.applyCredit(
+        tx,
+        session.creatorId,
+        LevelType.LIVESTREAM,
+        amount,
+      )
+
+      await pointLedgerRepository.insert(tx, {
+        walletId: creatorPointWallet.id,
+        direction: LedgerDirection.CREDIT,
+        txType: PointTxType.VIDEO_CALL,
+        amount,
+        balanceAfter: pointBalance + amount,
+        refId: sessionId,
+        counterpartyId: session.callerId,
+        description: `Video call min #${minuteNum}`,
+        idempotencyKey: `${idemBase}-point`,
+      })
+      await walletRepository.bumpVersion(tx, creatorPointWallet.id)
+
+      // Store levelResult on the outer scope for cache refresh after commit
+      ;(tx as unknown as { _lvl: typeof levelResult })._lvl = levelResult
+    }, { isolationLevel: 'Serializable' })
+
+    // Invalidate caches
+    await walletService.adjustCoinBalanceCache(session.callerId, 0n)
+    await walletService.adjustPointBalanceCache(session.creatorId, 0n)
+
+    // Update session counters
+    await videoCallRepository.incrementMinute(sessionId, amount, amount)
+
+    // Check if caller can afford the next minute
+    const remainingBalance = await walletService.getCoinBalance(session.callerId)
+    const canContinue = remainingBalance >= amount
+
+    if (!canContinue) {
+      await this.endInternal(sessionId, 'INSUFFICIENT_COINS', 'Caller ran out of coins')
+    }
+
+    return { canContinue, coinsRemaining: remainingBalance.toString() }
+  },
+
+  async end(sessionId: string, requesterId: string) {
+    const session = await videoCallRepository.getSession(sessionId)
+    if (!session) throw new AppError(404, 'Session not found', 'NOT_FOUND')
+    if (session.callerId !== requesterId && session.creatorId !== requesterId) {
+      throw new AppError(403, 'Forbidden', 'FORBIDDEN')
+    }
+    if (session.status !== 'ACTIVE') return { status: session.status } // idempotent
+
+    await this.endInternal(sessionId, 'ENDED', 'Ended by participant')
+    return { status: 'ENDED' }
+  },
+
+  async endInternal(sessionId: string, status: 'ENDED' | 'INSUFFICIENT_COINS', reason: string) {
+    await videoCallRepository.endSession(sessionId, status, reason)
+
+    // Best-effort: delete the LiveKit room
+    try {
+      const session = await videoCallRepository.getSession(sessionId)
+      if (session) {
+        const lk = getLivekitClient()
+        await lk.deleteRoom(session.livekitRoom)
+      }
+    } catch {
+      // Non-critical — room will auto-expire via emptyTimeout
+    }
+  },
+
+  /** Return a fresh LiveKit token for a participant joining an active session. */
+  async joinToken(sessionId: string, requesterId: string) {
+    const session = await videoCallRepository.getSession(sessionId)
+    if (!session) throw new AppError(404, 'Session not found', 'NOT_FOUND')
+    if (session.callerId !== requesterId && session.creatorId !== requesterId) {
+      throw new AppError(403, 'Forbidden', 'FORBIDDEN')
+    }
+    if (session.status !== 'ACTIVE') {
+      throw new AppError(409, 'Call is not active', 'CALL_NOT_ACTIVE')
+    }
+    const token = await buildToken(requesterId, session.livekitRoom)
+    return { token, roomName: session.livekitRoom }
+  },
+}

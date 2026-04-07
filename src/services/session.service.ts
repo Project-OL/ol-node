@@ -370,12 +370,18 @@ export const sessionService = {
 
   /**
    * Revoke every session and bump user.tokenVersion (invalidates all access JWTs).
+   * Redis deletes are batched in a single pipeline to avoid partial revocation if the
+   * process crashes between individual DEL calls.
    */
   async revokeAllSessions(userId: string) {
     const sessions = await sessionRepository.findActiveByUserId(userId)
     await sessionRepository.revokeAllByUserId(userId)
-    for (const s of sessions) {
-      await redisClient.del(RedisKeys.session(s.id))
+    if (sessions.length > 0) {
+      const pipe = redisClient.pipeline()
+      for (const s of sessions) {
+        pipe.del(RedisKeys.session(s.id))
+      }
+      await pipe.exec()
     }
     await userRepository.incrementTokenVersion(userId)
     await invalidateUserTokenVersionCache(userId)

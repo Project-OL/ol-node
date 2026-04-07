@@ -4,6 +4,9 @@ import { authenticate } from '../../middlewares/auth.middleware'
 import { searchQuerySchema } from '../../models/schemas'
 import { userSearchService } from '../../services/userSearch.service'
 import { meService } from '../../services/me.service'
+import { followService } from '../../services/follow.service'
+import { userRepository } from '../../repositories/user.repository'
+import { visitorRepository } from '../../repositories/visitor.repository'
 import { AppError } from '../../middlewares/errorHandler'
 import { env } from '../../config/env'
 
@@ -127,6 +130,49 @@ export default async function usersRoutes(app: FastifyInstance) {
         statusCode: 200,
       })
       return reply.status(200).send(result)
+    },
+  )
+
+  app.get<{ Params: { publicId: string } }>(
+    '/:publicId/social',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Get social counts (followers, following, friends, visitors) for a user by publicId.',
+        params: {
+          type: 'object',
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { publicId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const numericId = Number(request.params.publicId)
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
+      }
+      const targetUser = await userRepository.findByPublicId(numericId)
+      if (!targetUser) {
+        throw new AppError(404, 'User not found', 'NOT_FOUND')
+      }
+
+      const [counts, visitors] = await Promise.all([
+        followService.getCounts(targetUser.id),
+        visitorRepository.countVisitors(targetUser.id),
+      ])
+
+      return reply.status(200).send({
+        publicId: String(targetUser.publicId),
+        followers: counts.followers,
+        following: counts.following,
+        friends: counts.friends,
+        visitors,
+      })
     },
   )
 

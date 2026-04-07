@@ -2,102 +2,87 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { socialRateLimits } from '../../middlewares/rateLimitAuth'
 import {
-  followParamSchema,
   visitParamSchema,
   socialCursorQuerySchema,
-  userIdParamSchema,
 } from '../../models/schemas'
 import { followService } from '../../services/follow.service'
 import { visitorService } from '../../services/visitor.service'
+import { userRepository } from '../../repositories/user.repository'
 import { AppError } from '../../middlewares/errorHandler'
+
+async function resolvePublicId(publicId: string): Promise<string> {
+  const numericId = Number(publicId)
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
+  }
+  const user = await userRepository.findByPublicId(numericId)
+  if (!user) {
+    throw new AppError(404, 'User not found', 'NOT_FOUND')
+  }
+  return user.id
+}
 
 export default async function socialRoutes(app: FastifyInstance) {
   const preAuth = [authenticate]
 
-  app.post<{ Params: { targetUserId: string } }>(
-    '/follow/:targetUserId',
+  app.post<{ Params: { publicId: string } }>(
+    '/follow/:publicId',
     {
       preHandler: [...preAuth, socialRateLimits.follow],
       schema: {
         tags: ['Social'],
-        description: 'Follow a user by targetUserId',
+        description: 'Follow a user by publicId',
         params: {
           type: 'object',
-          required: ['targetUserId'],
-          properties: {
-            targetUserId: { type: 'string', minLength: 1 },
-          },
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
         },
       },
     },
     async (
-      request: FastifyRequest<{ Params: { targetUserId: string } }>,
+      request: FastifyRequest<{ Params: { publicId: string } }>,
       reply: FastifyReply,
     ) => {
       const userId = request.userId!
-      const parsed = followParamSchema.safeParse(request.params)
-      if (!parsed.success) {
-        throw new AppError(
-          400,
-          parsed.error.errors[0]?.message ?? 'Invalid target user id',
-          'INVALID_REQUEST',
-        )
-      }
-      const result = await followService.follow(
-        userId,
-        parsed.data.targetUserId,
-        {
-          request: {
-            ip: request.ip,
-            headers: request.headers as Record<string, string | undefined>,
-          },
-          deviceId: request.deviceId ?? null,
+      const targetUserId = await resolvePublicId(request.params.publicId)
+      const result = await followService.follow(userId, targetUserId, {
+        request: {
+          ip: request.ip,
+          headers: request.headers as Record<string, string | undefined>,
         },
-      )
+        deviceId: request.deviceId ?? null,
+      })
       return reply.status(200).send(result)
     },
   )
 
-  app.delete<{ Params: { targetUserId: string } }>(
-    '/follow/:targetUserId',
+  app.delete<{ Params: { publicId: string } }>(
+    '/follow/:publicId',
     {
       preHandler: [...preAuth, socialRateLimits.follow],
       schema: {
         tags: ['Social'],
-        description: 'Unfollow a user by targetUserId',
+        description: 'Unfollow a user by publicId',
         params: {
           type: 'object',
-          required: ['targetUserId'],
-          properties: {
-            targetUserId: { type: 'string', minLength: 1 },
-          },
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
         },
       },
     },
     async (
-      request: FastifyRequest<{ Params: { targetUserId: string } }>,
+      request: FastifyRequest<{ Params: { publicId: string } }>,
       reply: FastifyReply,
     ) => {
       const userId = request.userId!
-      const parsed = followParamSchema.safeParse(request.params)
-      if (!parsed.success) {
-        throw new AppError(
-          400,
-          parsed.error.errors[0]?.message ?? 'Invalid target user id',
-          'INVALID_REQUEST',
-        )
-      }
-      await followService.unfollow(
-        userId,
-        parsed.data.targetUserId,
-        {
-          request: {
-            ip: request.ip,
-            headers: request.headers as Record<string, string | undefined>,
-          },
-          deviceId: request.deviceId ?? null,
+      const targetUserId = await resolvePublicId(request.params.publicId)
+      await followService.unfollow(userId, targetUserId, {
+        request: {
+          ip: request.ip,
+          headers: request.headers as Record<string, string | undefined>,
         },
-      )
+        deviceId: request.deviceId ?? null,
+      })
       return reply.status(200).send({ following: false })
     },
   )
@@ -177,65 +162,59 @@ export default async function socialRoutes(app: FastifyInstance) {
     },
   )
 
-  app.get<{ Params: { userId: string } }>(
-    '/counts/:userId',
+  app.get<{ Params: { publicId: string } }>(
+    '/counts/:publicId',
     {
       preHandler: [...preAuth, socialRateLimits.list],
       schema: {
         tags: ['Social'],
-        description: 'Get social counts for a user',
+        description: 'Get social counts (followers, following, friends) for a user by publicId',
         params: {
           type: 'object',
-          required: ['userId'],
-          properties: { userId: { type: 'string', minLength: 1 } },
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
         },
       },
     },
     async (
-      request: FastifyRequest<{ Params: { userId: string } }>,
+      request: FastifyRequest<{ Params: { publicId: string } }>,
       reply: FastifyReply,
     ) => {
-      const parsed = userIdParamSchema.safeParse(request.params)
-      if (!parsed.success) {
-        throw new AppError(
-          400,
-          parsed.error.errors[0]?.message ?? 'Invalid user id',
-          'INVALID_REQUEST',
-        )
-      }
-      const result = await followService.getCounts(parsed.data.userId)
+      const targetUserId = await resolvePublicId(request.params.publicId)
+      const result = await followService.getCounts(targetUserId)
       return reply.status(200).send(result)
     },
   )
 
-  app.post<{ Params: { profileId: string } }>(
-    '/visit/:profileId',
+  app.post<{ Params: { publicId: string } }>(
+    '/visit/:publicId',
     {
       preHandler: [...preAuth, socialRateLimits.visit],
       schema: {
         tags: ['Social'],
-        description: 'Record a profile visit',
+        description: 'Record a profile visit by publicId',
         params: {
           type: 'object',
-          required: ['profileId'],
-          properties: { profileId: { type: 'string', minLength: 1 } },
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
         },
       },
     },
     async (
-      request: FastifyRequest<{ Params: { profileId: string } }>,
+      request: FastifyRequest<{ Params: { publicId: string } }>,
       reply: FastifyReply,
     ) => {
       const userId = request.userId!
-      const parsed = visitParamSchema.safeParse(request.params)
+      const parsed = visitParamSchema.safeParse({ profileId: request.params.publicId })
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid profile id',
+          parsed.error.errors[0]?.message ?? 'Invalid public ID',
           'INVALID_REQUEST',
         )
       }
-      await visitorService.recordVisit(parsed.data.profileId, userId, {
+      const profileId = await resolvePublicId(request.params.publicId)
+      await visitorService.recordVisit(profileId, userId, {
         request: {
           ip: request.ip,
           headers: request.headers as Record<string, string | undefined>,
@@ -296,4 +275,3 @@ export default async function socialRoutes(app: FastifyInstance) {
     },
   )
 }
-

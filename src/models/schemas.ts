@@ -307,3 +307,25 @@ export const postCursorQuerySchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
+
+export const SOCIAL_SECTIONS = ['followers', 'following', 'friends', 'visitors'] as const
+export type SocialSection = (typeof SOCIAL_SECTIONS)[number]
+
+export const socialSummaryQuerySchema = z.object({
+  include: z
+    .string()
+    .optional()
+    .transform((s) =>
+      s
+        ? (s.split(',').map((x) => x.trim()).filter(Boolean) as SocialSection[])
+        : ([...SOCIAL_SECTIONS] as SocialSection[]),
+    )
+    .pipe(
+      z
+        .array(z.enum(['followers', 'following', 'friends', 'visitors']))
+        .min(1, 'At least one section required'),
+    ),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+
+export type SocialSummaryQuery = z.infer<typeof socialSummaryQuerySchema>

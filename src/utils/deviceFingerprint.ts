@@ -1,13 +1,25 @@
 import crypto from 'crypto'
+import { env } from '../config/env'
 
-/** SHA-256 hex of deviceId + userAgent + IP (server-side binding signal; not proof of possession). */
+/**
+ * HMAC-SHA256 of (deviceId | userAgent | IP) keyed with DEVICE_FINGERPRINT_SECRET.
+ * Using HMAC instead of plain SHA-256 prevents pre-computation attacks: an attacker
+ * who knows the three input values cannot forge the fingerprint without the server secret.
+ * Falls back to a plain SHA-256 in non-production environments where the secret is optional.
+ */
 export function computeDeviceBindingHash(
   deviceId: string,
   userAgent: string | null | undefined,
   ipAddress: string,
 ): string {
   const ua = userAgent ?? ''
-  return crypto.createHash('sha256').update(`${deviceId}|${ua}|${ipAddress}`).digest('hex')
+  const payload = `${deviceId}|${ua}|${ipAddress}`
+  const secret = env.DEVICE_FINGERPRINT_SECRET
+  if (secret) {
+    return crypto.createHmac('sha256', secret).update(payload).digest('hex')
+  }
+  // Non-production fallback (secret not set): plain SHA-256
+  return crypto.createHash('sha256').update(payload).digest('hex')
 }
 
 export function hashIp(ipAddress: string): string {

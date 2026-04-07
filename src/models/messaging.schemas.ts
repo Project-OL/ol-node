@@ -51,15 +51,20 @@ export const MuteConversationSchema = z.object({
 })
 
 export const BlockUserSchema = z.object({
-  userId: z.string().uuid(),
+  publicId: z.string().min(1),
 })
 export const BulkUnblockSchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1).max(50),
+  publicIds: z.array(z.string().min(1)).min(1).max(50),
 })
 export const GetBlockListSchema = z.object({
   search: z.string().max(100).optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+
+/** Query: whether the current user has blocked this public ID. */
+export const CheckBlockQuerySchema = z.object({
+  publicId: z.string().min(1, 'publicId is required'),
 })
 
 export const CreateReportSchema = z.object({
@@ -103,6 +108,7 @@ export type MuteConversationInput = z.infer<typeof MuteConversationSchema>
 export type BlockUserInput = z.infer<typeof BlockUserSchema>
 export type BulkUnblockInput = z.infer<typeof BulkUnblockSchema>
 export type GetBlockListInput = z.infer<typeof GetBlockListSchema>
+export type CheckBlockQueryInput = z.infer<typeof CheckBlockQuerySchema>
 export type CreateReportInput = z.infer<typeof CreateReportSchema>
 export type GetUploadUrlsInput = z.infer<typeof GetUploadUrlsSchema>
 export type SetBroadcastReminderInput = z.infer<typeof SetBroadcastReminderSchema>

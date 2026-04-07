@@ -27,6 +27,8 @@ const envSchema = z
     JWT_ACCESS_EXPIRES_IN: z.string().default('8m'),
     JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
     JWT_REFRESH_SECRET: z.string().min(32).optional(), // if not set, uses JWT_ACCESS_SECRET (not recommended for prod)
+    /** HMAC key for device binding fingerprint. Min 32 chars. Required in production. */
+    DEVICE_FINGERPRINT_SECRET: z.string().min(32).optional(),
 
     AWS_ACCESS_KEY_ID: z.string().optional(),
     AWS_SECRET_ACCESS_KEY: z.string().optional(),
@@ -71,6 +73,34 @@ const envSchema = z
 
     REQUEST_BODY_LIMIT_BYTES: z.coerce.number().default(1_048_576), // 1MB
     MAX_UPLOAD_SIZE_BYTES: z.coerce.number().default(10_485_760), // 10MB
+
+    // LiveKit
+    LIVEKIT_URL: z.string().url().optional(),
+    LIVEKIT_API_KEY: z.string().optional(),
+    LIVEKIT_API_SECRET: z.string().optional(),
+
+    // Wallet / coins
+    COIN_TOPUP_RATE_LIMIT_MAX: z.coerce.number().default(5),
+    COIN_TOPUP_RATE_LIMIT_WINDOW: z.coerce.number().default(60000),
+    POINTS_WITHDRAW_MIN: z.coerce.bigint().default(6700n),
+    POINTS_WITHDRAW_MAX_WEEKLY: z.coerce.bigint().default(1050000n),
+    POINTS_TO_USD_RATE: z.coerce.number().default(210),
+
+    /** 1 = 1 coin → 1 point (receiver); 0.5 = 2 coins → 1 point */
+    GIFT_COIN_TO_POINT_RATE: z.coerce.number().positive().default(1),
+
+    /** Comma-separated user UUIDs allowed to call gift/gallery admin APIs */
+    ADMIN_USER_IDS: z
+      .string()
+      .optional()
+      .transform((s) =>
+        s
+          ? s
+              .split(",")
+              .map((id) => id.trim())
+              .filter(Boolean)
+          : [],
+      ),
   })
   .superRefine((val, ctx) => {
     if (val.NODE_ENV === 'production' && !val.JWT_REFRESH_SECRET) {
@@ -78,6 +108,13 @@ const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ['JWT_REFRESH_SECRET'],
         message: 'JWT_REFRESH_SECRET is required in production and must be different from JWT_ACCESS_SECRET',
+      })
+    }
+    if (val.NODE_ENV === 'production' && !val.DEVICE_FINGERPRINT_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DEVICE_FINGERPRINT_SECRET'],
+        message: 'DEVICE_FINGERPRINT_SECRET is required in production (min 32 chars)',
       })
     }
   })

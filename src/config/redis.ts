@@ -121,8 +121,8 @@ export const RedisKeys = {
   blockRateLimit: (userId: string) => `ratelimit:block:${userId}`,
   /** Messaging: report rate limit per user. */
   reportRateLimit: (userId: string) => `ratelimit:report:${userId}`,
-  /** Messaging: block list cache per user. */
-  blockList: (userId: string) => `blocklist:${userId}`,
+  /** Messaging: block list cache per user (v2 includes blocked user avatarUrl). */
+  blockList: (userId: string) => `blocklist:v2:${userId}`,
   /** Messaging: allowed sender cache (recipientId, senderId) — 60s TTL to avoid repeated follow checks. */
   allowedMessaging: (recipientId: string, senderId: string) =>
     `allowed-messaging:${recipientId}:${senderId}`,
@@ -132,6 +132,23 @@ export const RedisKeys = {
   userProfile: (userId: string) => `user:profile:${userId}`,
   /** Display-name change lock (TTL = seconds until next calendar month UTC). */
   userUsernameLock: (userId: string) => `user:username_lock:${userId}`,
+  // Wallet Redis keys
+  walletCoinBalance: (userId: string) => `wallet:coins:${userId}`,
+  walletPointBalance: (userId: string) => `wallet:points:${userId}`,
+  walletIdem: (key: string) => `wallet:idem:${key}`,
+  walletRateLimit: (userId: string, action: string) => `wallet:rl:${userId}:${action}`,
+  /** Wallet ledger level snapshots (wealth / livestream cumulative credits). */
+  userWealthLevel: (userId: string) => `level:wealth:${userId}`,
+  userLivestreamLevel: (userId: string) => `level:stream:${userId}`,
+  levelConfigWealth: () => `level:config:wealth`,
+  levelConfigStream: () => `level:config:stream`,
+  giftList: () => `gifts:list`,
+  giftByTag: (tag: string) => `gifts:tag:${tag}`,
+  giftGallery: (hostUserId: string, year: number, month: number) =>
+    `gallery:${hostUserId}:${year}:${month}`,
+  fanRanking: (hostUserId: string, periodType: string, periodKey: string) =>
+    `fanrank:${hostUserId}:${periodType}:${periodKey}`,
+  giftSendRateLimit: (userId: string) => `rl:gift:send:${userId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -152,6 +169,27 @@ export const TYPING_TTL = 5
 /** Messaging: block list per user TTL (1h). */
 export const BLOCK_LIST_TTL = 60 * 60
 
+/** Wallet: cached balance TTL (5 minutes). */
+export const WALLET_BALANCE_TTL = 300
+/** Wallet: idempotency key TTL (5 minutes). */
+export const WALLET_IDEM_TTL = 300
+/** Wallet: per-action rate limit window (1 minute). */
+export const WALLET_RL_TTL = 60
+
+/** Wallet ledger levels: per-user snapshot TTL (refreshed on each credit). */
+export const USER_LEVEL_TTL = 300
+/** Wallet level threshold list cache (config changes rarely). */
+export const LEVEL_CONFIG_TTL = 3600
+
+/** Gift catalog list / per-tag cache (10 min). */
+export const GIFT_LIST_CACHE_TTL = 600
+/** Host gift gallery payload cache (5 min). */
+export const GIFT_GALLERY_CACHE_TTL = 300
+/** Fan ranking: day period (2 min). */
+export const FAN_RANK_DAY_TTL = 120
+/** Fan ranking: week / month (5 min). */
+export const FAN_RANK_WEEK_MONTH_TTL = 300
+
 export async function redisPipeline(
   commands: [string, ...unknown[]][],
 ): Promise<unknown[]> {
@@ -163,15 +201,23 @@ export async function redisPipeline(
   if (!results) {
     throw new Error('Redis pipeline failed to execute')
   }
+
+  // Collect ALL per-command errors before throwing so callers and logs see the
+  // full picture of partial failures rather than only the first error encountered.
+  const failures: string[] = []
   const values: unknown[] = []
   for (let i = 0; i < results.length; i++) {
     const [err, result] = results[i]
     if (err) {
-      throw new Error(
-        `Redis pipeline command ${i + 1} (${commands[i][0]}) failed: ${(err as Error).message}`,
-      )
+      failures.push(`cmd ${i + 1} (${commands[i]![0]}): ${(err as Error).message}`)
+    } else {
+      values.push(result)
     }
-    values.push(result)
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `Redis pipeline had ${failures.length} failed command(s) — ${failures.join('; ')}`,
+    )
   }
   return values
 }

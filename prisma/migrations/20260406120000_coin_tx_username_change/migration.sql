@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "CoinTxType" ADD VALUE 'USERNAME_CHANGE';

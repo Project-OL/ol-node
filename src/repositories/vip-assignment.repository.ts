@@ -63,4 +63,15 @@ export const vipAssignmentRepository = {
       where: { id: assignmentId, userId },
     })
   },
+
+  /**
+   * Find the most recent VIP assignment for a user regardless of active/expired status.
+   * Used to surface last VIP dates even after expiry.
+   */
+  async findMostRecent(userId: string): Promise<UserVipAssignment | null> {
+    return prisma.userVipAssignment.findFirst({
+      where: { userId },
+      orderBy: { startsAt: 'desc' },
+    })
+  },
 }

@@ -38,6 +38,8 @@ export type PaginatedConversations = {
 export const messagingService = {
   async canUserMessage(senderId: string, recipientId: string): Promise<void> {
     if (await blockRepository.isBlocked(recipientId, senderId)) {
+      // Evict any cached permission — block state wins regardless of TTL
+      await redisClient.del(RedisKeys.allowedMessaging(recipientId, senderId)).catch(() => {})
       throw new AppError(403, 'User has blocked you', 'USER_BLOCKED')
     }
     if (await blockRepository.isBlocked(senderId, recipientId)) {
@@ -57,12 +59,15 @@ export const messagingService = {
     const cachedAllowed = await redisClient.get(allowedCacheKey)
     if (cachedAllowed === '1') return
 
-    const [following, friends] = await Promise.all([
-      followRepository.getFollowingIds(recipientId, 500),
-      followRepository.getFriendIds(senderId, 500),
+    // O(1) targeted existence checks — replaces fetching up to 500 IDs per call.
+    // recipientFollowsSender: recipient follows sender → qualifies for allowMsgFromFollowing.
+    // senderFollowsRecipient: both follow each other → qualifies for allowMsgFromMutual.
+    const [recipientFollowsSender, senderFollowsRecipient] = await Promise.all([
+      followRepository.existsFollow(recipientId, senderId),
+      followRepository.existsFollow(senderId, recipientId),
     ])
-    const recipientFollowsSender = following.includes(senderId)
-    const isMutual = friends.includes(recipientId)
+    const isMutual = recipientFollowsSender && senderFollowsRecipient
+
     if (settings.allowMsgFromFollowing && recipientFollowsSender) {
       await redisClient.set(allowedCacheKey, '1', 'EX', 60)
       return
