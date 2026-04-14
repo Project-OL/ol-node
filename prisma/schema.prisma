@@ -73,6 +73,8 @@ model User {
   userLevel         UserLevel?
   subscribers       UserSubscriber[] @relation("Creator")
   subscriptions     UserSubscriber[] @relation("Subscriber")
+  creatorSubsAsFan  CreatorSubscription[] @relation("CreatorSubFan")
+  creatorSubsAsHost CreatorSubscription[] @relation("CreatorSubHost")
   posts             Post[] @relation("UserPosts")
   taggedIn          PostTag[] @relation("TaggedIn")
   postLikes         PostLike[] @relation("PostLikes")
@@ -90,12 +92,14 @@ model User {
   videoCallSettings VideoCallSettings?
   callerSessions    VideoCallSession[] @relation("CallSessionCaller")
   creatorSessions   VideoCallSession[] @relation("CallSessionCreator")
-  giftGalleries     GiftGallery[]
-  giftGalleryFirstGifters GiftGalleryProgress[] @relation("GiftGalleryFirstGifter")
+  hostGalleryProgress   GiftGalleryProgress[] @relation("HostGalleryProgress")
+  gifterGalleryProgress GiftGalleryProgress[] @relation("GifterGalleryProgress")
   giftsSent         GiftTransaction[]     @relation("GiftsSent")
   giftsReceived     GiftTransaction[]     @relation("GiftsReceived")
   fanSpendSent      FanSpend[]            @relation("FanSpendSender")
   fanSpendReceived  FanSpend[]            @relation("FanSpendReceiver")
+  guardiansAsGuardian Guardian[]          @relation("GuardianOf")
+  guardiansAsTarget   Guardian[]          @relation("GuardedBy")
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -422,6 +426,58 @@ model UserSubscriber {
   @@map("user_subscribers")
 }
 
+enum CreatorSubscriptionStatus {
+  ACTIVE
+  GRACE
+  EXPIRED
+  CANCELLED
+}
+
+model CreatorSubscription {
+  id             String                    @id @default(cuid())
+  subscriberId   String                    @map("subscriber_id") @db.Uuid
+  creatorId      String                    @map("creator_id") @db.Uuid
+  status         CreatorSubscriptionStatus
+  nextRenewalAt  DateTime                  @map("next_renewal_at")
+  graceUntil     DateTime?                 @map("grace_until")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  subscriber User @relation("CreatorSubFan", fields: [subscriberId], references: [id], onDelete: Cascade)
+  creator    User @relation("CreatorSubHost", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriberId, creatorId])
+  @@index([nextRenewalAt, status])
+  @@map("creator_subscriptions")
+}
+
+enum GuardianTier {
+  SILVER
+  GOLD
+  KING
+}
+
+model Guardian {
+  id             String       @id @default(cuid())
+  guardianUserId String       @map("guardian_user_id") @db.Uuid
+  targetUserId   String       @map("target_user_id") @db.Uuid
+  tier           GuardianTier
+  durationMonths Int          @map("duration_months")
+  coinsPaid      BigInt       @map("coins_paid")
+  purchasedAt    DateTime     @default(now()) @map("purchased_at")
+  expiresAt      DateTime     @map("expires_at")
+  isExpired      Boolean      @default(false) @map("is_expired")
+
+  guardianUser User @relation("GuardianOf", fields: [guardianUserId], references: [id], onDelete: Restrict)
+  targetUser   User @relation("GuardedBy", fields: [targetUserId], references: [id], onDelete: Restrict)
+
+  @@unique([guardianUserId, targetUserId])
+  @@index([targetUserId, isExpired, expiresAt])
+  @@index([guardianUserId, isExpired])
+  @@index([expiresAt, isExpired])
+  @@map("guardians")
+}
+
 // ─── 15. USER_LEVELS (per-user livestream/wealth levels and XP) ───
 model UserLevel {
   id            String   @id @default(cuid())
@@ -467,6 +523,7 @@ model Post {
   mediaUrl    String         @map("media_url") @db.VarChar(1000)
   caption     String?        @db.Text
   visibility  PostVisibility @default(SUBSCRIBERS_ONLY)
+  subscriberOnly Boolean     @default(false) @map("subscriber_only")
   likesCount  Int            @default(0) @map("likes_count")
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
@@ -700,6 +757,8 @@ enum CoinTxType {
   ADJUSTMENT
   VIDEO_CALL
   USERNAME_CHANGE
+  CREATOR_SUBSCRIPTION
+  GUARDIAN_PURCHASE
 }
 
 enum PointTxType {
@@ -973,18 +1032,16 @@ model GiftTag {
 }
 
 model GiftGallery {
-  id         String   @id @default(uuid()) @db.Uuid
-  hostUserId String   @map("host_user_id") @db.Uuid
-  year       Int
-  month      Int
-  createdAt  DateTime @default(now()) @map("created_at")
+  id        String   @id @default(uuid()) @db.Uuid
+  year      Int
+  month     Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  hostUser User                   @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
   sections GiftGallerySection[]
   progress GiftGalleryProgress[]
 
-  @@unique([hostUserId, year, month])
-  @@index([hostUserId])
+  @@unique([year, month])
   @@map("gift_galleries")
 }
 
@@ -1007,8 +1064,9 @@ model GiftGallerySectionItem {
   giftId    String @map("gift_id") @db.Uuid
   sortOrder Int    @default(0) @map("sort_order")
 
-  section GiftGallerySection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  gift    Gift               @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  section       GiftGallerySection   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  gift          Gift                 @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  progressRows  GiftGalleryProgress[]
 
   @@unique([sectionId, giftId])
   @@index([giftId])
@@ -1016,17 +1074,22 @@ model GiftGallerySectionItem {
 }
 
 model GiftGalleryProgress {
-  id                String   @id @default(uuid()) @db.Uuid
-  galleryId         String   @map("gallery_id") @db.Uuid
-  giftId            String   @map("gift_id") @db.Uuid
-  firstGifterUserId String   @map("first_gifter_user_id") @db.Uuid
-  receivedAt        DateTime @default(now()) @map("received_at")
+  id                       String   @id @default(uuid()) @db.Uuid
+  galleryId                String   @map("gallery_id") @db.Uuid
+  hostUserId               String   @map("host_user_id") @db.Uuid
+  giftId                   String   @map("gift_id") @db.Uuid
+  giftGallerySectionItemId String   @map("gift_gallery_section_item_id") @db.Uuid
+  firstGifterId            String   @map("first_gifter_id") @db.Uuid
+  receivedAt               DateTime @default(now()) @map("received_at")
 
-  gallery     GiftGallery @relation(fields: [galleryId], references: [id], onDelete: Cascade)
-  gift        Gift        @relation(fields: [giftId], references: [id], onDelete: Restrict)
-  firstGifter User        @relation("GiftGalleryFirstGifter", fields: [firstGifterUserId], references: [id], onDelete: Restrict)
+  gallery     GiftGallery             @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  host        User                    @relation("HostGalleryProgress", fields: [hostUserId], references: [id], onDelete: Cascade)
+  firstGifter User                    @relation("GifterGalleryProgress", fields: [firstGifterId], references: [id], onDelete: Restrict)
+  gift        Gift                    @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  sectionItem GiftGallerySectionItem  @relation(fields: [giftGallerySectionItemId], references: [id], onDelete: Cascade)
 
-  @@unique([galleryId, giftId])
+  @@unique([hostUserId, giftGallerySectionItemId])
+  @@index([hostUserId, galleryId])
   @@index([galleryId])
   @@map("gift_gallery_progress")
 }

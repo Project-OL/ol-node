@@ -43,11 +43,19 @@ const existsLike = vi.fn()
 const batchExistsLike = vi.fn()
 const likePostRepo = vi.fn()
 const unlikePostRepo = vi.fn()
+const findByUserId = vi.fn()
+const checkAccess = vi.fn()
+vi.mock('../../src/services/subscription.service', () => ({
+  subscriptionService: {
+    checkAccess: (...args: unknown[]) => checkAccess(...args),
+  },
+}))
 vi.mock('../../src/repositories/post.repository', () => ({
   postRepository: {
     createPost: (...args: unknown[]) => createPostRepo(...args),
     createTags: (...args: unknown[]) => createTags(...args),
     findById: (...args: unknown[]) => findById(...args),
+    findByUserId: (...args: unknown[]) => findByUserId(...args),
     deletePost: (...args: unknown[]) => deletePostRepo(...args),
     existsLike: (...args: unknown[]) => existsLike(...args),
     batchExistsLike: (...args: unknown[]) => batchExistsLike(...args),
@@ -142,58 +150,72 @@ describe('postService', () => {
     })
 
     it('creates post without tags and audits', async () => {
-      const mediaKey = `posts/${userId}/abc.jpg`
-      const now = new Date()
-      getPublicUrl.mockReturnValue('https://cdn/posts/key.jpg')
-      createPostRepo.mockResolvedValue({
-        id: postId,
-        userId,
-        mediaKey,
-        mediaUrl: 'https://cdn/posts/key.jpg',
-        caption: null,
-        visibility: 'SUBSCRIBERS_ONLY',
-        likesCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      })
-      findById.mockResolvedValue({
-        id: postId,
-        user: {
-          id: userId,
-          username: 'user',
-          firstName: null,
-          lastName: null,
-          publicId: BigInt(1),
-          avatarUrl: null,
-        },
-        tags: [],
-        mediaUrl: 'https://cdn/posts/key.jpg',
-        caption: null,
-        visibility: 'SUBSCRIBERS_ONLY',
-        likesCount: 0,
-        createdAt: now,
-        updatedAt: now,
-      })
-
-      const result = await postService.createPost(
-        userId,
-        {
-          mediaKey,
-        },
-        meta,
-      )
-
-      expect(createPostRepo).toHaveBeenCalled()
-      expect(createTags).not.toHaveBeenCalled()
-      expect(cacheDelete).toHaveBeenCalledWith(`user:posts:${userId}`)
-      expect(result.postId).toBe(postId)
-      expect(auditLog).toHaveBeenCalledWith(
-        expect.objectContaining({
-          actionType: 'POST_CREATED',
-          actionStatus: 'success',
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-04-12T12:00:00Z'))
+      try {
+        const mediaKey = `posts/${userId}/abc.jpg`
+        const now = new Date()
+        getPublicUrl.mockReturnValue('https://cdn/posts/key.jpg')
+        createPostRepo.mockResolvedValue({
+          id: postId,
           userId,
-        }),
-      )
+          mediaKey,
+          mediaUrl: 'https://cdn/posts/key.jpg',
+          caption: null,
+          visibility: 'SUBSCRIBERS_ONLY',
+          subscriberOnly: false,
+          likesCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        })
+        findById.mockResolvedValue({
+          id: postId,
+          user: {
+            id: userId,
+            username: 'user',
+            firstName: null,
+            lastName: null,
+            publicId: BigInt(1),
+            avatarUrl: 'https://cdn.example/avatars/u.jpg',
+            gender: 'female',
+            dateOfBirth: new Date(Date.UTC(2000, 0, 15)),
+          },
+          tags: [],
+          mediaUrl: 'https://cdn/posts/key.jpg',
+          caption: null,
+          visibility: 'SUBSCRIBERS_ONLY',
+          subscriberOnly: false,
+          likesCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        })
+
+        const result = await postService.createPost(
+          userId,
+          {
+            mediaKey,
+          },
+          meta,
+        )
+
+        expect(createPostRepo).toHaveBeenCalled()
+        expect(createTags).not.toHaveBeenCalled()
+        expect(cacheDelete).toHaveBeenCalledWith(`user:posts:${userId}`)
+        expect(result.postId).toBe(postId)
+        expect(result.author.avatarUrl).toBe('https://cdn.example/avatars/u.jpg')
+        expect(result.author.gender).toBe('female')
+        expect(result.author.age).toBe(26)
+        expect(result.subscriberOnly).toBe(false)
+        expect(auditLog).toHaveBeenCalledWith(
+          expect.objectContaining({
+            actionType: 'POST_CREATED',
+            actionStatus: 'success',
+            userId,
+          }),
+        )
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 

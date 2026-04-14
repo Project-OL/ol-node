@@ -76,6 +76,28 @@ vi.mock('../../src/services/storage.service', () => ({
   },
 }))
 
+const getCompletionSummaryForUser = vi.fn()
+
+vi.mock('../../src/services/gift-gallery.service', () => ({
+  giftGalleryService: {
+    getCompletionSummaryForUser: (...a: unknown[]) => getCompletionSummaryForUser(...a),
+  },
+}))
+
+const isSuperHost = vi.fn()
+vi.mock('../../src/services/super-host.service', () => ({
+  superHostService: {
+    isSuperHost: (...a: unknown[]) => isSuperHost(...a),
+  },
+}))
+
+const getActiveGuardianSummary = vi.fn()
+vi.mock('../../src/services/guardian.service', () => ({
+  guardianService: {
+    getActiveGuardianSummary: (...a: unknown[]) => getActiveGuardianSummary(...a),
+  },
+}))
+
 import { meService } from '../../src/services/me.service'
 import { verifyAccess } from '../../src/utils/jwt'
 
@@ -89,6 +111,7 @@ function baseRow(over: Partial<Record<string, unknown>> = {}) {
     gender: 'female',
     dateOfBirth: null as Date | null,
     avatarUrl: null as string | null,
+    country: null as string | null,
     bio: null as string | null,
     usernameUpdatedAt: null as Date | null,
     passwordSet: true,
@@ -117,13 +140,32 @@ describe('meService', () => {
     getPointBalance.mockReset()
     walletUserLevelGetByUser.mockReset()
     vipFindMostRecent.mockReset()
+    getCompletionSummaryForUser.mockReset()
+    getCompletionSummaryForUser.mockResolvedValue({
+      isFullGallery: false,
+      receivedItems: 0,
+      totalItems: 0,
+      monthEndAt: '2026-04-30T23:59:59.999Z',
+      secondsRemaining: 100,
+    })
+    isSuperHost.mockResolvedValue(false)
+    getActiveGuardianSummary.mockResolvedValue(null)
     getCoinBalance.mockResolvedValue(20_000n)
     getPointBalance.mockResolvedValue(0n)
     walletUserLevelGetByUser.mockResolvedValue(null)
     vipFindMostRecent.mockResolvedValue(null)
   })
 
+  const galleryStub = {
+    isFullGallery: false,
+    receivedItems: 0,
+    totalItems: 0,
+    monthEndAt: '2026-04-30T23:59:59.999Z',
+    secondsRemaining: 100,
+  }
+
   const walletSuffix = {
+    galleryCompletion: galleryStub,
     coinsBalance: '20000',
     pointsBalance: '0',
     livestreamLevel: 1,
@@ -131,6 +173,8 @@ describe('meService', () => {
     isVipActive: false,
     lastVipStartedAt: null,
     lastVipExpiresAt: null,
+    isSuperHost: false,
+    activeGuardian: null,
   }
 
   it('getMe returns cached payload on Redis HIT', async () => {
@@ -140,6 +184,7 @@ describe('meService', () => {
       name: 'Jane Doe',
       email: 'j@example.com',
       avatarUrl: null,
+      country: null,
       bio: null,
       dateOfBirth: null,
       gender: 'female' as const,
@@ -173,6 +218,7 @@ describe('meService', () => {
       name: 'Jane Doe',
       email: 'j@example.com',
       avatarUrl: null,
+      country: null,
       bio: null,
       gender: 'female' as const,
       canChangeUsername: true,

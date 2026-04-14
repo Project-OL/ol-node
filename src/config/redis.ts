@@ -144,11 +144,32 @@ export const RedisKeys = {
   levelConfigStream: () => `level:config:stream`,
   giftList: () => `gifts:list`,
   giftByTag: (tag: string) => `gifts:tag:${tag}`,
-  giftGallery: (hostUserId: string, year: number, month: number) =>
+  /** Global gallery structure for a UTC month (admin-defined template). */
+  giftGalleryTemplate: (year: number, month: number) =>
+    `gallery:template:${year}:${month}`,
+  /** Per-host merged payload (template + that host's progress). */
+  giftGalleryHost: (hostUserId: string, year: number, month: number) =>
     `gallery:${hostUserId}:${year}:${month}`,
   fanRanking: (hostUserId: string, periodType: string, periodKey: string) =>
     `fanrank:${hostUserId}:${periodType}:${periodKey}`,
   giftSendRateLimit: (userId: string) => `rl:gift:send:${userId}`,
+  /** O(1) paid subscription access: subscriber may view creator subscriber-only content while key exists. */
+  subscriptionAccess: (subscriberId: string, creatorId: string) =>
+    `sub:access:${subscriberId}:${creatorId}`,
+  /** Cached ACTIVE paid subscriber count per creator (display stat). */
+  subscriptionCreatorCount: (creatorId: string) => `sub:count:${creatorId}`,
+  /** Per-user cap for mutating subscription routes (after JWT). */
+  subscriptionMutationRateLimit: (userId: string) => `ratelimit:subscription:mut:${userId}`,
+  /** Cached top active guardian for a target profile card. */
+  guardianActive: (targetUserId: string) => `guardian:active:${targetUserId}`,
+  /** Cached super-host flag for a profile card. */
+  superHostStatus: (targetUserId: string) => `superhost:status:${targetUserId}`,
+  /** Users I am guarding (list response cache). */
+  guardianMyList: (userId: string) => `guardian:my:${userId}`,
+  /** Users guarding me (list response cache). */
+  guardianMeList: (userId: string) => `guardian:me:${userId}`,
+  /** POST /guardian purchase throttle (per user). */
+  guardianPurchaseRateLimit: (userId: string) => `ratelimit:guardian:purchase:${userId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -183,12 +204,26 @@ export const LEVEL_CONFIG_TTL = 3600
 
 /** Gift catalog list / per-tag cache (10 min). */
 export const GIFT_LIST_CACHE_TTL = 600
-/** Host gift gallery payload cache (5 min). */
-export const GIFT_GALLERY_CACHE_TTL = 300
+/** Per-host merged gift gallery cache (5 min). */
+export const GALLERY_HOST_TTL = 300
+/** Global gallery template cache (10 min; invalidated on admin upsert). */
+export const GALLERY_TEMPLATE_TTL = 600
+/** @deprecated Use GALLERY_HOST_TTL */
+export const GIFT_GALLERY_CACHE_TTL = GALLERY_HOST_TTL
 /** Fan ranking: day period (2 min). */
 export const FAN_RANK_DAY_TTL = 120
 /** Fan ranking: week / month (5 min). */
 export const FAN_RANK_WEEK_MONTH_TTL = 300
+
+/** Paid subscriber count cache per creator (eventually consistent display stat). */
+export const SUBSCRIPTION_COUNT_CACHE_TTL = 300
+
+/** Guardian: active top guardian per target (recalculated on purchase/expiry). */
+export const GUARDIAN_ACTIVE_TTL = 300
+/** Guardian: my-guardians / guarding-me list cache. */
+export const GUARDIAN_LIST_TTL = 120
+/** Super-host status cache for profile short lookups. */
+export const SUPER_HOST_STATUS_TTL = 300
 
 export async function redisPipeline(
   commands: [string, ...unknown[]][],

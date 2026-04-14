@@ -7,7 +7,8 @@ import { followRepository } from '../repositories/follow.repository'
 import { storageService } from './storage.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { AuditMeta } from './follow.service'
-import type { CreatePostDto, PostResponse, TaggedUser } from '../types/post.types'
+import type { CreatePostDto, PostAuthor, PostResponse, TaggedUser } from '../types/post.types'
+import { subscriptionService } from './subscription.service'
 
 function buildMediaKeyRegex(userId: string): RegExp {
   const escapedUserId = userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -15,6 +16,17 @@ function buildMediaKeyRegex(userId: string): RegExp {
   return new RegExp(
     `^posts\\/${escapedUserId}\\/[a-z0-9-]+\\.(jpg|jpeg|png|webp)$`,
   )
+}
+
+function computeAge(dob: Date | null): number | null {
+  if (!dob) return null
+  const today = new Date()
+  let age = today.getFullYear() - dob.getFullYear()
+  const m = today.getMonth() - dob.getMonth()
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+    age--
+  }
+  return age >= 0 ? age : null
 }
 
 function toTaggedUser(user: {
@@ -40,11 +52,28 @@ function toTaggedUser(user: {
   }
 }
 
+function toPostAuthor(user: {
+  id: string
+  username: string
+  firstName: string | null
+  lastName: string | null
+  publicId: bigint
+  avatarUrl: string | null
+  gender: string | null
+  dateOfBirth: Date | null
+}): PostAuthor {
+  return {
+    ...toTaggedUser(user),
+    gender: user.gender,
+    age: computeAge(user.dateOfBirth),
+  }
+}
+
 function assemblePostResponse(
   post: NonNullable<Awaited<ReturnType<typeof postRepository.findById>>>,
   options: { isLiked: boolean },
 ): PostResponse {
-  const author = toTaggedUser(post.user)
+  const author = toPostAuthor(post.user)
   const tags: TaggedUser[] = post.tags.map((tag) => toTaggedUser(tag.taggedUser))
 
   return {
@@ -57,7 +86,42 @@ function assemblePostResponse(
     tags,
     author,
     createdAt: post.createdAt,
+    subscriberOnly: post.subscriberOnly,
   }
+}
+
+function assembleLockedPostResponse(
+  post: NonNullable<Awaited<ReturnType<typeof postRepository.findById>>>,
+  options: { isLiked: boolean },
+): PostResponse {
+  const author = toPostAuthor(post.user)
+  return {
+    postId: post.id,
+    mediaUrl: '',
+    caption: null,
+    visibility: post.visibility,
+    likesCount: post.likesCount,
+    isLiked: options.isLiked,
+    tags: [],
+    author,
+    createdAt: post.createdAt,
+    subscriberOnly: post.subscriberOnly,
+    locked: true,
+    previewUrl: null,
+  }
+}
+
+async function canViewSubscriberOnlyPost(
+  post: NonNullable<Awaited<ReturnType<typeof postRepository.findById>>>,
+  requesterId: string,
+): Promise<boolean> {
+  if (!post.subscriberOnly) {
+    return true
+  }
+  if (post.user.id === requesterId) {
+    return true
+  }
+  return subscriptionService.checkAccess(requesterId, post.user.id)
 }
 
 export const postService = {
@@ -104,7 +168,13 @@ export const postService = {
     dto: CreatePostDto,
     meta: AuditMeta,
   ): Promise<PostResponse> {
-    const { mediaKey, caption, visibility = PostVisibility.SUBSCRIBERS_ONLY, taggedUserIds } = dto
+    const {
+      mediaKey,
+      caption,
+      visibility = PostVisibility.SUBSCRIBERS_ONLY,
+      taggedUserIds,
+      subscriberOnly = false,
+    } = dto
 
     const regex = buildMediaKeyRegex(userId)
     if (!regex.test(mediaKey)) {
@@ -143,6 +213,7 @@ export const postService = {
       mediaUrl,
       caption,
       visibility,
+      subscriberOnly,
     })
 
     if (dto.taggedUserIds && dto.taggedUserIds.length > 0) {
@@ -173,21 +244,33 @@ export const postService = {
   },
 
   async getPost(postId: string, requesterId: string): Promise<PostResponse> {
-    const cacheKey = `post:${postId}`
-    const cached = await cacheService.get(cacheKey)
-    if (cached) {
-      const parsed = JSON.parse(cached) as PostResponse
-      return parsed
-    }
-
     const post = await postRepository.findById(postId)
     if (!post) {
       throw new AppError(404, 'Post not found', 'POST_NOT_FOUND')
     }
-    const isLiked = await postRepository.existsLike(postId, requesterId)
-    const response = assemblePostResponse(post, { isLiked })
 
-    await cacheService.set(cacheKey, JSON.stringify(response), 300)
+    const isLiked = await postRepository.existsLike(postId, requesterId)
+
+    if (post.subscriberOnly) {
+      const allowed = await canViewSubscriberOnlyPost(post, requesterId)
+      if (!allowed) {
+        return assembleLockedPostResponse(post, { isLiked })
+      }
+    }
+
+    const cacheKey = `post:${postId}`
+    if (!post.subscriberOnly) {
+      const cached = await cacheService.get(cacheKey)
+      if (cached) {
+        const parsed = JSON.parse(cached) as PostResponse
+        return { ...parsed, isLiked, subscriberOnly: parsed.subscriberOnly ?? false }
+      }
+    }
+
+    const response = assemblePostResponse(post, { isLiked })
+    if (!post.subscriberOnly) {
+      await cacheService.set(cacheKey, JSON.stringify(response), 300)
+    }
     return response
   },
 
@@ -205,9 +288,20 @@ export const postService = {
     const postIds = posts.map((p) => p.id)
     const likedSet = await postRepository.batchExistsLike(postIds, requesterId)
 
-    const responses = posts.map((post) =>
-      assemblePostResponse(post, { isLiked: likedSet.has(post.id) }),
-    )
+    const responses: PostResponse[] = []
+    for (const post of posts) {
+      const isLiked = likedSet.has(post.id)
+      if (post.subscriberOnly) {
+        const allowed = await canViewSubscriberOnlyPost(post, requesterId)
+        responses.push(
+          allowed
+            ? assemblePostResponse(post, { isLiked })
+            : assembleLockedPostResponse(post, { isLiked }),
+        )
+      } else {
+        responses.push(assemblePostResponse(post, { isLiked }))
+      }
+    }
     const nextCursorValue = posts.length === limit ? posts[posts.length - 1]?.id ?? null : null
 
     return { posts: responses, nextCursor: nextCursorValue }

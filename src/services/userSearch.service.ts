@@ -1,9 +1,12 @@
 import { userRepository } from '../repositories/user.repository'
-import { userLevelService } from './userLevel.service'
+import { walletLevelService } from './user-level.service'
 import { userSubscriberRepository } from '../repositories/userSubscriber.repository'
 import type { UserCard } from '../types/social.types'
 import { AppError } from '../middlewares/errorHandler'
 import { followRepository } from '../repositories/follow.repository'
+import { superHostService } from './super-host.service'
+import { guardianService } from './guardian.service'
+import { giftGalleryService } from './gift-gallery.service'
 
 export const userSearchService = {
   async searchByPublicId(
@@ -19,15 +22,19 @@ export const userSearchService = {
       return null
     }
 
-    const level = await userLevelService.getOrCreateLevel(user.id)
+    const levels = await walletLevelService.getDisplayLevelsForUsers([user.id])
+    const level = levels.get(user.id)
     const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators([
       user.id,
     ])
     const subscriberCount = subscriberCounts.get(user.id) ?? 0
 
-    const [isFollowing, isFollowedBy] = await Promise.all([
+    const [isFollowing, isFollowedBy, isSuperHost, activeGuardian, galleryCompletion] = await Promise.all([
       followRepository.existsFollow(requesterId, user.id),
       followRepository.existsFollow(user.id, requesterId),
+      superHostService.isSuperHost(user.id),
+      guardianService.getActiveGuardianSummary(user.id),
+      giftGalleryService.getCompletionSummaryForUser(user.id),
     ])
     const isFriend = isFollowing && isFollowedBy
 
@@ -53,18 +60,25 @@ export const userSearchService = {
         : null
 
     return {
+      id: user.id,
       userId: user.id,
+      username: user.username,
       publicId: String(user.publicId),
+      name: displayName,
       displayName,
       avatarUrl: user.avatarUrl,
+      country: user.country ?? null,
       gender: user.gender,
       age,
-      livestreamLevel: level.livestreamLevel,
-      wealthLevel: level.wealthLevel,
+      livestreamLevel: level?.livestreamLevel ?? 0,
+      wealthLevel: level?.wealthLevel ?? 0,
       subscriberCount,
       isFollowing,
       isFollowedBy,
       isFriend,
+      isSuperHost,
+      activeGuardian,
+      galleryCompletion,
     }
   },
 }

@@ -2,9 +2,11 @@ import { RedisKeys, redisClient } from '../config/redis'
 import { auditService } from './audit.service'
 import { visitorRepository } from '../repositories/visitor.repository'
 import { userRepository } from '../repositories/user.repository'
-import { userLevelService } from './userLevel.service'
+import { walletLevelService } from './user-level.service'
 import { userSubscriberRepository } from '../repositories/userSubscriber.repository'
 import type { PaginatedResult, UserCardWithVisit } from '../types/social.types'
+import { superHostService } from './super-host.service'
+import { guardianService } from './guardian.service'
 
 export interface AuditMeta {
   request?: { ip?: string; headers?: Record<string, string | undefined> }
@@ -90,20 +92,16 @@ export const visitorService = {
     const users = items.map((i) => i.user)
     const userIds = users.map((u) => u.id)
 
-    const levelsMap = await userLevelService.getLevelForUsers(userIds)
-    const levels = new Map<string, { livestreamLevel: number; wealthLevel: number }>()
-    for (const id of userIds) {
-      const lvl = levelsMap.get(id)
-      levels.set(id, {
-        livestreamLevel: lvl?.livestreamLevel ?? 0,
-        wealthLevel: lvl?.wealthLevel ?? 0,
-      })
-    }
+    const levels = await walletLevelService.getDisplayLevelsForUsers(userIds)
 
     const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
 
-    const cards: UserCardWithVisit[] = items.map((row) => {
+    const cards: UserCardWithVisit[] = await Promise.all(items.map(async (row) => {
       const user = row.user
+      const [isSuperHost, activeGuardian] = await Promise.all([
+        superHostService.isSuperHost(user.id),
+        guardianService.getActiveGuardianSummary(user.id),
+      ])
       const level = levels.get(user.id)
       const livestreamLevel = level?.livestreamLevel ?? 0
       const wealthLevel = level?.wealthLevel ?? 0
@@ -112,10 +110,14 @@ export const visitorService = {
       const age = computeAge(user.dateOfBirth)
 
       return {
+        id: user.id,
         userId: user.id,
+        username: user.username,
         publicId: String(user.publicId),
+        name: displayName,
         displayName,
         avatarUrl: user.avatarUrl,
+        country: user.country ?? null,
         gender: user.gender,
         age,
         livestreamLevel,
@@ -124,9 +126,11 @@ export const visitorService = {
         isFollowing: false,
         isFollowedBy: false,
         isFriend: false,
+        isSuperHost,
+        activeGuardian,
         visitedAt: row.visit.visitedAt,
       }
-    })
+    }))
 
     return {
       items: cards,
@@ -149,20 +153,16 @@ export const visitorService = {
     const users = items.map((i) => i.user)
     const userIds = users.map((u) => u.id)
 
-    const levelsMap = await userLevelService.getLevelForUsers(userIds)
-    const levels = new Map<string, { livestreamLevel: number; wealthLevel: number }>()
-    for (const id of userIds) {
-      const lvl = levelsMap.get(id)
-      levels.set(id, {
-        livestreamLevel: lvl?.livestreamLevel ?? 0,
-        wealthLevel: lvl?.wealthLevel ?? 0,
-      })
-    }
+    const levels = await walletLevelService.getDisplayLevelsForUsers(userIds)
 
     const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
 
-    const cards: UserCardWithVisit[] = items.map((row) => {
+    const cards: UserCardWithVisit[] = await Promise.all(items.map(async (row) => {
       const user = row.user
+      const [isSuperHost, activeGuardian] = await Promise.all([
+        superHostService.isSuperHost(user.id),
+        guardianService.getActiveGuardianSummary(user.id),
+      ])
       const level = levels.get(user.id)
       const livestreamLevel = level?.livestreamLevel ?? 0
       const wealthLevel = level?.wealthLevel ?? 0
@@ -171,10 +171,14 @@ export const visitorService = {
       const age = computeAge(user.dateOfBirth)
 
       return {
+        id: user.id,
         userId: user.id,
+        username: user.username,
         publicId: String(user.publicId),
+        name: displayName,
         displayName,
         avatarUrl: user.avatarUrl,
+        country: user.country ?? null,
         gender: user.gender,
         age,
         livestreamLevel,
@@ -183,9 +187,11 @@ export const visitorService = {
         isFollowing: false,
         isFollowedBy: false,
         isFriend: false,
+        isSuperHost,
+        activeGuardian,
         visitedAt: row.visit.visitedAt,
       }
-    })
+    }))
 
     return {
       items: cards,

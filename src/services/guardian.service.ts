@@ -1,0 +1,509 @@
+import crypto from 'crypto'
+import type { Guardian, GuardianTier } from '@prisma/client'
+import { prisma } from '../config/database'
+import { AppError } from '../middlewares/errorHandler'
+import {
+  RedisKeys,
+  GUARDIAN_ACTIVE_TTL,
+  GUARDIAN_LIST_TTL,
+} from '../config/redis'
+import { cacheService } from './cache.service'
+import { coinWalletService } from './coin-wallet.service'
+import { walletService } from './wallet.service'
+import { userRepository } from '../repositories/user.repository'
+import {
+  guardianRepository,
+  type GuardianUserCard,
+  type GuardianWithGuardianUser,
+  type GuardianWithTargetUser,
+} from '../repositories/guardian.repository'
+import { enqueueGuardianExpiry } from '../queues/guardian.queue'
+import type { PurchaseGuardianInput } from '../models/guardian.schemas'
+import type { ActiveGuardianProfileDto } from '../models/profile.types'
+import { walletLevelService } from './user-level.service'
+
+const MONTHLY_PRICE: Record<GuardianTier, number> = {
+  SILVER: 150_000,
+  GOLD: 300_000,
+  KING: 1_500_000,
+}
+
+const DURATION_MULTIPLIER: Record<number, number> = {
+  1: 1,
+  3: 3,
+  6: 9,
+  12: 12,
+}
+
+const TIER_RANK: Record<GuardianTier, number> = {
+  SILVER: 1,
+  GOLD: 2,
+  KING: 3,
+}
+
+function addMonths(from: Date, months: number): Date {
+  const d = new Date(from.getTime())
+  const expected = d.getDate()
+  d.setMonth(d.getMonth() + months)
+  if (d.getDate() !== expected) {
+    d.setDate(0)
+  }
+  return d
+}
+
+function sortGuardiansForRank<T extends { tier: GuardianTier; expiresAt: Date }>(
+  rows: T[],
+): T[] {
+  return [...rows].sort((a, b) => {
+    const tr = TIER_RANK[b.tier] - TIER_RANK[a.tier]
+    if (tr !== 0) return tr
+    return b.expiresAt.getTime() - a.expiresAt.getTime()
+  })
+}
+
+export function pickTopGuardian(rows: Guardian[]): Guardian | null {
+  if (rows.length === 0) return null
+  return sortGuardiansForRank(rows)[0] ?? null
+}
+
+function computeAge(dob: Date | null): number | null {
+  if (!dob) return null
+  const today = new Date()
+  let age = today.getFullYear() - dob.getFullYear()
+  const m = today.getMonth() - dob.getMonth()
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+    age--
+  }
+  return age >= 0 ? age : null
+}
+
+function buildDisplayName(user: {
+  username: string
+  firstName: string | null
+  lastName: string | null
+}): string {
+  const fullName =
+    user.firstName && user.lastName
+      ? `${user.firstName} ${user.lastName}`
+      : user.firstName ?? user.lastName
+  const trimmed = fullName?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : user.username
+}
+
+export type GuardianConfigDuration = { months: number; totalCoins: number }
+export type GuardianConfigTier = {
+  tier: GuardianTier
+  monthlyPrice: number
+  durations: GuardianConfigDuration[]
+}
+export type GuardianConfig = { tiers: GuardianConfigTier[] }
+
+export type GuardianListUser = {
+  id: string
+  username: string
+  displayName: string
+  avatarUrl: string | null
+  publicId: string
+  country: string | null
+  gender: string | null
+  age: number | null
+  livestreamLevel: number
+  wealthLevel: number
+}
+
+export type GuardianListItem = {
+  guardianId: string
+  tier: GuardianTier
+  durationMonths: number
+  expiresAt: string
+  daysRemaining: number
+  user: GuardianListUser
+  isTopGuardian: boolean
+}
+
+export type ActiveGuardianResponse = {
+  tier: GuardianTier
+  guardianUserId: string
+  guardianUsername: string
+  daysRemaining: number
+  expiresAt: string
+}
+
+export type ActiveGuardianSummary = ActiveGuardianProfileDto
+
+type CachedActiveGuardianSummary =
+  | {
+      guardianId: string
+      guardianUserId: string
+      guardianPublicId: string
+      displayName: string
+      avatarUrl: string | null
+      tier: string
+      purchasedAt: string
+      expiresAt: string
+    }
+  | null
+
+function parseCachedActiveGuardianSummary(raw: string): ActiveGuardianSummary | null {
+  try {
+    const parsed = JSON.parse(raw) as CachedActiveGuardianSummary
+    if (!parsed) return null
+    if (
+      typeof parsed.guardianId !== 'string' ||
+      typeof parsed.guardianUserId !== 'string' ||
+      typeof parsed.guardianPublicId !== 'string' ||
+      typeof parsed.displayName !== 'string' ||
+      (parsed.avatarUrl !== null && typeof parsed.avatarUrl !== 'string') ||
+      typeof parsed.tier !== 'string' ||
+      typeof parsed.purchasedAt !== 'string' ||
+      typeof parsed.expiresAt !== 'string'
+    ) {
+      return null
+    }
+    const purchasedAt = new Date(parsed.purchasedAt)
+    const expiresAt = new Date(parsed.expiresAt)
+    if (Number.isNaN(purchasedAt.getTime()) || Number.isNaN(expiresAt.getTime())) {
+      return null
+    }
+    return {
+      guardianId: parsed.guardianId,
+      guardianUserId: parsed.guardianUserId,
+      guardianPublicId: parsed.guardianPublicId,
+      displayName: parsed.displayName,
+      avatarUrl: parsed.avatarUrl,
+      tier: parsed.tier,
+      purchasedAt,
+      expiresAt,
+      user: {
+        userId: parsed.guardianUserId,
+        publicId: parsed.guardianPublicId,
+        name: parsed.displayName,
+        avatarUrl: parsed.avatarUrl,
+      },
+    }
+  } catch {
+    return null
+  }
+}
+
+function daysRemainingFor(expiresAt: Date): number {
+  return Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / 86_400_000))
+}
+
+function computeTopGuardianIdsByTarget(rows: Guardian[]): Map<string, string | null> {
+  const byTarget = new Map<string, Guardian[]>()
+  for (const r of rows) {
+    const list = byTarget.get(r.targetUserId) ?? []
+    list.push(r)
+    byTarget.set(r.targetUserId, list)
+  }
+  const out = new Map<string, string | null>()
+  for (const [tid, list] of byTarget) {
+    out.set(tid, pickTopGuardian(list)?.id ?? null)
+  }
+  return out
+}
+
+async function invalidatePurchaseCaches(args: {
+  targetUserId: string
+  guardianUserIds: string[]
+}): Promise<void> {
+  await Promise.all([
+    cacheService.delete(RedisKeys.guardianActive(args.targetUserId)),
+    cacheService.delete(RedisKeys.guardianMeList(args.targetUserId)),
+    ...args.guardianUserIds.map((id) => cacheService.delete(RedisKeys.guardianMyList(id))),
+  ])
+}
+
+async function rankTopFromDb(targetUserId: string): Promise<Guardian | null> {
+  const rows = await guardianRepository.findActiveGuardiansForTarget(targetUserId)
+  return pickTopGuardian(rows)
+}
+
+function mapToListItem(
+  row: Guardian,
+  related: GuardianUserCard,
+  targetUserIdForTop: string,
+  topByTarget: Map<string, string | null>,
+  levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
+): GuardianListItem {
+  const topId = topByTarget.get(targetUserIdForTop) ?? null
+  const level = levels.get(related.id)
+  return {
+    guardianId: row.id,
+    tier: row.tier,
+    durationMonths: row.durationMonths,
+    expiresAt: row.expiresAt.toISOString(),
+    daysRemaining: daysRemainingFor(row.expiresAt),
+    user: {
+      id: related.id,
+      username: related.username,
+      displayName: buildDisplayName(related),
+      avatarUrl: related.avatarUrl,
+      publicId: related.publicId.toString(),
+      country: related.country,
+      gender: related.gender,
+      age: computeAge(related.dateOfBirth),
+      livestreamLevel: level?.livestreamLevel ?? 0,
+      wealthLevel: level?.wealthLevel ?? 0,
+    },
+    isTopGuardian: row.id === topId,
+  }
+}
+
+function guardianListCacheHasUserEnrichment(items: GuardianListItem[]): boolean {
+  const u = items[0]?.user
+  return (
+    u != null &&
+    typeof u === 'object' &&
+    'publicId' in u &&
+    'livestreamLevel' in u &&
+    'wealthLevel' in u
+  )
+}
+
+export const guardianService = {
+  getGuardianConfig(): GuardianConfig {
+    const tiers = (Object.keys(MONTHLY_PRICE) as GuardianTier[]).map((tier) => ({
+      tier,
+      monthlyPrice: MONTHLY_PRICE[tier],
+      durations: ([1, 3, 6, 12] as const).map((months) => ({
+        months,
+        totalCoins: MONTHLY_PRICE[tier] * DURATION_MULTIPLIER[months],
+      })),
+    }))
+    return { tiers }
+  },
+
+  async purchaseGuardian(
+    guardianUserId: string,
+    input: PurchaseGuardianInput,
+  ): Promise<{
+    guardianId: string
+    tier: GuardianTier
+    durationMonths: number
+    coinsPaid: string
+    expiresAt: Date
+    daysRemaining: number
+  }> {
+    if (guardianUserId === input.targetUserId) {
+      throw new AppError(400, 'Cannot guardian yourself', 'CANNOT_GUARDIAN_SELF')
+    }
+    const target = await userRepository.findById(input.targetUserId)
+    if (!target) {
+      throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    }
+
+    const mult = DURATION_MULTIPLIER[input.durationMonths]
+    if (mult === undefined) {
+      throw new AppError(400, 'Invalid duration', 'INVALID_DURATION')
+    }
+    const totalCoins = BigInt(MONTHLY_PRICE[input.tier] * mult)
+    const expiresAt = addMonths(new Date(), input.durationMonths)
+    const idempotencyKey = `guardian-purchase:${crypto.randomUUID()}`
+
+    const guardian = await prisma.$transaction(
+      async (tx) => {
+        await coinWalletService.debitForGuardianPurchase(
+          guardianUserId,
+          totalCoins,
+          {
+            targetUserId: input.targetUserId,
+            idempotencyKey,
+          },
+          tx,
+        )
+        return guardianRepository.upsertGuardian(
+          {
+            guardianUserId,
+            targetUserId: input.targetUserId,
+            tier: input.tier,
+            durationMonths: input.durationMonths,
+            coinsPaid: totalCoins,
+            expiresAt,
+          },
+          tx,
+        )
+      },
+      { isolationLevel: 'Serializable' },
+    )
+
+    await walletService.adjustCoinBalanceCache(guardianUserId, totalCoins)
+    await enqueueGuardianExpiry(guardian.id, expiresAt)
+
+    const activeRows = await guardianRepository.findActiveGuardiansForTarget(
+      input.targetUserId,
+    )
+    const guardianUserIds = [...new Set(activeRows.map((g) => g.guardianUserId))]
+    await invalidatePurchaseCaches({
+      targetUserId: input.targetUserId,
+      guardianUserIds,
+    })
+
+    return {
+      guardianId: guardian.id,
+      tier: guardian.tier,
+      durationMonths: guardian.durationMonths,
+      coinsPaid: guardian.coinsPaid.toString(),
+      expiresAt: guardian.expiresAt,
+      daysRemaining: daysRemainingFor(guardian.expiresAt),
+    }
+  },
+
+  /**
+   * Invalidate active cache and return the new top guardian from DB (worker + post-expiry).
+   */
+  async recalculateActiveGuardian(targetUserId: string): Promise<Guardian | null> {
+    const top = await rankTopFromDb(targetUserId)
+    await cacheService.delete(RedisKeys.guardianActive(targetUserId))
+    return top
+  },
+
+  async toActiveGuardianResponse(top: Guardian): Promise<ActiveGuardianResponse> {
+    const guardianUser = await userRepository.findById(top.guardianUserId)
+    if (!guardianUser) {
+      throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    }
+    return {
+      tier: top.tier,
+      guardianUserId: top.guardianUserId,
+      guardianUsername: guardianUser.username,
+      daysRemaining: daysRemainingFor(top.expiresAt),
+      expiresAt: top.expiresAt.toISOString(),
+    }
+  },
+
+  async getActiveGuardianSummary(targetUserId: string): Promise<ActiveGuardianSummary | null> {
+    const key = RedisKeys.guardianActive(targetUserId)
+    const cached = await cacheService.get(key)
+    if (cached !== null) {
+      const parsed = parseCachedActiveGuardianSummary(cached)
+      if (parsed !== null || cached === 'null') {
+        return parsed
+      }
+    }
+
+    const top = await rankTopFromDb(targetUserId)
+    if (!top) {
+      await cacheService.set(key, 'null', GUARDIAN_ACTIVE_TTL)
+      return null
+    }
+
+    const guardianUser = await userRepository.findById(top.guardianUserId)
+    if (!guardianUser) {
+      throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    }
+
+    const summary: ActiveGuardianSummary = {
+      guardianId: top.id,
+      guardianUserId: top.guardianUserId,
+      guardianPublicId: guardianUser.publicId.toString(),
+      displayName: buildDisplayName(guardianUser),
+      avatarUrl: guardianUser.avatarUrl,
+      tier: top.tier,
+      purchasedAt: top.purchasedAt,
+      expiresAt: top.expiresAt,
+      user: {
+        userId: top.guardianUserId,
+        publicId: guardianUser.publicId.toString(),
+        name: buildDisplayName(guardianUser),
+        avatarUrl: guardianUser.avatarUrl,
+      },
+    }
+
+    await cacheService.set(
+      key,
+      JSON.stringify({
+        ...summary,
+        purchasedAt: summary.purchasedAt.toISOString(),
+        expiresAt: summary.expiresAt.toISOString(),
+      }),
+      GUARDIAN_ACTIVE_TTL,
+    )
+    return summary
+  },
+
+  async getActiveGuardian(targetUserId: string): Promise<ActiveGuardianResponse | null> {
+    const summary = await this.getActiveGuardianSummary(targetUserId)
+    if (!summary) return null
+
+    const guardianUser = await userRepository.findById(summary.guardianUserId)
+    if (!guardianUser) {
+      throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    }
+
+    return {
+      tier: summary.tier as GuardianTier,
+      guardianUserId: summary.guardianUserId,
+      guardianUsername: guardianUser.username,
+      daysRemaining: daysRemainingFor(summary.expiresAt),
+      expiresAt: summary.expiresAt.toISOString(),
+    }
+  },
+
+  async getMyGuardians(userId: string): Promise<GuardianListItem[]> {
+    const key = RedisKeys.guardianMyList(userId)
+    const hit = await cacheService.get(key)
+    if (hit) {
+      try {
+        const parsed = JSON.parse(hit) as GuardianListItem[]
+        if (parsed.length === 0) return parsed
+        if (guardianListCacheHasUserEnrichment(parsed)) return parsed
+        await cacheService.delete(key)
+      } catch {
+        /* miss */
+      }
+    }
+    const rows = await guardianRepository.findMyGuardians(userId)
+    const targetIds = [...new Set(rows.map((r) => r.targetUserId))]
+    const tops = computeTopGuardianIdsByTarget(
+      await guardianRepository.findActiveByTargetIds(targetIds),
+    )
+    const relatedUserIds = [...new Set(rows.map((r) => r.targetUser.id))]
+    const levels = await walletLevelService.getDisplayLevelsForUsers(relatedUserIds)
+    const items = rows.map((r: GuardianWithTargetUser) =>
+      mapToListItem(r, r.targetUser, r.targetUserId, tops, levels),
+    )
+    await cacheService.set(key, JSON.stringify(items), GUARDIAN_LIST_TTL)
+    return items
+  },
+
+  async getGuardiansOfMe(userId: string): Promise<GuardianListItem[]> {
+    const key = RedisKeys.guardianMeList(userId)
+    const hit = await cacheService.get(key)
+    if (hit) {
+      try {
+        const parsed = JSON.parse(hit) as GuardianListItem[]
+        if (parsed.length === 0) return parsed
+        if (guardianListCacheHasUserEnrichment(parsed)) return parsed
+        await cacheService.delete(key)
+      } catch {
+        /* miss */
+      }
+    }
+    const rows = await guardianRepository.findGuardiansOfMe(userId)
+    const tops = computeTopGuardianIdsByTarget(
+      await guardianRepository.findActiveByTargetIds([userId]),
+    )
+    const relatedUserIds = [...new Set(rows.map((r) => r.guardianUser.id))]
+    const levels = await walletLevelService.getDisplayLevelsForUsers(relatedUserIds)
+    const items = rows.map((r: GuardianWithGuardianUser) =>
+      mapToListItem(r, r.guardianUser, userId, tops, levels),
+    )
+    await cacheService.set(key, JSON.stringify(items), GUARDIAN_LIST_TTL)
+    return items
+  },
+
+  async processExpiryJob(guardianId: string): Promise<void> {
+    const g = await guardianRepository.findById(guardianId)
+    if (!g || g.isExpired) return
+    if (g.expiresAt.getTime() > Date.now()) return
+    await guardianRepository.markExpired(guardianId)
+    await guardianService.recalculateActiveGuardian(g.targetUserId)
+    await Promise.all([
+      cacheService.delete(RedisKeys.guardianActive(g.targetUserId)),
+      cacheService.delete(RedisKeys.guardianMeList(g.targetUserId)),
+      cacheService.delete(RedisKeys.guardianMyList(g.guardianUserId)),
+    ])
+  },
+}

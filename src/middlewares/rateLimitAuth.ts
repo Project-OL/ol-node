@@ -447,6 +447,22 @@ export const giftSendRateLimit = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.giftSendRateLimit(userId),
 });
 
+/** Shared per-user throttle for authenticated mutating routes (e.g. subscriptions). */
+export const perUserRateLimit = buildRateLimit({
+  max: 60,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.subscriptionMutationRateLimit(userId),
+});
+
+/** Guardian purchase: max 5 per minute per authenticated user. */
+export const guardianPurchaseRateLimit = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.guardianPurchaseRateLimit(userId),
+});
+
 export const socialRateLimits = {
   follow: createSocialRateLimit({
     endpoint: "social.follow",

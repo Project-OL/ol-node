@@ -54,6 +54,7 @@ export const userRepository = {
         lastName: true,
         gender: true,
         dateOfBirth: true,
+        country: true,
         avatarUrl: true,
         bio: true,
         usernameUpdatedAt: true,

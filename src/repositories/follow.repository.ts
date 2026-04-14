@@ -5,7 +5,18 @@ import type { TaggedUser } from '../types/post.types'
 
 interface FollowWithUser {
   follow: UserFollow
-  user: Pick<User, 'id' | 'publicId' | 'username' | 'firstName' | 'lastName' | 'avatarUrl' | 'gender' | 'dateOfBirth'>
+  user: Pick<
+    User,
+    | 'id'
+    | 'publicId'
+    | 'username'
+    | 'firstName'
+    | 'lastName'
+    | 'avatarUrl'
+    | 'country'
+    | 'gender'
+    | 'dateOfBirth'
+  >
   isFollowing: boolean
   isFollowedBy: boolean
 }
@@ -86,6 +97,7 @@ export const followRepository = {
             firstName: true,
             lastName: true,
             avatarUrl: true,
+            country: true,
             gender: true,
             dateOfBirth: true,
           },
@@ -154,6 +166,7 @@ export const followRepository = {
             firstName: true,
             lastName: true,
             avatarUrl: true,
+            country: true,
             gender: true,
             dateOfBirth: true,
           },
@@ -228,6 +241,7 @@ export const followRepository = {
             firstName: true,
             lastName: true,
             avatarUrl: true,
+            country: true,
             gender: true,
             dateOfBirth: true,
           },

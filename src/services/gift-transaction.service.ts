@@ -4,7 +4,6 @@ import { env } from "../config/env";
 import { redisClient, RedisKeys } from "../config/redis";
 import { AppError } from "../middlewares/errorHandler";
 import { giftRepository } from "../repositories/gift.repository";
-import { giftGalleryRepository } from "../repositories/gift-gallery.repository";
 import { giftTransactionRepository } from "../repositories/gift-transaction.repository";
 import { walletRepository } from "../repositories/wallet.repository";
 import { coinLedgerRepository } from "../repositories/coin-ledger.repository";
@@ -20,6 +19,8 @@ import {
   LevelType,
 } from "@prisma/client";
 import { getPeriodKeys } from "../utils/periodKeys";
+
+const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
 
 async function invalidateAfterGiftSend(params: {
   senderId: string;
@@ -41,11 +42,6 @@ async function invalidateAfterGiftSend(params: {
     );
     await redisClient.del(
       RedisKeys.fanRanking(params.receiverId, "month", params.monthKey),
-    );
-    await giftGalleryService.invalidateHostMonthCache(
-      params.receiverId,
-      params.year,
-      params.month,
     );
   } catch {
     // best-effort
@@ -74,13 +70,6 @@ export const giftTransactionService = {
     );
     const idemBase = `gift:${crypto.randomUUID()}`;
     const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys();
-
-    const inGallery = await giftGalleryRepository.isGiftInGallery(
-      params.receiverUserId,
-      year,
-      month,
-      params.giftId,
-    );
 
     type WealthRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>;
 
@@ -175,37 +164,6 @@ export const giftTransactionService = {
           context: params.context,
         });
 
-        let galleryUpdated = false;
-        let galleryNowFull = false;
-
-        if (inGallery) {
-          await tx.giftGalleryProgress.upsert({
-            where: {
-              galleryId_giftId: {
-                galleryId: inGallery.galleryId,
-                giftId: params.giftId,
-              },
-            },
-            create: {
-              galleryId: inGallery.galleryId,
-              giftId: params.giftId,
-              firstGifterUserId: params.senderUserId,
-            },
-            update: {},
-          });
-          galleryUpdated = true;
-
-          const [totalItems, progressCount] = await Promise.all([
-            tx.giftGallerySectionItem.count({
-              where: { section: { galleryId: inGallery.galleryId } },
-            }),
-            tx.giftGalleryProgress.count({
-              where: { galleryId: inGallery.galleryId },
-            }),
-          ]);
-          galleryNowFull = totalItems > 0 && progressCount >= totalItems;
-        }
-
         const coinIncrement = BigInt(coinCost);
         for (const periodType of ["day", "week", "month"] as const) {
           const key =
@@ -239,11 +197,9 @@ export const giftTransactionService = {
         return {
           transactionId: gt.id,
           wealthResult,
-          galleryUpdated,
-          galleryNowFull,
         };
       },
-      { isolationLevel: "Serializable" },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
     );
 
     await walletService.adjustCoinBalanceCache(params.senderUserId, 0n);
@@ -269,6 +225,20 @@ export const giftTransactionService = {
       monthKey,
     });
 
+    let galleryUpdated = false;
+    let galleryNowFull = false;
+    try {
+      const r = await giftGalleryService.recordGiftProgress({
+        hostUserId: params.receiverUserId,
+        giftId: params.giftId,
+        senderId: params.senderUserId,
+      });
+      galleryUpdated = r.created;
+      galleryNowFull = r.galleryNowFull;
+    } catch (err) {
+      console.error("[Gift send] recordGiftProgress failed", err);
+    }
+
     const senderCoinsRemaining = await walletService.getCoinBalance(
       params.senderUserId,
     );
@@ -279,8 +249,8 @@ export const giftTransactionService = {
       coinCost,
       pointsAwarded,
       senderCoinsRemaining: Number(senderCoinsRemaining),
-      galleryUpdated: txResult.galleryUpdated,
-      galleryNowFull: txResult.galleryNowFull,
+      galleryUpdated,
+      galleryNowFull,
     };
   },
 };

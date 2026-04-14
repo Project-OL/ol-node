@@ -293,6 +293,7 @@ export const createPostSchema = z.object({
   caption: z.string().max(2000).optional(),
   visibility: z.nativeEnum(PostVisibility).default('SUBSCRIBERS_ONLY'),
   taggedUserIds: z.array(z.string().min(1)).max(10).optional(),
+  subscriberOnly: z.boolean().optional(),
 })
 
 export const likeParamSchema = z.object({

@@ -14,6 +14,13 @@ import { runAccountDeletionJob } from "./jobs/account-deletion.job";
 import { WALLET_WITHDRAWAL_QUEUE } from "./queues/wallet-withdrawal.constants";
 import { WALLET_LEVEL_BACKFILL_QUEUE } from "./queues/wallet-level-backfill.constants";
 import { runWalletLevelBackfillForUser } from "./jobs/wallet-level-backfill.job";
+import {
+  SUBSCRIPTION_GRACE_QUEUE,
+  SUBSCRIPTION_RENEWAL_QUEUE,
+} from "./queues/subscription.constants";
+import { subscriptionService } from "./services/subscription.service";
+import { GUARDIAN_EXPIRY_QUEUE } from "./queues/guardian.constants";
+import { guardianService } from "./services/guardian.service";
 
 const ACCOUNT_DELETION_QUEUE = "account-deletion";
 
@@ -73,6 +80,30 @@ async function main() {
     { connection, concurrency: 2 },
   );
 
+  const subscriptionRenewalWorker = new Worker(
+    SUBSCRIPTION_RENEWAL_QUEUE,
+    async (job: Job<{ subscriptionId: string }>) => {
+      await subscriptionService.processRenewalJob(job.data.subscriptionId);
+    },
+    { connection, concurrency: 2 },
+  );
+
+  const subscriptionGraceWorker = new Worker(
+    SUBSCRIPTION_GRACE_QUEUE,
+    async (job: Job<{ subscriptionId: string }>) => {
+      await subscriptionService.processGraceJob(job.data.subscriptionId);
+    },
+    { connection, concurrency: 2 },
+  );
+
+  const guardianExpiryWorker = new Worker(
+    GUARDIAN_EXPIRY_QUEUE,
+    async (job: Job<{ guardianId: string }>) => {
+      await guardianService.processExpiryJob(job.data.guardianId);
+    },
+    { connection, concurrency: 2 },
+  );
+
   accountDeletionWorker.on("failed", (job, err) => {
     console.error("[Account Deletion] Job failed:", job?.id, err);
   });
@@ -85,11 +116,26 @@ async function main() {
     console.error("[Wallet Level Backfill] Job failed:", job?.id, err);
   });
 
+  subscriptionRenewalWorker.on("failed", (job, err) => {
+    console.error("[Subscription renewal] Job failed:", job?.id, err);
+  });
+
+  subscriptionGraceWorker.on("failed", (job, err) => {
+    console.error("[Subscription grace] Job failed:", job?.id, err);
+  });
+
+  guardianExpiryWorker.on("failed", (job, err) => {
+    console.error("[Guardian expiry] Job failed:", job?.id, err);
+  });
+
   console.info(
-    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; VIP expiry is Redis TTL only",
+    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; VIP expiry is Redis TTL only",
   );
 
   const shutdown = async () => {
+    await guardianExpiryWorker.close();
+    await subscriptionGraceWorker.close();
+    await subscriptionRenewalWorker.close();
     await levelBackfillWorker.close();
     await withdrawalWorker.close();
     await accountDeletionWorker.close();

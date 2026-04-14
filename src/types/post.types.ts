@@ -7,7 +7,10 @@ export type TaggedUser = {
   avatarUrl: string | null
 }
 
-export type PostAuthor = TaggedUser
+export type PostAuthor = TaggedUser & {
+  gender: string | null
+  age: number | null
+}
 
 export type PostResponse = {
   postId: string
@@ -19,6 +22,9 @@ export type PostResponse = {
   tags: TaggedUser[]
   author: PostAuthor
   createdAt: Date
+  subscriberOnly: boolean
+  locked?: boolean
+  previewUrl?: string | null
 }
 
 export type CreatePostDto = {
@@ -26,5 +32,6 @@ export type CreatePostDto = {
   caption?: string
   visibility?: PostVisibility
   taggedUserIds?: string[]
+  subscriberOnly?: boolean
 }
 

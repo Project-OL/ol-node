@@ -10,11 +10,13 @@ import {
   CoinTxType,
   LedgerDirection,
   LevelType,
+  type Prisma,
 } from "@prisma/client";
 import { walletLevelService } from "./user-level.service";
 
 /** Coins debited when changing display name via PATCH /users/me (`name` field). */
 export const USERNAME_CHANGE_COIN_COST = 10_000n;
+const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
 
 export const coinWalletService = {
   /**
@@ -135,7 +137,7 @@ export const coinWalletService = {
 
         return { ledgerEntry: entry, levelResult: lr };
       },
-      { isolationLevel: "Serializable" },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
     );
 
     await walletService.adjustCoinBalanceCache(userId, BigInt(order.coins));
@@ -230,10 +232,155 @@ export const coinWalletService = {
           },
         });
       },
-      { isolationLevel: "Serializable" },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
     );
 
     await walletService.adjustCoinBalanceCache(userId, USERNAME_CHANGE_COIN_COST);
+  },
+
+  /**
+   * Debits coins for a paid creator subscription (purchase or renewal).
+   * Pass `tx` to participate in a caller-owned serializable transaction; then the caller must
+   * `walletService.adjustCoinBalanceCache(userId, amount)` after commit.
+   */
+  async debitForCreatorSubscription(
+    userId: string,
+    amount: bigint,
+    options: {
+      creatorId: string
+      subscriptionId: string
+      idempotencyKey: string
+      description?: string
+    },
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const run = async (inner: Prisma.TransactionClient) => {
+      const wallet = await inner.wallet.upsert({
+        where: {
+          userId_currencyType: {
+            userId,
+            currencyType: WalletCurrencyType.COIN,
+          },
+        },
+        create: { userId, currencyType: WalletCurrencyType.COIN },
+        update: {},
+      });
+      await walletRepository.lockForUpdate(inner, wallet.id);
+      const last = await inner.coinLedgerEntry.findFirst({
+        where: { walletId: wallet.id },
+        orderBy: { createdAt: "desc" },
+        select: { balanceAfter: true },
+      });
+      const balance = last?.balanceAfter ?? 0n;
+      if (balance < amount) {
+        throw new AppError(
+          402,
+          "Insufficient coins",
+          "INSUFFICIENT_COINS",
+          {
+            required: amount.toString(),
+            balance: balance.toString(),
+          },
+        );
+      }
+      await coinLedgerRepository.insert(inner, {
+        walletId: wallet.id,
+        direction: LedgerDirection.DEBIT,
+        txType: "CREATOR_SUBSCRIPTION" as CoinTxType,
+        amount,
+        balanceAfter: balance - amount,
+        counterpartyId: options.creatorId,
+        description: options.description ?? "Creator subscription",
+        metadata: {
+          creatorId: options.creatorId,
+          subscriptionId: options.subscriptionId,
+        },
+        idempotencyKey: options.idempotencyKey,
+      });
+      await walletRepository.bumpVersion(inner, wallet.id);
+    };
+
+    if (tx) {
+      await run(tx);
+      return;
+    }
+    await prisma.$transaction(
+      async (inner) => {
+        await run(inner);
+      },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
+    );
+    await walletService.adjustCoinBalanceCache(userId, amount);
+  },
+
+  /**
+   * Debits coins for a guardian badge purchase. Caller should run inside a Serializable
+   * transaction with the guardian upsert; post-commit call `walletService.adjustCoinBalanceCache`.
+   */
+  async debitForGuardianPurchase(
+    userId: string,
+    amount: bigint,
+    options: {
+      targetUserId: string
+      idempotencyKey: string
+      description?: string
+    },
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const run = async (inner: Prisma.TransactionClient) => {
+      const wallet = await inner.wallet.upsert({
+        where: {
+          userId_currencyType: {
+            userId,
+            currencyType: WalletCurrencyType.COIN,
+          },
+        },
+        create: { userId, currencyType: WalletCurrencyType.COIN },
+        update: {},
+      })
+      await walletRepository.lockForUpdate(inner, wallet.id)
+      const last = await inner.coinLedgerEntry.findFirst({
+        where: { walletId: wallet.id },
+        orderBy: { createdAt: "desc" },
+        select: { balanceAfter: true },
+      })
+      const balance = last?.balanceAfter ?? 0n
+      if (balance < amount) {
+        throw new AppError(
+          402,
+          "Insufficient coins",
+          "INSUFFICIENT_COINS",
+          {
+            required: amount.toString(),
+            balance: balance.toString(),
+          },
+        )
+      }
+      await coinLedgerRepository.insert(inner, {
+        walletId: wallet.id,
+        direction: LedgerDirection.DEBIT,
+        txType: "GUARDIAN_PURCHASE" as CoinTxType,
+        amount,
+        balanceAfter: balance - amount,
+        counterpartyId: options.targetUserId,
+        description: options.description ?? "Guardian purchase",
+        metadata: { targetUserId: options.targetUserId },
+        idempotencyKey: options.idempotencyKey,
+      })
+      await walletRepository.bumpVersion(inner, wallet.id)
+    }
+
+    if (tx) {
+      await run(tx)
+      return
+    }
+    await prisma.$transaction(
+      async (inner) => {
+        await run(inner)
+      },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
+    )
+    await walletService.adjustCoinBalanceCache(userId, amount)
   },
 
   async getHistory(

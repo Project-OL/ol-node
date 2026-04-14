@@ -25,6 +25,8 @@ export type PostWithRelations = Prisma.PostGetPayload<{
         lastName: true
         publicId: true
         avatarUrl: true
+        gender: true
+        dateOfBirth: true
       }
     }
   }
@@ -39,6 +41,7 @@ export const postRepository = {
     mediaUrl: string
     caption?: string
     visibility: Post['visibility']
+    subscriberOnly?: boolean
   }): Promise<Post> {
     return prisma.post.create({
       data: {
@@ -47,6 +50,7 @@ export const postRepository = {
         mediaUrl: data.mediaUrl,
         caption: data.caption,
         visibility: data.visibility,
+        subscriberOnly: data.subscriberOnly ?? false,
       },
     })
   },
@@ -88,6 +92,8 @@ export const postRepository = {
             lastName: true,
             publicId: true,
             avatarUrl: true,
+            gender: true,
+            dateOfBirth: true,
           },
         },
       },
@@ -132,6 +138,8 @@ export const postRepository = {
             lastName: true,
             publicId: true,
             avatarUrl: true,
+            gender: true,
+            dateOfBirth: true,
           },
         },
       },

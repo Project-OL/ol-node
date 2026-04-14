@@ -1,97 +1,130 @@
 import { prisma, prismaRead } from "../config/database";
+import type { GiftGallery, Prisma } from "@prisma/client";
+
+const globalGalleryInclude = {
+  sections: {
+    orderBy: { sortOrder: "asc" as const },
+    include: {
+      gifts: {
+        orderBy: { sortOrder: "asc" as const },
+        where: { gift: { isActive: true } },
+        include: { gift: true },
+      },
+    },
+  },
+} as const;
+
+export type GlobalGalleryWithSections = Prisma.GiftGalleryGetPayload<{
+  include: typeof globalGalleryInclude;
+}>;
 
 export const giftGalleryRepository = {
-  async findByHostYearMonth(hostUserId: string, year: number, month: number) {
-    return prismaRead.giftGallery.findUnique({
-      where: {
-        hostUserId_year_month: { hostUserId, year, month },
-      },
-      include: {
-        sections: {
-          orderBy: { sortOrder: "asc" },
-          include: {
-            gifts: {
-              orderBy: { sortOrder: "asc" },
-              include: {
-                gift: true,
-              },
-            },
-          },
-        },
-        progress: {
-          include: {
-            firstGifter: {
-              select: {
-                id: true,
-                username: true,
-                firstName: true,
-                lastName: true,
-                avatarUrl: true,
-              },
-            },
-          },
-        },
-      },
-    });
-  },
-
-  async countProgressForGallery(galleryId: string) {
-    return prismaRead.giftGalleryProgress.count({
-      where: { galleryId },
-    });
-  },
-
-  async countSectionItemsForGallery(galleryId: string) {
-    return prismaRead.giftGallerySectionItem.count({
-      where: { section: { galleryId } },
-    });
-  },
-
-  /**
-   * Whether `giftId` appears in any section of this host's gallery for year/month.
-   */
-  async isGiftInGallery(
-    hostUserId: string,
+  async findGlobalGallery(
     year: number,
     month: number,
+  ): Promise<GlobalGalleryWithSections | null> {
+    return prismaRead.giftGallery.findUnique({
+      where: { year_month: { year, month } },
+      include: globalGalleryInclude,
+    });
+  },
+
+  async findHostProgress(galleryId: string, hostUserId: string) {
+    return prismaRead.giftGalleryProgress.findMany({
+      where: { galleryId, hostUserId },
+      include: {
+        firstGifter: {
+          select: {
+            id: true,
+            publicId: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
+  },
+
+  async findSectionItemForGalleryGift(
+    galleryId: string,
     giftId: string,
-  ): Promise<{ galleryId: string } | null> {
+  ): Promise<{ id: string } | null> {
     const row = await prismaRead.giftGallerySectionItem.findFirst({
       where: {
         giftId,
-        section: {
-          gallery: { hostUserId, year, month },
-        },
+        section: { galleryId },
       },
-      select: {
-        section: { select: { galleryId: true } },
-      },
+      select: { id: true },
     });
-    if (!row) return null;
-    return { galleryId: row.section.galleryId };
+    return row;
   },
 
-  async replaceGallerySections(params: {
+  async getHostCompletionSummary(
+    galleryId: string,
+    hostUserId: string,
+  ): Promise<{ totalItems: number; receivedItems: number; isFullGallery: boolean }> {
+    const [totalItems, receivedItems] = await Promise.all([
+      prismaRead.giftGallerySectionItem.count({
+        where: { section: { galleryId } },
+      }),
+      prismaRead.giftGalleryProgress.count({
+        where: { galleryId, hostUserId },
+      }),
+    ]);
+    const isFullGallery = totalItems > 0 && receivedItems >= totalItems;
+    return { totalItems, receivedItems, isFullGallery };
+  },
+
+  /**
+   * Insert progress if missing. First gifter wins; returns whether a new row was inserted.
+   */
+  async upsertProgress(params: {
+    galleryId: string;
     hostUserId: string;
+    giftId: string;
+    giftGallerySectionItemId: string;
+    firstGifterId: string;
+  }): Promise<{ created: boolean }> {
+    return prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.giftGalleryProgress.findUnique({
+          where: {
+            hostUserId_giftGallerySectionItemId: {
+              hostUserId: params.hostUserId,
+              giftGallerySectionItemId: params.giftGallerySectionItemId,
+            },
+          },
+        });
+        if (existing) {
+          return { created: false };
+        }
+        await tx.giftGalleryProgress.create({
+          data: {
+            galleryId: params.galleryId,
+            hostUserId: params.hostUserId,
+            giftId: params.giftId,
+            giftGallerySectionItemId: params.giftGallerySectionItemId,
+            firstGifterId: params.firstGifterId,
+          },
+        });
+        return { created: true };
+      },
+      { isolationLevel: "Serializable" },
+    );
+  },
+
+  async upsertGlobalGallery(params: {
     year: number;
     month: number;
     sections: Array<{ title: string; sortOrder: number; giftIds: string[] }>;
-  }) {
+  }): Promise<GiftGallery> {
     return prisma.$transaction(
       async (tx) => {
         const gallery = await tx.giftGallery.upsert({
-          where: {
-            hostUserId_year_month: {
-              hostUserId: params.hostUserId,
-              year: params.year,
-              month: params.month,
-            },
-          },
-          create: {
-            hostUserId: params.hostUserId,
-            year: params.year,
-            month: params.month,
-          },
+          where: { year_month: { year: params.year, month: params.month } },
+          create: { year: params.year, month: params.month },
           update: {},
         });
 
@@ -115,7 +148,7 @@ export const giftGalleryRepository = {
           });
         }
 
-        return gallery.id;
+        return gallery;
       },
       { isolationLevel: "Serializable" },
     );

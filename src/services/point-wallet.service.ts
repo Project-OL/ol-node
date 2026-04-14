@@ -15,6 +15,8 @@ import { walletLevelService } from "./user-level.service";
 import { env } from "../config/env";
 import { walletWithdrawalQueue } from "../queues/wallet-withdrawal.queue";
 
+const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
+
 export const pointWalletService = {
   async getSummary(userId: string) {
     const balance = await walletService.getPointBalance(userId);
@@ -114,7 +116,7 @@ export const pointWalletService = {
 
         return { entry: e, levelResult: lr };
       },
-      { isolationLevel: "Serializable" },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
     );
 
     await walletService.adjustPointBalanceCache(userId, amount);
@@ -241,7 +243,7 @@ export const pointWalletService = {
           },
         });
       },
-      { isolationLevel: "Serializable" },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
     );
 
     await walletService.adjustPointBalanceCache(userId, -amountPoints);

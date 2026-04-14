@@ -18,8 +18,16 @@ import { AppError } from '../middlewares/errorHandler'
 import { storageService } from './storage.service'
 import { displayNameFromUser, normalizeGenderStored, splitDisplayName } from '../utils/profileDisplay'
 import { detectImageMimeFromBuffer, extensionForImageMime } from '../utils/imageMagic'
-import type { MeProfileCache, MeResponseDto, PatchMeResponseDto } from '../models/me.types'
+import type {
+  GalleryCompletionDto,
+  MeProfileCache,
+  MeResponseDto,
+  PatchMeResponseDto,
+} from '../models/me.types'
+import { giftGalleryService } from './gift-gallery.service'
 import { meEndpointMetrics } from './me.metrics'
+import { superHostService } from './super-host.service'
+import { guardianService } from './guardian.service'
 
 const displayNameSchema = z
   .string()
@@ -69,6 +77,7 @@ function toProfileCache(
     name,
     email: primaryEmailFromIdentifiers(row.authIdentifiers),
     avatarUrl: row.avatarUrl,
+    country: row.country ?? null,
     bio: row.bio,
     dateOfBirth: row.dateOfBirth != null ? formatDateOfBirthUtc(row.dateOfBirth) : null,
     gender: normalizeGenderStored(row.gender),
@@ -81,10 +90,15 @@ function toProfileCache(
 function buildMeResponse(
   profile: MeProfileCache,
   walletData: Awaited<ReturnType<typeof fetchWalletData>>,
+  galleryCompletion: GalleryCompletionDto,
+  extras: { isSuperHost: boolean; activeGuardian: Awaited<ReturnType<typeof guardianService.getActiveGuardianSummary>> },
 ): MeResponseDto {
   return {
     ...profile,
     ...walletData,
+    galleryCompletion,
+    isSuperHost: extras.isSuperHost,
+    activeGuardian: extras.activeGuardian,
     canChangeUsername: BigInt(walletData.coinsBalance) >= USERNAME_CHANGE_COIN_COST,
     usernameNextChangeAt: null,
   }
@@ -163,7 +177,15 @@ export const meService = {
 
     // Wallet/level/VIP data is always fetched fresh (each has its own short-lived Redis cache).
     const walletData = await fetchWalletData(userId)
-    const data = buildMeResponse(profile, walletData)
+    const [galleryCompletion, isSuperHost, activeGuardian] = await Promise.all([
+      giftGalleryService.getCompletionSummaryForUser(userId),
+      superHostService.isSuperHost(userId),
+      guardianService.getActiveGuardianSummary(userId),
+    ])
+    const data = buildMeResponse(profile, walletData, galleryCompletion, {
+      isSuperHost,
+      activeGuardian,
+    })
     return { data, cache: cacheResult }
   },
 
@@ -304,7 +326,15 @@ export const meService = {
     await cacheRedisService.set(RedisKeys.userProfile(userId), profile, env.REDIS_TTL_PROFILE)
 
     const walletData = await fetchWalletData(userId)
-    const data = buildMeResponse(profile, walletData)
+    const [galleryCompletion, isSuperHost, activeGuardian] = await Promise.all([
+      giftGalleryService.getCompletionSummaryForUser(userId),
+      superHostService.isSuperHost(userId),
+      guardianService.getActiveGuardianSummary(userId),
+    ])
+    const data = buildMeResponse(profile, walletData, galleryCompletion, {
+      isSuperHost,
+      activeGuardian,
+    })
 
     const displayName = displayNameFromUser(fresh)
     const userTv =

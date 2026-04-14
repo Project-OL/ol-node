@@ -9,6 +9,7 @@ import { userRepository } from '../../repositories/user.repository'
 import { visitorRepository } from '../../repositories/visitor.repository'
 import { AppError } from '../../middlewares/errorHandler'
 import { env } from '../../config/env'
+import { subscriptionService } from '../../services/subscription.service'
 
 const PATCH_ME_ALLOWED_FIELDS = new Set(['name', 'dob', 'bio'])
 
@@ -130,6 +131,38 @@ export default async function usersRoutes(app: FastifyInstance) {
         statusCode: 200,
       })
       return reply.status(200).send(result)
+    },
+  )
+
+  app.get<{ Params: { publicId: string } }>(
+    '/:publicId/subscription-stats',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Paid subscriber count for a creator (by publicId). Cached ~5m in Redis for display.',
+        params: {
+          type: 'object',
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { publicId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const numericId = Number(request.params.publicId)
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
+      }
+      const subscriberCount =
+        await subscriptionService.getActiveSubscriberCountByPublicId(numericId)
+      return reply.status(200).send({
+        publicId: String(numericId),
+        subscriberCount,
+      })
     },
   )
 

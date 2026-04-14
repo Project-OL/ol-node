@@ -50,6 +50,16 @@ vi.mock('../../src/config/redis', () => ({
     del: (...a: unknown[]) => redisDel(...a),
     set: (...a: unknown[]) => redisSet(...a),
     get: (...a: unknown[]) => redisGet(...a),
+    pipeline: () => {
+      const p = {
+        del: (...a: unknown[]) => {
+          void redisDel(...a)
+          return p
+        },
+        exec: vi.fn().mockResolvedValue([]),
+      }
+      return p
+    },
   },
   RedisKeys: {
     session: (id: string) => `session:${id}`,

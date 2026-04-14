@@ -11,17 +11,16 @@ export default async function giftGalleryRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = UpsertGiftGalleryBodySchema.parse(request.body);
       const sections = body.sections.map((s, i) => ({
-        title: s.title,
+        title: s.name,
         sortOrder: s.sortOrder ?? i,
         giftIds: s.giftIds,
       }));
-      const result = await giftGalleryService.upsertForHost({
-        hostUserId: body.hostUserId,
+      const gallery = await giftGalleryService.upsertGallery({
         year: body.year,
         month: body.month,
         sections,
       });
-      return reply.status(201).send(result);
+      return reply.status(201).send({ ok: true, galleryId: gallery.id });
     },
   );
 
@@ -30,7 +29,7 @@ export default async function giftGalleryRoutes(app: FastifyInstance) {
     { preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const hostUserId = (request.params as { hostUserId: string }).hostUserId;
-      const result = await giftGalleryService.checkFull(hostUserId);
+      const result = await giftGalleryService.checkIsFull(hostUserId);
       return reply.send(result);
     },
   );
@@ -40,7 +39,7 @@ export default async function giftGalleryRoutes(app: FastifyInstance) {
     { preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const hostUserId = (request.params as { hostUserId: string }).hostUserId;
-      const result = await giftGalleryService.getForHostCurrentMonth(hostUserId);
+      const result = await giftGalleryService.getGalleryForHost(hostUserId);
       return reply.send(result);
     },
   );

@@ -1,4 +1,14 @@
 import type { MeGender } from '../utils/profileDisplay'
+import type { ActiveGuardianProfileDto } from './profile.types'
+
+/** Current UTC month global gift gallery completion for this user as host. */
+export interface GalleryCompletionDto {
+  isFullGallery: boolean
+  receivedItems: number
+  totalItems: number
+  monthEndAt: string
+  secondsRemaining: number
+}
 
 export interface MeProfileCache {
   userId: string
@@ -6,6 +16,7 @@ export interface MeProfileCache {
   name: string
   email: string
   avatarUrl: string | null
+  country: string | null
   bio: string | null
   /** Calendar date in UTC, `YYYY-MM-DD`, or `null` if unset. */
   dateOfBirth: string | null
@@ -15,6 +26,7 @@ export interface MeProfileCache {
 }
 
 export interface MeResponseDto extends MeProfileCache {
+  galleryCompletion: GalleryCompletionDto
   /** Caller's current livestream level. */
   livestreamLevel: number
   /** Caller's current wealth level. */
@@ -29,6 +41,10 @@ export interface MeResponseDto extends MeProfileCache {
   lastVipStartedAt: string | null
   /** ISO timestamp when the last VIP period expires/expired, or null if never had VIP. */
   lastVipExpiresAt: string | null
+  /** Whether the profile user currently has active super-host status. */
+  isSuperHost: boolean
+  /** Current highest active guardian summary for this profile. */
+  activeGuardian: ActiveGuardianProfileDto | null
 }
 
 export interface PatchMeResponseDto {

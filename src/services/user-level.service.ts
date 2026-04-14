@@ -241,4 +241,70 @@ export const walletLevelService = {
   async getLevelTable(levelType: LevelType) {
     return getThresholds(levelType);
   },
+
+  /**
+   * Batch-read wallet ledger display levels for social lists.
+   * Uses Redis `level:wealth:*` / `level:stream:*` via pipeline; on miss loads via `getSnapshot`.
+   */
+  async getDisplayLevelsForUsers(
+    userIds: string[],
+  ): Promise<Map<string, { wealthLevel: number; livestreamLevel: number }>> {
+    const unique = [...new Set(userIds)]
+    const map = new Map<string, { wealthLevel: number; livestreamLevel: number }>()
+    if (unique.length === 0) return map
+
+    const redis = getRedisForRead()
+    const pipe = redis.pipeline()
+    for (const id of unique) {
+      pipe.get(RedisKeys.userWealthLevel(id))
+      pipe.get(RedisKeys.userLivestreamLevel(id))
+    }
+    let results: (string | null)[] = []
+    try {
+      const exec = await pipe.exec()
+      if (exec && exec.length === unique.length * 2) {
+        results = exec.map(([, v]) => v as string | null)
+      } else {
+        results = new Array(unique.length * 2).fill(null)
+      }
+    } catch {
+      results = new Array(unique.length * 2).fill(null)
+    }
+
+    const missing: string[] = []
+    for (let i = 0; i < unique.length; i++) {
+      const uid = unique[i]!
+      const wRaw = results[i * 2] ?? null
+      const sRaw = results[i * 2 + 1] ?? null
+      if (wRaw && sRaw) {
+        try {
+          const w = JSON.parse(wRaw) as LevelSnapshot
+          const s = JSON.parse(sRaw) as LevelSnapshot
+          map.set(uid, {
+            wealthLevel: w.currentLevel,
+            livestreamLevel: s.currentLevel,
+          })
+          continue
+        } catch {
+          /* fall through */
+        }
+      }
+      missing.push(uid)
+    }
+
+    await Promise.all(
+      missing.map(async (uid) => {
+        const [w, s] = await Promise.all([
+          this.getSnapshot(uid, LevelType.WEALTH),
+          this.getSnapshot(uid, LevelType.LIVESTREAM),
+        ])
+        map.set(uid, {
+          wealthLevel: w.currentLevel,
+          livestreamLevel: s.currentLevel,
+        })
+      }),
+    )
+
+    return map
+  },
 };

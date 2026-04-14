@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "gift_gallery_progress_host_user_id_gift_gallery_section_item_id" RENAME TO "gift_gallery_progress_host_user_id_gift_gallery_section_ite_key";

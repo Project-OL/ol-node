@@ -1,6 +1,37 @@
-import { prismaRead } from '../config/database'
+import type { Prisma } from '@prisma/client'
+import { prisma, prismaRead } from '../config/database'
 
 export const userSubscriberRepository = {
+  async upsertPairInTx(
+    tx: Prisma.TransactionClient,
+    subscriberId: string,
+    creatorId: string,
+  ): Promise<void> {
+    await tx.userSubscriber.upsert({
+      where: {
+        subscriberId_creatorId: { subscriberId, creatorId },
+      },
+      create: { subscriberId, creatorId },
+      update: {},
+    })
+  },
+
+  async upsertPair(subscriberId: string, creatorId: string): Promise<void> {
+    await prisma.userSubscriber.upsert({
+      where: {
+        subscriberId_creatorId: { subscriberId, creatorId },
+      },
+      create: { subscriberId, creatorId },
+      update: {},
+    })
+  },
+
+  async deletePair(subscriberId: string, creatorId: string): Promise<void> {
+    await prisma.userSubscriber.deleteMany({
+      where: { subscriberId, creatorId },
+    })
+  },
+
   async countSubscribersForCreators(creatorIds: string[]): Promise<Map<string, number>> {
     if (creatorIds.length === 0) {
       return new Map()

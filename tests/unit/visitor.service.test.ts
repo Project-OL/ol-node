@@ -47,10 +47,11 @@ vi.mock('../../src/repositories/visitor.repository', () => ({
   },
 }))
 
-const getLevelForUsers = vi.fn()
-vi.mock('../../src/services/userLevel.service', () => ({
-  userLevelService: {
-    getLevelForUsers: (...args: unknown[]) => getLevelForUsers(...args),
+const getDisplayLevelsForUsers = vi.fn()
+vi.mock('../../src/services/user-level.service', () => ({
+  walletLevelService: {
+    getDisplayLevelsForUsers: (...args: unknown[]) =>
+      getDisplayLevelsForUsers(...args),
   },
 }))
 
@@ -62,6 +63,20 @@ vi.mock('../../src/repositories/userSubscriber.repository', () => ({
   },
 }))
 
+const isSuperHost = vi.fn()
+vi.mock('../../src/services/super-host.service', () => ({
+  superHostService: {
+    isSuperHost: (...args: unknown[]) => isSuperHost(...args),
+  },
+}))
+
+const getActiveGuardianSummary = vi.fn()
+vi.mock('../../src/services/guardian.service', () => ({
+  guardianService: {
+    getActiveGuardianSummary: (...args: unknown[]) => getActiveGuardianSummary(...args),
+  },
+}))
+
 const { visitorService } = await import('../../src/services/visitor.service')
 
 describe('visitorService', () => {
@@ -70,6 +85,8 @@ describe('visitorService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    isSuperHost.mockResolvedValue(false)
+    getActiveGuardianSummary.mockResolvedValue(null)
   })
 
   it('returns silently when visiting own profile', async () => {

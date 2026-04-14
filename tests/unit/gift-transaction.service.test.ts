@@ -22,11 +22,11 @@ vi.mock("../../src/services/user-level.service", () => ({
   },
 }));
 
-const invalidateHostMonthCache = vi.fn();
+const recordGiftProgress = vi.fn();
 
 vi.mock("../../src/services/gift-gallery.service", () => ({
   giftGalleryService: {
-    invalidateHostMonthCache: (...a: unknown[]) => invalidateHostMonthCache(...a),
+    recordGiftProgress: (...a: unknown[]) => recordGiftProgress(...a),
   },
 }));
 
@@ -42,6 +42,8 @@ vi.mock("../../src/config/redis", () => ({
       `fanrank:${h}:${p}:${k}`,
   },
   GIFT_LIST_CACHE_TTL: 600,
+  GALLERY_HOST_TTL: 300,
+  GALLERY_TEMPLATE_TTL: 600,
   GIFT_GALLERY_CACHE_TTL: 300,
   FAN_RANK_DAY_TTL: 120,
   FAN_RANK_WEEK_MONTH_TTL: 300,
@@ -51,13 +53,6 @@ const findById = vi.fn();
 vi.mock("../../src/repositories/gift.repository", () => ({
   giftRepository: {
     findById: (...a: unknown[]) => findById(...a),
-  },
-}));
-
-const isGiftInGallery = vi.fn();
-vi.mock("../../src/repositories/gift-gallery.repository", () => ({
-  giftGalleryRepository: {
-    isGiftInGallery: (...a: unknown[]) => isGiftInGallery(...a),
   },
 }));
 
@@ -110,7 +105,6 @@ vi.mock("../../src/config/env", () => ({
 import { giftTransactionService } from "../../src/services/gift-transaction.service";
 
 function mockTx() {
-  const progressUpsert = vi.fn().mockResolvedValue({});
   return {
     coinLedgerEntry: {
       findFirst: vi.fn().mockResolvedValue({ balanceAfter: 5000n }),
@@ -118,17 +112,9 @@ function mockTx() {
     pointLedgerEntry: {
       findFirst: vi.fn().mockResolvedValue({ balanceAfter: 0n }),
     },
-    giftGalleryProgress: {
-      upsert: progressUpsert,
-      count: vi.fn().mockResolvedValue(2),
-    },
-    giftGallerySectionItem: {
-      count: vi.fn().mockResolvedValue(2),
-    },
     fanSpend: {
       upsert: vi.fn().mockResolvedValue({}),
     },
-    _progressUpsert: progressUpsert,
   };
 }
 
@@ -144,6 +130,10 @@ beforeEach(() => {
   });
   giftTxCreate.mockResolvedValue({ id: "gt-1" });
   getCoinBalance.mockResolvedValue(4500n);
+  recordGiftProgress.mockResolvedValue({
+    created: true,
+    galleryNowFull: true,
+  });
 });
 
 describe("giftTransactionService.sendGift", () => {
@@ -180,7 +170,6 @@ describe("giftTransactionService.sendGift", () => {
       isActive: true,
       tags: [],
     });
-    isGiftInGallery.mockResolvedValue(null);
     const tx = mockTx();
     (tx.coinLedgerEntry.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
       balanceAfter: 100n,
@@ -197,9 +186,10 @@ describe("giftTransactionService.sendGift", () => {
       }),
     ).rejects.toMatchObject({ statusCode: 402 });
     expect(giftTxCreate).not.toHaveBeenCalled();
+    expect(recordGiftProgress).not.toHaveBeenCalled();
   });
 
-  it("happy path: debit, credit, progress upsert, fan spend, cache hooks", async () => {
+  it("happy path: debit, credit, fan spend, recordGiftProgress after commit", async () => {
     findById.mockResolvedValue({
       id: "g1",
       name: "Rose",
@@ -207,7 +197,6 @@ describe("giftTransactionService.sendGift", () => {
       isActive: true,
       tags: [],
     });
-    isGiftInGallery.mockResolvedValue({ galleryId: "gal-1" });
     const tx = mockTx();
     $transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) =>
       fn(tx),
@@ -225,15 +214,18 @@ describe("giftTransactionService.sendGift", () => {
     expect(result.galleryNowFull).toBe(true);
     expect(coinInsert).toHaveBeenCalled();
     expect(pointInsert).toHaveBeenCalled();
-    expect(tx._progressUpsert).toHaveBeenCalled();
+    expect(recordGiftProgress).toHaveBeenCalledWith({
+      hostUserId: "r1",
+      giftId: "g1",
+      senderId: "s1",
+    });
     expect(adjustCoinBalanceCache).toHaveBeenCalledWith("s1", 0n);
     expect(adjustPointBalanceCache).toHaveBeenCalledWith("r1", 0n);
     expect(refreshCache).toHaveBeenCalled();
     expect(redisDel).toHaveBeenCalled();
-    expect(invalidateHostMonthCache).toHaveBeenCalled();
   });
 
-  it("skips gallery progress when gift not in gallery", async () => {
+  it("maps recordGiftProgress created=false to galleryUpdated false", async () => {
     findById.mockResolvedValue({
       id: "g1",
       name: "Rose",
@@ -241,7 +233,10 @@ describe("giftTransactionService.sendGift", () => {
       isActive: true,
       tags: [],
     });
-    isGiftInGallery.mockResolvedValue(null);
+    recordGiftProgress.mockResolvedValueOnce({
+      created: false,
+      galleryNowFull: false,
+    });
     const tx = mockTx();
     $transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) =>
       fn(tx),
@@ -254,10 +249,10 @@ describe("giftTransactionService.sendGift", () => {
     });
     expect(result.galleryUpdated).toBe(false);
     expect(result.galleryNowFull).toBe(false);
-    expect(tx._progressUpsert).not.toHaveBeenCalled();
+    expect(recordGiftProgress).toHaveBeenCalled();
   });
 
-  it("preserves first gifter via upsert with empty update", async () => {
+  it("does not fail send when recordGiftProgress throws", async () => {
     findById.mockResolvedValue({
       id: "g1",
       name: "Rose",
@@ -265,24 +260,19 @@ describe("giftTransactionService.sendGift", () => {
       isActive: true,
       tags: [],
     });
-    isGiftInGallery.mockResolvedValue({ galleryId: "gal-1" });
+    recordGiftProgress.mockRejectedValueOnce(new Error("redis down"));
     const tx = mockTx();
     $transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) =>
       fn(tx),
     );
-    await giftTransactionService.sendGift({
+    const result = await giftTransactionService.sendGift({
       senderUserId: "s2",
       receiverUserId: "r1",
       giftId: "g1",
       context: "direct",
     });
-    expect(tx._progressUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        update: {},
-        create: expect.objectContaining({
-          firstGifterUserId: "s2",
-        }),
-      }),
-    );
+    expect(result.transactionId).toBe("gt-1");
+    expect(result.galleryUpdated).toBe(false);
+    expect(result.galleryNowFull).toBe(false);
   });
 });
