@@ -123,6 +123,7 @@ export const sessionService = {
     loginType?: string
     displayName: string
     avatarUrl: string | null
+    isSupport?: boolean
   }) {
     const started = Date.now()
     const fpHash = computeDeviceBindingHash(params.deviceId, params.userAgent, params.ipAddress)
@@ -218,6 +219,7 @@ export const sessionService = {
         tokenVersion: userTv,
         sessionTokenVersion: session.tokenVersion,
         jti: crypto.randomUUID(),
+        isSupport: params.isSupport ?? false,
       },
       env.JWT_ACCESS_EXPIRES_IN,
     )
@@ -296,6 +298,7 @@ export const sessionService = {
           tokenVersion: userTv,
           sessionTokenVersion,
           jti: crypto.randomUUID(),
+          isSupport: user.isSupport ?? false,
         },
         env.JWT_ACCESS_EXPIRES_IN,
       )

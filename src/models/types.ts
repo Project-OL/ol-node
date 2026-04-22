@@ -58,6 +58,8 @@ export interface JwtAccessPayload {
   tokenVersion?: number
   /** Mirrors sessions.token_version at mint; bumped on refresh. */
   sessionTokenVersion?: number
+  /** Customer support actor; mirrors `users.is_support` at mint. */
+  isSupport?: boolean
   iat: number
   exp: number
 }

@@ -170,6 +170,10 @@ export const RedisKeys = {
   guardianMeList: (userId: string) => `guardian:me:${userId}`,
   /** POST /guardian purchase throttle (per user). */
   guardianPurchaseRateLimit: (userId: string) => `ratelimit:guardian:purchase:${userId}`,
+  // Support system
+  supportTicketList: (userId: bigint | string) => `support:tickets:user:${userId}`,
+  supportTicketDetail: (ticketId: bigint | string) => `support:ticket:${ticketId}`,
+  supportRateLimit: (userId: bigint | string) => `ratelimit:support:create:${userId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -224,6 +228,11 @@ export const GUARDIAN_ACTIVE_TTL = 300
 export const GUARDIAN_LIST_TTL = 120
 /** Super-host status cache for profile short lookups. */
 export const SUPER_HOST_STATUS_TTL = 300
+
+/** Support: cached ticket list for a user (page 1, no status filter). */
+export const SUPPORT_TICKET_LIST_TTL = 60
+/** Support: ticket detail cache (reserved for future use; invalidated on mutation). */
+export const SUPPORT_TICKET_DETAIL_TTL = 30
 
 export async function redisPipeline(
   commands: [string, ...unknown[]][],

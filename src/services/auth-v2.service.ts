@@ -181,6 +181,7 @@ export const authV2Service = {
         avatarUrl: null,
         jti: crypto.randomUUID(),
         tokenVersion: 0,
+        isSupport: false,
       },
       '10m',
     )
@@ -242,6 +243,7 @@ export const authV2Service = {
       loginType: 'password',
       displayName: displayNameFromUser(updated!),
       avatarUrl: updated!.avatarUrl,
+      isSupport: updated!.isSupport ?? false,
     })
     return {
       userId,
@@ -313,6 +315,7 @@ export const authV2Service = {
       loginType: 'otp',
       displayName: displayNameFromUser(user),
       avatarUrl: user.avatarUrl,
+      isSupport: user.isSupport ?? false,
     })
     await auditService.log({
       userId: user.id,
@@ -379,7 +382,14 @@ export const authV2Service = {
 
     const profile = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { firstName: true, lastName: true, username: true, avatarUrl: true, passwordSet: true },
+      select: {
+        firstName: true,
+        lastName: true,
+        username: true,
+        avatarUrl: true,
+        passwordSet: true,
+        isSupport: true,
+      },
     })
     if (!profile) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
@@ -396,6 +406,7 @@ export const authV2Service = {
       loginType: 'password',
       displayName: displayNameFromUser(profile),
       avatarUrl: profile.avatarUrl,
+      isSupport: profile.isSupport ?? false,
     })
     await auditService.log({
       userId: user.id,

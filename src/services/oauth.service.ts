@@ -185,6 +185,7 @@ export const oauthService = {
         loginType: provider,
         displayName: displayNameFromUser(user),
         avatarUrl: user.avatarUrl,
+        isSupport: user.isSupport ?? false,
       })
       await auditService.log({
         userId: user.id,
@@ -246,6 +247,7 @@ export const oauthService = {
       loginType: provider,
       displayName: displayNameFromUser(user),
       avatarUrl: user.avatarUrl,
+      isSupport: false,
     })
     await auditService.log({
       userId: user.id,

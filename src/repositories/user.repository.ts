@@ -59,6 +59,7 @@ export const userRepository = {
         bio: true,
         usernameUpdatedAt: true,
         passwordSet: true,
+        isSupport: true,
         authIdentifiers: {
           select: { provider: true, identifier: true, isPrimary: true },
           orderBy: [{ isPrimary: 'desc' }, { provider: 'asc' }],

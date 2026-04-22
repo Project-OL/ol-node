@@ -463,6 +463,14 @@ export const guardianPurchaseRateLimit = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.guardianPurchaseRateLimit(userId),
 });
 
+/** Support ticket creation: max 5 per minute per authenticated user. */
+export const supportTicketCreateRateLimit = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.supportRateLimit(userId),
+});
+
 export const socialRateLimits = {
   follow: createSocialRateLimit({
     endpoint: "social.follow",

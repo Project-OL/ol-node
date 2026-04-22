@@ -349,6 +349,7 @@ export const meService = {
       jti: crypto.randomUUID(),
       deviceId: jwtCtx.deviceId,
       tokenVersion: userTv,
+      isSupport: fresh.isSupport ?? false,
     }
     if (jwtCtx.sessionId != null) {
       accessPayload.sessionId = jwtCtx.sessionId

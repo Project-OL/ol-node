@@ -48,17 +48,29 @@ vi.mock('../../src/services/cache.service', () => ({
   },
 }))
 
-vi.mock('../../src/config/redis', () => ({
-  RedisKeys: {
-    userDeletionStatus: (userId: string) => `user:${userId}:deletion-status`,
-    userAuthIdentifiers: (userId: string) => `user:${userId}:auth_identifiers`,
-    userDevices: (userId: string) => `user:${userId}:devices`,
-    userSessions: (userId: string) => `user:${userId}:sessions`,
-    userMe: (userId: string) => `user:me:${userId}`,
-    userProfile: (userId: string) => `user:profile:${userId}`,
-    userUsernameLock: (userId: string) => `user:username_lock:${userId}`,
-  },
-}))
+vi.mock('../../src/config/redis', () => {
+  const stubRedis = {
+    on: vi.fn(),
+    once: vi.fn(),
+    connect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn(),
+    quit: vi.fn().mockResolvedValue('OK'),
+  }
+  return {
+    redisClient: stubRedis,
+    redisReadClient: null,
+    getRedisForRead: () => stubRedis,
+    RedisKeys: {
+      userDeletionStatus: (userId: string) => `user:${userId}:deletion-status`,
+      userAuthIdentifiers: (userId: string) => `user:${userId}:auth_identifiers`,
+      userDevices: (userId: string) => `user:${userId}:devices`,
+      userSessions: (userId: string) => `user:${userId}:sessions`,
+      userMe: (userId: string) => `user:me:${userId}`,
+      userProfile: (userId: string) => `user:profile:${userId}`,
+      userUsernameLock: (userId: string) => `user:username_lock:${userId}`,
+    },
+  }
+})
 
 vi.mock('../../src/services/cacheRedis.service', () => ({
   cacheRedisService: {

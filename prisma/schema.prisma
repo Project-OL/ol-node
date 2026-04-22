@@ -47,6 +47,7 @@ model User {
   privacyMysteryRank     Boolean @default(false) @map("privacy_mystery_rank")
   privacyInvisibleOnline Boolean @default(false) @map("privacy_invisible_online")
   hideMicStatus          Boolean @default(false) @map("hide_mic_status")
+  isSupport              Boolean @default(false) @map("is_support")
   privacyUpdatedAt       DateTime? @map("privacy_updated_at")
 
   lastIpAddress String? @map("last_ip_address") @db.VarChar(45)
@@ -100,6 +101,9 @@ model User {
   fanSpendReceived  FanSpend[]            @relation("FanSpendReceiver")
   guardiansAsGuardian Guardian[]          @relation("GuardianOf")
   guardiansAsTarget   Guardian[]          @relation("GuardedBy")
+  supportTickets           SupportTicket[]  @relation("SupportTicketsAsUser")
+  supportTicketsClosed     SupportTicket[]  @relation("SupportTicketsClosedBy")
+  supportMessagesSent      SupportMessage[] @relation("SupportMessageSender")
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -935,6 +939,24 @@ enum LevelType {
   LIVESTREAM
 }
 
+enum SupportTicketType {
+  CONSULT
+  REPORT_COMPLAINTS
+  FEEDBACK
+  BUSINESS_COOPERATION
+}
+
+enum SupportTicketStatus {
+  OPEN
+  AWAITING_REPLY
+  CLOSED
+}
+
+enum SupportMessageSenderType {
+  USER
+  SUPPORT
+}
+
 model WalletLevelConfig {
   id        String    @id @default(uuid()) @db.Uuid
   levelType LevelType @map("level_type")
@@ -1137,5 +1159,50 @@ model FanSpend {
   @@unique([senderUserId, receiverUserId, periodType, periodKey])
   @@index([receiverUserId, periodType, periodKey])
   @@map("fan_spend")
+}
+
+model SupportTicket {
+  id             BigInt              @id @default(autoincrement()) @db.BigInt
+  publicId       String              @unique @default(cuid()) @map("public_id")
+  userId         String              @map("user_id") @db.Uuid
+  type           SupportTicketType
+  subType        String              @map("sub_type") @db.VarChar(100)
+  description    String              @db.Text
+  imageUrl       String?             @map("image_url") @db.Text
+  status         SupportTicketStatus @default(AWAITING_REPLY)
+  userLastReadMessageId BigInt?      @map("user_last_read_message_id") @db.BigInt
+  csLastReadMessageId   BigInt?      @map("cs_last_read_message_id") @db.BigInt
+  rating         Int?
+  ratedAt        DateTime?           @map("rated_at")
+  closedAt       DateTime?           @map("closed_at")
+  closedByUserId String?             @map("closed_by_user_id") @db.Uuid
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  user       User             @relation("SupportTicketsAsUser", fields: [userId], references: [id], onDelete: Cascade)
+  closedBy   User?            @relation("SupportTicketsClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  messages   SupportMessage[]
+
+  @@index([userId, status, updatedAt])
+  @@index([status, updatedAt])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id            BigInt                   @id @default(autoincrement()) @db.BigInt
+  publicId      String                   @unique @default(cuid()) @map("public_id")
+  ticketId      BigInt                   @map("ticket_id") @db.BigInt
+  senderUserId  String?                  @map("sender_user_id") @db.Uuid
+  senderType    SupportMessageSenderType @map("sender_type")
+  content       String                   @db.Text
+  imageUrl      String?                  @map("image_url") @db.Text
+  isAutoReply   Boolean                  @default(false) @map("is_auto_reply")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender User?         @relation("SupportMessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("support_messages")
 }
 
