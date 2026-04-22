@@ -37,8 +37,19 @@ export default async function postRoutes(app: FastifyInstance) {
         )
       }
 
-      const { fileName, mimeType } = parsed.data
-      const result = await postService.generateUploadUrl(userId, fileName, mimeType)
+      const {
+        fileName,
+        mimeType,
+        durationSeconds,
+        sizeBytes,
+      } = parsed.data
+      const result = await postService.generateUploadUrl(
+        userId,
+        fileName,
+        mimeType,
+        durationSeconds,
+        sizeBytes,
+      )
       return reply.status(200).send(result)
     },
   )

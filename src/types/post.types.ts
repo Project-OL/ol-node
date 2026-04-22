@@ -15,6 +15,8 @@ export type PostAuthor = TaggedUser & {
 export type PostResponse = {
   postId: string
   mediaUrl: string
+  mediaType: 'IMAGE' | 'VIDEO'
+  thumbnailUrl: string | null
   caption: string | null
   visibility: PostVisibility
   likesCount: number

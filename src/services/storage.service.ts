@@ -1,4 +1,8 @@
-import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import {
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { s3Client, s3Bucket } from '../config/s3'
 import { env } from '../config/env'
@@ -70,6 +74,36 @@ export const storageService = {
     return getSignedUrl(s3Client, command, {
       expiresIn: expiresInSeconds,
     })
+  },
+
+  async getObjectBuffer(key: string): Promise<Buffer> {
+    if (!s3Bucket) {
+      throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
+    }
+    try {
+      const response = await s3Client.send(
+        new GetObjectCommand({
+          Bucket: s3Bucket,
+          Key: key,
+        }),
+      )
+      const body = response.Body
+      if (!body) {
+        throw new AppError(404, 'Object body is empty', 'S3_OBJECT_EMPTY')
+      }
+
+      const chunks: Buffer[] = []
+      for await (const chunk of body as AsyncIterable<Uint8Array>) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      }
+      return Buffer.concat(chunks)
+    } catch (err) {
+      if (err instanceof AppError) {
+        throw err
+      }
+      rootLogger.child({ module: 'storage' }).error({ err, key }, 'S3 GetObject failed')
+      throw new AppError(502, 'File storage temporarily unavailable', 'S3_DOWNLOAD_FAILED')
+    }
   },
 
   async deleteObject(key: string): Promise<void> {

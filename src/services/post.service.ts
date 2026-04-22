@@ -9,12 +9,28 @@ import { AppError } from '../middlewares/errorHandler'
 import type { AuditMeta } from './follow.service'
 import type { CreatePostDto, PostAuthor, PostResponse, TaggedUser } from '../types/post.types'
 import { subscriptionService } from './subscription.service'
+import { videoThumbnailService } from './video-thumbnail.service'
+import { rootLogger } from '../utils/rootLogger'
+
+const VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'] as const
+
+function detectPostMediaType(mediaKey: string): 'IMAGE' | 'VIDEO' {
+  const ext = mediaKey.split('.').pop()?.toLowerCase() ?? ''
+  if (['mp4', 'mov', 'webm'].includes(ext)) {
+    return 'VIDEO'
+  }
+  return 'IMAGE'
+}
+
+function buildThumbnailKey(mediaKey: string): string {
+  return mediaKey.replace(/\.[^/.]+$/, '.thumb.jpg')
+}
 
 function buildMediaKeyRegex(userId: string): RegExp {
   const escapedUserId = userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   // posts/{userId}/{uuid}.{ext}
   return new RegExp(
-    `^posts\\/${escapedUserId}\\/[a-z0-9-]+\\.(jpg|jpeg|png|webp)$`,
+    `^posts\\/${escapedUserId}\\/[a-z0-9-]+\\.(jpg|jpeg|png|webp|mp4|mov|webm)$`,
   )
 }
 
@@ -79,6 +95,8 @@ function assemblePostResponse(
   return {
     postId: post.id,
     mediaUrl: post.mediaUrl,
+    mediaType: post.mediaType,
+    thumbnailUrl: post.thumbnailUrl,
     caption: post.caption ?? null,
     visibility: post.visibility,
     likesCount: post.likesCount,
@@ -98,6 +116,8 @@ function assembleLockedPostResponse(
   return {
     postId: post.id,
     mediaUrl: '',
+    mediaType: post.mediaType,
+    thumbnailUrl: post.thumbnailUrl,
     caption: null,
     visibility: post.visibility,
     likesCount: post.likesCount,
@@ -129,10 +149,34 @@ export const postService = {
     userId: string,
     fileName: string,
     mimeType: string,
+    durationSeconds?: number,
+    sizeBytes?: number,
   ): Promise<{ uploadUrl: string; mediaKey: string }> {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'] as const
+    const allowed = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      ...VIDEO_MIME_TYPES,
+    ] as const
     if (!allowed.includes(mimeType as (typeof allowed)[number])) {
       throw new AppError(400, 'Invalid mime type', 'INVALID_MIME_TYPE')
+    }
+
+    const videoLimitBytes = 50 * 1024 * 1024 // 50MB
+    const isVideo = mimeType.startsWith('video/')
+    if (isVideo) {
+      if (typeof durationSeconds !== 'number') {
+        throw new AppError(400, 'durationSeconds is required for video', 'INVALID_REQUEST')
+      }
+      if (durationSeconds > 30) {
+        throw new AppError(400, 'Video duration must be 30 seconds or less', 'INVALID_REQUEST')
+      }
+      if (typeof sizeBytes !== 'number') {
+        throw new AppError(400, 'sizeBytes is required for video', 'INVALID_REQUEST')
+      }
+      if (sizeBytes > videoLimitBytes) {
+        throw new AppError(400, 'Video size must be 50MB or less', 'INVALID_REQUEST')
+      }
     }
 
     const ext = (() => {
@@ -143,6 +187,12 @@ export const postService = {
           return 'png'
         case 'image/webp':
           return 'webp'
+        case VIDEO_MIME_TYPES[0]:
+          return 'mp4'
+        case VIDEO_MIME_TYPES[1]:
+          return 'mov'
+        case VIDEO_MIME_TYPES[2]:
+          return 'webm'
         default:
           return null
       }
@@ -206,11 +256,35 @@ export const postService = {
     }
 
     const mediaUrl = storageService.getPublicUrl(mediaKey)
+    const mediaType = detectPostMediaType(mediaKey)
+    let thumbnailKey: string | null = null
+    let thumbnailUrl: string | null = null
+
+    if (mediaType === 'VIDEO') {
+      thumbnailKey = buildThumbnailKey(mediaKey)
+      try {
+        const videoBuffer = await storageService.getObjectBuffer(mediaKey)
+        const thumbnailBuffer = await videoThumbnailService.createJpegThumbnail(videoBuffer)
+        await storageService.putObjectBuffer({
+          key: thumbnailKey,
+          body: thumbnailBuffer,
+          contentType: 'image/jpeg',
+        })
+        thumbnailUrl = storageService.getPublicUrl(thumbnailKey)
+      } catch (err) {
+        rootLogger
+          .child({ module: 'post-service', mediaKey })
+          .error({ err }, 'Video thumbnail generation failed')
+      }
+    }
 
     const post = await postRepository.createPost({
       userId,
       mediaKey,
       mediaUrl,
+      mediaType,
+      thumbnailKey,
+      thumbnailUrl,
       caption,
       visibility,
       subscriberOnly,
@@ -316,13 +390,21 @@ export const postService = {
       throw new AppError(403, 'Forbidden', 'FORBIDDEN')
     }
 
-    const { mediaKey } = await postRepository.deletePost(postId)
+    const { mediaKey, thumbnailKey } = await postRepository.deletePost(postId)
 
     try {
       await storageService.deleteObject(mediaKey)
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Failed to delete media from storage', { mediaKey, error: err })
+    }
+    if (thumbnailKey) {
+      try {
+        await storageService.deleteObject(thumbnailKey)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to delete thumbnail from storage', { thumbnailKey, error: err })
+      }
     }
 
     await cacheService.delete(`post:${postId}`)

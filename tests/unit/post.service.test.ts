@@ -19,11 +19,22 @@ vi.mock('../../src/services/audit.service', () => ({
 const getPresignedPutUrl = vi.fn()
 const getPublicUrl = vi.fn()
 const deleteObject = vi.fn()
+const getObjectBuffer = vi.fn()
+const putObjectBuffer = vi.fn()
 vi.mock('../../src/services/storage.service', () => ({
   storageService: {
     getPresignedPutUrl: (...args: unknown[]) => getPresignedPutUrl(...args),
     getPublicUrl: (...args: unknown[]) => getPublicUrl(...args),
     deleteObject: (...args: unknown[]) => deleteObject(...args),
+    getObjectBuffer: (...args: unknown[]) => getObjectBuffer(...args),
+    putObjectBuffer: (...args: unknown[]) => putObjectBuffer(...args),
+  },
+}))
+
+const createJpegThumbnail = vi.fn()
+vi.mock('../../src/services/video-thumbnail.service', () => ({
+  videoThumbnailService: {
+    createJpegThumbnail: (...args: unknown[]) => createJpegThumbnail(...args),
   },
 }))
 
@@ -92,6 +103,56 @@ describe('postService', () => {
       expect(getPresignedPutUrl).toHaveBeenCalled()
       expect(result.mediaKey).toMatch(/^posts\/user-1\/.+\.jpg$/)
       expect(result.uploadUrl).toBe('https://s3/upload-url')
+    })
+
+    it('returns uploadUrl and mediaKey for valid video mime type', async () => {
+      getPresignedPutUrl.mockResolvedValue('https://s3/video-upload-url')
+
+      const result = await postService.generateUploadUrl(
+        userId,
+        'clip.mp4',
+        'video/mp4',
+        30,
+        10 * 1024 * 1024,
+      )
+
+      expect(getPresignedPutUrl).toHaveBeenCalledWith(
+        expect.stringMatching(/^posts\/user-1\/.+\.mp4$/),
+        'video/mp4',
+        600,
+      )
+      expect(result.mediaKey).toMatch(/^posts\/user-1\/.+\.mp4$/)
+      expect(result.uploadUrl).toBe('https://s3/video-upload-url')
+    })
+
+    it('rejects video upload when duration exceeds 30 seconds', async () => {
+      await expect(
+        postService.generateUploadUrl(
+          userId,
+          'long.mp4',
+          'video/mp4',
+          31,
+          10 * 1024 * 1024,
+        ),
+      ).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        statusCode: 400,
+      })
+    })
+
+    it('rejects video upload when size exceeds 50MB', async () => {
+      await expect(
+        postService.generateUploadUrl(
+          userId,
+          'big.mp4',
+          'video/mp4',
+          20,
+          51 * 1024 * 1024,
+        ),
+      ).rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        statusCode: 400,
+      })
     })
   })
 
@@ -163,6 +224,8 @@ describe('postService', () => {
           mediaUrl: 'https://cdn/posts/key.jpg',
           caption: null,
           visibility: 'SUBSCRIBERS_ONLY',
+          mediaType: 'IMAGE',
+          thumbnailUrl: null,
           subscriberOnly: false,
           likesCount: 0,
           createdAt: now,
@@ -182,6 +245,8 @@ describe('postService', () => {
           },
           tags: [],
           mediaUrl: 'https://cdn/posts/key.jpg',
+          mediaType: 'IMAGE',
+          thumbnailUrl: null,
           caption: null,
           visibility: 'SUBSCRIBERS_ONLY',
           subscriberOnly: false,
@@ -202,6 +267,8 @@ describe('postService', () => {
         expect(createTags).not.toHaveBeenCalled()
         expect(cacheDelete).toHaveBeenCalledWith(`user:posts:${userId}`)
         expect(result.postId).toBe(postId)
+        expect(result.mediaType).toBe('IMAGE')
+        expect(result.thumbnailUrl).toBeNull()
         expect(result.author.avatarUrl).toBe('https://cdn.example/avatars/u.jpg')
         expect(result.author.gender).toBe('female')
         expect(result.author.age).toBe(26)
@@ -213,6 +280,78 @@ describe('postService', () => {
             userId,
           }),
         )
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('creates video post with generated thumbnail', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-04-12T12:00:00Z'))
+      try {
+        const mediaKey = `posts/${userId}/abc.mp4`
+        const thumbKey = `posts/${userId}/abc.thumb.jpg`
+        const now = new Date()
+        getObjectBuffer.mockResolvedValue(Buffer.from('video'))
+        createJpegThumbnail.mockResolvedValue(Buffer.from('thumb'))
+        getPublicUrl.mockImplementation((key: string) => `https://cdn/${key}`)
+        createPostRepo.mockResolvedValue({
+          id: postId,
+          userId,
+          mediaKey,
+          mediaUrl: `https://cdn/${mediaKey}`,
+          mediaType: 'VIDEO',
+          thumbnailKey: thumbKey,
+          thumbnailUrl: `https://cdn/${thumbKey}`,
+          caption: null,
+          visibility: 'SUBSCRIBERS_ONLY',
+          subscriberOnly: false,
+          likesCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        })
+        findById.mockResolvedValue({
+          id: postId,
+          user: {
+            id: userId,
+            username: 'user',
+            firstName: null,
+            lastName: null,
+            publicId: BigInt(1),
+            avatarUrl: 'https://cdn.example/avatars/u.jpg',
+            gender: 'female',
+            dateOfBirth: new Date(Date.UTC(2000, 0, 15)),
+          },
+          tags: [],
+          mediaUrl: `https://cdn/${mediaKey}`,
+          mediaType: 'VIDEO',
+          thumbnailUrl: `https://cdn/${thumbKey}`,
+          caption: null,
+          visibility: 'SUBSCRIBERS_ONLY',
+          subscriberOnly: false,
+          likesCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        })
+
+        const result = await postService.createPost(
+          userId,
+          {
+            mediaKey,
+          },
+          meta,
+        )
+
+        expect(getObjectBuffer).toHaveBeenCalledWith(mediaKey)
+        expect(createJpegThumbnail).toHaveBeenCalled()
+        expect(putObjectBuffer).toHaveBeenCalledWith(
+          expect.objectContaining({
+            key: thumbKey,
+            contentType: 'image/jpeg',
+          }),
+        )
+        expect(result.mediaType).toBe('VIDEO')
+        expect(result.thumbnailUrl).toBe(`https://cdn/${thumbKey}`)
       } finally {
         vi.useRealTimers()
       }
@@ -252,7 +391,10 @@ describe('postService', () => {
           id: userId,
         },
       })
-      deletePostRepo.mockResolvedValue({ mediaKey: 'posts/user-1/key.jpg' })
+      deletePostRepo.mockResolvedValue({
+        mediaKey: 'posts/user-1/key.jpg',
+        thumbnailKey: null,
+      })
       deleteObject.mockResolvedValue(undefined)
 
       await postService.deletePost(postId, userId, meta)
@@ -277,7 +419,10 @@ describe('postService', () => {
           id: userId,
         },
       })
-      deletePostRepo.mockResolvedValue({ mediaKey: 'posts/user-1/key.jpg' })
+      deletePostRepo.mockResolvedValue({
+        mediaKey: 'posts/user-1/key.jpg',
+        thumbnailKey: null,
+      })
       deleteObject.mockRejectedValue(new Error('s3 failed'))
 
       await expect(postService.deletePost(postId, userId, meta)).resolves.toBeUndefined()

@@ -19,6 +19,8 @@ export type UserCard = {
   isFollowing: boolean
   isFollowedBy: boolean
   isFriend: boolean
+  /** True when the authenticated user has blocked this profile (e.g. search). */
+  blockedByMe?: boolean
   isSuperHost?: boolean
   activeGuardian?: ActiveGuardianProfileDto | null
   galleryCompletion?: GalleryCompletionDto

@@ -215,7 +215,8 @@ export default async function usersRoutes(app: FastifyInstance) {
       preHandler: [authenticate],
       schema: {
         tags: ['Users'],
-        description: 'Search user by publicId',
+        description:
+          'Search user by publicId. User object includes blockedByMe when the caller has blocked that user.',
         querystring: {
           type: 'object',
           required: ['publicId'],

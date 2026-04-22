@@ -285,7 +285,16 @@ export const socialCursorQuerySchema = z.object({
 
 export const postUploadUrlSchema = z.object({
   fileName: z.string().min(1).max(255),
-  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+  mimeType: z.enum([
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'video/mp4',
+    'video/quicktime',
+    'video/webm',
+  ]),
+  durationSeconds: z.coerce.number().positive().max(30).optional(),
+  sizeBytes: z.coerce.number().int().positive().optional(),
 })
 
 export const createPostSchema = z.object({

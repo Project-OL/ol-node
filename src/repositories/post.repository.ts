@@ -39,6 +39,9 @@ export const postRepository = {
     userId: string
     mediaKey: string
     mediaUrl: string
+    mediaType: 'IMAGE' | 'VIDEO'
+    thumbnailKey?: string | null
+    thumbnailUrl?: string | null
     caption?: string
     visibility: Post['visibility']
     subscriberOnly?: boolean
@@ -48,6 +51,9 @@ export const postRepository = {
         userId: data.userId,
         mediaKey: data.mediaKey,
         mediaUrl: data.mediaUrl,
+        mediaType: data.mediaType,
+        thumbnailKey: data.thumbnailKey ?? null,
+        thumbnailUrl: data.thumbnailUrl ?? null,
         caption: data.caption,
         visibility: data.visibility,
         subscriberOnly: data.subscriberOnly ?? false,
@@ -146,12 +152,12 @@ export const postRepository = {
     })
   },
 
-  async deletePost(postId: string): Promise<{ mediaKey: string }> {
+  async deletePost(postId: string): Promise<{ mediaKey: string; thumbnailKey: string | null }> {
     const deleted = await prisma.post.delete({
       where: { id: postId },
-      select: { mediaKey: true },
+      select: { mediaKey: true, thumbnailKey: true },
     })
-    return { mediaKey: deleted.mediaKey }
+    return { mediaKey: deleted.mediaKey, thumbnailKey: deleted.thumbnailKey }
   },
 
   async existsLike(postId: string, userId: string): Promise<boolean> {

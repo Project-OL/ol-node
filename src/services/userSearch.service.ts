@@ -7,6 +7,7 @@ import { followRepository } from '../repositories/follow.repository'
 import { superHostService } from './super-host.service'
 import { guardianService } from './guardian.service'
 import { giftGalleryService } from './gift-gallery.service'
+import { blockRepository } from '../repositories/block.repository'
 
 export const userSearchService = {
   async searchByPublicId(
@@ -29,13 +30,15 @@ export const userSearchService = {
     ])
     const subscriberCount = subscriberCounts.get(user.id) ?? 0
 
-    const [isFollowing, isFollowedBy, isSuperHost, activeGuardian, galleryCompletion] = await Promise.all([
-      followRepository.existsFollow(requesterId, user.id),
-      followRepository.existsFollow(user.id, requesterId),
-      superHostService.isSuperHost(user.id),
-      guardianService.getActiveGuardianSummary(user.id),
-      giftGalleryService.getCompletionSummaryForUser(user.id),
-    ])
+    const [isFollowing, isFollowedBy, isSuperHost, activeGuardian, galleryCompletion, blockedByMe] =
+      await Promise.all([
+        followRepository.existsFollow(requesterId, user.id),
+        followRepository.existsFollow(user.id, requesterId),
+        superHostService.isSuperHost(user.id),
+        guardianService.getActiveGuardianSummary(user.id),
+        giftGalleryService.getCompletionSummaryForUser(user.id),
+        blockRepository.isBlocked(requesterId, user.id),
+      ])
     const isFriend = isFollowing && isFollowedBy
 
     const fullName =
@@ -76,6 +79,7 @@ export const userSearchService = {
       isFollowing,
       isFollowedBy,
       isFriend,
+      blockedByMe,
       isSuperHost,
       activeGuardian,
       galleryCompletion,

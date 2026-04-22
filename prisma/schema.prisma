@@ -516,11 +516,19 @@ enum PostVisibility {
   SUBSCRIBERS_ONLY
 }
 
+enum PostMediaType {
+  IMAGE
+  VIDEO
+}
+
 model Post {
   id          String         @id @default(cuid())
   userId      String         @map("user_id") @db.Uuid
   mediaKey    String         @map("media_key") @db.VarChar(500)
   mediaUrl    String         @map("media_url") @db.VarChar(1000)
+  mediaType   PostMediaType  @default(IMAGE) @map("media_type")
+  thumbnailKey String?       @map("thumbnail_key") @db.VarChar(500)
+  thumbnailUrl String?       @map("thumbnail_url") @db.VarChar(1000)
   caption     String?        @db.Text
   visibility  PostVisibility @default(SUBSCRIBERS_ONLY)
   subscriberOnly Boolean     @default(false) @map("subscriber_only")
