@@ -14,6 +14,7 @@ import type {
   GetAllTicketsQuery,
 } from '../models/support.schemas'
 
+/** Agency promotion / CS force-exit use explicit admin routes (`/admin/agency/*`); do not auto-invoke from ticket lifecycle here. */
 const AUTO_REPLY_CONTENT =
   'Thank you for your feedback, we will reply you within 24 hours.'
 

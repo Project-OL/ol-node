@@ -161,10 +161,13 @@ export const messagingService = {
       ),
     )
     const msgKey = RedisKeys.convMessages(conversationId)
-    const msgJson = JSON.stringify({
-      ...msg,
-      createdAt: msg.createdAt.toISOString(),
-    })
+    const msgJson = JSON.stringify(
+      {
+        ...msg,
+        createdAt: msg.createdAt.toISOString(),
+      },
+      (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+    )
     await redisClient.zadd(
       msgKey,
       msg.createdAt.getTime(),

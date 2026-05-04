@@ -120,6 +120,14 @@ vi.mock('../../src/services/vip-membership.service', () => ({
   },
 }))
 
+vi.mock('../../src/services/agency.service', () => ({
+  agencyService: {
+    buildMeAgencyBlock: vi.fn().mockResolvedValue({
+      role: 'NONE' as const,
+    }),
+  },
+}))
+
 import { meService } from '../../src/services/me.service'
 import { verifyAccess } from '../../src/utils/jwt'
 
@@ -128,6 +136,8 @@ function baseRow(over: Partial<Record<string, unknown>> = {}) {
     id: 'user-1',
     username: 'jdoe',
     publicId: BigInt(99),
+    defaultPublicId: BigInt(99),
+    currentVipPublicId: null as bigint | null,
     firstName: 'Jane',
     lastName: 'Doe',
     gender: 'female',
@@ -260,12 +270,16 @@ describe('meService', () => {
       vipPreventBeingKicked: false,
       vipLiveTranslationEnabled: false,
     },
+    agency: {
+      role: 'NONE' as const,
+    },
   }
 
   it('getMe returns cached payload on Redis HIT', async () => {
     const cached = {
       userId: 'user-1',
       publicId: '99',
+      displayPublicId: '99',
       name: 'Jane Doe',
       email: 'j@example.com',
       avatarUrl: null,
@@ -290,9 +304,12 @@ describe('meService', () => {
     expect(out.cache).toBe('MISS')
     expect(out.data.userId).toBe('user-1')
     expect(out.data.publicId).toBe('99')
+    expect(out.data.displayPublicId).toBe('99')
     expect(out.data.dateOfBirth).toBeNull()
     expect(out.data.coinsBalance).toBe('20000')
     expect(out.data.canChangeUsername).toBe(true)
+    expect(typeof out.data.isVipActive).toBe('boolean')
+    expect(out.data.isVipActive).toBe(false)
     expect(cacheSet).toHaveBeenCalled()
   })
 

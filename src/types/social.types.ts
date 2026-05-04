@@ -32,6 +32,12 @@ export type UserCard = {
   activeGuardian?: ActiveGuardianProfileDto | null
   activeStoreItems?: ActiveStoreItemsMap
   galleryCompletion?: GalleryCompletionDto
+  /** Agency badge: optional `agencyPublicId` is the agent’s default public id (decimal string). */
+  agencyTag?: {
+    isAgent: boolean
+    isHost: boolean
+    agencyPublicId?: string
+  }
   /** Paid VIP membership (Diamond/SVIP); cosmetic flags mirror `isActive`. */
   vipMembership?: {
     isActive: boolean

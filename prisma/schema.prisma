@@ -50,6 +50,10 @@ model User {
   isSupport              Boolean @default(false) @map("is_support")
   privacyUpdatedAt       DateTime? @map("privacy_updated_at")
 
+  isAgent         Boolean   @default(false) @map("is_agent")
+  lastActiveAt    DateTime? @map("last_active_at")
+  currentAgencyId String?   @map("current_agency_id") @db.Uuid
+
   lastIpAddress String? @map("last_ip_address") @db.VarChar(45)
   tokenVersion Int @default(0) @map("token_version") // revoke-all / password change; embedded in access JWT
   createdAt DateTime @default(now()) @map("created_at")
@@ -114,11 +118,26 @@ model User {
   vipDailyClaims           VipDailyClaim[]
   vipDailyQuotas           VipDailyQuota[]
 
+  agency                    Agency?
+  hostAgencyMembership      AgencyHost?
+  agencyDailyAsHost         AgencyDailyEarning[] @relation("AgencyDailyHost")
+  agentTransfersSent        AgentPointTransfer[] @relation("AgentTransferSender")
+  agentTransfersReceived    AgentPointTransfer[] @relation("AgentTransferRecipient")
+  currentAgencyAgent        User?   @relation("HostToAgencyAgent", fields: [currentAgencyId], references: [id], onDelete: SetNull)
+  usersHostedInMyAgency     User[]  @relation("HostToAgencyAgent")
+  agencyApplicationsAsHost  AgencyHostApplication[] @relation("AgencyAppHost")
+  agencyApplicationsResolved AgencyHostApplication[] @relation("AgencyAppResolver")
+  agencyLeaveAsHost         AgencyLeaveApplication[] @relation("AgencyLeaveHost")
+  agencyLeaveResolved       AgencyLeaveApplication[] @relation("AgencyLeaveResolver")
+
   @@index([publicId])
   @@index([defaultPublicId])
   @@index([username])
   @@index([status])
   @@index([createdAt(sort: Desc)])
+  @@index([isAgent])
+  @@index([currentAgencyId])
+  @@index([lastActiveAt])
   @@map("users")
 }
 
@@ -445,6 +464,15 @@ model NextPublicIdSequence {
   nextValue BigInt @map("next_value") // default 34216589 via seed
 
   @@map("next_public_id_sequence")
+}
+
+/// Cursor for VIP-pattern pre-generation (horizon ahead of signup sequence). Singleton row id=1.
+model PublicIdClassificationProgress {
+  id               Int      @id @default(1)
+  lastClassifiedId BigInt   @map("last_classified_id")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("public_id_classification_progress")
 }
 
 // ─── 11. USER_SETTINGS (per-user messaging and language preferences) ───
@@ -870,6 +898,9 @@ enum PointTxType {
   ADJUSTMENT
   VIDEO_CALL
   GIFT_RECEIVE
+  AGENCY_FORCE_EXIT_PENALTY
+  AGENT_COMMISSION
+  AGENT_POINT_TRANSFER
 }
 
 enum WithdrawalStatus {
@@ -1298,6 +1329,187 @@ model FanSpend {
   @@unique([senderUserId, receiverUserId, periodType, periodKey])
   @@index([receiverUserId, periodType, periodKey])
   @@map("fan_spend")
+}
+
+// ─── AGENCY (Phase 1 — commission/payroll in later phases) ───
+
+enum AgencyApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum AgencyLeaveApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  LATE_APPROVED
+  AUTO_APPROVED
+  CANCELLED
+}
+
+enum AgencyHostHistoryReason {
+  LEAVE_APPROVED
+  LEAVE_AUTO_APPROVED
+  LEAVE_LATE_APPROVED
+  REMOVED_INACTIVE
+  REMOVED_SUSPENDED
+  CS_FORCE_EXIT
+  AGENT_DELETED
+  HOST_DELETED
+}
+
+model Agency {
+  userId                     String    @id @map("user_id") @db.Uuid
+  defaultPublicId            BigInt    @unique @map("default_public_id")
+  displayName                String    @map("display_name") @db.VarChar(255)
+  payrollEnabled             Boolean   @default(false) @map("payroll_enabled")
+  pausedAt                   DateTime? @map("paused_at")
+  pausedUntil                DateTime? @map("paused_until")
+  totalHostsCount            Int       @default(0) @map("total_hosts_count")
+  lifetimeHostEarningsPoints BigInt    @default(0) @map("lifetime_host_earnings_points")
+  currentLevel               String    @default("D") @map("current_level") @db.VarChar(8)
+  currentWindowTotalPoints   BigInt    @default(0) @map("current_window_total_points")
+  lastLevelRecomputedAt      DateTime? @map("last_level_recomputed_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
+
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hosts             AgencyHost[]
+  applications      AgencyHostApplication[]
+  leaveApplications AgencyLeaveApplication[]
+  dailyEarnings     AgencyDailyEarning[]
+
+  @@index([payrollEnabled, pausedAt])
+  @@index([currentLevel, currentWindowTotalPoints(sort: Desc)])
+  @@index([totalHostsCount(sort: Desc)])
+  @@map("agencies")
+}
+
+model AgencyHost {
+  agencyUserId String   @map("agency_user_id") @db.Uuid
+  hostUserId   String   @id @map("host_user_id") @db.Uuid
+  joinedAt     DateTime @default(now()) @map("joined_at")
+
+  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host   User   @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@index([agencyUserId, joinedAt(sort: Desc)])
+  @@map("agency_hosts")
+}
+
+model AgencyHostApplication {
+  id               String                  @id @default(uuid()) @db.Uuid
+  agencyUserId     String                  @map("agency_user_id") @db.Uuid
+  hostUserId       String                  @map("host_user_id") @db.Uuid
+  status           AgencyApplicationStatus
+  message          String?                 @db.Text
+  createdAt        DateTime                @default(now()) @map("created_at")
+  resolvedAt       DateTime?               @map("resolved_at")
+  resolvedByUserId String?                 @map("resolved_by") @db.Uuid
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  agency     Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host       User   @relation("AgencyAppHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  resolvedBy User?  @relation("AgencyAppResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([hostUserId, status, createdAt(sort: Desc)])
+  @@index([agencyUserId, status, createdAt(sort: Desc)])
+  @@map("agency_host_applications")
+}
+
+model AgencyLeaveApplication {
+  id               String                     @id @default(uuid()) @db.Uuid
+  agencyUserId     String                     @map("agency_user_id") @db.Uuid
+  hostUserId       String                     @map("host_user_id") @db.Uuid
+  status           AgencyLeaveApplicationStatus
+  reason           String?                    @db.Text
+  createdAt        DateTime                   @default(now()) @map("created_at")
+  resolvedAt       DateTime?                  @map("resolved_at")
+  resolvedByUserId String?                    @map("resolved_by") @db.Uuid
+  autoApproveAt    DateTime                   @map("auto_approve_at")
+  lateApproveUntil DateTime?                  @map("late_approve_until")
+  updatedAt        DateTime                   @updatedAt @map("updated_at")
+
+  agency     Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host       User   @relation("AgencyLeaveHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  resolvedBy User?  @relation("AgencyLeaveResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([hostUserId, status, createdAt(sort: Desc)])
+  @@index([agencyUserId, status, createdAt(sort: Desc)])
+  @@index([status, autoApproveAt])
+  @@map("agency_leave_applications")
+}
+
+model AgencyHostHistory {
+  id           String                  @id @default(uuid()) @db.Uuid
+  agencyUserId String                  @map("agency_user_id") @db.Uuid
+  hostUserId   String                  @map("host_user_id") @db.Uuid
+  joinedAt     DateTime                @map("joined_at")
+  exitedAt     DateTime                @default(now()) @map("exited_at")
+  reason       AgencyHostHistoryReason
+  exitMetadata Json?                   @map("exit_metadata")
+
+  @@index([hostUserId, exitedAt(sort: Desc)])
+  @@index([agencyUserId, exitedAt(sort: Desc)])
+  @@map("agency_host_history")
+}
+
+/// Seeded ladder: D / C / B / A / S / SS+ (rates in basis points).
+model AgencyCommissionLevel {
+  level            String   @id @db.VarChar(8)
+  minWindowPoints  BigInt   @map("min_window_points")
+  liveRateBp       Int      @map("live_rate_bp")
+  matchChatRateBp  Int      @map("match_chat_rate_bp")
+  sortOrder        Int      @map("sort_order")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("agency_commission_levels")
+}
+
+model AgencyDailyEarning {
+  agencyUserId         String   @map("agency_user_id") @db.Uuid
+  hostUserId           String   @map("host_user_id") @db.Uuid
+  day                  DateTime @db.Date
+  hostEarningsPoints   BigInt   @default(0) @map("host_earnings_points")
+  hostCommissionPoints BigInt   @default(0) @map("host_commission_points")
+  hostWasActive        Boolean  @default(true) @map("host_was_active")
+  lastCreditAt         DateTime? @map("last_credit_at")
+
+  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host   User   @relation("AgencyDailyHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@id([agencyUserId, hostUserId, day])
+  @@index([agencyUserId, day(sort: Desc)])
+  @@index([hostUserId, day(sort: Desc)])
+  @@map("agency_daily_earnings")
+}
+
+/// Marks a host point ledger entry as processed for agency commission (same tx as applyCommission).
+model AgencyCommissionProcessed {
+  hostLedgerEntryId String   @id @map("host_ledger_entry_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("agency_commission_processed")
+}
+
+model AgentPointTransfer {
+  id                      String   @id @default(uuid()) @db.Uuid
+  senderAgentUserId       String   @map("sender_agent_user_id") @db.Uuid
+  recipientAgentUserId    String   @map("recipient_agent_user_id") @db.Uuid
+  points                  BigInt
+  senderLedgerEntryId     String   @map("sender_ledger_entry_id") @db.Uuid
+  recipientLedgerEntryId  String   @map("recipient_ledger_entry_id") @db.Uuid
+  idempotencyKey          String   @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  sender    User @relation("AgentTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
+  recipient User @relation("AgentTransferRecipient", fields: [recipientAgentUserId], references: [id], onDelete: Cascade)
+
+  @@index([senderAgentUserId, createdAt(sort: Desc)])
+  @@index([recipientAgentUserId, createdAt(sort: Desc)])
+  @@map("agent_point_transfers")
 }
 
 model SupportTicket {

@@ -109,6 +109,13 @@ vi.mock("../../src/config/env", () => ({
   env: { GIFT_COIN_TO_POINT_RATE: 1 },
 }));
 
+vi.mock("../../src/services/agencyCommission.service", () => ({
+  agencyCommissionService: {
+    applyCommission: vi.fn().mockResolvedValue({ bustAgentUserId: null }),
+    bustAgentCommissionCaches: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 import { giftTransactionService } from "../../src/services/gift-transaction.service";
 
 function mockTx() {
@@ -127,6 +134,10 @@ function mockTx() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  pointInsert.mockResolvedValue({
+    id: "pt-entry-1",
+    balanceAfter: 500n,
+  });
   getOrCreate
     .mockResolvedValueOnce({ id: "w-coin", userId: "s1" })
     .mockResolvedValueOnce({ id: "w-point", userId: "r1" });

@@ -28,6 +28,11 @@ export function errorHandler(
       const sec = Math.max(0, Math.ceil((next - Date.now()) / 1000))
       if (sec > 0) reply.header('Retry-After', String(sec))
     }
+    if (error.statusCode === 429 && error.details?.nextAllowedAt != null) {
+      const next = new Date(String(error.details.nextAllowedAt)).getTime()
+      const sec = Math.max(0, Math.ceil((next - Date.now()) / 1000))
+      if (sec > 0) reply.header('Retry-After', String(sec))
+    }
     const errCode = error.code ?? 'ERROR'
     return reply.status(error.statusCode).send({
       statusCode: error.statusCode,

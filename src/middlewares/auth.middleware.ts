@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { AppError } from './errorHandler'
+import { lastActiveTracker } from './lastActiveTracker.middleware'
 import type { JwtAccessPayload } from '../models/types'
 import { resolveUserTokenVersion, sessionService } from '../services/session.service'
 
@@ -44,4 +45,8 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
   request.jti = payload.jti
   request.deviceId = payload.deviceId
   request.sessionId = payload.sessionId
+
+  await lastActiveTracker(request, _reply).catch(() => {
+    /* non-fatal */
+  })
 }

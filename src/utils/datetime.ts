@@ -45,3 +45,39 @@ export function addUtcDays(from: Date, days: number): Date {
   d.setUTCDate(d.getUTCDate() + days);
   return d;
 }
+
+/** Midnight UTC for the given instant's calendar date. */
+export function utcStartOfDay(d: Date): Date {
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0),
+  );
+}
+
+/** Calendar UTC date only (for agency_daily_earnings.day) from a timestamp. */
+export function utcDayFromTimestamp(d: Date): Date {
+  return utcStartOfDay(d);
+}
+
+/**
+ * Rolling window for agency level: last 30 fully elapsed UTC calendar days
+ * ending yesterday — `[fromDay, toDay]` inclusive as DATE values.
+ */
+export function agencyCommissionRollingWindowDays(now: Date = utcNow()): {
+  fromDay: Date;
+  toDay: Date;
+} {
+  const todayStart = utcStartOfDay(now);
+  const toDay = addUtcDays(todayStart, -1);
+  const fromDay = addUtcDays(todayStart, -30);
+  return { fromDay, toDay };
+}
+
+/** Inclusive UTC calendar day range ending yesterday (`periodDays` days). */
+export function utcRollingPeriodDays(
+  periodDays: number,
+  now: Date = utcNow(),
+): { fromDay: Date; toDay: Date } {
+  const yesterday = addUtcDays(utcStartOfDay(now), -1);
+  const fromDay = addUtcDays(yesterday, -(periodDays - 1));
+  return { fromDay, toDay: yesterday };
+}

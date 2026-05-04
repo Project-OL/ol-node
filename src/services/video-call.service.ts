@@ -24,6 +24,7 @@ import {
   MIN_CALL_PRICE,
   type UpdateCallSettingsInput,
 } from '../models/call.schemas'
+import { utcDayFromTimestamp } from '../utils/datetime'
 
 // ── LiveKit helpers ───────────────────────────────────────────────────────────
 
@@ -189,6 +190,8 @@ export const videoCallSessionService = {
     const callerCoinWallet = await walletRepository.getOrCreate(session.callerId, WalletCurrencyType.COIN)
     const creatorPointWallet = await walletRepository.getOrCreate(session.creatorId, WalletCurrencyType.POINT)
 
+    let bustAgentUserId: string | null = null
+
     await prisma.$transaction(async (tx) => {
       // Lock caller wallet
       await walletRepository.lockForUpdate(tx, callerCoinWallet.id)
@@ -226,14 +229,7 @@ export const videoCallSessionService = {
       })
       const pointBalance = lastPoint?.balanceAfter ?? 0n
 
-      const levelResult = await walletLevelService.applyCredit(
-        tx,
-        session.creatorId,
-        LevelType.LIVESTREAM,
-        amount,
-      )
-
-      await pointLedgerRepository.insert(tx, {
+      const ptEntry = await pointLedgerRepository.insert(tx, {
         walletId: creatorPointWallet.id,
         direction: LedgerDirection.CREDIT,
         txType: PointTxType.VIDEO_CALL,
@@ -246,9 +242,34 @@ export const videoCallSessionService = {
       })
       await walletRepository.bumpVersion(tx, creatorPointWallet.id)
 
+      const { agencyCommissionService } = await import('./agencyCommission.service')
+      const ac = await agencyCommissionService.applyCommission(
+        {
+          hostUserId: session.creatorId,
+          hostLedgerEntryId: ptEntry.id,
+          hostPointsCredited: amount,
+          hostTxType: PointTxType.VIDEO_CALL,
+          day: utcDayFromTimestamp(new Date()),
+        },
+        tx,
+      )
+      bustAgentUserId = ac.bustAgentUserId
+
+      const levelResult = await walletLevelService.applyCredit(
+        tx,
+        session.creatorId,
+        LevelType.LIVESTREAM,
+        amount,
+      )
+
       // Store levelResult on the outer scope for cache refresh after commit
       ;(tx as unknown as { _lvl: typeof levelResult })._lvl = levelResult
     }, { isolationLevel: 'Serializable' })
+
+    if (bustAgentUserId) {
+      const { agencyCommissionService } = await import('./agencyCommission.service')
+      await agencyCommissionService.bustAgentCommissionCaches(bustAgentUserId)
+    }
 
     // Invalidate caches
     await walletService.adjustCoinBalanceCache(session.callerId, 0n)

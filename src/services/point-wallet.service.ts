@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
 import { AppError } from "../middlewares/errorHandler";
 import { walletRepository } from "../repositories/wallet.repository";
@@ -14,6 +15,7 @@ import {
 import { walletLevelService } from "./user-level.service";
 import { env } from "../config/env";
 import { walletWithdrawalQueue } from "../queues/wallet-withdrawal.queue";
+import { utcDayFromTimestamp } from "../utils/datetime";
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
 
@@ -81,7 +83,7 @@ export const pointWalletService = {
       WalletCurrencyType.POINT,
     );
 
-    const { entry, levelResult } = await prisma.$transaction(
+    const { entry, levelResult, bustAgentUserId } = await prisma.$transaction(
       async (tx) => {
         await walletRepository.lockForUpdate(tx, wallet.id);
 
@@ -107,6 +109,20 @@ export const pointWalletService = {
 
         await walletRepository.bumpVersion(tx, wallet.id);
 
+        const { agencyCommissionService } = await import(
+          "./agencyCommission.service"
+        );
+        const ac = await agencyCommissionService.applyCommission(
+          {
+            hostUserId: userId,
+            hostLedgerEntryId: e.id,
+            hostPointsCredited: amount,
+            hostTxType: txType,
+            day: utcDayFromTimestamp(new Date()),
+          },
+          tx,
+        );
+
         const lr = await walletLevelService.applyCredit(
           tx,
           userId,
@@ -114,12 +130,23 @@ export const pointWalletService = {
           amount,
         );
 
-        return { entry: e, levelResult: lr };
+        return {
+          entry: e,
+          levelResult: lr,
+          bustAgentUserId: ac.bustAgentUserId,
+        };
       },
       { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
     );
 
     await walletService.adjustPointBalanceCache(userId, amount);
+
+    if (bustAgentUserId) {
+      const { agencyCommissionService } = await import(
+        "./agencyCommission.service"
+      );
+      await agencyCommissionService.bustAgentCommissionCaches(bustAgentUserId);
+    }
 
     const streamSnapshot = await walletLevelService.refreshCache(
       userId,
@@ -313,5 +340,166 @@ export const pointWalletService = {
       nextCursor,
       hasMore,
     };
+  },
+
+  /**
+   * Point credit inside a caller-owned transaction. Idempotent on `idempotencyKey`.
+   * When `applyLivestreamLevel` is true (default), applies livestream cumulative XP
+   * (host earnings). Set false for agent commission / internal transfers.
+   */
+  async creditInTransaction(
+    userId: string,
+    amount: bigint,
+    txType: PointTxType,
+    tx: Prisma.TransactionClient,
+    options: {
+      idempotencyKey: string;
+      refId?: string;
+      counterpartyId?: string;
+      description?: string;
+      metadata?: Prisma.JsonValue;
+      applyLivestreamLevel?: boolean;
+    },
+  ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
+    const existing = await pointLedgerRepository.findByIdempotencyKey(
+      tx,
+      options.idempotencyKey,
+    );
+    if (existing) {
+      return {
+        ledgerEntryId: existing.id,
+        balanceAfter: existing.balanceAfter,
+      };
+    }
+
+    const wallet = await tx.wallet.upsert({
+      where: {
+        userId_currencyType: {
+          userId,
+          currencyType: WalletCurrencyType.POINT,
+        },
+      },
+      create: { userId, currencyType: WalletCurrencyType.POINT },
+      update: {},
+    });
+    await walletRepository.lockForUpdate(tx, wallet.id);
+    const last = await tx.pointLedgerEntry.findFirst({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: "desc" },
+      select: { balanceAfter: true },
+    });
+    const newBalance = (last?.balanceAfter ?? 0n) + amount;
+
+    const entry = await pointLedgerRepository.insert(tx, {
+      walletId: wallet.id,
+      direction: LedgerDirection.CREDIT,
+      txType,
+      amount,
+      balanceAfter: newBalance,
+      refId: options.refId,
+      counterpartyId: options.counterpartyId,
+      description: options.description ?? undefined,
+      metadata: options.metadata as object | undefined,
+      idempotencyKey: options.idempotencyKey,
+    });
+    await walletRepository.bumpVersion(tx, wallet.id);
+
+    const { agencyCommissionService } = await import(
+      "./agencyCommission.service"
+    );
+    await agencyCommissionService.applyCommission(
+      {
+        hostUserId: userId,
+        hostLedgerEntryId: entry.id,
+        hostPointsCredited: amount,
+        hostTxType: txType,
+        day: utcDayFromTimestamp(new Date()),
+      },
+      tx,
+    );
+
+    const applyXp = options.applyLivestreamLevel !== false;
+    if (
+      applyXp &&
+      txType !== PointTxType.AGENT_COMMISSION &&
+      txType !== PointTxType.AGENT_POINT_TRANSFER
+    ) {
+      await walletLevelService.applyCredit(
+        tx,
+        userId,
+        LevelType.LIVESTREAM,
+        amount,
+      );
+    }
+
+    return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter };
+  },
+
+  /**
+   * Generic point debit inside a caller-owned Serializable transaction.
+   * Idempotent on `idempotencyKey`. Does not apply livestream XP (penalties / adjustments).
+   */
+  async debit(
+    userId: string,
+    amount: bigint,
+    txType: PointTxType,
+    tx: Prisma.TransactionClient,
+    options: {
+      idempotencyKey: string;
+      description?: string;
+      metadata?: Prisma.JsonValue;
+      counterpartyId?: string;
+      refId?: string;
+    },
+  ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
+    const existing = await pointLedgerRepository.findByIdempotencyKey(
+      tx,
+      options.idempotencyKey,
+    );
+    if (existing) {
+      return {
+        ledgerEntryId: existing.id,
+        balanceAfter: existing.balanceAfter,
+      };
+    }
+
+    const wallet = await tx.wallet.upsert({
+      where: {
+        userId_currencyType: {
+          userId,
+          currencyType: WalletCurrencyType.POINT,
+        },
+      },
+      create: { userId, currencyType: WalletCurrencyType.POINT },
+      update: {},
+    });
+    await walletRepository.lockForUpdate(tx, wallet.id);
+    const last = await tx.pointLedgerEntry.findFirst({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: "desc" },
+      select: { balanceAfter: true },
+    });
+    const balance = last?.balanceAfter ?? 0n;
+    if (balance < amount) {
+      throw new AppError(400, "Insufficient points", "INSUFFICIENT_POINTS", {
+        balance: balance.toString(),
+        required: amount.toString(),
+      });
+    }
+
+    const entry = await pointLedgerRepository.insert(tx, {
+      walletId: wallet.id,
+      direction: LedgerDirection.DEBIT,
+      txType,
+      amount,
+      balanceAfter: balance - amount,
+      refId: options.refId,
+      counterpartyId: options.counterpartyId,
+      description: options.description,
+      metadata: options.metadata as object | undefined,
+      idempotencyKey: options.idempotencyKey,
+    });
+    await walletRepository.bumpVersion(tx, wallet.id);
+    return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter };
   },
 };

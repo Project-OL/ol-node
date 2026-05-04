@@ -28,5 +28,10 @@ export async function publishToConversation(
   conversationId: string,
   event: WsEvent,
 ): Promise<void> {
-  await redisClient.publish(`conv:${conversationId}:events`, JSON.stringify(event))
+  await redisClient.publish(
+    `conv:${conversationId}:events`,
+    JSON.stringify(event, (_key, value) =>
+      typeof value === 'bigint' ? value.toString() : value,
+    ),
+  )
 }

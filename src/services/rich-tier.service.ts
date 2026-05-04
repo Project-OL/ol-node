@@ -144,7 +144,8 @@ async function getMonthRechargeCoinsCached(
 }
 
 function buildSnapshotCore(params: {
-  tier: number;
+  /** Persisted badge tier from `user_rich_tier.currentTier` (rollover job only). */
+  badgeTier: number;
   displayMap: Map<number, string>;
   evaluatedFromYear: number;
   evaluatedFromMonth: number;
@@ -153,8 +154,12 @@ function buildSnapshotCore(params: {
   currentMonthProgressCoins: bigint;
 }): RichStateCached {
   const displayName =
-    params.tier > 0 ? (params.displayMap.get(params.tier) ?? null) : null;
-  const nextTh = params.tier < 10 ? thresholdForTier(params.tier + 1) : null;
+    params.badgeTier > 0
+      ? (params.displayMap.get(params.badgeTier) ?? null)
+      : null;
+  const progressTier = computeTier(params.currentMonthProgressCoins);
+  const nextTh =
+    progressTier < 10 ? thresholdForTier(progressTier + 1) : null;
   const lacking =
     nextTh != null
       ? (nextTh > params.currentMonthProgressCoins
@@ -162,7 +167,7 @@ function buildSnapshotCore(params: {
           : 0n)
       : null;
   return {
-    tier: params.tier,
+    tier: params.badgeTier,
     displayName,
     evaluatedFromYear: params.evaluatedFromYear,
     evaluatedFromMonth: params.evaluatedFromMonth,
@@ -201,6 +206,7 @@ export const richTierService = {
     }
   },
 
+  // Follow-up (product): `opts.isVip` / wallet legacy flag may trend false; consider keying badge off paid VIP membership instead.
   async getCurrentTierForUser(
     userId: string,
     opts?: { isVip?: boolean },
@@ -233,9 +239,9 @@ export const richTierService = {
       ym.month,
     );
     const progress = carry + monthTotal;
-    const tier = computeTier(progress);
+    const badgeTier = row?.currentTier ?? 0;
     const core = buildSnapshotCore({
-      tier,
+      badgeTier,
       displayMap,
       evaluatedFromYear: row?.evaluatedFromYear ?? 0,
       evaluatedFromMonth: row?.evaluatedFromMonth ?? 0,
@@ -252,7 +258,7 @@ export const richTierService = {
 
     return {
       ...core,
-      badgeVisible: isVip && tier > 0,
+      badgeVisible: isVip && badgeTier > 0,
     };
   },
 

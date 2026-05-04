@@ -1,4 +1,4 @@
-import { prisma } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 import type { UserVipAssignment } from '@prisma/client'
 
 export const vipAssignmentRepository = {
@@ -71,6 +71,44 @@ export const vipAssignmentRepository = {
   async findMostRecent(userId: string): Promise<UserVipAssignment | null> {
     return prisma.userVipAssignment.findFirst({
       where: { userId },
+      orderBy: { startsAt: 'desc' },
+    })
+  },
+
+  /**
+   * All rare-public-ID assignments for inventory/history views (e.g. GET store/my-items).
+   * Optional `isActive` matches `user_vip_assignments.is_active` (expiry job sets false).
+   */
+  async findAllForUser(
+    userId: string,
+    opts: { isActive?: boolean },
+  ): Promise<
+    Array<
+      UserVipAssignment & {
+        vipPublicId: {
+          tier: string
+          rarityScore: number
+          priceCredits: number | null
+          matchedRules: string[]
+        }
+      }
+    >
+  > {
+    return prismaRead.userVipAssignment.findMany({
+      where: {
+        userId,
+        ...(opts.isActive !== undefined ? { isActive: opts.isActive } : {}),
+      },
+      include: {
+        vipPublicId: {
+          select: {
+            tier: true,
+            rarityScore: true,
+            priceCredits: true,
+            matchedRules: true,
+          },
+        },
+      },
       orderBy: { startsAt: 'desc' },
     })
   },

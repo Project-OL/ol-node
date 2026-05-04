@@ -87,6 +87,34 @@ export const rateLimitRichRead = buildRateLimit({
   keyBuilder: RedisKeys.ratelimitRichRead,
 });
 
+export const rateLimitAgencyApply = buildRateLimit({
+  max: 3,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitAgencyApply,
+});
+
+export const rateLimitAgencyAccept = buildRateLimit({
+  max: 30,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitAgencyAccept,
+});
+
+export const rateLimitAgencyLeaveApply = buildRateLimit({
+  max: 3,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitAgencyLeaveApply,
+});
+
+export const rateLimitAgencyPointTransfer = buildRateLimit({
+  max: 3,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitAgencyPointTransfer,
+});
+
 export interface AuthRateLimitConfig {
   /** Endpoint key (e.g. 'auth.signup.send_otp') */
   endpoint: string;

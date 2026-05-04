@@ -42,7 +42,7 @@ export type ConversationPreview = {
     id: string
     username: string
     avatarUrl: string | null
-    defaultPublicId: bigint
+    defaultPublicId: string
   }>
   lastMessage: {
     id: string
@@ -198,7 +198,7 @@ export async function listConversationsForUser(
       id: m.user.id,
       username: m.user.username,
       avatarUrl: m.user.avatarUrl,
-      defaultPublicId: m.user.defaultPublicId,
+      defaultPublicId: m.user.defaultPublicId.toString(),
     })),
     lastMessage: c.messages[0]
       ? {

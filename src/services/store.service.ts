@@ -1,6 +1,7 @@
 import { Prisma, StoreItemCategory } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
+  redisClient,
   RedisKeys,
   STORE_CATALOG_TTL,
   STORE_ITEM_TTL,
@@ -8,17 +9,21 @@ import {
   USER_ACTIVE_STORE_TTL,
   USER_STORE_ITEMS_TTL,
 } from '../config/redis'
+import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
 import { cacheRedisService } from './cacheRedis.service'
 import { storeRepository } from '../repositories/store.repository'
+import { vipAssignmentRepository } from '../repositories/vip-assignment.repository'
 import { followRepository } from '../repositories/follow.repository'
 import { coinWalletService } from './coin-wallet.service'
 import { walletService } from './wallet.service'
-import { enqueueStoreItemExpiry } from '../queues/store-item-expiry.queue'
+import {
+  enqueueRareIdAssignmentExpiry,
+  enqueueStoreItemExpiry,
+} from '../queues/store-item-expiry.queue'
 import type { ActiveStoreItemsMap } from '../models/store.types'
 
 const TX_TIMEOUT_MS = 20_000
-const DEFAULT_RARE_ID_VALIDITY_DAYS = 15
 
 type StoreItemSummary = {
   id: string
@@ -58,6 +63,32 @@ function buildEmptyActiveMap(): ActiveStoreItemsMap {
     PROFILE_CARD: null,
     rareId: null,
   }
+}
+
+export type ListOwnedItemsResponse = {
+  items: Array<{
+    userStoreItemId: string
+    isApplied: boolean
+    isActive: boolean
+    expiresAt: string
+    purchasedById: string
+    coinsPaid: number
+    item: StoreItemSummary
+  }>
+  ownedRarePublicIds: Array<{
+    assignmentId: string
+    publicId: string
+    tier: string
+    rarityScore: number
+    priceCredits: number | null
+    matchedRules: string[]
+    isActive: boolean
+    isEquipped: boolean
+    startsAt: string
+    expiresAt: string
+    revokedAt: string | null
+  }>
+  nextCursor: string | null
 }
 
 export const storeService = {
@@ -220,13 +251,15 @@ export const storeService = {
 
     await walletService.adjustCoinBalanceCache(params.buyerId, BigInt(item.coinCost))
     await enqueueStoreItemExpiry(created.id, expiresAt)
-    await cacheRedisService.del(
-      RedisKeys.userActiveStore(params.recipientId),
-      RedisKeys.userStoreItems(params.recipientId),
-      RedisKeys.userStoreItems(params.buyerId),
-      RedisKeys.storeCatalog(),
-      RedisKeys.storeCatalog(item.category),
-    )
+    await Promise.all([
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.recipientId)),
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.buyerId)),
+      cacheRedisService.del(
+        RedisKeys.userActiveStore(params.recipientId),
+        RedisKeys.storeCatalog(),
+        RedisKeys.storeCatalog(item.category),
+      ),
+    ])
 
     return {
       userStoreItemId: created.id,
@@ -274,8 +307,10 @@ export const storeService = {
       throw new AppError(409, 'Recipient already has this rare ID', 'RARE_ID_ALREADY_OWNED')
     }
 
-    const expiresAt = new Date(Date.now() + DEFAULT_RARE_ID_VALIDITY_DAYS * 24 * 60 * 60 * 1000)
-    await prisma.$transaction(
+    const expiresAt = new Date(
+      Date.now() + env.STORE_RARE_ID_DURATION_DAYS * 24 * 60 * 60 * 1000,
+    )
+    const createdAssignment = await prisma.$transaction(
       async (tx) => {
         await coinWalletService.debitForVipPurchase(
           params.buyerId,
@@ -300,7 +335,7 @@ export const storeService = {
             expiresAt,
           },
         })
-        await tx.userVipAssignment.create({
+        const assignment = await tx.userVipAssignment.create({
           data: {
             userId: params.recipientId,
             publicId: params.publicId,
@@ -319,16 +354,18 @@ export const storeService = {
             },
           })
         }
+        return assignment
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TX_TIMEOUT_MS },
     )
 
     await walletService.adjustCoinBalanceCache(params.buyerId, BigInt(row.priceCredits!))
-    await cacheRedisService.del(
-      RedisKeys.storeRareIds(),
-      RedisKeys.userActiveStore(params.recipientId),
-      RedisKeys.userStoreItems(params.recipientId),
-    )
+    await enqueueRareIdAssignmentExpiry(createdAssignment.id, createdAssignment.expiresAt)
+    await Promise.all([
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.recipientId)),
+      cacheRedisService.del(RedisKeys.storeRareIds(), RedisKeys.userActiveStore(params.recipientId)),
+      cacheRedisService.del(RedisKeys.userMe(params.recipientId), RedisKeys.userProfile(params.recipientId)),
+    ])
 
     return {
       publicId: params.publicId.toString(),
@@ -351,30 +388,147 @@ export const storeService = {
       throw new AppError(400, 'Store item has expired', 'STORE_ITEM_EXPIRED')
     }
     await storeRepository.activateItem(userId, userStoreItemId, owned.storeItem.category)
-    await cacheRedisService.del(RedisKeys.userActiveStore(userId), RedisKeys.userStoreItems(userId))
+    await Promise.all([
+      cacheRedisService.del(RedisKeys.userActiveStore(userId)),
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(userId)),
+      cacheRedisService.del(RedisKeys.userMe(userId), RedisKeys.userProfile(userId)),
+    ])
+  },
+
+  async deactivateOwnedItem(userId: string, userStoreItemId: string): Promise<void> {
+    const owned = await storeRepository.findUserStoreItemById(userStoreItemId)
+    if (!owned || owned.userId !== userId) {
+      throw new AppError(404, 'Store item ownership not found', 'STORE_ITEM_NOT_OWNED')
+    }
+    if (!owned.isActive || owned.revokedAt) {
+      throw new AppError(400, 'Store item is inactive', 'STORE_ITEM_INACTIVE')
+    }
+    if (!owned.isApplied) {
+      // Idempotent deactivate: already inactive in active slot.
+      return
+    }
+    await storeRepository.deactivateItem(userId, userStoreItemId, owned.storeItem.category)
+    await Promise.all([
+      cacheRedisService.del(RedisKeys.userActiveStore(userId)),
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(userId)),
+      cacheRedisService.del(RedisKeys.userMe(userId), RedisKeys.userProfile(userId)),
+    ])
+  },
+
+  async activateOwnedRarePublicId(userId: string, assignmentId: string): Promise<void> {
+    const assignment = await prismaRead.userVipAssignment.findUnique({
+      where: { id: assignmentId },
+      select: { id: true, userId: true, publicId: true, isActive: true, revokedAt: true, expiresAt: true },
+    })
+    if (!assignment || assignment.userId !== userId) {
+      throw new AppError(404, 'Rare ID ownership not found', 'RARE_ID_NOT_OWNED')
+    }
+    if (!assignment.isActive || assignment.revokedAt) {
+      throw new AppError(400, 'Rare ID is inactive', 'RARE_ID_INACTIVE')
+    }
+    if (assignment.expiresAt.getTime() <= Date.now()) {
+      throw new AppError(400, 'Rare ID has expired', 'RARE_ID_EXPIRED')
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        currentVipPublicId: assignment.publicId,
+        vipPublicIdExpiresAt: assignment.expiresAt,
+      },
+    })
+
+    const ttlSeconds = Math.max(1, Math.floor((assignment.expiresAt.getTime() - Date.now()) / 1000))
+    try {
+      await redisClient.set(RedisKeys.userActiveVipId(userId), assignment.publicId.toString(), 'EX', ttlSeconds)
+    } catch {
+      /* ignore */
+    }
+
+    await Promise.all([
+      cacheRedisService.del(RedisKeys.userActiveStore(userId)),
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(userId)),
+    ])
+  },
+
+  async deactivateOwnedRarePublicId(userId: string, assignmentId: string): Promise<void> {
+    const assignment = await prismaRead.userVipAssignment.findUnique({
+      where: { id: assignmentId },
+      select: { id: true, userId: true, publicId: true },
+    })
+    if (!assignment || assignment.userId !== userId) {
+      throw new AppError(404, 'Rare ID ownership not found', 'RARE_ID_NOT_OWNED')
+    }
+
+    await prisma.user.updateMany({
+      where: { id: userId, currentVipPublicId: assignment.publicId },
+      data: {
+        currentVipPublicId: null,
+        vipPublicIdExpiresAt: null,
+      },
+    })
+
+    try {
+      await redisClient.del(RedisKeys.userActiveVipId(userId))
+    } catch {
+      /* ignore */
+    }
+
+    await Promise.all([
+      cacheRedisService.del(RedisKeys.userActiveStore(userId)),
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(userId)),
+    ])
   },
 
   async listOwnedItems(
     userId: string,
     opts: { category?: StoreItemCategory; isActive?: boolean; cursor?: string; limit?: number },
-  ): Promise<{ items: Array<{ userStoreItemId: string; isApplied: boolean; isActive: boolean; expiresAt: string; purchasedById: string; coinsPaid: number; item: StoreItemSummary }>; nextCursor: string | null }> {
+  ): Promise<ListOwnedItemsResponse> {
     const safeLimit = Math.max(1, Math.min(opts.limit ?? 20, 50))
     const cacheKey = !opts.cursor
-      ? `${RedisKeys.userStoreItems(userId)}:${opts.category ?? 'ALL'}:${opts.isActive ?? 'ALL'}:${safeLimit}`
+      ? `${RedisKeys.userStoreItems(userId)}:${opts.category ?? 'ALL'}:${opts.isActive ?? 'ALL'}:${safeLimit}:rare-v1`
       : null
     if (cacheKey) {
-      const cached = await cacheRedisService.get<{ items: Array<{ userStoreItemId: string; isApplied: boolean; isActive: boolean; expiresAt: string; purchasedById: string; coinsPaid: number; item: StoreItemSummary }>; nextCursor: string | null }>(cacheKey)
+      const cached = await cacheRedisService.get<ListOwnedItemsResponse>(cacheKey)
       if (cached) return cached
     }
-    const rows = await storeRepository.findOwnedItems(userId, {
-      category: opts.category,
-      isActive: opts.isActive,
-      cursor: opts.cursor,
-      limit: safeLimit + 1,
-    })
+    const [rows, rareAssignments, user] = await Promise.all([
+      storeRepository.findOwnedItems(userId, {
+        category: opts.category,
+        isActive: opts.isActive,
+        cursor: opts.cursor,
+        limit: safeLimit + 1,
+      }),
+      vipAssignmentRepository.findAllForUser(userId, { isActive: opts.isActive }),
+      prismaRead.user.findUnique({
+        where: { id: userId },
+        select: { currentVipPublicId: true, vipPublicIdExpiresAt: true },
+      }),
+    ])
     const hasMore = rows.length > safeLimit
     const page = hasMore ? rows.slice(0, safeLimit) : rows
-    const payload = {
+    const now = Date.now()
+    const equippedId = user?.currentVipPublicId ?? null
+    const equippedValid =
+      equippedId != null &&
+      user?.vipPublicIdExpiresAt != null &&
+      user.vipPublicIdExpiresAt.getTime() > now
+
+    const ownedRarePublicIds = rareAssignments.map((row) => ({
+      assignmentId: row.id,
+      publicId: row.publicId.toString(),
+      tier: row.vipPublicId.tier,
+      rarityScore: row.vipPublicId.rarityScore,
+      priceCredits: row.vipPublicId.priceCredits,
+      matchedRules: row.vipPublicId.matchedRules,
+      isActive: row.isActive,
+      isEquipped: equippedValid && equippedId === row.publicId,
+      startsAt: row.startsAt.toISOString(),
+      expiresAt: row.expiresAt.toISOString(),
+      revokedAt: row.revokedAt?.toISOString() ?? null,
+    }))
+
+    const payload: ListOwnedItemsResponse = {
       items: page.map((row) => ({
         userStoreItemId: row.id,
         isApplied: row.isApplied,
@@ -384,6 +538,7 @@ export const storeService = {
         coinsPaid: row.coinsPaid,
         item: toStoreSummary(row.storeItem),
       })),
+      ownedRarePublicIds,
       nextCursor: hasMore ? page[page.length - 1]!.id : null,
     }
     if (cacheKey) await cacheRedisService.set(cacheKey, payload, USER_STORE_ITEMS_TTL)
@@ -433,7 +588,59 @@ export const storeService = {
   async processExpiryJob(userStoreItemId: string): Promise<void> {
     const result = await storeRepository.expireItem(userStoreItemId)
     if (!result) return
-    await cacheRedisService.del(RedisKeys.userActiveStore(result.userId), RedisKeys.userStoreItems(result.userId))
+    await Promise.all([
+      cacheRedisService.del(RedisKeys.userActiveStore(result.userId)),
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(result.userId)),
+    ])
+  },
+
+  /**
+   * Rare public ID lease ended: return catalog row to the store; clear user overlay fields. Does not remove `vip:reserved`.
+   */
+  async processRareIdExpiryJob(assignmentId: string): Promise<void> {
+    const assignment = await prisma.userVipAssignment.findUnique({ where: { id: assignmentId } })
+    if (!assignment) return
+    if (!assignment.isActive) return
+
+    const { userId, publicId } = assignment
+
+    await prisma.$transaction(async (tx) => {
+      await tx.userVipAssignment.update({
+        where: { id: assignmentId },
+        data: { isActive: false },
+      })
+
+      await tx.user.updateMany({
+        where: { id: userId, currentVipPublicId: publicId },
+        data: {
+          currentVipPublicId: null,
+          vipPublicIdExpiresAt: null,
+        },
+      })
+
+      await tx.vipPublicId.update({
+        where: { publicId },
+        data: {
+          isAvailable: true,
+          currentOwnerId: null,
+          expiresAt: null,
+          purchasedAt: null,
+          assignedAt: null,
+        },
+      })
+    })
+
+    try {
+      await redisClient.del(RedisKeys.userActiveVipId(userId))
+    } catch {
+      /* ignore */
+    }
+
+    await Promise.all([
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(userId)),
+      cacheRedisService.del(RedisKeys.userActiveStore(userId), RedisKeys.storeRareIds()),
+      cacheRedisService.del(RedisKeys.userMe(userId), RedisKeys.userProfile(userId)),
+    ])
   },
 
   async createStoreItem(data: {
@@ -455,9 +662,11 @@ export const storeService = {
     id: string,
     data: {
       name?: string
+      description?: string | null
       coinCost?: number
       isActive?: boolean
       sortOrder?: number
+      displayImageUrl?: string
       effectUrl?: string | null
     },
   ) {

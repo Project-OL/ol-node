@@ -198,6 +198,31 @@ export const RedisKeys = {
     `ratelimit:vip-membership:purchase:${userId}`,
   ratelimitVipmClaim: (userId: string) =>
     `ratelimit:vip-membership:claim:${userId}`,
+  /** Agency: GET /users/me agency block cache bust target */
+  agencyMe: (userId: string) => `agency:me:${userId}`,
+  agencyByPublicId: (publicId: string) => `agency:pub:${publicId}`,
+  agencyRanking: (period: string, limit: number, cursor: string) =>
+    `agency:ranking:${period}:${limit}:${cursor}`,
+  /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
+  userLastActive: (userId: string) => `user:lastActive:${userId}`,
+  ratelimitAgencyApply: (userId: string) =>
+    `ratelimit:agency:apply:${userId}`,
+  ratelimitAgencyAccept: (userId: string) =>
+    `ratelimit:agency:accept:${userId}`,
+  ratelimitAgencyLeaveApply: (userId: string) =>
+    `ratelimit:agency:leave:apply:${userId}`,
+  /** Agency Phase 2: level ladder + derived rates (60s) */
+  agencyRate: (agencyUserId: string) => `agency:rate:${agencyUserId}`,
+  /** Commission GET /me / panel fragments */
+  agencyCommissionMe: (agencyUserId: string, periodDays?: number) =>
+    periodDays != null
+      ? `agency:commission:me:${agencyUserId}:${periodDays}`
+      : `agency:commission:me:${agencyUserId}`,
+  agencyHostBreakdown: (agencyUserId: string, period: string) =>
+    `agency:host:breakdown:${agencyUserId}:${period}`,
+  agencyLevelConfig: () => `agency:level:config`,
+  ratelimitAgencyPointTransfer: (userId: string) =>
+    `ratelimit:agency:point-transfer:${userId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -277,6 +302,21 @@ export const VIPM_ACTIVE_TTL_MAX = 24 * 60 * 60
 export const VIPM_ACTIVE_INACTIVE_TTL = 300
 /** VIP membership purchase / daily claim throttle window (60s). */
 export const VIPM_MUTATION_RL_TTL = 60
+
+/** Agency snapshot cache for ranking list (60s). */
+export const AGENCY_RANKING_CACHE_TTL = 60
+/** Agency single-record caches */
+export const AGENCY_ME_CACHE_TTL = 60
+export const AGENCY_BY_PUBLIC_ID_CACHE_TTL = 300
+/** Agency Phase 2 */
+export const AGENCY_LEVEL_CONFIG_CACHE_TTL = 3600
+export const AGENCY_RATE_CACHE_TTL = 60
+export const AGENCY_COMMISSION_ME_CACHE_TTL = 60
+export const AGENCY_HOST_BREAKDOWN_CACHE_TTL = 300
+/** POST /agency/transfer-points */
+export const AGENCY_POINT_TRANSFER_RL_TTL = 60
+/** lastActiveTracker middleware — skip DB write if key exists (600s). */
+export const USER_LAST_ACTIVE_THROTTLE_TTL = 600
 
 export async function redisPipeline(
   commands: [string, ...unknown[]][],

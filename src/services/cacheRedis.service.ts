@@ -63,6 +63,34 @@ export const cacheRedisService = {
     }
   },
 
+  /**
+   * Delete every key whose name starts with `prefix` (Redis SCAN + DEL batches).
+   * Used when list payloads are cached under `${prefix}:filter:…` but mutations only knew the base prefix.
+   */
+  async delByKeyPrefix(prefix: string): Promise<void> {
+    if (!prefix) return
+    const pattern = `${prefix}*`
+    const started = Date.now()
+    try {
+      let cursor = '0'
+      let totalDeleted = 0
+      do {
+        const [next, keys] = await withTimeout(
+          redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 200),
+          `SCAN ${pattern}`,
+        )
+        cursor = next
+        if (keys.length > 0) {
+          await withTimeout(redisClient.del(...keys), `DEL ${keys.length} keys`)
+          totalDeleted += keys.length
+        }
+      } while (cursor !== '0')
+      log.debug({ prefix, pattern, totalDeleted, latencyMs: Date.now() - started }, 'cache delByKeyPrefix')
+    } catch (err) {
+      log.warn({ err, prefix, pattern, latencyMs: Date.now() - started }, 'cache delByKeyPrefix failed')
+    }
+  },
+
   async exists(key: string): Promise<boolean> {
     try {
       const n = await withTimeout(redisClient.exists(key), `EXISTS ${key}`)

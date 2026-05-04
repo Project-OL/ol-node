@@ -22,10 +22,16 @@ import { subscriptionService } from "./services/subscription.service";
 import { GUARDIAN_EXPIRY_QUEUE } from "./queues/guardian.constants";
 import { guardianService } from "./services/guardian.service";
 import {
+  RARE_ID_EXPIRY_JOB,
   STORE_ITEM_EXPIRY_JOB,
   STORE_ITEM_EXPIRY_QUEUE,
 } from "./queues/store-item-expiry.constants";
 import { storeService } from "./services/store.service";
+import {
+  PUBLIC_ID_PREGEN_HORIZON_JOB,
+  PUBLIC_ID_PREGEN_QUEUE,
+} from "./queues/public-id-pregen.constants";
+import { publicIdPreGenerationService } from "./services/public-id-pre-generation.service";
 import {
   RICH_TIER_JOB_MASTER,
   RICH_TIER_ROLLOVER_QUEUE,
@@ -36,6 +42,18 @@ import {
   VIP_MEMBERSHIP_EXPIRY_QUEUE,
 } from "./queues/vip-membership.constants";
 import { processVipMembershipExpiryJob } from "./jobs/vip-membership-expiry.job";
+import {
+  AGENCY_LEAVE_AUTO_APPROVE_QUEUE,
+  AGENCY_LEAVE_SAFETY_NET_JOB,
+} from "./queues/agency.constants";
+import { agencyLeaveAutoApproveQueue } from "./queues/agency.queue";
+import { processAgencyLeaveWorkerJob } from "./jobs/agency-leave-auto-approve.job";
+import {
+  AGENCY_LEVEL_JOB_MASTER,
+  AGENCY_LEVEL_RECOMPUTE_QUEUE,
+} from "./queues/agency-commission.constants";
+import { agencyLevelRecomputeQueue } from "./queues/agency-commission.queue";
+import { processAgencyLevelRecomputeJob } from "./jobs/agency-level-recompute.job";
 
 const ACCOUNT_DELETION_QUEUE = "account-deletion";
 
@@ -121,12 +139,24 @@ async function main() {
 
   const storeItemExpiryWorker = new Worker(
     STORE_ITEM_EXPIRY_QUEUE,
-    async (job: Job<{ userStoreItemId: string }>) => {
+    async (job: Job<{ userStoreItemId?: string; assignmentId?: string }>) => {
       if (job.name === STORE_ITEM_EXPIRY_JOB) {
-        await storeService.processExpiryJob(job.data.userStoreItemId);
+        await storeService.processExpiryJob(job.data.userStoreItemId!);
+      } else if (job.name === RARE_ID_EXPIRY_JOB) {
+        await storeService.processRareIdExpiryJob(job.data.assignmentId!);
       }
     },
     { connection, concurrency: 2 },
+  );
+
+  const publicIdPregenWorker = new Worker(
+    PUBLIC_ID_PREGEN_QUEUE,
+    async (job: Job) => {
+      if (job.name === PUBLIC_ID_PREGEN_HORIZON_JOB) {
+        await publicIdPreGenerationService.runHorizonJob();
+      }
+    },
+    { connection, concurrency: 1 },
   );
 
   const richTierRolloverQueue = new Queue(RICH_TIER_ROLLOVER_QUEUE, {
@@ -164,6 +194,48 @@ async function main() {
     { connection, concurrency: 2 },
   );
 
+  await agencyLeaveAutoApproveQueue.add(
+    AGENCY_LEAVE_SAFETY_NET_JOB,
+    {},
+    {
+      repeat: { pattern: "0 * * * *", tz: "UTC" },
+      jobId: "agency-leave-safety-net-hourly-utc",
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  );
+
+  const agencyLeaveWorker = new Worker(
+    AGENCY_LEAVE_AUTO_APPROVE_QUEUE,
+    async (job: Job<{ applicationId?: string }>) => {
+      await processAgencyLeaveWorkerJob(job);
+    },
+    { connection, concurrency: 2 },
+  );
+
+  await agencyLevelRecomputeQueue.add(
+    AGENCY_LEVEL_JOB_MASTER,
+    {},
+    {
+      repeat: { pattern: "5 0 * * *", tz: "UTC" },
+      jobId: "agency-level-recompute-repeatable-master-utc",
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  );
+
+  const agencyLevelRecomputeWorker = new Worker(
+    AGENCY_LEVEL_RECOMPUTE_QUEUE,
+    async (job: Job) => {
+      await processAgencyLevelRecomputeJob(job);
+    },
+    { connection, concurrency: 2 },
+  );
+
   accountDeletionWorker.on("failed", (job, err) => {
     console.error("[Account Deletion] Job failed:", job?.id, err);
   });
@@ -192,6 +264,10 @@ async function main() {
     console.error("[Store item expiry] Job failed:", job?.id, err);
   });
 
+  publicIdPregenWorker.on("failed", (job, err) => {
+    console.error("[Public ID pregen] Job failed:", job?.id, err);
+  });
+
   richTierRolloverWorker.on("failed", (job, err) => {
     console.error("[Rich tier rollover] Job failed:", job?.id, err);
   });
@@ -200,14 +276,27 @@ async function main() {
     console.error("[VIP membership expiry] Job failed:", job?.id, err);
   });
 
+  agencyLeaveWorker.on("failed", (job, err) => {
+    console.error("[Agency leave auto-approve] Job failed:", job?.id, err);
+  });
+
+  agencyLevelRecomputeWorker.on("failed", (job, err) => {
+    console.error("[Agency level recompute] Job failed:", job?.id, err);
+  });
+
   console.info(
-    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry; rich-tier-rollover; vip-membership-expiry; VIP public ID expiry is Redis TTL only",
+    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve",
   );
 
   const shutdown = async () => {
+    await agencyLevelRecomputeWorker.close();
+    await agencyLevelRecomputeQueue.close();
+    await agencyLeaveWorker.close();
+    await agencyLeaveAutoApproveQueue.close();
     await vipMembershipExpiryWorker.close();
     await richTierRolloverWorker.close();
     await richTierRolloverQueue.close();
+    await publicIdPregenWorker.close();
     await storeItemExpiryWorker.close();
     await guardianExpiryWorker.close();
     await subscriptionGraceWorker.close();

@@ -107,6 +107,27 @@ const envSchema = z
       .string()
       .optional()
       .transform((s) => s === "true"),
+
+    /** When not `true`, scheduled agency level recompute master no-ops (admin enqueue still works). */
+    AGENCY_LEVEL_RECOMPUTE_ENABLED: z
+      .string()
+      .optional()
+      .transform((s) => s === "true"),
+
+    /** VIP-pattern IDs to classify ahead of `next_public_id_sequence.next_value` (numeric string or number). */
+    PUBLIC_ID_PREGEN_HORIZON_AHEAD: z.coerce.bigint().default(1_000_000n),
+    PUBLIC_ID_PREGEN_BATCH_SIZE: z.coerce.number().default(5_000),
+    /** Fallback when sequence row missing (matches signup sequence default). */
+    PUBLIC_ID_INITIAL_VALUE: z.coerce.bigint().default(34_216_589n),
+
+    /** Rare public ID purchase duration (store); separate from paid VIP membership. */
+    STORE_RARE_ID_DURATION_DAYS: z.coerce.number().default(15),
+
+    /** Optional override prices (credits) for rare IDs by tier rank: 1=BRONZE … 4=DIAMOND. */
+    VIP_PRICE_TIER_1: z.coerce.number().optional(),
+    VIP_PRICE_TIER_2: z.coerce.number().optional(),
+    VIP_PRICE_TIER_3: z.coerce.number().optional(),
+    VIP_PRICE_TIER_4: z.coerce.number().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.NODE_ENV === 'production' && !val.JWT_REFRESH_SECRET) {

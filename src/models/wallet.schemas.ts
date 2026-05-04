@@ -70,6 +70,9 @@ export const PointTxTypeEnum = z.enum([
   "ADJUSTMENT",
   "VIDEO_CALL",
   "GIFT_RECEIVE",
+  "AGENCY_FORCE_EXIT_PENALTY",
+  "AGENT_COMMISSION",
+  "AGENT_POINT_TRANSFER",
 ]);
 
 export const PointHistoryQuerySchema = DateRangeSchema.merge(

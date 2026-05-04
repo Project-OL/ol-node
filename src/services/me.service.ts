@@ -11,7 +11,7 @@ import {
   USERNAME_CHANGE_COIN_COST,
 } from './coin-wallet.service'
 import { cacheRedisService } from './cacheRedis.service'
-import { RedisKeys } from '../config/redis'
+import { redisClient, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { signAccess } from '../utils/jwt'
 import { AppError } from '../middlewares/errorHandler'
@@ -32,6 +32,7 @@ import { guardianService } from './guardian.service'
 import { storeService } from './store.service'
 import { richTierService } from './rich-tier.service'
 import { vipMembershipService } from './vip-membership.service'
+import { agencyService } from './agency.service'
 
 const displayNameSchema = z
   .string()
@@ -75,9 +76,11 @@ function toProfileCache(
   row: NonNullable<Awaited<ReturnType<typeof userRepository.findForMe>>>,
 ): MeProfileCache {
   const name = displayNameFromUser(row)
+  const displayPublicId = (row.currentVipPublicId ?? row.defaultPublicId ?? row.publicId).toString()
   return {
     userId: row.id,
     publicId: row.publicId.toString(),
+    displayPublicId,
     name,
     email: primaryEmailFromIdentifiers(row.authIdentifiers),
     avatarUrl: row.avatarUrl,
@@ -103,6 +106,7 @@ function buildMeResponse(
     vipMembership: Awaited<
       ReturnType<typeof vipMembershipService.buildMeVipMembershipBlock>
     >
+    agency: Awaited<ReturnType<typeof agencyService.buildMeAgencyBlock>>
   },
 ): MeResponseDto {
   return {
@@ -113,6 +117,7 @@ function buildMeResponse(
     activeGuardian: extras.activeGuardian,
     activeStoreItems: extras.activeStoreItems,
     richTier: extras.richTier,
+    agency: extras.agency,
     vipMembership: extras.vipMembership,
     canChangeUsername: BigInt(walletData.coinsBalance) >= USERNAME_CHANGE_COIN_COST,
     usernameNextChangeAt: null,
@@ -136,6 +141,7 @@ async function fetchWalletData(userId: string): Promise<{
     vipAssignmentRepository.findMostRecent(userId),
   ])
   const now = new Date()
+  // Legacy pool VIP auto-grants are disabled; this stays true only for existing un-expired user_vip_assignments (incl. store rare-ID leases).
   const isVipActive =
     lastVip != null && lastVip.isActive && lastVip.revokedAt == null && lastVip.expiresAt > now
   return {
@@ -169,7 +175,12 @@ export const meService = {
 
     if (cached && cacheHasDobShape) {
       meEndpointMetrics.cacheHits += 1
-      profile = { ...cached, dateOfBirth: cached.dateOfBirth ?? null }
+      profile = {
+        ...cached,
+        dateOfBirth: cached.dateOfBirth ?? null,
+        // Backward compatibility for cached payloads written before displayPublicId existed.
+        displayPublicId: (cached as MeProfileCache).displayPublicId ?? cached.publicId,
+      }
       cacheResult = 'HIT'
     } else {
       if (cached && !cacheHasDobShape) {
@@ -199,6 +210,8 @@ export const meService = {
       activeStoreItems,
       richTier,
       vipMembership,
+      agency,
+      activeVipRaw,
     ] = await Promise.all([
       giftGalleryService.getCompletionSummaryForUser(userId),
       superHostService.isSuperHost(userId),
@@ -208,6 +221,8 @@ export const meService = {
         isVip: walletData.isVipActive,
       }),
       vipMembershipService.buildMeVipMembershipBlock(userId),
+      agencyService.buildMeAgencyBlock(userId),
+      redisClient.get(RedisKeys.userActiveVipId(userId)).catch(() => null),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
       isSuperHost,
@@ -215,7 +230,12 @@ export const meService = {
       activeStoreItems,
       richTier,
       vipMembership,
+      agency,
     })
+    if (activeVipRaw) {
+      // Prefer live equipped rare-ID marker over cached profile displayPublicId.
+      data.displayPublicId = activeVipRaw
+    }
     return { data, cache: cacheResult }
   },
 
@@ -363,6 +383,7 @@ export const meService = {
       activeStoreItems,
       richTier,
       vipMembership,
+      agency,
     ] = await Promise.all([
       giftGalleryService.getCompletionSummaryForUser(userId),
       superHostService.isSuperHost(userId),
@@ -372,6 +393,7 @@ export const meService = {
         isVip: walletData.isVipActive,
       }),
       vipMembershipService.buildMeVipMembershipBlock(userId),
+      agencyService.buildMeAgencyBlock(userId),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
       isSuperHost,
@@ -379,6 +401,7 @@ export const meService = {
       activeStoreItems,
       richTier,
       vipMembership,
+      agency,
     })
 
     const displayName = displayNameFromUser(fresh)

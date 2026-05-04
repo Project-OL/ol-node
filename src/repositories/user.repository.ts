@@ -35,9 +35,22 @@ export const userRepository = {
     })
   },
 
+  /**
+   * Resolve a user by any externally visible numeric ID:
+   * - users.public_id (base)
+   * - users.default_public_id
+   * - users.current_vip_public_id (active rare overlay)
+   */
   async findByPublicId(publicId: number) {
-    return prismaRead.user.findUnique({
-      where: { publicId: BigInt(publicId) },
+    const pid = BigInt(publicId)
+    return prismaRead.user.findFirst({
+      where: {
+        OR: [
+          { publicId: pid },
+          { defaultPublicId: pid },
+          { currentVipPublicId: pid },
+        ],
+      },
       include: { authIdentifiers: true, authPassword: true },
     })
   },
@@ -50,6 +63,8 @@ export const userRepository = {
         id: true,
         username: true,
         publicId: true,
+        defaultPublicId: true,
+        currentVipPublicId: true,
         firstName: true,
         lastName: true,
         gender: true,
@@ -218,6 +233,10 @@ export const userRepository = {
     })
 
     await prisma.$transaction(async (tx) => {
+      const { agencyHostService } = await import('../services/agencyHost.service')
+      await agencyHostService.handleHostAccountDeletion(userId, tx)
+      await agencyHostService.handleAgentAccountDeletion(userId, tx)
+
       await tx.authIdentifier.deleteMany({ where: { userId } })
       await tx.authPassword.deleteMany({ where: { userId } })
       await tx.securityPassword.deleteMany({ where: { userId } })

@@ -24,6 +24,7 @@ export const SUPPORT_TYPE_CONFIG: SupportTypeConfig[] = [
       { key: 'APPEAL_ACCOUNT_SUSPENSION', label: 'Appeal of Account Suspension' },
       { key: 'FUN_ZONE', label: 'Fun Zone' },
       { key: 'ACCOUNT_AND_SECURITY', label: 'Account and Security' },
+      { key: 'AGENCY_FORCE_EXIT', label: 'Agency force exit' },
       { key: 'ACCOUNT_HACKED', label: 'Account Hacked' },
       { key: 'PLATFORM_EXPAT', label: 'Platform Expat' },
       { key: 'OTHERS', label: 'Others' },

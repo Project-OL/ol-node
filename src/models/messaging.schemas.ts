@@ -8,7 +8,8 @@ export const SendMessageSchema = z
   .object({
     content: z.string().max(4000).optional(),
     type: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
-    replyToId: z.string().cuid().optional(),
+    // Client payloads often send null for "no reply"; normalize to undefined.
+    replyToId: z.preprocess((v) => (v === null ? undefined : v), z.string().cuid().optional()),
     mediaItems: z
       .array(
         z.object({

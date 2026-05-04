@@ -89,6 +89,28 @@ export const storeRepository = {
     )
   },
 
+  async deactivateItem(userId: string, userStoreItemId: string, category: StoreItemCategory): Promise<void> {
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.userStoreItem.update({
+          where: { id: userStoreItemId },
+          data: { isApplied: false },
+        })
+
+        await tx.userActiveStoreItems.upsert({
+          where: { userId_category: { userId, category } },
+          create: {
+            userId,
+            category,
+            userStoreItemId: null,
+          },
+          update: { userStoreItemId: null },
+        })
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TX_TIMEOUT_MS },
+    )
+  },
+
   async expireItem(userStoreItemId: string): Promise<{ userId: string; category: StoreItemCategory } | null> {
     return prisma.$transaction(
       async (tx) => {

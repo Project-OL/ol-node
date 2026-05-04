@@ -46,6 +46,11 @@ import storeRoutes from "./routes/v1/store.routes";
 import storeAdminRoutes from "./routes/v1/store-admin.routes";
 import { richTierRoutes } from "./routes/v1/rich-tier.routes";
 import vipMembershipRoutes from "./routes/v1/vip-membership.routes";
+import agencyRoutes from "./routes/v1/agency.routes";
+import agencyAdminRoutes from "./routes/v1/agency-admin.routes";
+import { schedulePublicIdPregen } from "./queues/public-id-pregen.queue";
+import { publicIdPreGenerationService } from "./services/public-id-pre-generation.service";
+import { rootLogger } from "./utils/rootLogger";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -160,6 +165,27 @@ export async function buildApp() {
   await app.register(storeRoutes, { prefix: `${prefix}/store` });
   await app.register(richTierRoutes, { prefix: `${prefix}/rich-tier` });
   await app.register(vipMembershipRoutes, { prefix: `${prefix}/vip-membership` });
+  await app.register(agencyRoutes, { prefix: `${prefix}/agency` });
+  await app.register(agencyAdminRoutes, { prefix: `${prefix}/admin/agency` });
+
+  app.addHook("onReady", async () => {
+    try {
+      await schedulePublicIdPregen();
+    } catch (err) {
+      rootLogger.error(
+        { err },
+        "[pregen] failed to register hourly job; worker may still process manual jobs",
+      );
+    }
+    try {
+      await publicIdPreGenerationService.runHorizonJob();
+    } catch (err) {
+      rootLogger.error(
+        { err },
+        "[pregen] startup horizon run failed; cron will retry",
+      );
+    }
+  });
 
   return app;
 }

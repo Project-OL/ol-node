@@ -11,6 +11,7 @@ import { blockRepository } from '../repositories/block.repository'
 import { storeService } from './store.service'
 import { richTierService } from './rich-tier.service'
 import { vipMembershipService } from './vip-membership.service'
+import { prismaRead } from '../config/database'
 
 export const userSearchService = {
   async searchByPublicId(
@@ -55,6 +56,33 @@ export const userSearchService = {
       vipMembershipService.getActiveMembershipSummary(user.id),
     ])
     const isFriend = isFollowing && isFollowedBy
+
+    let agencyTag:
+      | { isAgent: boolean; isHost: boolean; agencyPublicId?: string }
+      | undefined
+    const agentRow = await prismaRead.agency.findUnique({
+      where: { userId: user.id },
+      select: { defaultPublicId: true },
+    })
+    if (user.isAgent && agentRow) {
+      agencyTag = {
+        isAgent: true,
+        isHost: false,
+        agencyPublicId: agentRow.defaultPublicId.toString(),
+      }
+    } else if (user.currentAgencyId) {
+      const ag = await prismaRead.agency.findUnique({
+        where: { userId: user.currentAgencyId },
+        select: { defaultPublicId: true },
+      })
+      agencyTag = {
+        isAgent: false,
+        isHost: true,
+        agencyPublicId: ag?.defaultPublicId.toString(),
+      }
+    } else {
+      agencyTag = { isAgent: false, isHost: false }
+    }
 
     const fullName =
       user.firstName && user.lastName
@@ -101,6 +129,7 @@ export const userSearchService = {
       activeStoreItems,
       galleryCompletion,
       vipMembership,
+      agencyTag,
     }
   },
 }

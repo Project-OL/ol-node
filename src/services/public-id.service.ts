@@ -4,6 +4,10 @@ import { prisma } from '../config/database'
 import { classifyPublicId, type VipClassification } from './vip-classifier.service'
 import { vipPoolService } from './vip-pool.service'
 import { userPublicIdService } from './user-public-id.service'
+import { priceCreditsForTier } from './vip-rare-id-pricing'
+import { rootLogger } from '../utils/rootLogger'
+
+const log = rootLogger.child({ module: 'public-id' })
 
 export interface PublicIdResult {
   publicId: bigint
@@ -26,26 +30,49 @@ export const publicIdService = {
   },
 
   /**
-   * Next sequence value that is neither VIP-reserved nor VIP-classified; VIP hits go to pool only.
+   * Next sequence value that is neither VIP-reserved nor VIP-classified; VIP hits are catalogued for the store.
    */
   async _nextNonReservedNonVip(): Promise<{
     publicId: bigint
     classification: VipClassification
   }> {
-    while (true) {
+    const MAX_ITERATIONS = 200
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
       const id = await publicIdRepository.getNextAndIncrement()
-      if (await this.isReserved(id)) {
-        continue
-      }
+      if (await this.isReserved(id)) continue
+
       const classification = classifyPublicId(id)
       if (classification.isVip) {
-        void vipPoolService.add(id, classification).catch((err) => {
-          console.error(`[public-id] vipPoolService.add failed for ${id}`, err)
-        })
+        log.error(
+          { id: id.toString(), tier: classification.tier },
+          '[public-id] pregen miss; classifying inline',
+        )
+        try {
+          await prisma.vipPublicId.create({
+            data: {
+              publicId: id,
+              tier: classification.tier,
+              priceGroup: classification.priceGroup,
+              rarityScore: classification.rarityScore,
+              matchedRules: classification.matchedRules,
+              detectedAt: new Date(),
+              isAvailable: true,
+              priceCredits: priceCreditsForTier(classification.tier),
+            },
+          })
+        } catch (err) {
+          log.error({ err }, '[public-id] inline vipPublicId.create failed')
+        }
+        try {
+          await redisClient.sadd(RedisKeys.vipReserved(), id.toString())
+        } catch {
+          /* ignore */
+        }
         continue
       }
       return { publicId: id, classification }
     }
+    throw new Error('[public-id] exhausted MAX_ITERATIONS for non-VIP allocation')
   },
 
   /**
@@ -56,10 +83,10 @@ export const publicIdService = {
   },
 
   /**
-   * Loads unassigned VIP rows from Postgres into Redis pool/meta.
+   * Loads all `vip_public_ids` into Redis `vip:reserved`.
    */
   async warmVipCache(): Promise<void> {
-    await vipPoolService.warmCache()
+    await vipPoolService.warmReservedSet()
   },
 
   /**

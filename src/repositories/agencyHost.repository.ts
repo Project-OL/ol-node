@@ -1,0 +1,131 @@
+import type { AgencyHostHistoryReason, Prisma } from "@prisma/client";
+import { prismaRead } from "../config/database";
+
+export const agencyHostRepository = {
+  async insertHost(
+    data: { agencyUserId: string; hostUserId: string },
+    tx: Prisma.TransactionClient,
+  ) {
+    return tx.agencyHost.create({
+      data: {
+        agencyUserId: data.agencyUserId,
+        hostUserId: data.hostUserId,
+      },
+    });
+  },
+
+  async removeHost(hostUserId: string, tx: Prisma.TransactionClient) {
+    return tx.agencyHost.delete({
+      where: { hostUserId },
+    });
+  },
+
+  async getHost(hostUserId: string) {
+    return prismaRead.agencyHost.findUnique({
+      where: { hostUserId },
+    });
+  },
+
+  async getHostWithAgency(hostUserId: string) {
+    return prismaRead.agencyHost.findUnique({
+      where: { hostUserId },
+      include: { agency: true },
+    });
+  },
+
+  async listHosts(
+    agencyUserId: string,
+    params: { limit: number; cursor?: string | null },
+  ) {
+    let cursor: { joinedAt: Date; hostUserId: string } | null = null;
+    if (params.cursor) {
+      const parts = params.cursor.split("|");
+      if (parts.length === 2 && parts[0] && parts[1]) {
+        cursor = { joinedAt: new Date(parts[0]), hostUserId: parts[1] };
+      }
+    }
+
+    const where: Prisma.AgencyHostWhereInput = cursor
+      ? {
+          agencyUserId,
+          OR: [
+            { joinedAt: { lt: cursor.joinedAt } },
+            {
+              joinedAt: cursor.joinedAt,
+              hostUserId: { lt: cursor.hostUserId },
+            },
+          ],
+        }
+      : { agencyUserId };
+
+    return prismaRead.agencyHost.findMany({
+      where,
+      orderBy: [{ joinedAt: "desc" }, { hostUserId: "desc" }],
+      take: params.limit + 1,
+      select: {
+        hostUserId: true,
+        joinedAt: true,
+      },
+    });
+  },
+
+  async insertHistory(
+    row: {
+      agencyUserId: string;
+      hostUserId: string;
+      joinedAt: Date;
+      reason: AgencyHostHistoryReason;
+      exitMetadata?: Prisma.InputJsonValue | null;
+    },
+    tx: Prisma.TransactionClient,
+  ) {
+    return tx.agencyHostHistory.create({
+      data: {
+        agencyUserId: row.agencyUserId,
+        hostUserId: row.hostUserId,
+        joinedAt: row.joinedAt,
+        reason: row.reason,
+        exitMetadata: row.exitMetadata ?? undefined,
+      },
+    });
+  },
+
+  /** Most recent exit or join audit row for cooldown checks. */
+  async getRecentExitForHost(hostUserId: string) {
+    return prismaRead.agencyHostHistory.findFirst({
+      where: { hostUserId },
+      orderBy: { exitedAt: "desc" },
+    });
+  },
+
+  async countHostsForAgency(agencyUserId: string) {
+    return prismaRead.agencyHost.count({
+      where: { agencyUserId },
+    });
+  },
+
+  async listHostUserIdsForAgency(agencyUserId: string) {
+    return prismaRead.agencyHost.findMany({
+      where: { agencyUserId },
+      select: { hostUserId: true },
+    });
+  },
+
+  async findLatestRejectedApplication(hostUserId: string) {
+    return prismaRead.agencyHostApplication.findFirst({
+      where: { hostUserId, status: "REJECTED" },
+      orderBy: { resolvedAt: "desc" },
+    });
+  },
+
+  async findLatestResolvedLeaveApplication(hostUserId: string) {
+    return prismaRead.agencyLeaveApplication.findFirst({
+      where: {
+        hostUserId,
+        status: { not: "CANCELLED" },
+        resolvedAt: { not: null },
+      },
+      orderBy: { resolvedAt: "desc" },
+    });
+  },
+};

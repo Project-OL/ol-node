@@ -21,6 +21,7 @@ import {
 import { getPeriodKeys } from "../utils/periodKeys";
 import { vipMembershipService } from "./vip-membership.service";
 import { fanSpendIncrementForGift } from "./vip-membership.helpers";
+import { utcDayFromTimestamp } from "../utils/datetime";
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
 
@@ -130,6 +131,7 @@ export const giftTransactionService = {
         await walletRepository.bumpVersion(tx, senderCoinWallet.id);
 
         let wealthResult: WealthRet | null = null;
+        let bustAgentUserId: string | null = null;
 
         if (pointsAwarded > 0) {
           const pt = BigInt(pointsAwarded);
@@ -147,7 +149,7 @@ export const giftTransactionService = {
             pt,
           );
 
-          await pointLedgerRepository.insert(tx, {
+          const ptEntry = await pointLedgerRepository.insert(tx, {
             walletId: receiverPointWallet.id,
             direction: LedgerDirection.CREDIT,
             txType: PointTxType.GIFT_RECEIVE,
@@ -159,6 +161,21 @@ export const giftTransactionService = {
             idempotencyKey: `${idemBase}-point`,
           });
           await walletRepository.bumpVersion(tx, receiverPointWallet.id);
+
+          const { agencyCommissionService } = await import(
+            "./agencyCommission.service"
+          );
+          const ac = await agencyCommissionService.applyCommission(
+            {
+              hostUserId: params.receiverUserId,
+              hostLedgerEntryId: ptEntry.id,
+              hostPointsCredited: pt,
+              hostTxType: PointTxType.GIFT_RECEIVE,
+              day: utcDayFromTimestamp(new Date()),
+            },
+            tx,
+          );
+          bustAgentUserId = ac.bustAgentUserId;
         }
 
         const gt = await giftTransactionRepository.create(tx, {
@@ -206,6 +223,7 @@ export const giftTransactionService = {
         return {
           transactionId: gt.id,
           wealthResult,
+          bustAgentUserId,
         };
       },
       { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
@@ -221,6 +239,15 @@ export const giftTransactionService = {
         txResult.wealthResult.newCumulative,
         txResult.wealthResult.newLevel,
         txResult.wealthResult.previousLevel,
+      );
+    }
+
+    if (txResult.bustAgentUserId) {
+      const { agencyCommissionService } = await import(
+        "./agencyCommission.service"
+      );
+      await agencyCommissionService.bustAgentCommissionCaches(
+        txResult.bustAgentUserId,
       );
     }
 

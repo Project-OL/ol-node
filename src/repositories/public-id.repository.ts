@@ -1,4 +1,5 @@
 import { prisma } from '../config/database'
+import { env } from '../config/env'
 
 const SEQUENCE_ID = 1
 const INITIAL_VALUE = 34216589
@@ -30,5 +31,11 @@ export const publicIdRepository = {
       where: { id: SEQUENCE_ID },
     })
     return row?.nextValue ?? null
+  },
+
+  /** Next value the allocator would return, without consuming (read-only). */
+  async peekNextValue(): Promise<bigint> {
+    const row = await prisma.nextPublicIdSequence.findUnique({ where: { id: SEQUENCE_ID } })
+    return row?.nextValue ?? env.PUBLIC_ID_INITIAL_VALUE
   },
 }

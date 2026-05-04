@@ -48,11 +48,19 @@ export default async function storeRoutes(app: FastifyInstance) {
     '/purchase',
     { preHandler: [authenticate, storePurchaseRateLimit] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const bodySchema = z.object({
-        storeItemId: z.string().uuid(),
-        recipientPublicId: z.number().int().positive().optional(),
-        idempotencyKey: z.string().min(8).max(200),
-      })
+      const bodySchema = z
+        .object({
+          storeItemId: z.string().uuid(),
+          /** Preferred recipient selector for gifting. */
+          recipientUserId: z.string().uuid().optional(),
+          /** Backward-compatible recipient selector by public ID. */
+          recipientPublicId: z.number().int().positive().optional(),
+          idempotencyKey: z.string().min(8).max(200),
+        })
+        .refine(
+          (v) => !(v.recipientUserId !== undefined && v.recipientPublicId !== undefined),
+          'Provide either recipientUserId or recipientPublicId, not both',
+        )
       const parsed = bodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
         throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
@@ -61,7 +69,11 @@ export default async function storeRoutes(app: FastifyInstance) {
       if (!buyerId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
 
       let recipientId = buyerId
-      if (parsed.data.recipientPublicId !== undefined) {
+      if (parsed.data.recipientUserId !== undefined) {
+        const recipient = await userRepository.findById(parsed.data.recipientUserId)
+        if (!recipient) throw new AppError(404, 'Recipient not found', 'RECIPIENT_NOT_FOUND')
+        recipientId = recipient.id
+      } else if (parsed.data.recipientPublicId !== undefined) {
         const recipient = await userRepository.findByPublicId(parsed.data.recipientPublicId)
         if (!recipient) throw new AppError(404, 'Recipient not found', 'RECIPIENT_NOT_FOUND')
         recipientId = recipient.id
@@ -124,6 +136,48 @@ export default async function storeRoutes(app: FastifyInstance) {
     },
   )
 
+  app.post<{ Params: { userStoreItemId: string } }>(
+    '/deactivate/:userStoreItemId',
+    { preHandler: [authenticate] },
+    async (
+      request: FastifyRequest<{ Params: { userStoreItemId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const userId = request.userId
+      if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      await storeService.deactivateOwnedItem(userId, request.params.userStoreItemId)
+      return reply.status(204).send()
+    },
+  )
+
+  app.post<{ Params: { assignmentId: string } }>(
+    '/rare-ids/activate/:assignmentId',
+    { preHandler: [authenticate] },
+    async (
+      request: FastifyRequest<{ Params: { assignmentId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const userId = request.userId
+      if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      await storeService.activateOwnedRarePublicId(userId, request.params.assignmentId)
+      return reply.status(204).send()
+    },
+  )
+
+  app.post<{ Params: { assignmentId: string } }>(
+    '/rare-ids/deactivate/:assignmentId',
+    { preHandler: [authenticate] },
+    async (
+      request: FastifyRequest<{ Params: { assignmentId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const userId = request.userId
+      if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      await storeService.deactivateOwnedRarePublicId(userId, request.params.assignmentId)
+      return reply.status(204).send()
+    },
+  )
+
   app.get<{ Querystring: { category?: string; isActive?: string; cursor?: string; limit?: string } }>(
     '/my-items',
     { preHandler: [authenticate] },
@@ -167,6 +221,48 @@ export default async function storeRoutes(app: FastifyInstance) {
       const user = await userRepository.findByPublicId(numericId)
       if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
       return reply.send(await storeService.getActiveItemsForUser(user.id))
+    },
+  )
+
+  app.get<{
+    Params: { publicId: string }
+    Querystring: { category?: string; isActive?: string; cursor?: string; limit?: string }
+  }>(
+    '/users/:publicId/items',
+    { preHandler: [authenticate] },
+    async (
+      request: FastifyRequest<{
+        Params: { publicId: string }
+        Querystring: { category?: string; isActive?: string; cursor?: string; limit?: string }
+      }>,
+      reply: FastifyReply,
+    ) => {
+      const numericId = Number(request.params.publicId)
+      if (!Number.isInteger(numericId) || numericId <= 0) {
+        throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
+      }
+      const user = await userRepository.findByPublicId(numericId)
+      if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+      let category: StoreItemCategory | undefined
+      if (request.query.category) {
+        const parsedCategory = CategorySchema.safeParse(request.query.category)
+        if (!parsedCategory.success) {
+          throw new AppError(400, 'Invalid category', 'INVALID_CATEGORY')
+        }
+        category = parsedCategory.data
+      }
+      const isActive =
+        request.query.isActive === undefined ? undefined : request.query.isActive === 'true'
+      const limit = request.query.limit ? Number(request.query.limit) : undefined
+      return reply.send(
+        await storeService.listOwnedItems(user.id, {
+          category,
+          isActive,
+          cursor: request.query.cursor,
+          limit,
+        }),
+      )
     },
   )
 }

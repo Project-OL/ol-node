@@ -28,6 +28,8 @@ export interface GalleryCompletionDto {
 export interface MeProfileCache {
   userId: string
   publicId: string
+  /** Publicly displayed numeric ID: active rare ID when present, otherwise default/base ID. */
+  displayPublicId: string
   name: string
   email: string
   avatarUrl: string | null
@@ -64,6 +66,24 @@ export interface MeResponseDto extends MeProfileCache {
   activeStoreItems: ActiveStoreItemsMap
   /** Monthly Rich tier progress (UTC month); BigInt-like fields as strings. */
   richTier: RichTierMeDto
+  /** Agency (agent/host) overlay; Phase 1 — commission logic not yet wired. */
+  agency: {
+    role: 'AGENT' | 'HOST' | 'NONE',
+    asAgent?: {
+      agencyPublicId: string
+      displayName: string
+      totalHostsCount: number
+      currentLevel: string
+      payrollEnabled: boolean
+      paused: boolean
+    },
+    asHost?: {
+      agencyPublicId: string
+      agencyDisplayName: string
+      joinedAt: string
+      pendingLeaveApplication?: { id: string; autoApproveAt: string }
+    },
+  }
   /** Paid Diamond/SVIP membership (separate from VIP public ID / `isVipActive`). */
   vipMembership: {
     isActive: boolean

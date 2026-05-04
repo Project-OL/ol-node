@@ -11,6 +11,15 @@ export type PointLedgerFilter = {
 };
 
 export const pointLedgerRepository = {
+  async findByIdempotencyKey(
+    tx: Prisma.TransactionClient,
+    idempotencyKey: string,
+  ) {
+    return tx.pointLedgerEntry.findUnique({
+      where: { idempotencyKey },
+    });
+  },
+
   async insert(
     tx: Prisma.TransactionClient,
     data: {
