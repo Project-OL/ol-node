@@ -98,6 +98,28 @@ vi.mock('../../src/services/guardian.service', () => ({
   },
 }))
 
+const getActiveItemsForUser = vi.fn()
+vi.mock('../../src/services/store.service', () => ({
+  storeService: {
+    getActiveItemsForUser: (...a: unknown[]) => getActiveItemsForUser(...a),
+  },
+}))
+
+const getCurrentTierForUserRich = vi.fn()
+vi.mock('../../src/services/rich-tier.service', () => ({
+  richTierService: {
+    getCurrentTierForUser: (...a: unknown[]) => getCurrentTierForUserRich(...a),
+  },
+}))
+
+const buildMeVipMembershipBlock = vi.fn()
+vi.mock('../../src/services/vip-membership.service', () => ({
+  vipMembershipService: {
+    buildMeVipMembershipBlock: (...a: unknown[]) =>
+      buildMeVipMembershipBlock(...a),
+  },
+}))
+
 import { meService } from '../../src/services/me.service'
 import { verifyAccess } from '../../src/utils/jwt'
 
@@ -150,6 +172,39 @@ describe('meService', () => {
     })
     isSuperHost.mockResolvedValue(false)
     getActiveGuardianSummary.mockResolvedValue(null)
+    getActiveItemsForUser.mockReset()
+    getCurrentTierForUserRich.mockReset()
+    getActiveItemsForUser.mockResolvedValue({
+      RIDE: null,
+      AVATAR_FRAME: null,
+      CHAT_BUBBLE: null,
+      PROFILE_CARD: null,
+      rareId: null,
+    })
+    getCurrentTierForUserRich.mockResolvedValue({
+      tier: 0,
+      displayName: null,
+      evaluatedFromYear: 0,
+      evaluatedFromMonth: 0,
+      currentMonthRechargeCoins: '0',
+      currentMonthCarryoverCoins: '0',
+      currentMonthProgressCoins: '0',
+      nextTierThreshold: '3000000',
+      nextTierLackingCoins: '3000000',
+      badgeVisible: false,
+    })
+    buildMeVipMembershipBlock.mockReset()
+    buildMeVipMembershipBlock.mockResolvedValue({
+      isActive: false,
+      daysRemaining: 0,
+      dailyClaimAvailable: false,
+      vipExclusiveProfileCard: false,
+      vipDistinguishedLogo: false,
+      vipExclusiveMessageBackground: false,
+      vipSpecialEntryEffect: false,
+      vipPreventBeingKicked: false,
+      vipLiveTranslationEnabled: false,
+    })
     getCoinBalance.mockResolvedValue(20_000n)
     getPointBalance.mockResolvedValue(0n)
     walletUserLevelGetByUser.mockResolvedValue(null)
@@ -175,6 +230,36 @@ describe('meService', () => {
     lastVipExpiresAt: null,
     isSuperHost: false,
     activeGuardian: null,
+    activeStoreItems: {
+      RIDE: null,
+      AVATAR_FRAME: null,
+      CHAT_BUBBLE: null,
+      PROFILE_CARD: null,
+      rareId: null,
+    },
+    richTier: {
+      tier: 0,
+      displayName: null,
+      evaluatedFromYear: 0,
+      evaluatedFromMonth: 0,
+      currentMonthRechargeCoins: '0',
+      currentMonthCarryoverCoins: '0',
+      currentMonthProgressCoins: '0',
+      nextTierThreshold: '3000000',
+      nextTierLackingCoins: '3000000',
+      badgeVisible: false,
+    },
+    vipMembership: {
+      isActive: false,
+      daysRemaining: 0,
+      dailyClaimAvailable: false,
+      vipExclusiveProfileCard: false,
+      vipDistinguishedLogo: false,
+      vipExclusiveMessageBackground: false,
+      vipSpecialEntryEffect: false,
+      vipPreventBeingKicked: false,
+      vipLiveTranslationEnabled: false,
+    },
   }
 
   it('getMe returns cached payload on Redis HIT', async () => {

@@ -104,6 +104,15 @@ model User {
   supportTickets           SupportTicket[]  @relation("SupportTicketsAsUser")
   supportTicketsClosed     SupportTicket[]  @relation("SupportTicketsClosedBy")
   supportMessagesSent      SupportMessage[] @relation("SupportMessageSender")
+  storeItems               UserStoreItem[]       @relation("UserStoreItems")
+  storePurchasedItems      UserStoreItem[]       @relation("StorePurchasedBy")
+  activeStoreItems         UserActiveStoreItems[]
+  userRichTier             UserRichTier?
+  monthlyRechargeAggregates MonthlyRechargeAggregate[]
+  richTierHistoryRows      RichTierHistory[] @relation("RichTierHistoryUser")
+  vipMembershipPurchases   VipMembershipPurchase[]
+  vipDailyClaims           VipDailyClaim[]
+  vipDailyQuotas           VipDailyQuota[]
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -184,7 +193,7 @@ model OtpToken {
   createdAt        DateTime @default(now()) @map("created_at")
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
-
+ 
   @@index([userId])
   @@index([expiresAt])
   @@index([otpPurpose])
@@ -312,6 +321,79 @@ model UserVipAssignment {
   @@index([userId, isActive])
   @@index([expiresAt, isActive])
   @@map("user_vip_assignments")
+}
+
+// ─── STORE ───────────────────────────────────────────────────────────────────
+
+enum StoreItemCategory {
+  RIDE
+  AVATAR_FRAME
+  CHAT_BUBBLE
+  PROFILE_CARD
+}
+
+model StoreItem {
+  id              String            @id @default(uuid()) @db.Uuid
+  name            String            @db.VarChar(255)
+  description     String?           @db.Text
+  category        StoreItemCategory
+  coinCost        Int               @map("coin_cost")
+  validityDays    Int               @default(15) @map("validity_days")
+  displayImageUrl String            @map("display_image_url") @db.Text
+  effectUrl       String?           @map("effect_url") @db.Text
+  isActive        Boolean           @default(true) @map("is_active")
+  sortOrder       Int               @default(0) @map("sort_order")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  userItems UserStoreItem[]
+
+  @@index([category, isActive, sortOrder])
+  @@index([isActive])
+  @@map("store_items")
+}
+
+model UserStoreItem {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  storeItemId    String    @map("store_item_id") @db.Uuid
+  purchasedById  String    @map("purchased_by_id") @db.Uuid
+  coinsPaid      Int       @map("coins_paid")
+  isActive       Boolean   @default(true) @map("is_active")
+  isApplied      Boolean   @default(false) @map("is_applied")
+  expiresAt      DateTime  @map("expires_at")
+  activatedAt    DateTime? @map("activated_at")
+  expiredAt      DateTime? @map("expired_at")
+  revokedAt      DateTime? @map("revoked_at")
+  idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user        User      @relation("UserStoreItems", fields: [userId], references: [id], onDelete: Cascade)
+  purchasedBy User      @relation("StorePurchasedBy", fields: [purchasedById], references: [id], onDelete: Restrict)
+  storeItem   StoreItem @relation(fields: [storeItemId], references: [id], onDelete: Restrict)
+  activeRows  UserActiveStoreItems[]
+
+  @@index([userId, isApplied])
+  @@index([userId, isActive])
+  @@index([expiresAt, isActive])
+  @@index([storeItemId])
+  @@map("user_store_items")
+}
+
+model UserActiveStoreItems {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  category        StoreItemCategory
+  userStoreItemId String?           @map("user_store_item_id") @db.Uuid
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userStoreItem UserStoreItem? @relation(fields: [userStoreItemId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, category])
+  @@index([userId])
+  @@map("user_active_store_items")
 }
 
 // ─── 8. AUDIT_LOGS (90-day retention) ───
@@ -771,6 +853,8 @@ enum CoinTxType {
   USERNAME_CHANGE
   CREATOR_SUBSCRIPTION
   GUARDIAN_PURCHASE
+  STORE_ITEM_PURCHASE
+  VIP_MEMBERSHIP_PURCHASE
 }
 
 enum PointTxType {
@@ -849,11 +933,66 @@ model CoinLedgerEntry {
   createdAt      DateTime        @default(now()) @map("created_at")
 
   wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  vipMembershipPurchases VipMembershipPurchase[]
+  vipDailyClaims         VipDailyClaim[]
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([walletId, txType, createdAt(sort: Desc)])
   @@index([idempotencyKey])
   @@map("coin_ledger_entries")
+}
+
+enum VipMembershipTier {
+  DIAMOND
+  SVIP
+}
+
+model VipMembershipPurchase {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  tier            VipMembershipTier
+  periodDays      Int               @map("period_days")
+  coinCost        BigInt            @map("coin_cost")
+  ledgerEntryId   String            @map("ledger_entry_id") @db.Uuid
+  expiresAtBefore DateTime?         @map("expires_at_before")
+  expiresAtAfter  DateTime          @map("expires_at_after")
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntry CoinLedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+
+  @@unique([ledgerEntryId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([tier, createdAt(sort: Desc)])
+  @@map("vip_membership_purchases")
+}
+
+model VipDailyClaim {
+  userId        String   @map("user_id") @db.Uuid
+  claimDate     DateTime @map("claim_date") @db.Date
+  coinAmount    BigInt   @map("coin_amount")
+  ledgerEntryId String   @map("ledger_entry_id") @db.Uuid
+  claimedAt     DateTime @default(now()) @map("claimed_at")
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntry CoinLedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+
+  @@id([userId, claimDate])
+  @@index([userId, claimDate(sort: Desc)])
+  @@map("vip_daily_claims")
+}
+
+model VipDailyQuota {
+  userId     String   @map("user_id") @db.Uuid
+  quotaDate  DateTime @map("quota_date") @db.Date
+  quotaType  String   @map("quota_type") @db.VarChar(50)
+  used       Int      @default(0)
+  maxAllowed Int      @map("max_allowed")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, quotaDate, quotaType])
+  @@map("vip_daily_quotas")
 }
 
 model PointLedgerEntry {
@@ -1204,5 +1343,62 @@ model SupportMessage {
 
   @@index([ticketId, createdAt])
   @@map("support_messages")
+}
+
+model MonthlyRechargeAggregate {
+  userId             String   @map("user_id") @db.Uuid
+  year               Int
+  month              Int
+  totalRechargeCoins BigInt   @default(0) @map("total_recharge_coins")
+  rechargeCount      Int      @default(0) @map("recharge_count")
+  lastRechargeAt     DateTime @default(now()) @map("last_recharge_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, year, month])
+  @@index([year, month, totalRechargeCoins(sort: Desc)])
+  @@map("monthly_recharge_aggregates")
+}
+
+model UserRichTier {
+  userId                 String    @id @map("user_id") @db.Uuid
+  currentTier            Int       @default(0) @map("current_tier")
+  evaluatedFromYear      Int       @default(0) @map("evaluated_from_year")
+  evaluatedFromMonth     Int       @default(0) @map("evaluated_from_month")
+  evaluatedRechargeCoins BigInt    @default(0) @map("evaluated_recharge_coins")
+  carryoverCoins         BigInt    @default(0) @map("carryover_coins")
+  lastRolledOverAt       DateTime? @map("last_rolled_over_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([currentTier, evaluatedFromYear, evaluatedFromMonth])
+  @@map("user_rich_tier")
+}
+
+model RichTierHistory {
+  userId             String   @map("user_id") @db.Uuid
+  year               Int
+  month              Int
+  tier               Int
+  totalProgressCoins BigInt   @map("total_progress_coins")
+  carryoverApplied   BigInt   @map("carryover_applied")
+  pureRechargeCoins  BigInt   @map("pure_recharge_coins")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user User @relation("RichTierHistoryUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, year, month])
+  @@index([year, month, tier])
+  @@map("rich_tier_history")
+}
+
+model RichTierConfig {
+  tier             Int      @id
+  minRechargeCoins BigInt   @map("min_recharge_coins")
+  displayName      String   @map("display_name")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("rich_tier_configs")
 }
 

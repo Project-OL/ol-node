@@ -7,6 +7,7 @@ import { followService } from './follow.service'
 import { cacheService } from './cache.service'
 import { auditService } from './audit.service'
 import { userSearchService } from './userSearch.service'
+import { privacyService } from './privacy.service'
 import { redisClient } from '../config/redis'
 import { RedisKeys, MSG_HOT_TTL, CONV_LIST_TTL } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
@@ -454,6 +455,7 @@ export const messagingService = {
     const onlineValues = onlineKeys.length
       ? await redisClient.mget(...onlineKeys)
       : []
+    const effOnline = await privacyService.getEffectiveFlagsBulk(contactIds)
     const result: DmContact[] = contactIds.map((id: string, i: number) => {
       const friendCard = friends.find((f: { userId: string }) => f.userId === id)
       const followCard = following.find((f: { userId: string }) => f.userId === id)
@@ -463,7 +465,8 @@ export const messagingService = {
         username: card?.displayName ?? '',
         publicId: card?.publicId ?? '',
         avatar: card?.avatarUrl ?? null,
-        isOnline: !!onlineValues[i],
+        isOnline:
+          !!onlineValues[i] && !(effOnline.get(id)?.invisibleOnline ?? false),
         isMutual: !!friendCard,
         existingConversationId: existingConvs[i]?.id ?? null,
       }

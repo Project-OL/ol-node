@@ -80,6 +80,13 @@ export const rateLimitReport = buildRateLimit({
   keyBuilder: RedisKeys.reportRateLimit,
 });
 
+export const rateLimitRichRead = buildRateLimit({
+  max: 60,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitRichRead,
+});
+
 export interface AuthRateLimitConfig {
   /** Endpoint key (e.g. 'auth.signup.send_otp') */
   endpoint: string;
@@ -469,6 +476,36 @@ export const supportTicketCreateRateLimit = buildRateLimit({
   windowMs: 60_000,
   keyFn: (r) => r.userId ?? "",
   keyBuilder: (userId) => RedisKeys.supportRateLimit(userId),
+});
+
+export const storePurchaseRateLimit = buildRateLimit({
+  max: 10,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? '',
+  keyBuilder: (userId) => RedisKeys.storePurchaseRateLimit(userId),
+})
+
+export const storeRareIdPurchaseRateLimit = buildRateLimit({
+  max: 10,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? '',
+  keyBuilder: (userId) => RedisKeys.storeRareIdPurchaseRateLimit(userId),
+})
+
+/** VIP membership purchase: max 5 per 60s per user. */
+export const rateLimitVipmPurchase = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.ratelimitVipmPurchase(userId),
+});
+
+/** VIP daily claim: max 5 per 60s per user. */
+export const rateLimitVipmClaim = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.ratelimitVipmClaim(userId),
 });
 
 export const socialRateLimits = {

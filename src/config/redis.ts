@@ -174,6 +174,30 @@ export const RedisKeys = {
   supportTicketList: (userId: bigint | string) => `support:tickets:user:${userId}`,
   supportTicketDetail: (ticketId: bigint | string) => `support:ticket:${ticketId}`,
   supportRateLimit: (userId: bigint | string) => `ratelimit:support:create:${userId}`,
+  // Store system
+  storeCatalog: (category?: string) =>
+    category ? `store:catalog:${category}` : 'store:catalog:all',
+  storeItem: (itemId: string) => `store:item:${itemId}`,
+  userActiveStore: (userId: string) => `store:active:${userId}`,
+  userStoreItems: (userId: string) => `store:owned:${userId}`,
+  storeRareIds: () => 'store:rare-ids',
+  storePurchaseRateLimit: (userId: string) => `ratelimit:store:purchase:${userId}`,
+  storeRareIdPurchaseRateLimit: (userId: string) => `ratelimit:store:rare-id:${userId}`,
+  /** Rich tier read-through snapshot (tier/progress for current UTC month). */
+  richState: (userId: string) => `rich:state:${userId}`,
+  /** Cached monthly recharge total for a UTC month (invalidated on recharge + rollover). */
+  richProgress: (userId: string, year: number, month: number) =>
+    `rich:progress:${userId}:${year}:${month}`,
+  richConfig: () => `rich:config`,
+  ratelimitRichRead: (userId: string) => `ratelimit:rich:read:${userId}`,
+  /** Paid VIP membership (Diamond/SVIP) active snapshot: JSON `{ tier, expiresAt }` or `null`. */
+  vipmActive: (userId: string) => `vipm:active:${userId}`,
+  /** Static VIP membership pricing/config cache (optional; service may inline). */
+  vipmConfig: () => `vipm:config`,
+  ratelimitVipmPurchase: (userId: string) =>
+    `ratelimit:vip-membership:purchase:${userId}`,
+  ratelimitVipmClaim: (userId: string) =>
+    `ratelimit:vip-membership:claim:${userId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -233,6 +257,26 @@ export const SUPER_HOST_STATUS_TTL = 300
 export const SUPPORT_TICKET_LIST_TTL = 60
 /** Support: ticket detail cache (reserved for future use; invalidated on mutation). */
 export const SUPPORT_TICKET_DETAIL_TTL = 30
+
+export const STORE_CATALOG_TTL = 600
+export const STORE_ITEM_TTL = 600
+export const USER_ACTIVE_STORE_TTL = 300
+export const USER_STORE_ITEMS_TTL = 120
+export const STORE_RARE_IDS_TTL = 300
+
+/** Rich tier per-user snapshot cache (invalidated on recharge + rollover). */
+export const RICH_STATE_TTL = 300
+/** Rich tier threshold table cache. */
+export const RICH_CONFIG_TTL = 3600
+/** GET rich-tier read endpoints: 60 requests / 60s per user. */
+export const RICH_READ_RL_TTL = 60
+
+/** VIP membership: active cache TTL upper bound (service sets dynamic TTL up to this). */
+export const VIPM_ACTIVE_TTL_MAX = 24 * 60 * 60
+/** VIP membership: inactive / expired cache (5 min). */
+export const VIPM_ACTIVE_INACTIVE_TTL = 300
+/** VIP membership purchase / daily claim throttle window (60s). */
+export const VIPM_MUTATION_RL_TTL = 60
 
 export async function redisPipeline(
   commands: [string, ...unknown[]][],

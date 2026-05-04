@@ -19,6 +19,8 @@ import {
   LevelType,
 } from "@prisma/client";
 import { getPeriodKeys } from "../utils/periodKeys";
+import { vipMembershipService } from "./vip-membership.service";
+import { fanSpendIncrementForGift } from "./vip-membership.helpers";
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
 
@@ -70,6 +72,10 @@ export const giftTransactionService = {
     );
     const idemBase = `gift:${crypto.randomUUID()}`;
     const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys();
+
+    const senderHasActiveVipMembership = await vipMembershipService.hasActive(
+      params.senderUserId,
+    );
 
     type WealthRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>;
 
@@ -164,7 +170,10 @@ export const giftTransactionService = {
           context: params.context,
         });
 
-        const coinIncrement = BigInt(coinCost);
+        const coinIncrement = fanSpendIncrementForGift(
+          BigInt(coinCost),
+          senderHasActiveVipMembership,
+        );
         for (const periodType of ["day", "week", "month"] as const) {
           const key =
             periodType === "day"

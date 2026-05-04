@@ -23,11 +23,15 @@ import type {
   MeProfileCache,
   MeResponseDto,
   PatchMeResponseDto,
+  RichTierMeDto,
 } from '../models/me.types'
 import { giftGalleryService } from './gift-gallery.service'
 import { meEndpointMetrics } from './me.metrics'
 import { superHostService } from './super-host.service'
 import { guardianService } from './guardian.service'
+import { storeService } from './store.service'
+import { richTierService } from './rich-tier.service'
+import { vipMembershipService } from './vip-membership.service'
 
 const displayNameSchema = z
   .string()
@@ -91,7 +95,15 @@ function buildMeResponse(
   profile: MeProfileCache,
   walletData: Awaited<ReturnType<typeof fetchWalletData>>,
   galleryCompletion: GalleryCompletionDto,
-  extras: { isSuperHost: boolean; activeGuardian: Awaited<ReturnType<typeof guardianService.getActiveGuardianSummary>> },
+  extras: {
+    isSuperHost: boolean
+    activeGuardian: Awaited<ReturnType<typeof guardianService.getActiveGuardianSummary>>
+    activeStoreItems: Awaited<ReturnType<typeof storeService.getActiveItemsForUser>>
+    richTier: RichTierMeDto
+    vipMembership: Awaited<
+      ReturnType<typeof vipMembershipService.buildMeVipMembershipBlock>
+    >
+  },
 ): MeResponseDto {
   return {
     ...profile,
@@ -99,6 +111,9 @@ function buildMeResponse(
     galleryCompletion,
     isSuperHost: extras.isSuperHost,
     activeGuardian: extras.activeGuardian,
+    activeStoreItems: extras.activeStoreItems,
+    richTier: extras.richTier,
+    vipMembership: extras.vipMembership,
     canChangeUsername: BigInt(walletData.coinsBalance) >= USERNAME_CHANGE_COIN_COST,
     usernameNextChangeAt: null,
   }
@@ -177,14 +192,29 @@ export const meService = {
 
     // Wallet/level/VIP data is always fetched fresh (each has its own short-lived Redis cache).
     const walletData = await fetchWalletData(userId)
-    const [galleryCompletion, isSuperHost, activeGuardian] = await Promise.all([
+    const [
+      galleryCompletion,
+      isSuperHost,
+      activeGuardian,
+      activeStoreItems,
+      richTier,
+      vipMembership,
+    ] = await Promise.all([
       giftGalleryService.getCompletionSummaryForUser(userId),
       superHostService.isSuperHost(userId),
       guardianService.getActiveGuardianSummary(userId),
+      storeService.getActiveItemsForUser(userId),
+      richTierService.getCurrentTierForUser(userId, {
+        isVip: walletData.isVipActive,
+      }),
+      vipMembershipService.buildMeVipMembershipBlock(userId),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
       isSuperHost,
       activeGuardian,
+      activeStoreItems,
+      richTier,
+      vipMembership,
     })
     return { data, cache: cacheResult }
   },
@@ -326,14 +356,29 @@ export const meService = {
     await cacheRedisService.set(RedisKeys.userProfile(userId), profile, env.REDIS_TTL_PROFILE)
 
     const walletData = await fetchWalletData(userId)
-    const [galleryCompletion, isSuperHost, activeGuardian] = await Promise.all([
+    const [
+      galleryCompletion,
+      isSuperHost,
+      activeGuardian,
+      activeStoreItems,
+      richTier,
+      vipMembership,
+    ] = await Promise.all([
       giftGalleryService.getCompletionSummaryForUser(userId),
       superHostService.isSuperHost(userId),
       guardianService.getActiveGuardianSummary(userId),
+      storeService.getActiveItemsForUser(userId),
+      richTierService.getCurrentTierForUser(userId, {
+        isVip: walletData.isVipActive,
+      }),
+      vipMembershipService.buildMeVipMembershipBlock(userId),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
       isSuperHost,
       activeGuardian,
+      activeStoreItems,
+      richTier,
+      vipMembership,
     })
 
     const displayName = displayNameFromUser(fresh)

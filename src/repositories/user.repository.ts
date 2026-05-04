@@ -260,4 +260,19 @@ export const userRepository = {
       })
     })
   },
+
+  /** Raw privacy toggles for read-gate composition (bulk). */
+  async findPrivacyFlagsBulk(userIds: string[]) {
+    if (userIds.length === 0) return []
+    return prismaRead.user.findMany({
+      where: { id: { in: userIds } },
+      select: {
+        id: true,
+        privacyInvisibleVisitor: true,
+        privacyMysteryLive: true,
+        privacyMysteryRank: true,
+        privacyInvisibleOnline: true,
+      },
+    })
+  },
 }

@@ -78,6 +78,22 @@ async function main() {
       skipDuplicates: true,
     });
   }
+
+  await prisma.richTierConfig.createMany({
+    data: [
+      { tier: 1, minRechargeCoins: 3_000_000n, displayName: "RICH I" },
+      { tier: 2, minRechargeCoins: 5_000_000n, displayName: "RICH II" },
+      { tier: 3, minRechargeCoins: 10_000_000n, displayName: "RICH III" },
+      { tier: 4, minRechargeCoins: 20_000_000n, displayName: "RICH IV" },
+      { tier: 5, minRechargeCoins: 30_000_000n, displayName: "RICH V" },
+      { tier: 6, minRechargeCoins: 50_000_000n, displayName: "RICH VI" },
+      { tier: 7, minRechargeCoins: 100_000_000n, displayName: "RICH VII" },
+      { tier: 8, minRechargeCoins: 200_000_000n, displayName: "RICH VIII" },
+      { tier: 9, minRechargeCoins: 500_000_000n, displayName: "RICH IX" },
+      { tier: 10, minRechargeCoins: 1_000_000_000n, displayName: "RICH X" },
+    ],
+    skipDuplicates: true,
+  });
 }
 
 main()

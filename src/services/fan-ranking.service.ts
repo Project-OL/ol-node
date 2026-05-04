@@ -10,6 +10,7 @@ import {
   mapUserToRankingFields,
 } from "../repositories/fan-ranking.repository";
 import { getPeriodKeys } from "../utils/periodKeys";
+import { privacyService } from "./privacy.service";
 
 function periodKeyFor(period: "day" | "week" | "month", keys: ReturnType<typeof getPeriodKeys>) {
   if (period === "day") return keys.dayKey;
@@ -19,6 +20,15 @@ function periodKeyFor(period: "day" | "week" | "month", keys: ReturnType<typeof 
 
 function ttlFor(period: "day" | "week" | "month") {
   return period === "day" ? FAN_RANK_DAY_TTL : FAN_RANK_WEEK_MONTH_TTL;
+}
+
+const FETCH_MULT = 10;
+const FETCH_CAP = 500;
+
+function applyMysteryRankFilter<
+  T extends { senderUserId: string },
+>(rows: T[], eff: Map<string, { mysteryOnRank: boolean }>): T[] {
+  return rows.filter((row) => !eff.get(row.senderUserId)?.mysteryOnRank);
 }
 
 export const fanRankingService = {
@@ -57,8 +67,23 @@ export const fanRankingService = {
           periodKey,
           myTotal: myCoinsSpent,
         });
+        const ids = (parsed.rankings as { userId: string }[]).map((r) => r.userId);
+        const eff = await privacyService.getEffectiveFlagsBulk(ids);
+        const rankings = (parsed.rankings as {
+          rank: number;
+          userId: string;
+          username: string;
+          displayName: string;
+          avatarUrl: string | null;
+          wealthLevel: number;
+          coinsSpent: string;
+        }[])
+          .filter((r) => !eff.get(r.userId)?.mysteryOnRank)
+          .map((r, i) => ({ ...r, rank: i + 1 }));
         return {
-          ...parsed,
+          period: parsed.period,
+          periodKey: parsed.periodKey,
+          rankings,
           myRank,
           myCoinsSpent: myCoinsSpent.toString(),
         };
@@ -67,12 +92,17 @@ export const fanRankingService = {
       // compute
     }
 
-    const top = await fanRankingRepository.topSendersBySpend({
+    const rawLimit = Math.min(FETCH_CAP, 100 * FETCH_MULT);
+    const topRaw = await fanRankingRepository.topSendersBySpend({
       receiverUserId: params.hostUserId,
       periodType: params.period,
       periodKey,
-      limit: 100,
+      limit: rawLimit,
     });
+    const effTop = await privacyService.getEffectiveFlagsBulk(
+      topRaw.map((t) => t.senderUserId),
+    );
+    const top = applyMysteryRankFilter(topRaw, effTop).slice(0, 100);
 
     const userIds = top.map((t) => t.senderUserId);
     const users = await fanRankingRepository.usersPublicFields(userIds);

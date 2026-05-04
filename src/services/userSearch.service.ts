@@ -8,6 +8,9 @@ import { superHostService } from './super-host.service'
 import { guardianService } from './guardian.service'
 import { giftGalleryService } from './gift-gallery.service'
 import { blockRepository } from '../repositories/block.repository'
+import { storeService } from './store.service'
+import { richTierService } from './rich-tier.service'
+import { vipMembershipService } from './vip-membership.service'
 
 export const userSearchService = {
   async searchByPublicId(
@@ -30,15 +33,27 @@ export const userSearchService = {
     ])
     const subscriberCount = subscriberCounts.get(user.id) ?? 0
 
-    const [isFollowing, isFollowedBy, isSuperHost, activeGuardian, galleryCompletion, blockedByMe] =
-      await Promise.all([
-        followRepository.existsFollow(requesterId, user.id),
-        followRepository.existsFollow(user.id, requesterId),
-        superHostService.isSuperHost(user.id),
-        guardianService.getActiveGuardianSummary(user.id),
-        giftGalleryService.getCompletionSummaryForUser(user.id),
-        blockRepository.isBlocked(requesterId, user.id),
-      ])
+    const [
+      isFollowing,
+      isFollowedBy,
+      isSuperHost,
+      activeGuardian,
+      activeStoreItems,
+      galleryCompletion,
+      blockedByMe,
+      richTier,
+      vipMembership,
+    ] = await Promise.all([
+      followRepository.existsFollow(requesterId, user.id),
+      followRepository.existsFollow(user.id, requesterId),
+      superHostService.isSuperHost(user.id),
+      guardianService.getActiveGuardianSummary(user.id),
+      storeService.getActiveItemsForUser(user.id),
+      giftGalleryService.getCompletionSummaryForUser(user.id),
+      blockRepository.isBlocked(requesterId, user.id),
+      richTierService.getRichTierCardFields(user.id),
+      vipMembershipService.getActiveMembershipSummary(user.id),
+    ])
     const isFriend = isFollowing && isFollowedBy
 
     const fullName =
@@ -75,6 +90,7 @@ export const userSearchService = {
       age,
       livestreamLevel: level?.livestreamLevel ?? 0,
       wealthLevel: level?.wealthLevel ?? 0,
+      richTier,
       subscriberCount,
       isFollowing,
       isFollowedBy,
@@ -82,7 +98,9 @@ export const userSearchService = {
       blockedByMe,
       isSuperHost,
       activeGuardian,
+      activeStoreItems,
       galleryCompletion,
+      vipMembership,
     }
   },
 }

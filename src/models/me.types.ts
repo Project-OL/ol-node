@@ -1,5 +1,20 @@
 import type { MeGender } from '../utils/profileDisplay'
 import type { ActiveGuardianProfileDto } from './profile.types'
+import type { ActiveStoreItemsMap } from './store.types'
+
+/** Monthly Rich (Elite) tier snapshot for GET /users/me. */
+export interface RichTierMeDto {
+  tier: number
+  displayName: string | null
+  evaluatedFromYear: number
+  evaluatedFromMonth: number
+  currentMonthRechargeCoins: string
+  currentMonthCarryoverCoins: string
+  currentMonthProgressCoins: string
+  nextTierThreshold: string | null
+  nextTierLackingCoins: string | null
+  badgeVisible: boolean
+}
 
 /** Current UTC month global gift gallery completion for this user as host. */
 export interface GalleryCompletionDto {
@@ -45,6 +60,25 @@ export interface MeResponseDto extends MeProfileCache {
   isSuperHost: boolean
   /** Current highest active guardian summary for this profile. */
   activeGuardian: ActiveGuardianProfileDto | null
+  /** Active store cosmetics and current rare ID. */
+  activeStoreItems: ActiveStoreItemsMap
+  /** Monthly Rich tier progress (UTC month); BigInt-like fields as strings. */
+  richTier: RichTierMeDto
+  /** Paid Diamond/SVIP membership (separate from VIP public ID / `isVipActive`). */
+  vipMembership: {
+    isActive: boolean
+    tier?: string
+    expiresAt?: string
+    daysRemaining: number
+    dailyClaimAvailable: boolean
+    lastClaimedAt?: string
+    vipExclusiveProfileCard: boolean
+    vipDistinguishedLogo: boolean
+    vipExclusiveMessageBackground: boolean
+    vipSpecialEntryEffect: boolean
+    vipPreventBeingKicked: boolean
+    vipLiveTranslationEnabled: boolean
+  }
 }
 
 export interface PatchMeResponseDto {

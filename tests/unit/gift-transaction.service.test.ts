@@ -32,6 +32,12 @@ vi.mock("../../src/services/gift-gallery.service", () => ({
 
 const redisDel = vi.fn();
 
+vi.mock("../../src/services/vip-membership.service", () => ({
+  vipMembershipService: {
+    hasActive: vi.fn().mockResolvedValue(false),
+  },
+}));
+
 vi.mock("../../src/config/redis", () => ({
   redisClient: { del: (...a: unknown[]) => redisDel(...a) },
   getRedisForRead: () => ({ get: vi.fn() }),
@@ -40,6 +46,7 @@ vi.mock("../../src/config/redis", () => ({
     walletPointBalance: (u: string) => `wallet:points:${u}`,
     fanRanking: (h: string, p: string, k: string) =>
       `fanrank:${h}:${p}:${k}`,
+    vipmActive: (u: string) => `vipm:active:${u}`,
   },
   GIFT_LIST_CACHE_TTL: 600,
   GALLERY_HOST_TTL: 300,

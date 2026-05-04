@@ -42,6 +42,10 @@ import subscriptionRoutes from "./routes/v1/subscription.routes";
 import guardianRoutes from "./routes/v1/guardian.routes";
 import superHostRoutes from "./routes/v1/super-host.routes";
 import { supportRoutes } from "./routes/v1/support.routes";
+import storeRoutes from "./routes/v1/store.routes";
+import storeAdminRoutes from "./routes/v1/store-admin.routes";
+import { richTierRoutes } from "./routes/v1/rich-tier.routes";
+import vipMembershipRoutes from "./routes/v1/vip-membership.routes";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -151,7 +155,11 @@ export async function buildApp() {
   await app.register(subscriptionRoutes, { prefix: `${prefix}/subscriptions` });
   await app.register(guardianRoutes, { prefix: `${prefix}/guardian` });
   await app.register(superHostRoutes, { prefix: `${prefix}/admin` });
+  await app.register(storeAdminRoutes, { prefix: `${prefix}/admin` });
   await app.register(supportRoutes, { prefix: `${prefix}/support` });
+  await app.register(storeRoutes, { prefix: `${prefix}/store` });
+  await app.register(richTierRoutes, { prefix: `${prefix}/rich-tier` });
+  await app.register(vipMembershipRoutes, { prefix: `${prefix}/vip-membership` });
 
   return app;
 }

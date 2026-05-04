@@ -11,6 +11,15 @@ export type CoinLedgerFilter = {
 };
 
 export const coinLedgerRepository = {
+  async findByIdempotencyKey(
+    tx: Prisma.TransactionClient,
+    idempotencyKey: string,
+  ) {
+    return tx.coinLedgerEntry.findUnique({
+      where: { idempotencyKey },
+    });
+  },
+
   async insert(
     tx: Prisma.TransactionClient,
     data: {

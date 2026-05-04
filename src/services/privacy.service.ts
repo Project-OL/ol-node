@@ -1,7 +1,7 @@
 /**
- * VIP Privacy Settings: 4 premium toggles (invisible visitor, mystery live, mystery rank, invisible online).
- * All require VIP subscription. Cache-aside with invalidation on every toggle.
- * Future: implement effect of each feature in live room code, ranking calculation, profile visitors, online status.
+ * Privacy toggles: four booleans stored on User. Anyone may change their own raw flags;
+ * effect application (hiding visitors, ranks, online, live identity) is gated at read sites
+ * via `getEffectiveFlags` / `getEffectiveFlagsBulk` (raw flag AND active paid VIP membership).
  */
 
 import { RedisKeys } from '../config/redis'
@@ -9,6 +9,7 @@ import { userRepository } from '../repositories/user.repository'
 import { cacheService } from './cache.service'
 import { auditService } from './audit.service'
 import { AppError } from '../middlewares/errorHandler'
+import { vipMembershipService } from './vip-membership.service'
 
 const PRIVACY_CACHE_TTL_SEC = 3600 // 1 hour
 
@@ -18,6 +19,14 @@ export interface PrivacySettings {
   mysteryRank: boolean
   invisibleOnline: boolean
   hideMicStatus?: boolean
+}
+
+/** Raw DB flags AND active paid VIP — use for filtering / hiding only. */
+export interface EffectivePrivacyFlags {
+  invisibleVisitor: boolean
+  mysteryInLive: boolean
+  mysteryOnRank: boolean
+  invisibleOnline: boolean
 }
 
 export interface PrivacyFeatureInfo {
@@ -93,13 +102,7 @@ export const privacyService = {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     }
 
-    if (!user.vipSubscriptionActive) {
-      throw new AppError(
-        403,
-        'VIP subscription required for privacy settings',
-        'VIP_SUBSCRIPTION_REQUIRED',
-      )
-    }
+    const vipActive = await vipMembershipService.hasActive(userId)
 
     const settings: Record<PrivacyToggleKey, PrivacyFeatureInfo> = {
       invisibleVisitor: {
@@ -122,7 +125,7 @@ export const privacyService = {
 
     const updatedAt = user.privacyUpdatedAt ?? user.updatedAt ?? new Date()
     const result = {
-      vipActive: user.vipSubscriptionActive,
+      vipActive,
       settings,
       updatedAt,
     }
@@ -141,7 +144,7 @@ export const privacyService = {
     message: string
     updatedAt: Date
   }> {
-    const updated = await this.checkVipAndUpdate(userId, 'privacyInvisibleVisitor', enabled)
+    const updated = await this.updatePrivacyField(userId, 'privacyInvisibleVisitor', enabled)
     await this.invalidatePrivacyCaches(userId)
 
     await auditService.log({
@@ -170,7 +173,7 @@ export const privacyService = {
     message: string
     updatedAt: Date
   }> {
-    const updated = await this.checkVipAndUpdate(userId, 'privacyMysteryLive', enabled)
+    const updated = await this.updatePrivacyField(userId, 'privacyMysteryLive', enabled)
     await this.invalidatePrivacyCaches(userId)
 
     await auditService.log({
@@ -199,7 +202,7 @@ export const privacyService = {
     message: string
     updatedAt: Date
   }> {
-    const updated = await this.checkVipAndUpdate(userId, 'privacyMysteryRank', enabled)
+    const updated = await this.updatePrivacyField(userId, 'privacyMysteryRank', enabled)
     await this.invalidatePrivacyCaches(userId)
 
     await auditService.log({
@@ -228,7 +231,7 @@ export const privacyService = {
     message: string
     updatedAt: Date
   }> {
-    const updated = await this.checkVipAndUpdate(userId, 'privacyInvisibleOnline', enabled)
+    const updated = await this.updatePrivacyField(userId, 'privacyInvisibleOnline', enabled)
     await this.invalidatePrivacyCaches(userId)
 
     await auditService.log({
@@ -249,7 +252,7 @@ export const privacyService = {
     }
   },
 
-  async checkVipAndUpdate(
+  async updatePrivacyField(
     userId: string,
     field: PrivacyField,
     value: boolean,
@@ -257,13 +260,6 @@ export const privacyService = {
     const user = (await userRepository.findById(userId)) as UserPrivacyRow | null
     if (!user) {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
-    }
-    if (!user.vipSubscriptionActive) {
-      throw new AppError(
-        403,
-        'VIP subscription required',
-        'VIP_SUBSCRIPTION_REQUIRED',
-      )
     }
 
     const now = new Date()
@@ -280,8 +276,65 @@ export const privacyService = {
   },
 
   /**
-   * Get minimal privacy settings for other services (e.g. profile loading, visitor logic).
-   * Use in: profile visiting logic (invisible visitor), ranking (mystery rank), live room (mystery live), online status (invisible online).
+   * Effective privacy for enforcement: each flag is (rawUserColumn && hasActivePaidVipMembership).
+   */
+  async getEffectiveFlags(userId: string): Promise<EffectivePrivacyFlags> {
+    const [rows, active] = await Promise.all([
+      userRepository.findPrivacyFlagsBulk([userId]),
+      vipMembershipService.hasActive(userId),
+    ])
+    const r = rows[0]
+    if (!r) {
+      return {
+        invisibleVisitor: false,
+        mysteryInLive: false,
+        mysteryOnRank: false,
+        invisibleOnline: false,
+      }
+    }
+    const a = active
+    return {
+      invisibleVisitor: r.privacyInvisibleVisitor && a,
+      mysteryInLive: r.privacyMysteryLive && a,
+      mysteryOnRank: r.privacyMysteryRank && a,
+      invisibleOnline: r.privacyInvisibleOnline && a,
+    }
+  },
+
+  async getEffectiveFlagsBulk(
+    userIds: string[],
+  ): Promise<Map<string, EffectivePrivacyFlags>> {
+    const m = new Map<string, EffectivePrivacyFlags>()
+    if (userIds.length === 0) return m
+    const [rawRows, activeMap] = await Promise.all([
+      userRepository.findPrivacyFlagsBulk(userIds),
+      vipMembershipService.hasActiveBulk(userIds),
+    ])
+    const byId = new Map(rawRows.map((r) => [r.id, r]))
+    for (const id of userIds) {
+      const r = byId.get(id)
+      const a = activeMap.get(id) ?? false
+      if (!r) {
+        m.set(id, {
+          invisibleVisitor: false,
+          mysteryInLive: false,
+          mysteryOnRank: false,
+          invisibleOnline: false,
+        })
+        continue
+      }
+      m.set(id, {
+        invisibleVisitor: r.privacyInvisibleVisitor && a,
+        mysteryInLive: r.privacyMysteryLive && a,
+        mysteryOnRank: r.privacyMysteryRank && a,
+        invisibleOnline: r.privacyInvisibleOnline && a,
+      })
+    }
+    return m
+  },
+
+  /**
+   * Raw minimal privacy (settings / cache). Does not apply VIP read-gate.
    */
   async getUserPrivacySettings(userId: string): Promise<PrivacySettings> {
     const cacheKey = RedisKeys.userPrivacyData(userId)

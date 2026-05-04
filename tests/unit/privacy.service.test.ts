@@ -4,10 +4,15 @@ const cacheGet = vi.fn()
 const cacheSet = vi.fn()
 const cacheDelete = vi.fn()
 vi.mock('../../src/config/redis', () => ({
+  redisClient: {},
+  getRedisForRead: () => ({ mget: vi.fn().mockResolvedValue([]) }),
   RedisKeys: {
     userPrivacySettings: (userId: string) => `user:${userId}:privacy:settings`,
     userPrivacyData: (userId: string) => `user:${userId}:privacy:data`,
+    vipmActive: (userId: string) => `vipm:active:${userId}`,
   },
+  VIPM_ACTIVE_INACTIVE_TTL: 300,
+  VIPM_ACTIVE_TTL_MAX: 86400,
 }))
 
 vi.mock('../../src/services/cache.service', () => ({
@@ -20,10 +25,20 @@ vi.mock('../../src/services/cache.service', () => ({
 
 const userFindById = vi.fn()
 const userUpdate = vi.fn()
+const findPrivacyFlagsBulk = vi.fn()
 vi.mock('../../src/repositories/user.repository', () => ({
   userRepository: {
     findById: (...args: unknown[]) => userFindById(...args),
     update: (...args: unknown[]) => userUpdate(...args),
+    findPrivacyFlagsBulk: (...args: unknown[]) => findPrivacyFlagsBulk(...args),
+  },
+}))
+
+const vipHasActive = vi.fn()
+vi.mock('../../src/services/vip-membership.service', () => ({
+  vipMembershipService: {
+    hasActive: (...args: unknown[]) => vipHasActive(...args),
+    hasActiveBulk: vi.fn().mockResolvedValue(new Map()),
   },
 }))
 
@@ -62,6 +77,8 @@ function makeUser(overrides: Partial<{
 describe('PrivacyService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vipHasActive.mockResolvedValue(true)
+    findPrivacyFlagsBulk.mockResolvedValue([])
   })
 
   describe('getSettings', () => {
@@ -108,14 +125,15 @@ describe('PrivacyService', () => {
       )
     })
 
-    it('should throw VIP_SUBSCRIPTION_REQUIRED if user not VIP', async () => {
+    it('should return settings with vipActive false when paid VIP inactive', async () => {
       cacheGet.mockResolvedValue(null)
       userFindById.mockResolvedValue(makeUser({ vipSubscriptionActive: false }))
+      vipHasActive.mockResolvedValueOnce(false)
 
-      await expect(privacyService.getSettings(userId)).rejects.toMatchObject({
-        code: 'VIP_SUBSCRIPTION_REQUIRED',
-        statusCode: 403,
-      })
+      const result = await privacyService.getSettings(userId)
+
+      expect(result.vipActive).toBe(false)
+      expect(result.settings.invisibleVisitor.enabled).toBe(false)
     })
 
     it('should throw USER_NOT_FOUND if user missing', async () => {
@@ -156,12 +174,15 @@ describe('PrivacyService', () => {
       expect(cacheDelete).toHaveBeenCalledWith(`user:${userId}:privacy:data`)
     })
 
-    it('should throw VIP_SUBSCRIPTION_REQUIRED if not VIP', async () => {
+    it('should allow toggle when paid VIP inactive (no write gate)', async () => {
       userFindById.mockResolvedValue(makeUser({ vipSubscriptionActive: false }))
+      userUpdate.mockResolvedValue({ privacyInvisibleVisitor: true, privacyUpdatedAt: new Date() })
+      cacheDelete.mockResolvedValue(undefined)
 
-      await expect(
-        privacyService.toggleInvisibleVisitor(userId, true),
-      ).rejects.toMatchObject({ code: 'VIP_SUBSCRIPTION_REQUIRED', statusCode: 403 })
+      const result = await privacyService.toggleInvisibleVisitor(userId, true)
+
+      expect(result.enabled).toBe(true)
+      expect(userUpdate).toHaveBeenCalled()
     })
 
     it('should return disabled message when enabling false', async () => {
@@ -190,12 +211,13 @@ describe('PrivacyService', () => {
       )
     })
 
-    it('should throw if not VIP', async () => {
+    it('should toggle when paid VIP inactive (no write gate)', async () => {
       userFindById.mockResolvedValue(makeUser({ vipSubscriptionActive: false }))
+      userUpdate.mockResolvedValue({ privacyMysteryLive: true, privacyUpdatedAt: new Date() })
+      cacheDelete.mockResolvedValue(undefined)
 
-      await expect(privacyService.toggleMysteryLive(userId, true)).rejects.toMatchObject({
-        code: 'VIP_SUBSCRIPTION_REQUIRED',
-      })
+      const result = await privacyService.toggleMysteryLive(userId, true)
+      expect(result.enabled).toBe(true)
     })
   })
 
@@ -290,7 +312,7 @@ describe('PrivacyService', () => {
     })
   })
 
-  describe('checkVipAndUpdate', () => {
+  describe('toggle error handling', () => {
     it('should throw USER_NOT_FOUND when user missing on toggle', async () => {
       userFindById.mockResolvedValue(null)
 

@@ -101,6 +101,12 @@ const envSchema = z
               .filter(Boolean)
           : [],
       ),
+
+    /** When not the string `true`, scheduled monthly rich-tier rollover master no-ops (admin `force` still runs). */
+    RICH_TIER_ROLLOVER_ENABLED: z
+      .string()
+      .optional()
+      .transform((s) => s === "true"),
   })
   .superRefine((val, ctx) => {
     if (val.NODE_ENV === 'production' && !val.JWT_REFRESH_SECRET) {

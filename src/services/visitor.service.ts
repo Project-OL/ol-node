@@ -7,6 +7,7 @@ import { userSubscriberRepository } from '../repositories/userSubscriber.reposit
 import type { PaginatedResult, UserCardWithVisit } from '../types/social.types'
 import { superHostService } from './super-host.service'
 import { guardianService } from './guardian.service'
+import { privacyService } from './privacy.service'
 
 export interface AuditMeta {
   request?: { ip?: string; headers?: Record<string, string | undefined> }
@@ -51,7 +52,8 @@ export const visitorService = {
     if (!visitor) {
       return
     }
-    if (visitor.privacyInvisibleVisitor) {
+    const eff = await privacyService.getEffectiveFlags(visitorId)
+    if (eff.invisibleVisitor) {
       return
     }
 

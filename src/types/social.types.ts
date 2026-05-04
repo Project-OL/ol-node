@@ -1,5 +1,6 @@
 import type { ActiveGuardianProfileDto } from '../models/profile.types'
 import type { GalleryCompletionDto } from '../models/me.types'
+import type { ActiveStoreItemsMap } from '../models/store.types'
 
 export type UserCard = {
   /** Same as `userId` (UUID); included for picker UIs that expect `id`. */
@@ -15,6 +16,12 @@ export type UserCard = {
   age: number | null
   livestreamLevel: number
   wealthLevel: number
+  /** Monthly Rich (Elite) tier; badge gated by VIP. */
+  richTier?: {
+    tier: number
+    displayName: string | null
+    badgeVisible: boolean
+  }
   subscriberCount: number
   isFollowing: boolean
   isFollowedBy: boolean
@@ -23,7 +30,20 @@ export type UserCard = {
   blockedByMe?: boolean
   isSuperHost?: boolean
   activeGuardian?: ActiveGuardianProfileDto | null
+  activeStoreItems?: ActiveStoreItemsMap
   galleryCompletion?: GalleryCompletionDto
+  /** Paid VIP membership (Diamond/SVIP); cosmetic flags mirror `isActive`. */
+  vipMembership?: {
+    isActive: boolean
+    tier?: string
+    expiresAt?: string
+    vipExclusiveProfileCard: boolean
+    vipDistinguishedLogo: boolean
+    vipExclusiveMessageBackground: boolean
+    vipSpecialEntryEffect: boolean
+    vipPreventBeingKicked: boolean
+    vipLiveTranslationEnabled: boolean
+  }
 }
 
 export type UserCardWithVisit = UserCard & { visitedAt: Date }

@@ -29,9 +29,18 @@ vi.mock('../../src/services/audit.service', () => ({
 }))
 
 const findById = vi.fn()
+const findPrivacyFlagsBulk = vi.fn()
 vi.mock('../../src/repositories/user.repository', () => ({
   userRepository: {
     findById: (...args: unknown[]) => findById(...args),
+    findPrivacyFlagsBulk: (...args: unknown[]) => findPrivacyFlagsBulk(...args),
+  },
+}))
+
+const vipHasActive = vi.fn()
+vi.mock('../../src/services/vip-membership.service', () => ({
+  vipMembershipService: {
+    hasActive: (...args: unknown[]) => vipHasActive(...args),
   },
 }))
 
@@ -87,6 +96,8 @@ describe('visitorService', () => {
     vi.clearAllMocks()
     isSuperHost.mockResolvedValue(false)
     getActiveGuardianSummary.mockResolvedValue(null)
+    vipHasActive.mockResolvedValue(false)
+    findPrivacyFlagsBulk.mockResolvedValue([])
   })
 
   it('returns silently when visiting own profile', async () => {
@@ -95,7 +106,17 @@ describe('visitorService', () => {
   })
 
   it('returns silently when invisibleVisitor is true', async () => {
-    findById.mockResolvedValueOnce({ id: visitorId, privacyInvisibleVisitor: true })
+    findById.mockResolvedValueOnce({ id: visitorId })
+    findPrivacyFlagsBulk.mockResolvedValueOnce([
+      {
+        id: visitorId,
+        privacyInvisibleVisitor: true,
+        privacyMysteryLive: false,
+        privacyMysteryRank: false,
+        privacyInvisibleOnline: false,
+      },
+    ])
+    vipHasActive.mockResolvedValueOnce(true)
 
     await visitorService.recordVisit(profileId, visitorId, {})
 
