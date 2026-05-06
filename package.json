@@ -13,7 +13,6 @@
         "start": "concurrently \"npm run start\" \"npm run worker\"",
         "dev:all": "concurrently \"npm run dev\" \"npm run dev:ws\"",
         "build": "tsc",
-        // "start": "node dist/server.js",
         "worker": "tsx src/worker.ts",
         "worker:prod": "node dist/worker.js",
         "lint": "eslint \"src/**/*.ts\"",
