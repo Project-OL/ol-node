@@ -2,8 +2,16 @@ import { buildApp } from './app'
 import { env } from './config/env'
 import { prisma } from './config/database'
 import { redisClient } from './config/redis'
+import { ensureCollectionExists } from './lib/rekognition.client'
 
 async function start() {
+  try {
+    await ensureCollectionExists()
+  } catch (error) {
+    console.error('Failed to ensure Rekognition collection exists', error)
+    process.exit(1)
+  }
+
   const app = await buildApp()
 
   const shutdown = async (signal: string, options: { exitCode: number }) => {

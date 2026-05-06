@@ -37,6 +37,7 @@ import {
 } from '../../models/schemas'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { authRateLimits } from '../../middlewares/rateLimitAuth'
+import { mintWsTicket } from '../../services/ws-ticket.service'
 
 export default async function authRoutes(app: FastifyInstance) {
   // ----- Phase 1: Production auth -----
@@ -219,6 +220,18 @@ export default async function authRoutes(app: FastifyInstance) {
       }
       const result = await authV2Service.refresh(parsed.data.refreshToken, request)
       return reply.send(result)
+    },
+  )
+
+  /** Mint single-use ticket for `GET /ws?ticket=` (15m TTL). */
+  app.post(
+    '/ws-ticket',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const { token, expiresInSec } = await mintWsTicket(userId)
+      return reply.send({ token, expiresInSec })
     },
   )
 

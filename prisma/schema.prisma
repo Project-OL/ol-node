@@ -117,6 +117,9 @@ model User {
   vipMembershipPurchases   VipMembershipPurchase[]
   vipDailyClaims           VipDailyClaim[]
   vipDailyQuotas           VipDailyQuota[]
+  questionnaireAttempts    UserQuestionnaireAttempt[]
+  faceProfile              UserFaceProfile?
+  faceVerificationAttempts FaceVerificationAttempt[]
 
   agency                    Agency?
   hostAgencyMembership      AgencyHost?
@@ -727,6 +730,8 @@ model Conversation {
   id             String               @id @default(cuid())
   type           ConversationType
   lastMessageAt DateTime?            @map("last_message_at")
+  // Monotonic per-conversation message sequence
+  lastSeq        BigInt               @default(0) @map("last_seq")
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
   members        ConversationMember[]
@@ -741,6 +746,7 @@ model ConversationMember {
   userId         String        @map("user_id") @db.Uuid
   joinedAt       DateTime      @default(now()) @map("joined_at")
   lastReadAt     DateTime?     @map("last_read_at")
+  lastReadMessageId String?  @map("last_read_message_id")
   isMuted        Boolean       @default(false) @map("is_muted")
   mutedUntil     DateTime?     @map("muted_until")
   isDeleted      Boolean       @default(false) @map("is_deleted")
@@ -754,25 +760,44 @@ model ConversationMember {
 }
 
 model Message {
-  id             String            @id @default(cuid())
-  conversationId String            @map("conversation_id")
-  senderId       String            @map("sender_id") @db.Uuid
-  type           MessageType
-  content        String?           @db.Text
-  replyToId      String?           @map("reply_to_id")
-  isDeleted      Boolean           @default(false) @map("is_deleted")
-  deletedAt      DateTime?         @map("deleted_at")
-  createdAt      DateTime         @default(now()) @map("created_at")
-  updatedAt      DateTime         @updatedAt @map("updated_at")
-  conversation   Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender         User              @relation("SentMessages", fields: [senderId], references: [id])
-  replyTo        Message?          @relation("MessageReplies", fields: [replyToId], references: [id])
-  replies        Message[]         @relation("MessageReplies")
-  mediaItems     MessageMedia[]
-  reactions      MessageReaction[]
+  id               String            @id @default(cuid())
+  conversationId   String            @map("conversation_id")
+  senderId         String            @map("sender_id") @db.Uuid
+  type             MessageType
+  content          String?           @db.Text
+  replyToId        String?           @map("reply_to_id")
+  isDeleted        Boolean           @default(false) @map("is_deleted")
+  deletedAt        DateTime?         @map("deleted_at")
+  // Idempotency key (UUID) when set; unique per conversation
+  clientMessageId  String?           @map("client_message_id")
+  // Per-conversation monotonic order
+  seq              BigInt            @map("seq")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  conversation     Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender           User              @relation("SentMessages", fields: [senderId], references: [id])
+  replyTo          Message?          @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies          Message[]         @relation("MessageReplies")
+  mediaItems       MessageMedia[]
+  reactions        MessageReaction[]
+  @@unique([conversationId, clientMessageId])
+  @@unique([conversationId, seq])
+  @@index([conversationId, seq])
   @@index([conversationId, createdAt])
   @@index([senderId])
   @@map("messages")
+}
+
+// Transactional outbox: at-least-once WS fan-out after commit
+model MessageOutbox {
+  id             BigInt    @id @default(autoincrement())
+  conversationId String    @map("conversation_id")
+  payload        Json
+  createdAt      DateTime  @default(now()) @map("created_at")
+  publishedAt    DateTime? @map("published_at")
+
+  @@index([publishedAt, id])
+  @@map("message_outbox")
 }
 
 model MessageMedia {
@@ -976,6 +1001,21 @@ model CoinLedgerEntry {
 enum VipMembershipTier {
   DIAMOND
   SVIP
+}
+
+enum FaceProfileStatus {
+  PENDING_INDEX
+  INDEXED
+  FAILED
+  REVOKED
+}
+
+enum FaceVerificationDecision {
+  PASS
+  FAIL
+  ERROR
+  QUALITY_REJECTED
+  RATE_LIMITED
 }
 
 model VipMembershipPurchase {
@@ -1612,5 +1652,133 @@ model RichTierConfig {
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("rich_tier_configs")
+}
+
+model UserFaceProfile {
+  id                 String            @id @default(uuid()) @db.Uuid
+  userId             String            @unique @map("user_id") @db.Uuid
+  collectionId       String            @map("collection_id")
+  rekognitionFaceId  String?           @unique @map("rekognition_face_id")
+  s3KeyReference     String            @map("s3_key_reference")
+  imageQualityScore  Float?            @map("image_quality_score")
+  livenessConfidence Float?            @map("liveness_confidence")
+  status             FaceProfileStatus @default(PENDING_INDEX)
+  failureReason      String?           @map("failure_reason")
+  indexedAt          DateTime?         @map("indexed_at")
+  lastVerifiedAt     DateTime?         @map("last_verified_at")
+  revokedAt          DateTime?         @map("revoked_at")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("user_face_profiles")
+}
+
+model FaceVerificationAttempt {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  userId              String                   @map("user_id") @db.Uuid
+  s3Key               String                   @map("s3_key")
+  similarityScore     Float?                   @map("similarity_score")
+  decision            FaceVerificationDecision
+  reason              String?
+  rekognitionRequestId String?                 @map("rekognition_request_id")
+  ipAddress           String?                  @map("ip_address")
+  userAgent           String?                  @map("user_agent")
+  clientRequestId     String?                  @map("client_request_id") @db.Uuid
+  latencyMs           Int?                     @map("latency_ms")
+  createdAt           DateTime                 @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([decision, createdAt(sort: Desc)])
+  @@unique([userId, clientRequestId])
+  @@map("face_verification_attempts")
+}
+
+model Questionnaire {
+  id                String   @id @default(uuid()) @db.Uuid
+  key               String
+  title             String
+  description       String?
+  version           Int      @default(1)
+  isActive          Boolean  @default(true) @map("is_active")
+  requireAllCorrect Boolean  @default(true) @map("require_all_correct")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdById       String?  @map("created_by_id") @db.Uuid
+  updatedById       String?  @map("updated_by_id") @db.Uuid
+
+  questions QuestionnaireQuestion[]
+  attempts  UserQuestionnaireAttempt[]
+
+  @@unique([key, version])
+  @@index([key, isActive])
+  @@map("questionnaires")
+}
+
+model QuestionnaireQuestion {
+  id              String @id @default(uuid()) @db.Uuid
+  questionnaireId String @map("questionnaire_id") @db.Uuid
+  text            String
+  order           Int
+
+  questionnaire Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  options       QuestionnaireOption[]
+  answers       UserQuestionnaireAnswer[]
+
+  @@unique([questionnaireId, order])
+  @@map("questionnaire_questions")
+}
+
+model QuestionnaireOption {
+  id         String  @id @default(uuid()) @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  label      String
+  value      String
+  isCorrect  Boolean @default(false) @map("is_correct")
+  order      Int
+
+  question QuestionnaireQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, value])
+  @@unique([questionId, order])
+  @@map("questionnaire_options")
+}
+
+model UserQuestionnaireAttempt {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  questionnaireId      String   @map("questionnaire_id") @db.Uuid
+  questionnaireVersion Int      @map("questionnaire_version")
+  totalQuestions       Int      @map("total_questions")
+  correctCount         Int      @map("correct_count")
+  allCorrect           Boolean  @map("all_correct")
+  completedAt          DateTime @default(now()) @map("completed_at")
+
+  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionnaire Questionnaire             @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  answers       UserQuestionnaireAnswer[]
+
+  @@index([userId, questionnaireId, completedAt(sort: Desc)])
+  @@index([userId, questionnaireId, questionnaireVersion, allCorrect])
+  @@map("user_questionnaire_attempts")
+}
+
+model UserQuestionnaireAnswer {
+  id               String  @id @default(uuid()) @db.Uuid
+  attemptId        String  @map("attempt_id") @db.Uuid
+  questionId       String  @map("question_id") @db.Uuid
+  selectedOptionId String? @map("selected_option_id") @db.Uuid
+  selectedValue    String? @map("selected_value")
+  isCorrect        Boolean @map("is_correct")
+
+  attempt  UserQuestionnaireAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question QuestionnaireQuestion    @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@unique([attemptId, questionId])
+  @@map("user_questionnaire_answers")
 }
 

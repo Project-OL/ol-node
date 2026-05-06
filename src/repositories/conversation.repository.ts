@@ -252,6 +252,26 @@ export async function updateMuteStatus(
   })
 }
 
+export async function getConversationLastSeq(conversationId: string): Promise<bigint | null> {
+  const row = await prismaRead.conversation.findUnique({
+    where: { id: conversationId },
+    select: { lastSeq: true },
+  })
+  return row?.lastSeq ?? null
+}
+
+/** Active membership (not soft-deleted). */
+export async function isActiveConversationMember(
+  conversationId: string,
+  userId: string,
+): Promise<boolean> {
+  const m = await prismaRead.conversationMember.findFirst({
+    where: { conversationId, userId, isDeleted: false },
+    select: { id: true },
+  })
+  return m != null
+}
+
 export const conversationRepository = {
   createConversation,
   findDirectConversation,
@@ -260,4 +280,6 @@ export const conversationRepository = {
   updateLastMessageAt,
   markConversationDeleted,
   updateMuteStatus,
+  getConversationLastSeq,
+  isActiveConversationMember,
 }

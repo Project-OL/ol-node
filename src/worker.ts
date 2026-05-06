@@ -54,16 +54,41 @@ import {
 } from "./queues/agency-commission.constants";
 import { agencyLevelRecomputeQueue } from "./queues/agency-commission.queue";
 import { processAgencyLevelRecomputeJob } from "./jobs/agency-level-recompute.job";
+import {
+  MESSAGE_OUTBOX_PUBLISH_JOB,
+  MESSAGE_OUTBOX_QUEUE,
+  MESSAGE_OUTBOX_SWEEP_JOB,
+} from "./queues/messaging.constants";
+import {
+  messageOutboxQueue,
+  registerMessageOutboxScheduledJobs,
+} from "./queues/messaging.queue";
+import {
+  publishMessageOutboxRow,
+  sweepStaleMessageOutbox,
+} from "./services/messaging-outbox.service";
+import { FACE_INDEXING_QUEUE, FACE_INDEX_JOB_INDEX } from "./queues/face.constants";
+import { faceVerificationService } from "./services/face-verification.service";
+import { ensureCollectionExists } from "./lib/rekognition.client";
 
 const ACCOUNT_DELETION_QUEUE = "account-deletion";
 
 async function main() {
+  try {
+    await ensureCollectionExists();
+  } catch (error) {
+    console.error("Failed to ensure Rekognition collection exists", error);
+    process.exit(1);
+  }
+
   const connection = new Redis(env.REDIS_URL, {
     password: env.REDIS_PASSWORD || undefined,
     maxRetriesPerRequest: null,
     lazyConnect: true,
   });
   await connection.connect();
+
+  await registerMessageOutboxScheduledJobs();
 
   const accountDeletionQueue = new Queue(ACCOUNT_DELETION_QUEUE, {
     connection,
@@ -236,6 +261,29 @@ async function main() {
     { connection, concurrency: 2 },
   );
 
+  const messageOutboxWorker = new Worker(
+    MESSAGE_OUTBOX_QUEUE,
+    async (job: Job<{ outboxId?: string }>) => {
+      if (job.name === MESSAGE_OUTBOX_PUBLISH_JOB) {
+        const id = job.data?.outboxId;
+        if (id) await publishMessageOutboxRow(BigInt(id));
+      } else if (job.name === MESSAGE_OUTBOX_SWEEP_JOB) {
+        await sweepStaleMessageOutbox();
+      }
+    },
+    { connection, concurrency: 8 },
+  );
+
+  const faceIndexingWorker = new Worker(
+    FACE_INDEXING_QUEUE,
+    async (job: Job<{ userId: string; faceProfileId: string; s3Key: string }>) => {
+      if (job.name === FACE_INDEX_JOB_INDEX) {
+        await faceVerificationService.processIndexingJob(job.data);
+      }
+    },
+    { connection, concurrency: 4 },
+  );
+
   accountDeletionWorker.on("failed", (job, err) => {
     console.error("[Account Deletion] Job failed:", job?.id, err);
   });
@@ -284,11 +332,21 @@ async function main() {
     console.error("[Agency level recompute] Job failed:", job?.id, err);
   });
 
+  messageOutboxWorker.on("failed", (job, err) => {
+    console.error("[Message outbox] Job failed:", job?.id, err);
+  });
+  faceIndexingWorker.on("failed", (job, err) => {
+    console.error("[Face indexing] Job failed:", job?.id, err);
+  });
+
   console.info(
-    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve",
+    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; message-outbox; face-indexing",
   );
 
   const shutdown = async () => {
+    await messageOutboxWorker.close();
+    await faceIndexingWorker.close();
+    await messageOutboxQueue.close();
     await agencyLevelRecomputeWorker.close();
     await agencyLevelRecomputeQueue.close();
     await agencyLeaveWorker.close();

@@ -520,6 +520,23 @@ export const storeRareIdPurchaseRateLimit = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.storeRareIdPurchaseRateLimit(userId),
 })
 
+export const questionnaireSubmitRateLimit = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => `${r.userId ?? ''}:${String((r.params as { key?: string } | undefined)?.key ?? '')}`,
+  keyBuilder: (combined) => {
+    const [userId, key] = combined.split(':')
+    return RedisKeys.questionnaireSubmitRateLimit(userId ?? '', key ?? '')
+  },
+})
+
+export const questionnaireAdminRateLimit = buildRateLimit({
+  max: 30,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? '',
+  keyBuilder: (userId) => RedisKeys.questionnaireAdminRateLimit(userId),
+})
+
 /** VIP membership purchase: max 5 per 60s per user. */
 export const rateLimitVipmPurchase = buildRateLimit({
   max: 5,
@@ -535,6 +552,20 @@ export const rateLimitVipmClaim = buildRateLimit({
   keyFn: (r) => r.userId ?? "",
   keyBuilder: (userId) => RedisKeys.ratelimitVipmClaim(userId),
 });
+
+export const rateLimitFaceRegister = buildRateLimit({
+  max: env.FACE_REGISTER_RATE_PER_HOUR,
+  windowMs: 3_600_000,
+  keyFn: (r) => r.userId ?? '',
+  keyBuilder: (userId) => RedisKeys.faceRegisterRateLimit(userId),
+})
+
+export const rateLimitFaceVerify = buildRateLimit({
+  max: env.FACE_VERIFY_RATE_PER_HOUR,
+  windowMs: 3_600_000,
+  keyFn: (r) => r.userId ?? '',
+  keyBuilder: (userId) => RedisKeys.faceVerifyRateLimitUser(userId),
+})
 
 export const socialRateLimits = {
   follow: createSocialRateLimit({

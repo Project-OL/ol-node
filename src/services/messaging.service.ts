@@ -9,9 +9,21 @@ import { auditService } from './audit.service'
 import { userSearchService } from './userSearch.service'
 import { privacyService } from './privacy.service'
 import { redisClient } from '../config/redis'
-import { RedisKeys, MSG_HOT_TTL, CONV_LIST_TTL } from '../config/redis'
+import {
+  RedisKeys,
+  MSG_HOT_TTL,
+  CONV_LIST_TTL,
+  CONV_MEMBER_CACHE_TTL_SEC,
+  TYPING_THROTTLE_TTL_SEC,
+  TYPING_INDICATOR_TTL_SEC,
+  READ_RECEIPT_DEBOUNCE_MS,
+} from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
-import { publishToConversation } from '../utils/ws-publisher'
+import {
+  publishServerFrameToConversation,
+  publishToConversation,
+} from '../utils/ws-publisher'
+import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
 import type { SendMessageInput } from '../models/messaging.schemas'
 
 export type DmContact = {
@@ -34,6 +46,17 @@ export type PaginatedConversations = {
     ReturnType<typeof conversationRepository.listConversationsForUser>
   >['conversations']
   nextCursor: string | null
+}
+
+type ReadDebounceEntry = {
+  timer: ReturnType<typeof setTimeout>
+  lastReadMessageId: string
+}
+
+const readReceiptDebounce = new Map<string, ReadDebounceEntry>()
+
+function readReceiptDebounceKey(userId: string, conversationId: string): string {
+  return `${userId}:${conversationId}`
 }
 
 export const messagingService = {
@@ -146,43 +169,42 @@ export const messagingService = {
         throw new AppError(400, 'Invalid reply target', 'INVALID_REPLY')
       }
     }
-    const msg = await messageRepository.createMessage({
+    const result = await messageRepository.sendMessageWithOutbox({
       conversationId,
       senderId,
+      clientMessageId: input.clientMessageId,
       type: input.type as any,
       content: input.content,
       replyToId: input.replyToId,
       mediaItems: input.mediaItems as any,
     })
-    await conversationRepository.updateLastMessageAt(conversationId, msg.createdAt)
+    const msg = result.message
+
     await Promise.all(
       conv.members.map((m: { userId: string }) =>
         cacheService.delete(RedisKeys.userConversations(m.userId)),
       ),
     )
-    const msgKey = RedisKeys.convMessages(conversationId)
-    const msgJson = JSON.stringify(
-      {
-        ...msg,
-        createdAt: msg.createdAt.toISOString(),
-      },
-      (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
-    )
-    await redisClient.zadd(
-      msgKey,
-      msg.createdAt.getTime(),
-      msgJson,
-    )
-    await redisClient.expire(msgKey, MSG_HOT_TTL)
-    await redisClient.zremrangebyrank(msgKey, 0, -101)
-    await publishToConversation(conversationId, {
-      type: 'NEW_MESSAGE',
-      conversationId,
-      message: msg,
-    })
-    for (const userId of otherMemberIds) {
-      await redisClient.incr(RedisKeys.unreadCount(userId, conversationId))
+
+    if (result.status === 'created') {
+      const msgKey = RedisKeys.convMessages(conversationId)
+      const msgJson = JSON.stringify(
+        {
+          ...msg,
+          createdAt: msg.createdAt.toISOString(),
+        },
+        (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+      )
+      const zscore = Number(msg.seq)
+      await redisClient.zadd(msgKey, zscore, msgJson)
+      await redisClient.expire(msgKey, MSG_HOT_TTL)
+      await redisClient.zremrangebyrank(msgKey, 0, -101)
+      for (const uid of otherMemberIds) {
+        await redisClient.incr(RedisKeys.unreadCount(uid, conversationId))
+      }
+      await enqueueMessageOutboxPublish(result.outboxId)
     }
+
     return msg
   },
 
@@ -476,5 +498,142 @@ export const messagingService = {
     })
     await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 60)
     return result
+  },
+
+  /** After JOIN verified — warms conv membership cache for typing (60s). */
+  async touchConvMemberCache(userId: string, conversationId: string): Promise<void> {
+    await redisClient.set(
+      RedisKeys.convMember(conversationId, userId),
+      '1',
+      'EX',
+      CONV_MEMBER_CACHE_TTL_SEC,
+    )
+  },
+
+  async ensureConvMemberForTyping(
+    userId: string,
+    conversationId: string,
+  ): Promise<boolean> {
+    const key = RedisKeys.convMember(conversationId, userId)
+    const hit = await redisClient.get(key)
+    if (hit === '1') return true
+    const conv = await conversationRepository.findConversationById(
+      conversationId,
+      userId,
+    )
+    if (!conv) return false
+    await redisClient.set(key, '1', 'EX', CONV_MEMBER_CACHE_TTL_SEC)
+    return true
+  },
+
+  async handleTypingFrame(
+    userId: string,
+    conversationId: string,
+    isTyping: boolean,
+  ): Promise<void> {
+    const ok = await this.ensureConvMemberForTyping(userId, conversationId)
+    if (!ok) return
+
+    const throttleKey = RedisKeys.typingThrottle(conversationId, userId)
+    const firstInWindow = await redisClient.set(
+      throttleKey,
+      '1',
+      'EX',
+      TYPING_THROTTLE_TTL_SEC,
+      'NX',
+    )
+    if (firstInWindow === null) return
+
+    if (isTyping) {
+      await redisClient.set(
+        RedisKeys.userTyping(conversationId, userId),
+        '1',
+        'EX',
+        TYPING_INDICATOR_TTL_SEC,
+      )
+    } else {
+      await redisClient.del(RedisKeys.userTyping(conversationId, userId))
+    }
+
+    await publishServerFrameToConversation(conversationId, {
+      t: 'TYPING',
+      conversationId,
+      userId,
+      isTyping,
+    })
+  },
+
+  scheduleReadReceipt(
+    userId: string,
+    conversationId: string,
+    lastReadMessageId: string,
+  ): void {
+    const key = readReceiptDebounceKey(userId, conversationId)
+    const existing = readReceiptDebounce.get(key)
+    if (existing) {
+      clearTimeout(existing.timer)
+    }
+    const timer = setTimeout(() => {
+      const pending = readReceiptDebounce.get(key)
+      readReceiptDebounce.delete(key)
+      if (!pending) return
+      void messagingService.flushReadReceipt(
+        userId,
+        conversationId,
+        pending.lastReadMessageId,
+      )
+    }, READ_RECEIPT_DEBOUNCE_MS)
+    readReceiptDebounce.set(key, { timer, lastReadMessageId })
+  },
+
+  async flushReadReceipt(
+    userId: string,
+    conversationId: string,
+    lastReadMessageId: string,
+  ): Promise<void> {
+    try {
+      const updated = await messageRepository.updateReadCursor(
+        conversationId,
+        userId,
+        lastReadMessageId,
+      )
+      if (!updated) return
+      await redisClient.set(
+        RedisKeys.unreadCount(userId, conversationId),
+        '0',
+        'EX',
+        86400,
+      )
+      await publishServerFrameToConversation(conversationId, {
+        t: 'READ',
+        conversationId,
+        userId,
+        lastReadMessageId,
+      })
+    } catch (e) {
+      console.warn('[messaging] flushReadReceipt failed', e)
+    }
+  },
+
+  /** Phase 5: membership-checked lastSeq + gap hint for reconnect sync. */
+  async getResumeSyncStates(
+    userId: string,
+    items: { conversationId: string; afterSeq?: number }[],
+  ): Promise<Array<{ conversationId: string; latestSeq: number; hasGap: boolean }>> {
+    const out: Array<{ conversationId: string; latestSeq: number; hasGap: boolean }> = []
+    for (const it of items) {
+      const member = await conversationRepository.isActiveConversationMember(
+        it.conversationId,
+        userId,
+      )
+      if (!member) continue
+      const lastSeq = await conversationRepository.getConversationLastSeq(it.conversationId)
+      if (lastSeq === null) continue
+      const latestSeq = Number(lastSeq)
+      const hasGap =
+        it.afterSeq !== undefined && Number.isFinite(it.afterSeq) && it.afterSeq < latestSeq
+      out.push({ conversationId: it.conversationId, latestSeq, hasGap })
+    }
+    return out
   },
 }

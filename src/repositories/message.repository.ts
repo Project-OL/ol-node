@@ -1,6 +1,9 @@
 import type { Message, MessageReaction, MessageType, MediaType } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
+import type { ServerFrame } from '../realtime/types'
+import { storageService } from '../services/storage.service'
 
 export type MediaItemInput = {
   s3Key: string
@@ -35,6 +38,7 @@ export type MessageWithDetails = Message & {
     mediaType: MediaType
     s3Key: string
     s3Bucket: string
+    mediaUrl: string
     fileName: string | null
     mimeType: string | null
     sizeBytes: number | null
@@ -57,60 +61,147 @@ export type MessageWithDetails = Message & {
   }>
 }
 
-export async function createMessage(data: {
+const fullMessageInclude = {
+  sender: { select: senderSelect },
+  mediaItems: { orderBy: { order: 'asc' as const } },
+  replyTo: {
+    select: {
+      id: true,
+      content: true,
+      senderId: true,
+      type: true,
+      sender: { select: { username: true } },
+    },
+  },
+  reactions: { select: { emoji: true, userId: true } },
+} as const
+
+export type SendMessageWithOutboxInput = {
   conversationId: string
   senderId: string
+  clientMessageId: string
   type: MessageType
   content?: string
   replyToId?: string
   mediaItems?: MediaItemInput[]
-}): Promise<MessageWithDetails> {
-  const full = await prisma.$transaction(async (tx) => {
-    const m = await tx.message.create({
-      data: {
-        conversationId: data.conversationId,
-        senderId: data.senderId,
-        type: data.type,
-        content: data.content,
-        replyToId: data.replyToId,
-      },
-    })
-    if (data.mediaItems && data.mediaItems.length > 0) {
-      await tx.messageMedia.createMany({
-        data: data.mediaItems.map((item) => ({
-          messageId: m.id,
-          mediaType: item.mediaType,
-          s3Key: item.s3Key,
-          s3Bucket: item.s3Bucket,
-          fileName: item.fileName,
-          mimeType: item.mimeType,
-          sizeBytes: item.sizeBytes,
-          durationSec: item.durationSec,
-          width: item.width,
-          height: item.height,
-          order: item.order,
-        })),
-      })
-    }
-    return tx.message.findUniqueOrThrow({
-      where: { id: m.id },
-      include: {
-        sender: { select: senderSelect },
-        mediaItems: { orderBy: { order: 'asc' } },
-        replyTo: {
-          select: {
-            id: true,
-            content: true,
-            senderId: true,
-            type: true,
-            sender: { select: { username: true } },
+}
+
+export type SendMessageWithOutboxResult =
+  | { status: 'created'; message: MessageWithDetails; outboxId: bigint }
+  | { status: 'duplicate'; message: MessageWithDetails }
+
+function messageToJsonSafeRecord(msg: MessageWithDetails): Record<string, unknown> {
+  return JSON.parse(
+    JSON.stringify(msg, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+  ) as Record<string, unknown>
+}
+
+/**
+ * Idempotent send: locks conversation row, returns existing message when `clientMessageId` repeats.
+ * Inserts `message_outbox` for WS fan-out (published by worker after commit).
+ */
+export async function sendMessageWithOutbox(
+  data: SendMessageWithOutboxInput,
+): Promise<SendMessageWithOutboxResult> {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw(
+        Prisma.sql`SELECT id FROM conversations WHERE id = ${data.conversationId} FOR UPDATE`,
+      )
+
+      const duplicate = await tx.message.findUnique({
+        where: {
+          conversationId_clientMessageId: {
+            conversationId: data.conversationId,
+            clientMessageId: data.clientMessageId,
           },
         },
-        reactions: { select: { emoji: true, userId: true } },
-      },
-    })
-  })
-  return mapToMessageWithDetails(full, undefined)
+      })
+
+      if (duplicate) {
+        const full = await tx.message.findUniqueOrThrow({
+          where: { id: duplicate.id },
+          include: fullMessageInclude,
+        })
+        return {
+          status: 'duplicate',
+          message: mapToMessageWithDetails(full, data.senderId),
+        }
+      }
+
+      const now = new Date()
+      const conv = await tx.conversation.update({
+        where: { id: data.conversationId },
+        data: {
+          lastSeq: { increment: 1n },
+          lastMessageAt: now,
+        },
+        select: { lastSeq: true },
+      })
+      const seq = conv.lastSeq
+
+      const m = await tx.message.create({
+        data: {
+          conversationId: data.conversationId,
+          senderId: data.senderId,
+          type: data.type,
+          content: data.content,
+          replyToId: data.replyToId,
+          seq,
+          clientMessageId: data.clientMessageId,
+        },
+      })
+
+      if (data.mediaItems && data.mediaItems.length > 0) {
+        await tx.messageMedia.createMany({
+          data: data.mediaItems.map((item) => ({
+            messageId: m.id,
+            mediaType: item.mediaType,
+            s3Key: item.s3Key,
+            s3Bucket: item.s3Bucket,
+            fileName: item.fileName,
+            mimeType: item.mimeType,
+            sizeBytes: item.sizeBytes,
+            durationSec: item.durationSec,
+            width: item.width,
+            height: item.height,
+            order: item.order,
+          })),
+        })
+      }
+
+      const full = await tx.message.findUniqueOrThrow({
+        where: { id: m.id },
+        include: fullMessageInclude,
+      })
+      const message = mapToMessageWithDetails(full, data.senderId)
+
+      const frame: ServerFrame = {
+        t: 'NEW_MESSAGE',
+        conversationId: data.conversationId,
+        message: messageToJsonSafeRecord(message),
+        seq: Number(message.seq),
+      }
+
+      const outbox = await tx.messageOutbox.create({
+        data: {
+          conversationId: data.conversationId,
+          payload: frame as Prisma.InputJsonValue,
+        },
+      })
+
+      return {
+        status: 'created',
+        message,
+        outboxId: outbox.id,
+      }
+    },
+    {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      maxWait: 5000,
+      timeout: 15000,
+    },
+  )
 }
 
 function mapToMessageWithDetails(
@@ -119,6 +210,7 @@ function mapToMessageWithDetails(
     conversationId: string
     senderId: string
     type: MessageType
+    seq: bigint
     content: string | null
     replyToId: string | null
     isDeleted: boolean
@@ -163,10 +255,14 @@ function mapToMessageWithDetails(
     count: v.count,
     reactedByMe: v.reactedByMe,
   }))
+  const mediaItemsWithUrl = msg.mediaItems.map((item) => ({
+    ...item,
+    mediaUrl: storageService.getCdnOrS3PublicUrl(item.s3Key),
+  }))
   return {
     ...msg,
     sender: msg.sender,
-    mediaItems: msg.mediaItems,
+    mediaItems: mediaItemsWithUrl,
     replyTo: msg.replyTo,
     reactions,
   } as MessageWithDetails
@@ -322,6 +418,45 @@ export async function markAsRead(
   })
 }
 
+/** Validates membership + message; ignores regressions (same or older seq than stored cursor). */
+export async function updateReadCursor(
+  conversationId: string,
+  userId: string,
+  messageId: string,
+): Promise<boolean> {
+  const member = await prismaRead.conversationMember.findUnique({
+    where: { conversationId_userId: { conversationId, userId } },
+    select: { lastReadMessageId: true },
+  })
+  if (!member) {
+    throw new AppError(403, 'Not a member', 'FORBIDDEN')
+  }
+  const msg = await prismaRead.message.findFirst({
+    where: { id: messageId, conversationId, isDeleted: false },
+    select: { id: true, createdAt: true, seq: true },
+  })
+  if (!msg) {
+    throw new AppError(400, 'Invalid message', 'INVALID_MESSAGE')
+  }
+  if (member.lastReadMessageId) {
+    const prev = await prismaRead.message.findUnique({
+      where: { id: member.lastReadMessageId },
+      select: { seq: true },
+    })
+    if (prev && msg.seq <= prev.seq) {
+      return false
+    }
+  }
+  await prisma.conversationMember.update({
+    where: { conversationId_userId: { conversationId, userId } },
+    data: {
+      lastReadAt: msg.createdAt,
+      lastReadMessageId: msg.id,
+    },
+  })
+  return true
+}
+
 export async function getUnreadCount(
   conversationId: string,
   userId: string,
@@ -343,12 +478,13 @@ export async function getUnreadCount(
 }
 
 export const messageRepository = {
-  createMessage,
+  sendMessageWithOutbox,
   listMessages,
   findMessageById,
   softDeleteMessage,
   upsertReaction,
   removeReaction,
   markAsRead,
+  updateReadCursor,
   getUnreadCount,
 }

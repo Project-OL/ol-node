@@ -4,6 +4,7 @@ import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import jwt from "@fastify/jwt";
+import websocket from "@fastify/websocket";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import compress from "@fastify/compress";
@@ -48,9 +49,13 @@ import { richTierRoutes } from "./routes/v1/rich-tier.routes";
 import vipMembershipRoutes from "./routes/v1/vip-membership.routes";
 import agencyRoutes from "./routes/v1/agency.routes";
 import agencyAdminRoutes from "./routes/v1/agency-admin.routes";
+import questionnaireRoutes from "./routes/v1/questionnaire.routes";
+import questionnaireAdminRoutes from "./routes/v1/questionnaire-admin.routes";
+import faceVerificationRoutes from "./routes/v1/face-verification.routes";
 import { schedulePublicIdPregen } from "./queues/public-id-pregen.queue";
 import { publicIdPreGenerationService } from "./services/public-id-pre-generation.service";
 import { rootLogger } from "./utils/rootLogger";
+import { registerRealtimeGateway } from "./realtime/ws.gateway";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -97,6 +102,8 @@ export async function buildApp() {
     secret: env.JWT_ACCESS_SECRET,
     sign: { algorithm: "HS256", expiresIn: env.JWT_ACCESS_EXPIRES_IN },
   });
+
+  await app.register(websocket);
 
   await app.register(helmet, {
     contentSecurityPolicy: env.NODE_ENV === "production",
@@ -166,7 +173,12 @@ export async function buildApp() {
   await app.register(richTierRoutes, { prefix: `${prefix}/rich-tier` });
   await app.register(vipMembershipRoutes, { prefix: `${prefix}/vip-membership` });
   await app.register(agencyRoutes, { prefix: `${prefix}/agency` });
+  await app.register(questionnaireRoutes, { prefix: `${prefix}/questionnaires` });
+  await app.register(faceVerificationRoutes, { prefix: `${prefix}/face-verification` });
   await app.register(agencyAdminRoutes, { prefix: `${prefix}/admin/agency` });
+  await app.register(questionnaireAdminRoutes, { prefix: `${prefix}/admin/questionnaires` });
+
+  registerRealtimeGateway(app);
 
   app.addHook("onReady", async () => {
     try {

@@ -107,8 +107,27 @@ export const RedisKeys = {
   unreadCount: (userId: string, convId: string) => `unread:${userId}:${convId}`,
   /** Messaging: user online status. */
   userOnlineStatus: (userId: string) => `online:${userId}`,
+  /** Messaging: cached conversation membership for WS typing path (60s). */
+  convMember: (conversationId: string, userId: string) =>
+    `conv:member:${conversationId}:${userId}`,
+  /** Messaging: typing publish throttle (SET NX, 2s). */
+  typingThrottle: (conversationId: string, userId: string) =>
+    `typing:throttle:${conversationId}:${userId}`,
   /** Messaging: typing indicator per conversation per user. */
   userTyping: (convId: string, userId: string) => `typing:${convId}:${userId}`,
+  /** Messaging: open WebSocket count per user (presence). */
+  presenceCount: (userId: string) => `presence:count:${userId}`,
+  /** Messaging: Redis pub/sub for PRESENCE frames for a user (lazy JOIN_PRESENCE). */
+  presenceChannel: (userId: string) => `presence:user:${userId}`,
+  /** Messaging: per-user thin digest for badge/list when not in conv room (Phase 7). */
+  userInboxChannel: (userId: string) => `msg:user:${userId}`,
+  /** One-time WebSocket upgrade ticket (GETDEL on connect). TTL 15m. */
+  wsTicket: (token: string) => `ws:ticket:${token}`,
+  /**
+   * Messaging: Redis pub/sub channel for conversation realtime frames (`ServerFrame` JSON).
+   * Same logical channel as legacy `conv:{id}:events`; migrated name for clarity.
+   */
+  convChannel: (conversationId: string) => `msg:conv:${conversationId}`,
   /** Messaging: send message rate limit per user. */
   msgRateLimit: (userId: string) => `ratelimit:msg:send:${userId}`,
   /** Messaging: create conversation rate limit per user. */
@@ -223,6 +242,23 @@ export const RedisKeys = {
   agencyLevelConfig: () => `agency:level:config`,
   ratelimitAgencyPointTransfer: (userId: string) =>
     `ratelimit:agency:point-transfer:${userId}`,
+  questionnaireActive: (key: string) => `questionnaire:active:${key}`,
+  questionnaireActiveFull: (key: string) => `questionnaire:active-full:${key}`,
+  questionnaireUserStatus: (userId: string, key: string) =>
+    `questionnaire:user-status:${userId}:${key}`,
+  questionnaireSubmitRateLimit: (userId: string, key: string) =>
+    `ratelimit:questionnaire:submit:${userId}:${key}`,
+  questionnaireAdminRateLimit: (userId: string) =>
+    `ratelimit:questionnaire:admin:${userId}`,
+  faceRegisterLock: (userId: string) => `face:register:lock:${userId}`,
+  faceRegisterRateLimit: (userId: string) => `ratelimit:face:register:${userId}`,
+  faceVerifyRateLimitUser: (userId: string) => `ratelimit:face:verify:${userId}`,
+  faceVerifyRateLimitIp: (ip: string) => `ratelimit:face:verify:ip:${ip}`,
+  faceRegisterIdem: (userId: string, clientRequestId: string) =>
+    `face:register:idem:${userId}:${clientRequestId}`,
+  faceVerifyIdem: (userId: string, clientRequestId: string) =>
+    `face:verify:idem:${userId}:${clientRequestId}`,
+  faceVerifyLastPass: (userId: string) => `face:verify:lastpass:${userId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -236,10 +272,22 @@ export const USER_DEVICES_CACHE_TTL = 60
 export const MSG_HOT_TTL = 60 * 60 * 2
 /** Messaging: conversation list per user TTL (5m). */
 export const CONV_LIST_TTL = 60 * 5
-/** Messaging: online status TTL (30s, refreshed by WS heartbeat). */
+/** Messaging: online status TTL (30s; DM list cache / legacy). */
 export const ONLINE_STATUS_TTL = 30
-/** Messaging: typing indicator TTL (5s). */
+/** Messaging: PING heartbeat refresh for `online:{userId}` (Phase 3 presence). */
+export const PRESENCE_HEARTBEAT_TTL_SEC = 60
+/** Messaging: typing indicator key TTL (Phase 3 spec: 8s). */
+export const TYPING_INDICATOR_TTL_SEC = 8
+/** Messaging: max one typing publish per user per conversation per 2s. */
+export const TYPING_THROTTLE_TTL_SEC = 2
+/** Messaging: cached conv membership for typing (60s). */
+export const CONV_MEMBER_CACHE_TTL_SEC = 60
+/** Messaging: coalesce READ WS frames before DB + fan-out (ms). */
+export const READ_RECEIPT_DEBOUNCE_MS = 5000
+/** Messaging: typing indicator TTL (5s) — hot-cache / non-WS paths. */
 export const TYPING_TTL = 5
+/** WebSocket upgrade ticket TTL (15m). */
+export const WS_TICKET_TTL_SEC = 60 * 15
 /** Messaging: block list per user TTL (1h). */
 export const BLOCK_LIST_TTL = 60 * 60
 
@@ -317,6 +365,14 @@ export const AGENCY_HOST_BREAKDOWN_CACHE_TTL = 300
 export const AGENCY_POINT_TRANSFER_RL_TTL = 60
 /** lastActiveTracker middleware — skip DB write if key exists (600s). */
 export const USER_LAST_ACTIVE_THROTTLE_TTL = 600
+export const QUESTIONNAIRE_ACTIVE_TTL = 600
+export const QUESTIONNAIRE_USER_STATUS_TTL = 3600
+export const QUESTIONNAIRE_SUBMIT_RL_TTL = 60
+export const QUESTIONNAIRE_ADMIN_RL_TTL = 60
+export const FACE_REGISTER_LOCK_TTL = 30
+export const FACE_REGISTER_IDEM_TTL = 24 * 60 * 60
+export const FACE_VERIFY_IDEM_TTL = 60
+export const FACE_VERIFY_LAST_PASS_TTL = 60
 
 export async function redisPipeline(
   commands: [string, ...unknown[]][],

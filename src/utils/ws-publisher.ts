@@ -1,5 +1,8 @@
 import { redisClient } from '../config/redis'
+import { RedisKeys } from '../config/redis'
+import type { ServerFrame } from '../realtime/types'
 
+/** @deprecated Prefer publishing `ServerFrame` (`t` discriminant); retained for call-site compatibility. */
 export type WsEvent =
   | { type: 'NEW_MESSAGE'; conversationId: string; message: unknown }
   | { type: 'MESSAGE_DELETED'; conversationId: string; messageId: string }
@@ -24,14 +27,72 @@ export type WsEvent =
       mutedUntil: string | null
     }
 
+const LEGACY_SEQ_PLACEHOLDER = 0
+
+function wsEventToServerFrame(event: WsEvent): ServerFrame {
+  switch (event.type) {
+    case 'NEW_MESSAGE':
+      return {
+        t: 'NEW_MESSAGE',
+        conversationId: event.conversationId,
+        message:
+          typeof event.message === 'object' && event.message !== null
+            ? (event.message as Record<string, unknown>)
+            : { value: event.message },
+        seq: LEGACY_SEQ_PLACEHOLDER,
+      }
+    case 'MESSAGE_DELETED':
+      return {
+        t: 'MESSAGE_DELETED',
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        seq: LEGACY_SEQ_PLACEHOLDER,
+      }
+    case 'REACTION_ADDED':
+      return {
+        t: 'REACTION_ADDED',
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        userId: event.userId,
+        emoji: event.emoji,
+      }
+    case 'REACTION_REMOVED':
+      return {
+        t: 'REACTION_REMOVED',
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        userId: event.userId,
+        emoji: event.emoji,
+      }
+    case 'CONV_MUTED':
+      return {
+        t: 'CONV_MUTED',
+        conversationId: event.conversationId,
+        userId: event.userId,
+        mutedUntil: event.mutedUntil,
+      }
+    default: {
+      const _exhaustive: never = event
+      return _exhaustive
+    }
+  }
+}
+
 export async function publishToConversation(
   conversationId: string,
   event: WsEvent,
 ): Promise<void> {
-  await redisClient.publish(
-    `conv:${conversationId}:events`,
-    JSON.stringify(event, (_key, value) =>
-      typeof value === 'bigint' ? value.toString() : value,
-    ),
+  const frame = wsEventToServerFrame(event)
+  await publishServerFrameToConversation(conversationId, frame)
+}
+
+export async function publishServerFrameToConversation(
+  conversationId: string,
+  frame: ServerFrame,
+): Promise<void> {
+  const channel = RedisKeys.convChannel(conversationId)
+  const payload = JSON.stringify(frame, (_key, value) =>
+    typeof value === 'bigint' ? value.toString() : value,
   )
+  await redisClient.publish(channel, payload)
 }

@@ -6,6 +6,8 @@ export const CreateDMSchema = z.object({
 
 export const SendMessageSchema = z
   .object({
+    /** UUID v4 from client — idempotent retries must reuse the same value per logical send. */
+    clientMessageId: z.string().uuid(),
     content: z.string().max(4000).optional(),
     type: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
     // Client payloads often send null for "no reply"; normalize to undefined.

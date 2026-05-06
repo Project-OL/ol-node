@@ -34,6 +34,16 @@ const envSchema = z
     AWS_SECRET_ACCESS_KEY: z.string().optional(),
     AWS_REGION: z.string().default('ap-south-1'),
     AWS_S3_BUCKET: z.string().optional(),
+    REKOGNITION_COLLECTION_ID: z.string().min(3),
+    REKOGNITION_QUALITY_FILTER: z.enum(['NONE', 'AUTO', 'LOW', 'MEDIUM', 'HIGH']).default('AUTO'),
+    FACE_MATCH_THRESHOLD_PASS: z.coerce.number().min(50).max(100).default(90),
+    FACE_MATCH_THRESHOLD_REJECT: z.coerce.number().min(0).max(100).default(70),
+    FACE_MIN_DETECT_CONFIDENCE: z.coerce.number().min(0).max(100).default(98),
+    FACE_VERIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(4000),
+    FACE_INDEX_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
+    FACE_LIVENESS_REQUIRED: z.coerce.boolean().default(false),
+    FACE_REGISTER_RATE_PER_HOUR: z.coerce.number().int().positive().default(5),
+    FACE_VERIFY_RATE_PER_HOUR: z.coerce.number().int().positive().default(10),
     /** If set (non-empty), avatar URLs use https://{domain}/{key}; else S3 virtual-hosted URL. */
     CLOUDFRONT_DOMAIN: z.string().optional(),
     MAX_AVATAR_SIZE_BYTES: z.coerce.number().default(5_242_880),
@@ -73,6 +83,15 @@ const envSchema = z
 
     REQUEST_BODY_LIMIT_BYTES: z.coerce.number().default(1_048_576), // 1MB
     MAX_UPLOAD_SIZE_BYTES: z.coerce.number().default(10_485_760), // 10MB
+
+    /** Max UTF-8 bytes for one inbound WebSocket text frame (Phase 4). */
+    WS_MAX_INCOMING_BYTES: z.coerce.number().default(65_536),
+    /** Max validated JSON client frames per rolling 1s window per socket (Phase 4). */
+    WS_MAX_CLIENT_FRAMES_PER_SEC: z.coerce.number().default(80),
+    /** Close socket if no inbound message for this long (ms); any frame counts (Phase 4). */
+    WS_IDLE_TIMEOUT_MS: z.coerce.number().default(180_000),
+    /** Max JOINed conversation channels per socket (Phase 4). */
+    WS_MAX_CONV_JOINS_PER_SOCKET: z.coerce.number().default(200),
 
     // LiveKit
     LIVEKIT_URL: z.string().url().optional(),

@@ -30,6 +30,8 @@ vi.mock('../../src/config/redis', () => ({
     userActiveVipId: (userId: string) => `user:active_vip:${userId}`,
     userActiveStore: (userId: string) => `user:active-store:${userId}`,
     userStoreItems: (userId: string) => `user:store:${userId}`,
+    userMe: (userId: string) => `user:me:${userId}`,
+    userProfile: (userId: string) => `user:profile:${userId}`,
     storeRareIds: () => 'store:rare-ids',
   },
   STORE_CATALOG_TTL: 1,
