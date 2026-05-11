@@ -44,6 +44,10 @@ const envSchema = z
     FACE_LIVENESS_REQUIRED: z.coerce.boolean().default(false),
     FACE_REGISTER_RATE_PER_HOUR: z.coerce.number().int().positive().default(5),
     FACE_VERIFY_RATE_PER_HOUR: z.coerce.number().int().positive().default(10),
+    /** `worker-face-index` sleep between Postgres polls (ms). */
+    FACE_INDEX_POLL_MS: z.coerce.number().int().positive().default(2000),
+    /** Max `PENDING_INDEX` rows processed per poll cycle (capped at 50 in job). */
+    FACE_INDEX_BATCH: z.coerce.number().int().positive().default(5),
     /** If set (non-empty), avatar URLs use https://{domain}/{key}; else S3 virtual-hosted URL. */
     CLOUDFRONT_DOMAIN: z.string().optional(),
     MAX_AVATAR_SIZE_BYTES: z.coerce.number().default(5_242_880),
@@ -97,6 +101,10 @@ const envSchema = z
     LIVEKIT_URL: z.string().url().optional(),
     LIVEKIT_API_KEY: z.string().optional(),
     LIVEKIT_API_SECRET: z.string().optional(),
+
+    EPAY_BASE_URL: z.string().url().default("https://epay.invalid"),
+    EPAY_API_KEY: z.string().min(1).default("epay-test-key"),
+    EPAY_WEBHOOK_SECRET: z.string().min(1).default("epay-test-secret"),
 
     // Wallet / coins
     COIN_TOPUP_RATE_LIMIT_MAX: z.coerce.number().default(5),

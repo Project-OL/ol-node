@@ -67,9 +67,20 @@ import {
   publishMessageOutboxRow,
   sweepStaleMessageOutbox,
 } from "./services/messaging-outbox.service";
-import { FACE_INDEXING_QUEUE, FACE_INDEX_JOB_INDEX } from "./queues/face.constants";
-import { faceVerificationService } from "./services/face-verification.service";
 import { ensureCollectionExists } from "./lib/rekognition.client";
+import { EPAY_WEBHOOK_RETRY_JOB, EPAY_WEBHOOK_RETRY_QUEUE } from "./queues/epay-webhook.constants";
+import { coinWalletService } from "./services/coin-wallet.service";
+import { coinTradingService } from "./services/coinTrading.service";
+import {
+  PAYROLL_SLA_JOB,
+  PAYROLL_SLA_QUEUE,
+  PAYROLL_SAFETY_NET_JOB,
+} from "./queues/payroll.constants";
+import { payrollSlaQueue } from "./queues/payroll.queue";
+import {
+  processPayrollSlaJob,
+  runPayrollSlaSafetyNet,
+} from "./jobs/payroll-sla.job";
 
 const ACCOUNT_DELETION_QUEUE = "account-deletion";
 
@@ -274,14 +285,50 @@ async function main() {
     { connection, concurrency: 8 },
   );
 
-  const faceIndexingWorker = new Worker(
-    FACE_INDEXING_QUEUE,
-    async (job: Job<{ userId: string; faceProfileId: string; s3Key: string }>) => {
-      if (job.name === FACE_INDEX_JOB_INDEX) {
-        await faceVerificationService.processIndexingJob(job.data);
+  await payrollSlaQueue.add(
+    PAYROLL_SAFETY_NET_JOB,
+    {},
+    {
+      repeat: { pattern: "10 * * * *", tz: "UTC" },
+      jobId: "payroll-sla-safety-net-hourly-utc",
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  );
+
+  const payrollSlaWorker = new Worker(
+    PAYROLL_SLA_QUEUE,
+    async (job: Job<{ assignmentId?: string }>) => {
+      if (job.name === PAYROLL_SLA_JOB) {
+        const id = job.data?.assignmentId;
+        if (id) await processPayrollSlaJob({ assignmentId: id });
+      } else if (job.name === PAYROLL_SAFETY_NET_JOB) {
+        await runPayrollSlaSafetyNet();
       }
     },
-    { connection, concurrency: 4 },
+    { connection, concurrency: 2 },
+  );
+
+  const epayWebhookRetryWorker = new Worker(
+    EPAY_WEBHOOK_RETRY_QUEUE,
+    async (job: Job<{ payload: any; orderType: "PERSONAL_TOPUP" | "TRADING_TOPUP" }>) => {
+      if (job.name !== EPAY_WEBHOOK_RETRY_JOB) return;
+      const payload = job.data.payload;
+      if (job.data.orderType === "PERSONAL_TOPUP") {
+        await coinWalletService.confirmTopup(
+          payload.userId,
+          payload.orderId,
+          payload.gatewayRef,
+          `epay-personal-topup:${payload.orderId}`,
+        );
+      } else {
+        const order = await prisma.coinTradingTopupOrder.findUnique({ where: { id: payload.orderId } });
+        if (order) await coinTradingService.confirmTopup(order, payload);
+      }
+    },
+    { connection, concurrency: 2 },
   );
 
   accountDeletionWorker.on("failed", (job, err) => {
@@ -335,17 +382,23 @@ async function main() {
   messageOutboxWorker.on("failed", (job, err) => {
     console.error("[Message outbox] Job failed:", job?.id, err);
   });
-  faceIndexingWorker.on("failed", (job, err) => {
-    console.error("[Face indexing] Job failed:", job?.id, err);
+  epayWebhookRetryWorker.on("failed", (job, err) => {
+    console.error("[Epay webhook retry] Job failed:", job?.id, err);
+  });
+
+  payrollSlaWorker.on("failed", (job, err) => {
+    console.error("[Payroll SLA] Job failed:", job?.id, err);
   });
 
   console.info(
-    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; message-outbox; face-indexing",
+    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; message-outbox; epay-webhook-retry (face indexing: run `npm run worker:face-index` — Postgres poll, no Redis queue)",
   );
 
   const shutdown = async () => {
+    await payrollSlaWorker.close();
+    await payrollSlaQueue.close();
+    await epayWebhookRetryWorker.close();
     await messageOutboxWorker.close();
-    await faceIndexingWorker.close();
     await messageOutboxQueue.close();
     await agencyLevelRecomputeWorker.close();
     await agencyLevelRecomputeQueue.close();

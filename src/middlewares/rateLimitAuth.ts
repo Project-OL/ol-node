@@ -115,6 +115,27 @@ export const rateLimitAgencyPointTransfer = buildRateLimit({
   keyBuilder: RedisKeys.ratelimitAgencyPointTransfer,
 });
 
+export const rateLimitCtTopup = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitCtTopup,
+});
+
+export const rateLimitCtExchange = buildRateLimit({
+  max: 10,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitCtExchange,
+});
+
+export const rateLimitCtTransfer = buildRateLimit({
+  max: 30,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitCtTransfer,
+});
+
 export interface AuthRateLimitConfig {
   /** Endpoint key (e.g. 'auth.signup.send_otp') */
   endpoint: string;
@@ -473,6 +494,41 @@ export const withdrawRateLimit = buildRateLimit({
   windowMs: 60_000,
   keyFn: (r) => r.userId ?? "",
   keyBuilder: (userId) => RedisKeys.walletRateLimit(userId, "withdraw"),
+});
+
+export const rateLimitWithdrawalCreate = buildRateLimit({
+  max: 3,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitWithdrawalCreate,
+});
+
+export const rateLimitWithdrawalDispute = buildRateLimit({
+  max: 1,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitWithdrawalDispute,
+});
+
+export const rateLimitPayrollComplete = buildRateLimit({
+  max: 10,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitPayrollComplete,
+});
+
+export const rateLimitPayrollReject = buildRateLimit({
+  max: 10,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitPayrollReject,
+});
+
+export const rateLimitPmBind = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitPmBind,
 });
 
 export const giftSendRateLimit = buildRateLimit({

@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { authenticate } from "../../middlewares/auth.middleware";
-import { withdrawRateLimit } from "../../middlewares/rateLimitAuth";
+import { rateLimitWithdrawalCreate } from "../../middlewares/rateLimitAuth";
 import { pointWalletService } from "../../services/point-wallet.service";
 import { walletService } from "../../services/wallet.service";
 import {
@@ -29,12 +29,13 @@ export async function walletPointsRoutes(app: FastifyInstance) {
 
   app.post(
     "/withdraw",
-    { preHandler: [authenticate, withdrawRateLimit] },
+    { preHandler: [authenticate, rateLimitWithdrawalCreate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = WithdrawInitiateSchema.parse(request.body);
       const result = await pointWalletService.initiateWithdrawal(
         request.userId!,
         body.amountPoints,
+        body.paymentMethodId,
         body.idempotencyKey,
       );
       return reply.status(201).send(result);

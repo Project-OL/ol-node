@@ -1,0 +1,86 @@
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
+import { authenticate } from "../../middlewares/auth.middleware";
+import { AppError } from "../../middlewares/errorHandler";
+import { coinTradingService } from "../../services/coinTrading.service";
+import { securityPasswordService } from "../../services/security-password.service";
+import { rateLimitCtExchange, rateLimitCtTopup, rateLimitCtTransfer } from "../../middlewares/rateLimitAuth";
+import { userRepository } from "../../repositories/user.repository";
+
+const topupSchema = z.object({ amountUsd: z.number().positive(), currency: z.string().default("USD"), callbackUrl: z.string().url().optional(), returnUrl: z.string().url().optional() });
+const exchangeSchema = z.object({ pointsToExchange: z.string().min(1) });
+const transferSchema = z.object({
+  recipientPublicId: z.string().min(1),
+  tradingCoins: z.string().min(1),
+  targetWalletType: z.enum(["PERSONAL", "TRADING"]).optional(),
+  idempotencyKey: z.string().min(1),
+  securityPassword: z.string().optional(),
+});
+
+export default async function coinTradingRoutes(app: FastifyInstance) {
+  app.get("/balance", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await userRepository.findById(request.userId!);
+    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+    const balance = await coinTradingService.getTradingBalance(request.userId!);
+    return reply.send({ balance: balance.toString() });
+  });
+
+  app.get("/rates", { preHandler: [authenticate] }, async (_request, reply) => {
+    const [topupRates, exchangeRates] = await Promise.all([coinTradingService.getTopupRates(), coinTradingService.getExchangeRates()]);
+    return reply.send({ topupRates, exchangeRates });
+  });
+
+  app.post("/topup/initiate", { preHandler: [authenticate, rateLimitCtTopup] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await userRepository.findById(request.userId!);
+    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+    const body = topupSchema.parse(request.body ?? {});
+    const result = await coinTradingService.initiateTopup(
+      request.userId!,
+      body.amountUsd,
+      body.currency,
+      body.callbackUrl ?? `${request.protocol}://${request.hostname}/api/v1/webhooks/epay`,
+      body.returnUrl ?? `${request.protocol}://${request.hostname}`,
+    );
+    return reply.status(201).send(result);
+  });
+
+  app.get("/topup/orders", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await userRepository.findById(request.userId!);
+    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+    const q = request.query as { limit?: string; cursor?: string };
+    const limit = Math.min(100, Math.max(1, Number(q.limit ?? "20") || 20));
+    const rows = await coinTradingService.listTopupHistory(request.userId!, { limit, cursor: q.cursor });
+    return reply.send({ items: rows });
+  });
+
+  app.post("/exchange", { preHandler: [authenticate, rateLimitCtExchange] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await userRepository.findById(request.userId!);
+    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+    const body = exchangeSchema.parse(request.body ?? {});
+    const result = await coinTradingService.exchangePointsForTradingCoins(request.userId!, BigInt(body.pointsToExchange));
+    return reply.send(result);
+  });
+
+  app.post("/transfer", { preHandler: [authenticate, rateLimitCtTransfer] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await userRepository.findById(request.userId!);
+    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+    const body = transferSchema.parse(request.body ?? {});
+    const securityPassword = String(request.headers["x-security-password"] ?? body.securityPassword ?? "");
+    await securityPasswordService.verifyCurrentPassword(request.userId!, securityPassword);
+    const result = await coinTradingService.transferTradingCoins(request.userId!, {
+      recipientPublicId: body.recipientPublicId,
+      tradingCoins: BigInt(body.tradingCoins),
+      targetWalletType: body.targetWalletType,
+      idempotencyKey: body.idempotencyKey,
+    });
+    return reply.status(201).send(result);
+  });
+
+  app.get("/transfers", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const q = request.query as { role?: "sender" | "recipient" | "all"; limit?: string; cursor?: string };
+    const limit = Math.min(100, Math.max(1, Number(q.limit ?? "20") || 20));
+    const role = q.role ?? "all";
+    const rows = await coinTradingService.listTransferHistory(request.userId!, { role, limit, cursor: q.cursor });
+    return reply.send({ items: rows });
+  });
+}

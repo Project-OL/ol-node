@@ -5,7 +5,6 @@ import { storageService } from './storage.service'
 import { redisClient, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
-import { enqueueFaceIndexingJob } from '../queues/face.queue'
 import {
   deleteFaceFromCollection,
   detectFacesQuality,
@@ -13,6 +12,8 @@ import {
   searchFaceByImage,
 } from '../lib/rekognition.client'
 import { auditService } from './audit.service'
+import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
+import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 
 const RATE_LIMIT_LUA = `
 local current = redis.call("INCR", KEYS[1])
@@ -131,18 +132,17 @@ export const faceVerificationService = {
         qualityScore,
       })
 
-      await enqueueFaceIndexingJob({ userId, faceProfileId: profile.id, s3Key: body.s3Key })
       faceMetrics.indexingQueued += 1
       auditService.log({
         userId,
-        actionType: 'face_register_queued',
+        actionType: 'face_register_pending_index',
         actionStatus: 'success',
         actionDetails: { faceProfileId: profile.id },
         ipAddress: extractIp(ctx),
         userAgent: toHeaderString(ctx.headers?.['user-agent']),
       })
 
-      const response = { status: 'PENDING_INDEX', faceProfileId: profile.id, queued: true }
+      const response = { status: 'PENDING_INDEX' as const, faceProfileId: profile.id }
       await redisClient.set(idemKey, JSON.stringify(response), 'EX', 24 * 60 * 60)
       return response
     } finally {
@@ -254,6 +254,18 @@ export const faceVerificationService = {
         ipAddress: ip,
         userAgent: toHeaderString(ctx.headers?.['user-agent']),
       })
+      try {
+        const agencyApp = await agencyAgentApplicationRepository.findByUserId(userId)
+        if (
+          agencyApp &&
+          agencyApp.status !== 'APPROVED' &&
+          agencyApp.status !== 'REJECTED'
+        ) {
+          await agencyApplicationKycRepository.setFaceVerified(userId, true)
+        }
+      } catch {
+        /* non-fatal — KYC row may not exist yet */
+      }
     }
 
     const response = {

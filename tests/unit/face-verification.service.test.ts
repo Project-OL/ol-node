@@ -67,9 +67,6 @@ vi.mock('../../src/repositories/faceVerification.repository', () => ({
   faceVerificationRepository: repo,
 }))
 
-const enqueueFaceIndexingJob = vi.fn()
-vi.mock('../../src/queues/face.queue', () => ({ enqueueFaceIndexingJob }))
-
 describe('faceVerificationService', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -96,7 +93,6 @@ describe('faceVerificationService', () => {
         {},
       ),
     ).rejects.toMatchObject({ code: 'face_quality_rejected' })
-    expect(enqueueFaceIndexingJob).not.toHaveBeenCalled()
   })
 
   it('passes at threshold boundary 90.0 and fails at 89.9', async () => {

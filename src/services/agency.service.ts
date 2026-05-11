@@ -1,4 +1,4 @@
-import { SupportTicketType } from "@prisma/client";
+import { SupportTicketType, WalletCurrencyType } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
 import { RedisKeys } from "../config/redis";
 import { cacheRedisService } from "./cacheRedis.service";
@@ -6,10 +6,12 @@ import { AppError } from "../middlewares/errorHandler";
 import { agencyRepository } from "../repositories/agency.repository";
 import { agencyHostRepository } from "../repositories/agencyHost.repository";
 import { agencyLeaveApplicationRepository } from "../repositories/agencyLeaveApplication.repository";
+import { agencyAgentApplicationRepository } from "../repositories/agencyAgentApplication.repository";
 import { supportRepository } from "../repositories/support.repository";
 import { rootLogger } from "../utils/rootLogger";
 import { displayNameFromUser } from "../utils/profileDisplay";
 import { agencyCommissionService } from "./agencyCommission.service";
+import { agencyKycService } from "./agencyKyc.service";
 
 const log = rootLogger.child({ module: "agency.service" });
 
@@ -31,14 +33,15 @@ export const agencyService = {
   },
 
   /**
-   * Promote applicant to agent after CS review; closes ticket.
-   * Idempotent if agency row already exists.
+   * Legacy: promote via support ticket + close ticket. Kept for rollback / scripts; HTTP uses
+   * {@link agencyService.createAgencyFromApplication}.
    */
-  async createAgencyFromTicket(params: {
+  async createAgencyFromTicket_deprecated(params: {
     adminUserId: string;
     applicantUserId: string;
     ticketId: bigint;
   }) {
+    await agencyKycService.validateKycComplete(params.applicantUserId);
     const ticket = await supportRepository.findTicketById(params.ticketId);
     if (!ticket) {
       throw new AppError(404, "Ticket not found", "TICKET_NOT_FOUND");
@@ -57,7 +60,7 @@ export const agencyService = {
     if (existing) {
       log.info(
         { userId: params.applicantUserId },
-        "createAgencyFromTicket: agency already exists, no-op",
+        "createAgencyFromTicket_deprecated: agency already exists, no-op",
       );
       return { agency: existing, created: false as const };
     }
@@ -93,6 +96,12 @@ export const agencyService = {
           where: { id: userRow.id },
           data: { isAgent: true },
         });
+        await tx.wallet.create({
+          data: {
+            userId: userRow.id,
+            currencyType: WalletCurrencyType.TRADING_COIN,
+          },
+        });
         await tx.supportTicket.update({
           where: { id: params.ticketId },
           data: {
@@ -100,6 +109,99 @@ export const agencyService = {
             closedAt: now,
             closedByUserId: params.adminUserId,
             updatedAt: now,
+          },
+        });
+        return ag;
+      },
+      { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS },
+    );
+
+    await agencyService.bustCachesForAgency(
+      agency.userId,
+      agency.defaultPublicId,
+    );
+    await meServiceInvalidateSafe(params.applicantUserId);
+
+    return { agency, created: true as const };
+  },
+
+  /**
+   * Promote applicant to agent from `AgencyAgentApplication` after KYC complete.
+   * Idempotent if agency row already exists.
+   */
+  async createAgencyFromApplication(params: {
+    adminUserId: string;
+    applicantUserId: string;
+    applicationId: string;
+  }) {
+    const existingAgency = await agencyRepository.getAgencyByUserId(params.applicantUserId);
+    if (existingAgency) {
+      log.info(
+        { userId: params.applicantUserId },
+        "createAgencyFromApplication: agency already exists, no-op",
+      );
+      return { agency: existingAgency, created: false as const };
+    }
+
+    const application = await agencyAgentApplicationRepository.findById(params.applicationId);
+    if (!application) {
+      throw new AppError(404, "Application not found", "APPLICATION_NOT_FOUND");
+    }
+    if (application.userId !== params.applicantUserId) {
+      throw new AppError(403, "Application does not belong to this user", "APPLICATION_USER_MISMATCH");
+    }
+    if (application.status === "APPROVED") {
+      throw new AppError(400, "Application already approved", "ALREADY_APPROVED");
+    }
+    if (application.status === "REJECTED") {
+      throw new AppError(400, "Application was rejected", "APPLICATION_REJECTED");
+    }
+
+    await agencyKycService.validateKycComplete(params.applicantUserId);
+
+    const userRow = await prisma.user.findUnique({
+      where: { id: params.applicantUserId },
+      select: {
+        id: true,
+        defaultPublicId: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+      },
+    });
+    if (!userRow) {
+      throw new AppError(404, "User not found", "USER_NOT_FOUND");
+    }
+
+    const displayName = displayNameFromUser(userRow as never);
+
+    const now = new Date();
+    const agency = await prisma.$transaction(
+      async (tx) => {
+        const ag = await agencyRepository.createAgency(
+          {
+            userId: userRow.id,
+            defaultPublicId: userRow.defaultPublicId,
+            displayName: displayName.slice(0, 255),
+          },
+          tx,
+        );
+        await tx.user.update({
+          where: { id: userRow.id },
+          data: { isAgent: true },
+        });
+        await tx.wallet.create({
+          data: {
+            userId: userRow.id,
+            currencyType: WalletCurrencyType.TRADING_COIN,
+          },
+        });
+        await tx.agencyAgentApplication.update({
+          where: { id: params.applicationId },
+          data: {
+            status: "APPROVED",
+            reviewedBy: params.adminUserId,
+            reviewedAt: now,
           },
         });
         return ag;
@@ -221,6 +323,7 @@ export const agencyService = {
       async (inner) => run(inner),
       { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS },
     );
+    await cacheRedisService.del(RedisKeys.ctBalance(userId));
     await agencyService.onAgencyMutation(userId);
     return updated;
   },

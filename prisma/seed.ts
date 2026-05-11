@@ -94,6 +94,24 @@ async function main() {
     ],
     skipDuplicates: true,
   });
+
+  await prisma.coinTradingTopupRate.createMany({
+    data: [
+      { minUsd: "0.00", maxUsd: "500.00", coinsPerUsd: 9200, sortOrder: 1 },
+      { minUsd: "500.00", maxUsd: "2000.00", coinsPerUsd: 9500, sortOrder: 2 },
+      { minUsd: "2000.00", maxUsd: null, coinsPerUsd: 9900, sortOrder: 3 },
+    ],
+    skipDuplicates: true,
+  });
+
+  await prisma.agentExchangeRate.createMany({
+    data: [
+      { minUsdEquiv: "0.00", maxUsdEquiv: "50.00", coinsPerUsd: 9500, sortOrder: 1 },
+      { minUsdEquiv: "50.00", maxUsdEquiv: "1000.00", coinsPerUsd: 9500, sortOrder: 2 },
+      { minUsdEquiv: "1000.00", maxUsdEquiv: null, coinsPerUsd: 9900, sortOrder: 3 },
+    ],
+    skipDuplicates: true,
+  });
 }
 
 main()

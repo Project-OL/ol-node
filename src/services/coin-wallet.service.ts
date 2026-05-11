@@ -17,6 +17,7 @@ import {
   RECHARGE_TX_TYPES,
   richTierService,
 } from "./rich-tier.service";
+import { epayClient } from "../lib/epay.client";
 
 /** Coins debited when changing display name via PATCH /users/me (`name` field). */
 export const USERNAME_CHANGE_COIN_COST = 10_000n;
@@ -65,10 +66,26 @@ export const coinWalletService = {
       },
     });
 
+    const epay = await epayClient.createOrder({
+      amountUsd: Number((pkg.priceCents / 100).toFixed(2)),
+      currency: pkg.currency,
+      orderId: order.id,
+      orderType: "PERSONAL_TOPUP",
+      description: `Personal top-up ${pkg.coins} coins`,
+      callbackUrl: "/api/v1/webhooks/epay",
+      returnUrl: "/",
+    });
+
+    await prisma.coinTopupOrder.update({
+      where: { id: order.id },
+      data: { gatewayRef: epay.gatewayRef },
+    });
+
     const response = {
       orderId: order.id,
       coins: pkg.coins,
       priceCents: pkg.priceCents,
+      paymentUrl: epay.paymentUrl,
     };
     await walletService.resolveIdemKey(idempotencyKey, response);
     return response;
@@ -566,6 +583,13 @@ export const coinWalletService = {
       create: { userId, currencyType: WalletCurrencyType.COIN },
       update: {},
     });
+    if (wallet.currencyType === WalletCurrencyType.TRADING_COIN) {
+      throw new AppError(
+        403,
+        "Trading coins cannot be used for in-app purchases",
+        "TRADING_COIN_NOT_SPENDABLE",
+      );
+    }
     await walletRepository.lockForUpdate(tx, wallet.id);
     const last = await tx.coinLedgerEntry.findFirst({
       where: { walletId: wallet.id },

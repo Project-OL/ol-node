@@ -14,6 +14,22 @@ import { agencyApplicationRepository } from "../../repositories/agencyApplicatio
 import { agencyLeaveApplicationRepository } from "../../repositories/agencyLeaveApplication.repository";
 import { agencyHostRepository } from "../../repositories/agencyHost.repository";
 import { registerAgencyCommissionRoutes } from "./agency-commission.routes";
+import { withdrawalService } from "../../services/withdrawal.service";
+import { auditService } from "../../services/audit.service";
+import { userRepository } from "../../repositories/user.repository";
+import {
+  rateLimitPayrollComplete,
+  rateLimitPayrollReject,
+} from "../../middlewares/rateLimitAuth";
+
+const PayrollCompleteSchema = z.object({
+  proofS3Key: z.string().min(1),
+  proofS3Bucket: z.string().min(1),
+});
+
+const PayrollRejectSchema = z.object({
+  reason: z.string().max(2000).optional(),
+});
 
 const preAuth = [authenticate];
 
@@ -468,6 +484,91 @@ export default async function agencyRoutes(app: FastifyInstance) {
     },
   );
 
+  app.get(
+    "/payroll/inbox",
+    { preHandler: preAuth },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId;
+      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const u = await userRepository.findById(userId);
+      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const q = request.query as {
+        status?: string;
+        limit?: string;
+        cursor?: string;
+      };
+      const limit = Math.min(
+        50,
+        Math.max(1, Number(q.limit ?? "20") || 20),
+      );
+      const result = await withdrawalService.getPayrollInbox(userId, {
+        status: q.status,
+        limit,
+        cursor: q.cursor,
+      });
+      return reply.send(result);
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/payroll/assignments/:id",
+    { preHandler: preAuth },
+    async (request, reply: FastifyReply) => {
+      const userId = request.userId;
+      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const u = await userRepository.findById(userId);
+      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const detail = await withdrawalService.getPayrollAssignmentDetailForAgent(
+        userId,
+        request.params.id,
+      );
+      if (detail.revealPii) {
+        auditService.log({
+          userId,
+          actionType: "PAYROLL_PII_ACCESS",
+          actionStatus: "success",
+          actionDetails: {
+            assignmentId: detail.assignment.id,
+            withdrawalId: detail.withdrawal.id,
+          },
+        });
+      }
+      return reply.send(detail);
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/payroll/assignments/:id/complete",
+    { preHandler: [...preAuth, rateLimitPayrollComplete] },
+    async (request, reply: FastifyReply) => {
+      const userId = request.userId;
+      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const u = await userRepository.findById(userId);
+      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const body = PayrollCompleteSchema.parse(request.body ?? {});
+      await withdrawalService.agentCompletePayroll(userId, request.params.id, body);
+      return reply.send({ ok: true });
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/payroll/assignments/:id/reject",
+    { preHandler: [...preAuth, rateLimitPayrollReject] },
+    async (request, reply: FastifyReply) => {
+      const userId = request.userId;
+      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const u = await userRepository.findById(userId);
+      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const body = PayrollRejectSchema.parse(request.body ?? {});
+      await withdrawalService.agentRejectPayroll(
+        userId,
+        request.params.id,
+        body.reason,
+      );
+      return reply.send({ ok: true });
+    },
+  );
+
   app.get<{ Params: { publicId: string } }>(
     "/:publicId",
     async (
@@ -484,6 +585,7 @@ export default async function agencyRoutes(app: FastifyInstance) {
         "settings",
         "commission",
         "transfer-points",
+        "payroll",
       ]);
       if (reserved.has(publicId)) {
         throw new AppError(400, "Invalid path", "INVALID_REQUEST");

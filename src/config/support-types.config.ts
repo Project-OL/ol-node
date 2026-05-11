@@ -43,6 +43,7 @@ export const SUPPORT_TYPE_CONFIG: SupportTypeConfig[] = [
       { key: 'LIVE_BROADCAST_VIOLATION', label: 'Live Broadcast Violation' },
       { key: 'VIOLATION_OF_CHILD_SAFETY', label: 'Violation of Child Safety' },
       { key: 'REPORT_OTHERS', label: 'Report Others' },
+      { key: 'WITHDRAWAL_DISPUTE', label: 'Withdrawal dispute' },
     ],
   },
   {

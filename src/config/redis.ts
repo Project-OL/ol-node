@@ -154,6 +154,9 @@ export const RedisKeys = {
   // Wallet Redis keys
   walletCoinBalance: (userId: string) => `wallet:coins:${userId}`,
   walletPointBalance: (userId: string) => `wallet:points:${userId}`,
+  ctBalance: (userId: string) => `ct:balance:${userId}`,
+  ctTopupRates: () => "ct:topup-rates",
+  ctExchangeRates: () => "ct:exchange-rates",
   walletIdem: (key: string) => `wallet:idem:${key}`,
   walletRateLimit: (userId: string, action: string) => `wallet:rl:${userId}:${action}`,
   /** Wallet ledger level snapshots (wealth / livestream cumulative credits). */
@@ -242,6 +245,9 @@ export const RedisKeys = {
   agencyLevelConfig: () => `agency:level:config`,
   ratelimitAgencyPointTransfer: (userId: string) =>
     `ratelimit:agency:point-transfer:${userId}`,
+  ratelimitCtTopup: (userId: string) => `ratelimit:ct:topup:${userId}`,
+  ratelimitCtExchange: (userId: string) => `ratelimit:ct:exchange:${userId}`,
+  ratelimitCtTransfer: (userId: string) => `ratelimit:ct:transfer:${userId}`,
   questionnaireActive: (key: string) => `questionnaire:active:${key}`,
   questionnaireActiveFull: (key: string) => `questionnaire:active-full:${key}`,
   questionnaireUserStatus: (userId: string, key: string) =>
@@ -259,6 +265,18 @@ export const RedisKeys = {
   faceVerifyIdem: (userId: string, clientRequestId: string) =>
     `face:verify:idem:${userId}:${clientRequestId}`,
   faceVerifyLastPass: (userId: string) => `face:verify:lastpass:${userId}`,
+  /** Phase 3b payroll / withdrawal */
+  payrollConfig: () => "payroll:config",
+  userPaymentMethods: (userId: string) => `pmethods:${userId}`,
+  ratelimitWithdrawalCreate: (userId: string) =>
+    `ratelimit:withdrawal:create:${userId}`,
+  ratelimitWithdrawalDispute: (userId: string) =>
+    `ratelimit:withdrawal:dispute:${userId}`,
+  ratelimitPayrollComplete: (userId: string) =>
+    `ratelimit:payroll:complete:${userId}`,
+  ratelimitPayrollReject: (userId: string) =>
+    `ratelimit:payroll:reject:${userId}`,
+  ratelimitPmBind: (userId: string) => `ratelimit:pm:bind:${userId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -293,6 +311,8 @@ export const BLOCK_LIST_TTL = 60 * 60
 
 /** Wallet: cached balance TTL (5 minutes). */
 export const WALLET_BALANCE_TTL = 300
+export const CT_BALANCE_TTL = 300
+export const CT_RATES_TTL = 3600
 /** Wallet: idempotency key TTL (5 minutes). */
 export const WALLET_IDEM_TTL = 300
 /** Wallet: per-action rate limit window (1 minute). */
@@ -341,6 +361,8 @@ export const STORE_RARE_IDS_TTL = 300
 export const RICH_STATE_TTL = 300
 /** Rich tier threshold table cache. */
 export const RICH_CONFIG_TTL = 3600
+/** Payroll fee config singleton cache. */
+export const PAYROLL_CONFIG_TTL = 3600
 /** GET rich-tier read endpoints: 60 requests / 60s per user. */
 export const RICH_READ_RL_TTL = 60
 

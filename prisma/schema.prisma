@@ -132,6 +132,14 @@ model User {
   agencyApplicationsResolved AgencyHostApplication[] @relation("AgencyAppResolver")
   agencyLeaveAsHost         AgencyLeaveApplication[] @relation("AgencyLeaveHost")
   agencyLeaveResolved       AgencyLeaveApplication[] @relation("AgencyLeaveResolver")
+  agencyApplicationKyc     AgencyApplicationKyc?
+  agencyAgentApplication   AgencyAgentApplication? @relation("AgencyAgentApplications")
+  tradingCoinTopupOrders    CoinTradingTopupOrder[] @relation("TradingCoinTopupsByAgent")
+  tradingCoinTransfersSent  CoinTradingTransfer[] @relation("TradingCoinTransferSender")
+  tradingCoinTransfersReceived CoinTradingTransfer[] @relation("TradingCoinTransferRecipient")
+  tradingCoinTransferReversals CoinTradingTransfer[] @relation("TradingCoinTransferReversedBy")
+  paymentMethods             UserPaymentMethod[]
+  payrollAssignmentsAsAgent WithdrawalPayrollAssignment[] @relation("AgencyPayrollAssignments")
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -882,6 +890,7 @@ model BroadcastReminder {
 enum WalletCurrencyType {
   COIN
   POINT
+  TRADING_COIN
 }
 
 enum LedgerDirection {
@@ -891,10 +900,15 @@ enum LedgerDirection {
 
 enum CoinTxType {
   TOPUP
+  TRADING_TOPUP
   GIFT_SEND
   GIFT_REFUND
   TRANSFER_OUT
   TRANSFER_IN
+  TRADING_TRANSFER_OUT
+  TRADING_TRANSFER_IN
+  TRADING_EXCHANGE_FROM_POINTS
+  TRADING_TRANSFER_REVERSAL
   VIP_PURCHASE
   VIP_REWARD
   DAILY_LOGIN
@@ -926,6 +940,7 @@ enum PointTxType {
   AGENCY_FORCE_EXIT_PENALTY
   AGENT_COMMISSION
   AGENT_POINT_TRANSFER
+  PAYROLL_PROCESSING_REWARD
 }
 
 enum WithdrawalStatus {
@@ -936,6 +951,8 @@ enum WithdrawalStatus {
   PAID
   FAILED
   REJECTED
+  PENDING_PLATFORM
+  DISPUTED
 }
 
 model CoinPackage {
@@ -1108,6 +1125,121 @@ model CoinTopupOrder {
   @@map("coin_topup_orders")
 }
 
+enum AgencyAgentApplicationStatus {
+  PENDING
+  UNDER_REVIEW
+  MORE_DOCS_REQUIRED
+  APPROVED
+  REJECTED
+}
+
+model AgencyAgentApplication {
+  id          String                       @id @default(uuid()) @db.Uuid
+  publicId    String                       @unique @default(cuid()) @map("public_id")
+  userId      String                       @unique @map("user_id") @db.Uuid
+  status      AgencyAgentApplicationStatus @default(PENDING)
+  adminNote   String?                      @map("admin_note") @db.Text
+  userNote    String?                      @map("user_note") @db.Text
+  reviewedAt  DateTime?                    @map("reviewed_at")
+  reviewedBy  String?                    @map("reviewed_by") @db.Uuid
+  createdAt   DateTime                     @default(now()) @map("created_at")
+  updatedAt   DateTime                     @updatedAt @map("updated_at")
+
+  user User                   @relation("AgencyAgentApplications", fields: [userId], references: [id], onDelete: Cascade)
+  kyc  AgencyApplicationKyc?
+
+  @@map("agency_agent_applications")
+}
+
+model AgencyApplicationKyc {
+  userId             String    @id @map("user_id") @db.Uuid
+  applicationId      String    @unique @map("application_id") @db.Uuid
+  govtIdS3Key        String?   @map("govt_id_s3_key") @db.VarChar(255)
+  govtIdS3Bucket     String?   @map("govt_id_s3_bucket") @db.VarChar(255)
+  govtIdSubmittedAt  DateTime? @map("govt_id_submitted_at")
+  contactPhone       String?   @map("contact_phone") @db.VarChar(20)
+  contactEmail       String?   @map("contact_email") @db.VarChar(255)
+  contactSubmittedAt DateTime? @map("contact_submitted_at")
+  faceVerified       Boolean   @default(false) @map("face_verified")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application AgencyAgentApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@map("agency_application_kyc")
+}
+
+model CoinTradingTopupOrder {
+  id                  String   @id @default(uuid()) @db.Uuid
+  agentUserId         String   @map("agent_user_id") @db.Uuid
+  amountUsd           Decimal  @map("amount_usd") @db.Decimal(12, 2)
+  tradingCoinsAwarded BigInt   @map("trading_coins_awarded")
+  rateApplied         Int      @map("rate_applied")
+  epayRef             String?  @unique @map("epay_ref") @db.VarChar(256)
+  status              String   @default("PENDING") @db.VarChar(50)
+  ledgerEntryId       String?  @map("ledger_entry_id") @db.Uuid
+  idempotencyKey      String   @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  agent User @relation("TradingCoinTopupsByAgent", fields: [agentUserId], references: [id], onDelete: Cascade)
+
+  @@index([agentUserId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("coin_trading_topup_orders")
+}
+
+model CoinTradingTransfer {
+  id                     String    @id @default(uuid()) @db.Uuid
+  senderAgentUserId      String    @map("sender_agent_user_id") @db.Uuid
+  recipientUserId        String    @map("recipient_user_id") @db.Uuid
+  tradingCoinsDebited    BigInt    @map("trading_coins_debited")
+  coinsCredited          BigInt    @map("coins_credited")
+  recipientWalletType    String    @map("recipient_wallet_type") @db.VarChar(20)
+  senderLedgerEntryId    String    @map("sender_ledger_entry_id") @db.Uuid
+  recipientLedgerEntryId String    @map("recipient_ledger_entry_id") @db.Uuid
+  idempotencyKey         String    @unique @map("idempotency_key") @db.VarChar(200)
+  reversedAt             DateTime? @map("reversed_at")
+  reversedByUserId       String?   @map("reversed_by_user_id") @db.Uuid
+  reverseReason          String?   @map("reverse_reason") @db.Text
+  createdAt              DateTime  @default(now()) @map("created_at")
+
+  senderAgent User  @relation("TradingCoinTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
+  recipient   User  @relation("TradingCoinTransferRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  reversedBy  User? @relation("TradingCoinTransferReversedBy", fields: [reversedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([senderAgentUserId, createdAt(sort: Desc)])
+  @@index([recipientUserId, createdAt(sort: Desc)])
+  @@map("coin_trading_transfers")
+}
+
+model CoinTradingTopupRate {
+  id          String   @id @default(uuid()) @db.Uuid
+  minUsd      Decimal  @map("min_usd") @db.Decimal(12, 2)
+  maxUsd      Decimal? @map("max_usd") @db.Decimal(12, 2)
+  coinsPerUsd Int      @map("coins_per_usd")
+  sortOrder   Int      @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("coin_trading_topup_rates")
+}
+
+model AgentExchangeRate {
+  id          String   @id @default(uuid()) @db.Uuid
+  minUsdEquiv Decimal  @map("min_usd_equiv") @db.Decimal(12, 2)
+  maxUsdEquiv Decimal? @map("max_usd_equiv") @db.Decimal(12, 2)
+  coinsPerUsd Int      @map("coins_per_usd")
+  sortOrder   Int      @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("agent_exchange_rates")
+}
+
 model Withdrawal {
   id              String           @id @default(uuid()) @db.Uuid
   walletId        String           @map("wallet_id") @db.Uuid
@@ -1123,11 +1255,83 @@ model Withdrawal {
   processedAt     DateTime?        @map("processed_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
-  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  paymentMethodId   String?   @map("payment_method_id") @db.Uuid
+  hostPayoutUsd      Decimal?  @map("host_payout_usd") @db.Decimal(12, 2)
+  platformFeePoints  BigInt?   @map("platform_fee_points")
+  agentRewardPoints  BigInt?   @map("agent_reward_points")
+  assignmentCount    Int       @default(0) @map("assignment_count")
+  disputeTicketId    String?   @map("dispute_ticket_id") @db.VarChar(255)
+
+  wallet          Wallet                       @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  paymentMethod   UserPaymentMethod?           @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  payrollAssignments WithdrawalPayrollAssignment[]
 
   @@index([userId, status])
   @@index([walletId, requestedAt(sort: Desc)])
   @@map("withdrawals")
+}
+
+model UserPaymentMethod {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @map("user_id") @db.Uuid
+  methodType          String   @map("method_type") @db.VarChar(10)
+  epayEmail           String?  @map("epay_email") @db.VarChar(255)
+  bankName            String?  @map("bank_name") @db.VarChar(255)
+  bankAccountHolder   String?  @map("bank_account_holder") @db.VarChar(255)
+  bankAccountNumber   String?  @map("bank_account_number") @db.VarChar(50)
+  bankIfscCode        String?  @map("bank_ifsc_code") @db.VarChar(20)
+  upiNumber           String?  @map("upi_number") @db.VarChar(50)
+  registeredPhone     String?  @map("registered_phone") @db.VarChar(20)
+  registeredEmail     String?  @map("registered_email") @db.VarChar(255)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  withdrawals Withdrawal[]
+
+  @@unique([userId, methodType])
+  @@index([userId])
+  @@map("user_payment_methods")
+}
+
+model WithdrawalPayrollAssignment {
+  id               String    @id @default(uuid()) @db.Uuid
+  withdrawalId     String    @map("withdrawal_id") @db.Uuid
+  agencyUserId     String    @map("agency_user_id") @db.Uuid
+  assignedAt       DateTime  @default(now()) @map("assigned_at")
+  expiresAt        DateTime  @map("expires_at")
+  status           String    @default("PENDING") @map("status") @db.VarChar(20)
+  proofS3Key       String?   @map("proof_s3_key") @db.VarChar(500)
+  proofS3Bucket    String?   @map("proof_s3_bucket") @db.VarChar(255)
+  completedAt      DateTime? @map("completed_at")
+  rejectedAt       DateTime? @map("rejected_at")
+  rejectionReason  String?   @map("rejection_reason") @db.Text
+  assignmentNumber Int       @map("assignment_number")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
+  agencyUser User       @relation("AgencyPayrollAssignments", fields: [agencyUserId], references: [id], onDelete: Cascade)
+
+  @@index([withdrawalId, assignmentNumber])
+  @@index([agencyUserId, status, assignedAt(sort: Desc)])
+  @@index([status, expiresAt])
+  @@map("withdrawal_payroll_assignments")
+}
+
+model PayrollConfig {
+  id                    Int      @id @default(1)
+  platformFeeRateBp     Int      @default(600) @map("platform_fee_rate_bp")
+  agentRewardRateBp     Int      @default(300) @map("agent_reward_rate_bp")
+  serviceFeeUsd         Decimal  @default(1.00) @map("service_fee_usd") @db.Decimal(8, 2)
+  minWithdrawalUsd      Decimal  @default(10.00) @map("min_withdrawal_usd") @db.Decimal(12, 2)
+  maxWithdrawalUsd      Decimal  @default(10000000.00) @map("max_withdrawal_usd") @db.Decimal(18, 2)
+  slaHours              Int      @default(2) @map("sla_hours")
+  maxAssignmentAttempts Int      @default(5) @map("max_assignment_attempts")
+  inrPerUsd             Decimal  @default(88.00) @map("inr_per_usd") @db.Decimal(8, 2)
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("payroll_config")
 }
 
 model WalletIdempotencyLog {
@@ -1412,6 +1616,7 @@ model Agency {
   currentLevel               String    @default("D") @map("current_level") @db.VarChar(8)
   currentWindowTotalPoints   BigInt    @default(0) @map("current_window_total_points")
   lastLevelRecomputedAt      DateTime? @map("last_level_recomputed_at")
+  lastPayrollAssignedAt      DateTime? @map("last_payroll_assigned_at")
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @updatedAt @map("updated_at")
 
@@ -1422,6 +1627,7 @@ model Agency {
   dailyEarnings     AgencyDailyEarning[]
 
   @@index([payrollEnabled, pausedAt])
+  @@index([payrollEnabled, pausedAt, lastPayrollAssignedAt])
   @@index([currentLevel, currentWindowTotalPoints(sort: Desc)])
   @@index([totalHostsCount(sort: Desc)])
   @@map("agencies")

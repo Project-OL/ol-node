@@ -9,13 +9,11 @@ import {
   WalletCurrencyType,
   PointTxType,
   LedgerDirection,
-  WithdrawalStatus,
   LevelType,
 } from "@prisma/client";
 import { walletLevelService } from "./user-level.service";
-import { env } from "../config/env";
-import { walletWithdrawalQueue } from "../queues/wallet-withdrawal.queue";
 import { utcDayFromTimestamp } from "../utils/datetime";
+import { withdrawalService } from "./withdrawal.service";
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
 
@@ -186,114 +184,26 @@ export const pointWalletService = {
   async initiateWithdrawal(
     userId: string,
     amountPoints: bigint,
+    paymentMethodId: string,
     idempotencyKey: string,
   ) {
-    if (amountPoints < env.POINTS_WITHDRAW_MIN) {
-      throw new AppError(
-        400,
-        `Minimum withdrawal is ${env.POINTS_WITHDRAW_MIN} points`,
-        "BELOW_MIN_WITHDRAWAL",
-      );
-    }
-
-    const cached = await walletService.getCachedIdemResponse(idempotencyKey);
-    if (cached) return cached;
-
-    const acquired = await walletService.acquireIdemKey(idempotencyKey);
-    if (!acquired)
-      throw new AppError(409, "Already processing", "IDEM_CONFLICT");
-
-    const wallet = await walletRepository.getOrCreate(
-      userId,
-      WalletCurrencyType.POINT,
-    );
-
-    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const weeklyTotal = await prisma.withdrawal.aggregate({
-      where: {
-        userId,
-        status: {
-          in: [
-            WithdrawalStatus.APPROVED,
-            WithdrawalStatus.PROCESSING,
-            WithdrawalStatus.PAID,
-          ],
-        },
-        requestedAt: { gte: weekAgo },
-      },
-      _sum: { amountPoints: true },
-    });
-    const usedThisWeek = weeklyTotal._sum.amountPoints ?? 0n;
-    if (usedThisWeek + amountPoints > env.POINTS_WITHDRAW_MAX_WEEKLY) {
-      throw new AppError(
-        400,
-        "Weekly withdrawal limit exceeded",
-        "WEEKLY_LIMIT_EXCEEDED",
-      );
-    }
-
-    const withdrawal = await prisma.$transaction(
-      async (tx) => {
-        await walletRepository.lockForUpdate(tx, wallet.id);
-
-        const last = await tx.pointLedgerEntry.findFirst({
-          where: { walletId: wallet.id },
-          orderBy: { createdAt: "desc" },
-          select: { balanceAfter: true },
-        });
-        const currentBalance = last?.balanceAfter ?? 0n;
-        if (currentBalance < amountPoints) {
-          throw new AppError(400, "Insufficient points", "INSUFFICIENT_POINTS");
-        }
-
-        const newBalance = currentBalance - amountPoints;
-
-        await pointLedgerRepository.insert(tx, {
-          walletId: wallet.id,
-          direction: LedgerDirection.DEBIT,
-          txType: PointTxType.WITHDRAWAL,
-          amount: amountPoints,
-          balanceAfter: newBalance,
-          description: "Withdrawal initiated",
-          idempotencyKey,
-        });
-
-        await walletRepository.bumpVersion(tx, wallet.id);
-
-        return tx.withdrawal.create({
-          data: {
-            walletId: wallet.id,
-            userId,
-            amountPoints,
-            status: WithdrawalStatus.PENDING,
-            idempotencyKey,
-          },
-        });
-      },
-      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
-    );
-
-    await walletService.adjustPointBalanceCache(userId, -amountPoints);
+    const result = (await withdrawalService.createWithdrawal(userId, {
+      grossPoints: amountPoints,
+      paymentMethodId,
+      idempotencyKey,
+    })) as { withdrawalId: string; status: string };
 
     auditService.log({
       userId,
       actionType: "POINTS_WITHDRAWAL_INITIATED",
       actionStatus: "success",
       actionDetails: {
-        withdrawalId: withdrawal.id,
+        withdrawalId: result.withdrawalId,
         amountPoints: amountPoints.toString(),
       },
     });
 
-    await walletWithdrawalQueue.add(
-      "process",
-      { withdrawalId: withdrawal.id, userId },
-      { attempts: 3, backoff: { type: "exponential", delay: 5000 } },
-    );
-
-    const response = { withdrawalId: withdrawal.id, status: withdrawal.status };
-    await walletService.resolveIdemKey(idempotencyKey, response);
-    return response;
+    return result;
   },
 
   async getHistory(
