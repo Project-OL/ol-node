@@ -25,6 +25,8 @@ import {
 } from '../utils/ws-publisher'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
 import type { SendMessageInput } from '../models/messaging.schemas'
+import { s3Bucket } from '../config/s3'
+import type { MediaItemInput } from '../repositories/message.repository'
 
 export type DmContact = {
   userId: string
@@ -57,6 +59,19 @@ const readReceiptDebounce = new Map<string, ReadDebounceEntry>()
 
 function readReceiptDebounceKey(userId: string, conversationId: string): string {
   return `${userId}:${conversationId}`
+}
+
+function mediaItemsWithServerBucket(
+  items: NonNullable<SendMessageInput['mediaItems']>,
+): MediaItemInput[] {
+  const bucket = s3Bucket?.trim()
+  if (!bucket) {
+    throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
+  }
+  return items.map((item) => ({
+    ...item,
+    s3Bucket: bucket,
+  }))
 }
 
 export const messagingService = {
@@ -176,7 +191,10 @@ export const messagingService = {
       type: input.type as any,
       content: input.content,
       replyToId: input.replyToId,
-      mediaItems: input.mediaItems as any,
+      mediaItems:
+        input.mediaItems && input.mediaItems.length > 0
+          ? mediaItemsWithServerBucket(input.mediaItems)
+          : undefined,
     })
     const msg = result.message
 

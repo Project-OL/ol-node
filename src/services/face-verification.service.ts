@@ -9,7 +9,7 @@ import {
   deleteFaceFromCollection,
   detectFacesQuality,
   indexUserFace,
-  searchFaceByImage,
+  searchFaceInCollection,
 } from '../lib/rekognition.client'
 import { auditService } from './audit.service'
 import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
@@ -124,6 +124,42 @@ export const faceVerificationService = {
         throw new AppError(400, 'Exactly one face required', 'face_quality_rejected')
       }
       const qualityScore = parseQuality(detectRes.FaceDetails![0]!)
+      const existingMatch = await searchFaceInCollection({
+        imageBytes,
+        collectionId: env.REKOGNITION_COLLECTION_ID,
+        threshold: Number(env.FACE_MATCH_THRESHOLD_PASS),
+      })
+      if (existingMatch) {
+        const ownerProfile = await faceVerificationRepository.findProfileByRekognitionFaceId(
+          existingMatch.faceId,
+        )
+        const duplicateOfUserId = ownerProfile?.userId ?? null
+        if (!duplicateOfUserId || duplicateOfUserId !== userId) {
+          await faceVerificationRepository.markDuplicate({
+            userId,
+            collectionId: env.REKOGNITION_COLLECTION_ID,
+            s3KeyReference: body.s3Key,
+            qualityScore,
+            duplicateOfUserId,
+          })
+          auditService.log({
+            userId,
+            actionType: 'face_register_duplicate_rejected',
+            actionStatus: 'failed',
+            actionDetails: {
+              similarity: existingMatch.similarity,
+              duplicateOfUserId: duplicateOfUserId ?? 'unknown',
+            },
+            ipAddress: extractIp(ctx),
+            userAgent: toHeaderString(ctx.headers?.['user-agent']),
+          })
+          throw new AppError(
+            409,
+            'A verified face already exists for this identity. Each person may only register once.',
+            'FACE_DUPLICATE_IDENTITY',
+          )
+        }
+      }
 
       const profile = await faceVerificationRepository.createPendingProfile({
         userId,
@@ -197,13 +233,16 @@ export const faceVerificationService = {
     let rekognitionRequestId: string | undefined
     try {
       const imageBytes = await getImageBytes(body.s3Key)
-      const searchRes = await searchFaceByImage(imageBytes)
-      rekognitionRequestId = searchRes.$metadata.requestId
-      const top = searchRes.FaceMatches?.[0]
-      const topFaceId = top?.Face?.FaceId
-      similarityScore = Number(top?.Similarity ?? 0)
+      const top = await searchFaceInCollection({
+        imageBytes,
+        collectionId: env.REKOGNITION_COLLECTION_ID,
+        threshold: Number(env.FACE_MATCH_THRESHOLD_REJECT),
+      })
+      rekognitionRequestId = top?.requestId
+      const topFaceId = top?.faceId
+      similarityScore = Number(top?.similarity ?? 0)
 
-      if (!top) {
+      if (!topFaceId) {
         decision = 'FAIL'
         reason = 'no_match'
       } else if (topFaceId !== profile.rekognitionFaceId) {
@@ -280,8 +319,15 @@ export const faceVerificationService = {
 
   async getMyFaceProfile(userId: string) {
     const profile = await faceVerificationRepository.getProfileByUserId(userId)
+    const status = profile?.status ?? 'REVOKED'
+    const isDuplicate = String(status) === 'DUPLICATE_FACE'
     return {
-      status: profile?.status ?? 'REVOKED',
+      status,
+      message: isDuplicate
+        ? 'Registration rejected: this face is already associated with another account.'
+        : undefined,
+      faceProfileId: profile?.id ?? null,
+      canReRegister: status === 'FAILED' || status === 'REVOKED',
       indexedAt: profile?.indexedAt?.toISOString() ?? null,
       lastVerifiedAt: profile?.lastVerifiedAt?.toISOString() ?? null,
       hasReference: Boolean(profile?.s3KeyReference),
@@ -319,6 +365,34 @@ export const faceVerificationService = {
     }
     try {
       const imageBytes = await getImageBytes(payload.s3Key)
+      const preIndexMatch = await searchFaceInCollection({
+        imageBytes,
+        collectionId: env.REKOGNITION_COLLECTION_ID,
+        threshold: Number(env.FACE_MATCH_THRESHOLD_PASS),
+      })
+      if (preIndexMatch) {
+        const ownerProfile = await faceVerificationRepository.findProfileByRekognitionFaceId(
+          preIndexMatch.faceId,
+        )
+        if (!ownerProfile || ownerProfile.userId !== payload.userId) {
+          await faceVerificationRepository.markDuplicate({
+            userId: payload.userId,
+            collectionId: env.REKOGNITION_COLLECTION_ID,
+            s3KeyReference: payload.s3Key,
+            duplicateOfUserId: ownerProfile?.userId ?? null,
+          })
+          auditService.log({
+            userId: payload.userId,
+            actionType: 'face_index_duplicate_rejected_at_index',
+            actionStatus: 'failed',
+            actionDetails: {
+              similarity: preIndexMatch.similarity,
+              duplicateOfUserId: ownerProfile?.userId ?? 'unknown',
+            },
+          })
+          return
+        }
+      }
       const indexRes = await indexUserFace({ userId: payload.userId, imageBytes })
       const faceId = indexRes.FaceRecords?.[0]?.Face?.FaceId
       if (!faceId) {

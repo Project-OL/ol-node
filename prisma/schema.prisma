@@ -1025,6 +1025,7 @@ enum FaceProfileStatus {
   INDEXED
   FAILED
   REVOKED
+  DUPLICATE_FACE
 }
 
 enum FaceVerificationDecision {
@@ -1865,6 +1866,7 @@ model UserFaceProfile {
   userId             String            @unique @map("user_id") @db.Uuid
   collectionId       String            @map("collection_id")
   rekognitionFaceId  String?           @unique @map("rekognition_face_id")
+  duplicateOfUserId  String?           @map("duplicate_of_user_id") @db.Uuid
   s3KeyReference     String            @map("s3_key_reference")
   imageQualityScore  Float?            @map("image_quality_score")
   livenessConfidence Float?            @map("liveness_confidence")

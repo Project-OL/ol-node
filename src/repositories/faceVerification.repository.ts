@@ -27,6 +27,7 @@ export const faceVerificationRepository = {
         s3KeyReference: input.s3KeyReference,
         imageQualityScore: input.qualityScore ?? null,
         status: 'PENDING_INDEX',
+        rekognitionFaceId: null,
         failureReason: null,
         revokedAt: null,
         indexedAt: null,
@@ -38,6 +39,45 @@ export const faceVerificationRepository = {
         imageQualityScore: input.qualityScore ?? null,
         status: 'PENDING_INDEX',
       },
+    })
+  },
+
+  findProfileByRekognitionFaceId(faceId: string) {
+    return prismaRead.userFaceProfile.findFirst({
+      where: { rekognitionFaceId: faceId, status: 'INDEXED' },
+      select: { userId: true },
+    })
+  },
+
+  markDuplicate(
+    input: {
+      userId: string
+      collectionId: string
+      s3KeyReference: string
+      qualityScore?: number | null
+      duplicateOfUserId: string | null
+    },
+    tx?: Prisma.TransactionClient,
+  ) {
+    return getDb(tx).userFaceProfile.upsert({
+      where: { userId: input.userId },
+      update: {
+        collectionId: input.collectionId,
+        s3KeyReference: input.s3KeyReference,
+        imageQualityScore: input.qualityScore ?? null,
+        status: 'DUPLICATE_FACE',
+        duplicateOfUserId: input.duplicateOfUserId,
+        rekognitionFaceId: null,
+        failureReason: 'duplicate_face',
+      } as any,
+      create: {
+        userId: input.userId,
+        collectionId: input.collectionId,
+        s3KeyReference: input.s3KeyReference,
+        imageQualityScore: input.qualityScore ?? null,
+        status: 'DUPLICATE_FACE',
+        duplicateOfUserId: input.duplicateOfUserId,
+      } as any,
     })
   },
 

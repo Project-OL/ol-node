@@ -44,12 +44,12 @@ vi.mock('../../src/services/storage.service', () => ({
 }))
 
 const detectFacesQuality = vi.fn()
-const searchFaceByImage = vi.fn()
+const searchFaceInCollection = vi.fn()
 const indexUserFace = vi.fn()
 const deleteFaceFromCollection = vi.fn()
 vi.mock('../../src/lib/rekognition.client', () => ({
   detectFacesQuality,
-  searchFaceByImage,
+  searchFaceInCollection,
   indexUserFace,
   deleteFaceFromCollection,
 }))
@@ -62,6 +62,8 @@ const repo = {
   revokeProfile: vi.fn(),
   markProfileFailed: vi.fn(),
   markProfileIndexed: vi.fn(),
+  findProfileByRekognitionFaceId: vi.fn(),
+  markDuplicate: vi.fn(),
 }
 vi.mock('../../src/repositories/faceVerification.repository', () => ({
   faceVerificationRepository: repo,
@@ -104,10 +106,7 @@ describe('faceVerificationService', () => {
       rekognitionFaceId: 'f1',
     })
 
-    searchFaceByImage.mockResolvedValueOnce({
-      FaceMatches: [{ Similarity: 89.9, Face: { FaceId: 'f1' } }],
-      $metadata: { requestId: 'r1' },
-    })
+    searchFaceInCollection.mockResolvedValueOnce({ faceId: 'f1', similarity: 89.9, requestId: 'r1' })
     const failRes = await faceVerificationService.verifyFromUploadedKey(
       'u1',
       { s3Key: 'face/verify/u1/a.jpg', clientRequestId: '11111111-1111-1111-1111-111111111111' },
@@ -115,10 +114,7 @@ describe('faceVerificationService', () => {
     )
     expect(failRes.decision).toBe('FAIL')
 
-    searchFaceByImage.mockResolvedValueOnce({
-      FaceMatches: [{ Similarity: 90, Face: { FaceId: 'f1' } }],
-      $metadata: { requestId: 'r2' },
-    })
+    searchFaceInCollection.mockResolvedValueOnce({ faceId: 'f1', similarity: 90, requestId: 'r2' })
     const passRes = await faceVerificationService.verifyFromUploadedKey(
       'u1',
       { s3Key: 'face/verify/u1/a.jpg', clientRequestId: '22222222-2222-2222-2222-222222222222' },
@@ -135,10 +131,7 @@ describe('faceVerificationService', () => {
       status: 'INDEXED',
       rekognitionFaceId: 'expected-face',
     })
-    searchFaceByImage.mockResolvedValue({
-      FaceMatches: [{ Similarity: 99, Face: { FaceId: 'other-face' } }],
-      $metadata: { requestId: 'r3' },
-    })
+    searchFaceInCollection.mockResolvedValue({ faceId: 'other-face', similarity: 99, requestId: 'r3' })
     const result = await faceVerificationService.verifyFromUploadedKey(
       'u1',
       { s3Key: 'face/verify/u1/a.jpg', clientRequestId: '33333333-3333-3333-3333-333333333333' },

@@ -111,6 +111,43 @@ export async function searchFaceByImage(imageBytes: Uint8Array) {
   )
 }
 
+export async function searchFaceInCollection(params: {
+  imageBytes: Uint8Array
+  collectionId: string
+  threshold: number
+  maxFaces?: number
+  timeoutMs?: number
+}) {
+  try {
+    const result = await withTimeout(params.timeoutMs ?? env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+      rekognitionClient.send(
+        new SearchFacesByImageCommand({
+          CollectionId: params.collectionId,
+          Image: { Bytes: params.imageBytes },
+          MaxFaces: params.maxFaces ?? 1,
+          FaceMatchThreshold: params.threshold,
+          QualityFilter: QualityFilter.AUTO,
+        }),
+        { abortSignal },
+      ),
+    )
+    const top = result.FaceMatches?.[0]
+    if (!top?.Face?.FaceId || top.Similarity == null) {
+      return null
+    }
+    return {
+      faceId: top.Face.FaceId,
+      similarity: Number(top.Similarity),
+      requestId: result.$metadata.requestId,
+    }
+  } catch (error) {
+    if ((error as { name?: string }).name === 'InvalidParameterException') {
+      return null
+    }
+    throw error
+  }
+}
+
 export async function deleteFaceFromCollection(faceId: string) {
   return withTimeout(env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(

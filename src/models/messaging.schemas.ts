@@ -16,7 +16,6 @@ export const SendMessageSchema = z
       .array(
         z.object({
           s3Key: z.string().min(1),
-          s3Bucket: z.string().min(1),
           mediaType: z.enum(['IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
           fileName: z.string().optional(),
           mimeType: z.string().optional(),
