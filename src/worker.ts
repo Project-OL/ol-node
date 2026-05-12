@@ -64,6 +64,12 @@ import {
   registerMessageOutboxScheduledJobs,
 } from "./queues/messaging.queue";
 import {
+  MESSAGE_MEDIA_AUDIO_PROCESS_JOB,
+  MESSAGE_MEDIA_AUDIO_QUEUE,
+} from "./queues/message-media-audio.constants";
+import { messageMediaAudioQueue } from "./queues/message-media-audio.queue";
+import { processMessageMediaAudioJob } from "./jobs/message-media-audio-processing.job";
+import {
   publishMessageOutboxRow,
   sweepStaleMessageOutbox,
 } from "./services/messaging-outbox.service";
@@ -285,6 +291,16 @@ async function main() {
     { connection, concurrency: 8 },
   );
 
+  const messageMediaAudioWorker = new Worker(
+    MESSAGE_MEDIA_AUDIO_QUEUE,
+    async (job: Job<{ messageMediaId?: string }>) => {
+      if (job.name === MESSAGE_MEDIA_AUDIO_PROCESS_JOB && job.data?.messageMediaId) {
+        await processMessageMediaAudioJob(job.data.messageMediaId);
+      }
+    },
+    { connection, concurrency: 4 },
+  );
+
   await payrollSlaQueue.add(
     PAYROLL_SAFETY_NET_JOB,
     {},
@@ -382,6 +398,10 @@ async function main() {
   messageOutboxWorker.on("failed", (job, err) => {
     console.error("[Message outbox] Job failed:", job?.id, err);
   });
+
+  messageMediaAudioWorker.on("failed", (job, err) => {
+    console.error("[Message media audio] Job failed:", job?.id, err);
+  });
   epayWebhookRetryWorker.on("failed", (job, err) => {
     console.error("[Epay webhook retry] Job failed:", job?.id, err);
   });
@@ -391,13 +411,15 @@ async function main() {
   });
 
   console.info(
-    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; message-outbox; epay-webhook-retry (face indexing: run `npm run worker:face-index` — Postgres poll, no Redis queue)",
+    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; message-outbox; message-media-audio; epay-webhook-retry (face indexing: run `npm run worker:face-index` — Postgres poll, no Redis queue)",
   );
 
   const shutdown = async () => {
     await payrollSlaWorker.close();
     await payrollSlaQueue.close();
     await epayWebhookRetryWorker.close();
+    await messageMediaAudioWorker.close();
+    await messageMediaAudioQueue.close();
     await messageOutboxWorker.close();
     await messageOutboxQueue.close();
     await agencyLevelRecomputeWorker.close();

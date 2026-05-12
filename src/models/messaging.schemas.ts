@@ -4,6 +4,40 @@ export const CreateDMSchema = z.object({
   recipientPublicId: z.string().min(1),
 })
 
+const sendMessageMediaItemSchema = z
+  .object({
+    s3Key: z.string().min(1),
+    mediaType: z.enum(['IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
+    fileName: z.string().optional(),
+    mimeType: z.string().optional(),
+    sizeBytes: z.number().int().positive().optional(),
+    durationSec: z.number().int().positive().optional(),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    order: z.number().int().min(0).optional(),
+    bitrate: z.number().int().positive().max(2_000_000).optional(),
+    sampleRate: z.number().int().positive().max(384_000).optional(),
+    channels: z.number().int().min(1).max(16).optional(),
+    codec: z.enum(['aac', 'mp3', 'opus', 'pcm_s16le', 'unknown']).optional(),
+    /** Normalized peak envelope 0..1; server stores compact u8 base64 in `waveform_json`. */
+    waveformPeaksNormalized: z.array(z.number()).max(200).optional(),
+    /** Lowercase hex SHA-256 of object bytes when client computed it (must match S3 checksum if present). */
+    checksumSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+  })
+  .superRefine((item, ctx) => {
+    if (!item.waveformPeaksNormalized?.length) return
+    for (let i = 0; i < item.waveformPeaksNormalized.length; i++) {
+      const p = item.waveformPeaksNormalized[i]!
+      if (typeof p !== 'number' || !Number.isFinite(p) || p < 0 || p > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'waveformPeaksNormalized values must be finite numbers in [0,1]',
+          path: ['waveformPeaksNormalized', i],
+        })
+      }
+    }
+  })
+
 export const SendMessageSchema = z
   .object({
     /** UUID v4 from client — idempotent retries must reuse the same value per logical send. */
@@ -12,22 +46,7 @@ export const SendMessageSchema = z
     type: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
     // Client payloads often send null for "no reply"; normalize to undefined.
     replyToId: z.preprocess((v) => (v === null ? undefined : v), z.string().cuid().optional()),
-    mediaItems: z
-      .array(
-        z.object({
-          s3Key: z.string().min(1),
-          mediaType: z.enum(['IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
-          fileName: z.string().optional(),
-          mimeType: z.string().optional(),
-          sizeBytes: z.number().int().positive().optional(),
-          durationSec: z.number().int().positive().optional(),
-          width: z.number().int().positive().optional(),
-          height: z.number().int().positive().optional(),
-          order: z.number().int().min(0),
-        }),
-      )
-      .max(10)
-      .optional(),
+    mediaItems: z.array(sendMessageMediaItemSchema).max(10).optional(),
   })
   .refine(
     (d) => d.content?.trim() || (d.mediaItems && d.mediaItems.length > 0),
@@ -85,16 +104,31 @@ export const CreateReportSchema = z.object({
   evidenceS3Keys: z.array(z.string().min(1)).max(5).optional(),
 })
 
-export const GetUploadUrlsSchema = z.object({
-  files: z.array(
-    z.object({
-      mediaType: z.enum(['IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
-      fileName: z.string().min(1).max(255),
-      mimeType: z.string().min(1).max(100),
-      sizeBytes: z.number().int().positive(),
-    }),
-  ).min(1).max(10),
-})
+export const GetUploadUrlsSchema = z
+  .object({
+    /** Required when any file has mediaType AUDIO — used for scoped S3 keys and membership checks. */
+    conversationId: z.string().cuid().optional(),
+    files: z
+      .array(
+        z.object({
+          mediaType: z.enum(['IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
+          fileName: z.string().min(1).max(255),
+          mimeType: z.string().min(1).max(100),
+          sizeBytes: z.number().int().positive(),
+        }),
+      )
+      .min(1)
+      .max(10),
+  })
+  .superRefine((data, ctx) => {
+    if (data.files.some((f) => f.mediaType === 'AUDIO') && !data.conversationId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'conversationId is required when uploading audio',
+        path: ['conversationId'],
+      })
+    }
+  })
 
 export const SetBroadcastReminderSchema = z.object({
   creatorPublicId: z.string().min(1),

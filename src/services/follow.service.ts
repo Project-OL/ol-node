@@ -43,6 +43,9 @@ async function toUserCards(
     user: {
       id: string
       publicId: bigint
+      defaultPublicId: bigint
+      currentVipPublicId: bigint | null
+      isAgent: boolean
       username: string
       firstName: string | null
       lastName: string | null
@@ -77,6 +80,10 @@ async function toUserCards(
         userId: user.id,
         username: user.username,
         publicId: String(user.publicId),
+        displayPublicId: String(
+          user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
+        ),
+        isAgency: Boolean(user.isAgent),
         name: displayName,
         displayName,
         avatarUrl: user.avatarUrl,

@@ -19,14 +19,20 @@ import {
   READ_RECEIPT_DEBOUNCE_MS,
 } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
+import { MediaProcessingStatus } from '@prisma/client'
 import {
   publishServerFrameToConversation,
   publishToConversation,
 } from '../utils/ws-publisher'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
+import { enqueueMessageMediaAudioProcessing } from '../queues/message-media-audio.queue'
 import type { SendMessageInput } from '../models/messaging.schemas'
 import { s3Bucket } from '../config/s3'
 import type { MediaItemInput } from '../repositories/message.repository'
+import {
+  assertMessageTypeMediaAlignment,
+  prepareMediaItemsForSend,
+} from './message-send-media.service'
 
 export type DmContact = {
   userId: string
@@ -61,9 +67,7 @@ function readReceiptDebounceKey(userId: string, conversationId: string): string 
   return `${userId}:${conversationId}`
 }
 
-function mediaItemsWithServerBucket(
-  items: NonNullable<SendMessageInput['mediaItems']>,
-): MediaItemInput[] {
+function mediaItemsWithServerBucket(items: MediaItemInput[]): MediaItemInput[] {
   const bucket = s3Bucket?.trim()
   if (!bucket) {
     throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
@@ -184,6 +188,19 @@ export const messagingService = {
         throw new AppError(400, 'Invalid reply target', 'INVALID_REPLY')
       }
     }
+    assertMessageTypeMediaAlignment(input.type as any, input.mediaItems)
+
+    let mediaItemsPrepared: MediaItemInput[] | undefined
+    if (input.mediaItems && input.mediaItems.length > 0) {
+      mediaItemsPrepared = await prepareMediaItemsForSend({
+        senderId,
+        conversationId,
+        messageType: input.type as any,
+        items: input.mediaItems,
+      })
+      mediaItemsPrepared = mediaItemsWithServerBucket(mediaItemsPrepared)
+    }
+
     const result = await messageRepository.sendMessageWithOutbox({
       conversationId,
       senderId,
@@ -191,10 +208,7 @@ export const messagingService = {
       type: input.type as any,
       content: input.content,
       replyToId: input.replyToId,
-      mediaItems:
-        input.mediaItems && input.mediaItems.length > 0
-          ? mediaItemsWithServerBucket(input.mediaItems)
-          : undefined,
+      mediaItems: mediaItemsPrepared,
     })
     const msg = result.message
 
@@ -221,6 +235,11 @@ export const messagingService = {
         await redisClient.incr(RedisKeys.unreadCount(uid, conversationId))
       }
       await enqueueMessageOutboxPublish(result.outboxId)
+      for (const mi of result.message.mediaItems) {
+        if (mi.mediaType === 'AUDIO' && mi.processingStatus === MediaProcessingStatus.ENQUEUED) {
+          await enqueueMessageMediaAudioProcessing(mi.id)
+        }
+      }
     }
 
     return msg

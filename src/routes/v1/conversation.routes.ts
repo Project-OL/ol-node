@@ -15,6 +15,7 @@ import {
 } from '../../models/messaging.schemas'
 import { messagingService } from '../../services/messaging.service'
 import { uploadService } from '../../services/upload.service'
+import { conversationRepository } from '../../repositories/conversation.repository'
 import { AppError } from '../../middlewares/errorHandler'
 import { requestTimeout } from '../../utils/requestTimeout'
 
@@ -114,6 +115,15 @@ export default async function conversationRoutes(app: FastifyInstance) {
           parsed.error.errors[0]?.message ?? 'Invalid request body',
           'INVALID_REQUEST',
         )
+      }
+      if (parsed.data.conversationId) {
+        const conv = await conversationRepository.findConversationById(
+          parsed.data.conversationId,
+          userId,
+        )
+        if (!conv) {
+          throw new AppError(403, 'Not a member', 'FORBIDDEN')
+        }
       }
       const urls = await uploadService.getMessageMediaUploadUrls(
         userId,

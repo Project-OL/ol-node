@@ -719,6 +719,23 @@ enum MediaType {
   AUDIO
   FILE
 }
+
+// Async sidecar processing for message media (waveform extraction, transcoding, etc.).
+enum MediaProcessingStatus {
+  NONE
+  PENDING
+  ENQUEUED
+  READY
+  FAILED
+}
+
+// Future transcription pipeline; persisted for client UX.
+enum MediaTranscriptionStatus {
+  NONE
+  PENDING
+  READY
+  FAILED
+}
 enum ReportReason {
   SPAM
   HARASSMENT
@@ -809,20 +826,32 @@ model MessageOutbox {
 }
 
 model MessageMedia {
-  id          String    @id @default(cuid())
-  messageId   String    @map("message_id")
-  mediaType   MediaType @map("media_type")
-  s3Key       String    @map("s3_key") @db.VarChar(500)
-  s3Bucket    String    @map("s3_bucket") @db.VarChar(255)
-  fileName    String?   @map("file_name") @db.VarChar(255)
-  mimeType    String?   @map("mime_type") @db.VarChar(100)
-  sizeBytes   Int?      @map("size_bytes")
-  durationSec Int?      @map("duration_sec")
-  width       Int?
-  height      Int?
-  order       Int       @default(0)
-  message     Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  id                   String                   @id @default(cuid())
+  messageId            String                   @map("message_id")
+  mediaType            MediaType                @map("media_type")
+  s3Key                String                   @map("s3_key") @db.VarChar(500)
+  s3Bucket             String                   @map("s3_bucket") @db.VarChar(255)
+  fileName             String?                  @map("file_name") @db.VarChar(255)
+  mimeType             String?                  @map("mime_type") @db.VarChar(100)
+  sizeBytes            Int?                     @map("size_bytes")
+  durationSec          Int?                     @map("duration_sec")
+  width                Int?
+  height               Int?
+  order                Int                      @default(0)
+  // Compact waveform: `{ "v": 1, "e": "<base64 u8 peaks>" }` or legacy normalized floats (bounded).
+  waveformJson         Json?                    @map("waveform_json")
+  codec                String?                  @map("codec") @db.VarChar(32)
+  bitrate              Int?                     @map("bitrate")
+  sampleRate           Int?                     @map("sample_rate")
+  channels             Int?                     @map("channels")
+  processingStatus     MediaProcessingStatus    @default(NONE) @map("processing_status")
+  transcriptionStatus  MediaTranscriptionStatus @default(NONE) @map("transcription_status")
+  checksumSha256       String?                  @map("checksum_sha256") @db.VarChar(64)
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  message              Message                  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   @@index([messageId])
+  @@index([processingStatus, createdAt])
+  @@index([createdAt])
   @@map("message_media")
 }
 

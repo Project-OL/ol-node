@@ -116,6 +116,10 @@ export const visitorService = {
         userId: user.id,
         username: user.username,
         publicId: String(user.publicId),
+        displayPublicId: String(
+          user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
+        ),
+        isAgency: Boolean(user.isAgent),
         name: displayName,
         displayName,
         avatarUrl: user.avatarUrl,
@@ -177,6 +181,10 @@ export const visitorService = {
         userId: user.id,
         username: user.username,
         publicId: String(user.publicId),
+        displayPublicId: String(
+          user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
+        ),
+        isAgency: Boolean(user.isAgent),
         name: displayName,
         displayName,
         avatarUrl: user.avatarUrl,

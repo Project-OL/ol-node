@@ -13,7 +13,41 @@ import { richTierService } from './rich-tier.service'
 import { vipMembershipService } from './vip-membership.service'
 import { prismaRead } from '../config/database'
 
+export type ResolvedPublicIdentity = {
+  userId: string
+  username: string
+  /** Base `users.public_id` (decimal string). */
+  publicId: string
+  /** Shown ID: rare/VIP overlay when set — same rule as `GET /users/me`. */
+  displayPublicId: string
+  isAgency: boolean
+}
+
 export const userSearchService = {
+  /**
+   * Resolve a user by **any** externally visible numeric id: `public_id`, `default_public_id`,
+   * or `current_vip_public_id` (`userRepository.findByPublicId`).
+   */
+  async resolvePublicIdentity(
+    publicId: string,
+  ): Promise<ResolvedPublicIdentity | null> {
+    const numericId = Number(publicId)
+    if (!Number.isInteger(numericId) || numericId <= 0) {
+      throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
+    }
+    const user = await userRepository.findByPublicId(numericId)
+    if (!user) return null
+    return {
+      userId: user.id,
+      username: user.username,
+      publicId: String(user.publicId),
+      displayPublicId: String(
+        user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
+      ),
+      isAgency: Boolean(user.isAgent),
+    }
+  },
+
   async searchByPublicId(
     publicId: string,
     requesterId: string,
@@ -91,6 +125,10 @@ export const userSearchService = {
     const displayName =
       fullName && fullName.trim().length > 0 ? fullName : user.username
 
+    const displayPublicId = String(
+      user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
+    )
+
     const age =
       user.dateOfBirth != null
         ? (() => {
@@ -110,6 +148,8 @@ export const userSearchService = {
       userId: user.id,
       username: user.username,
       publicId: String(user.publicId),
+      displayPublicId,
+      isAgency: Boolean(user.isAgent),
       name: displayName,
       displayName,
       avatarUrl: user.avatarUrl,

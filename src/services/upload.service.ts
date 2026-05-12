@@ -6,6 +6,14 @@ import { AppError } from '../middlewares/errorHandler'
 import { env } from '../config/env'
 import { storageService } from './storage.service'
 import type { GetUploadUrlsInput } from '../models/messaging.schemas'
+import {
+  AUDIO_ALLOWED_MIMES,
+  audioExtensionForMime,
+  extensionMatchesAudioMime,
+  isMimeAllowedForAudio,
+  MESSAGING_AUDIO_WAV_MAX_BYTES,
+  normalizeAudioMime,
+} from '../lib/message-audio.constants'
 
 const ALLOWED_CONTENT_TYPES: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -58,17 +66,21 @@ export const uploadService = {
     userId: string,
     input: GetUploadUrlsInput,
   ): Promise<
-    Array<{ s3Key: string; uploadUrl: string; mediaType: string; order: number }>
+    Array<{
+      s3Key: string
+      s3Bucket: string
+      publicUrl: string
+      uploadUrl: string
+      mediaType: string
+      order: number
+      expiresInSec: number
+    }>
   > {
+    if (!s3Bucket) {
+      throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
+    }
     const IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
     const VIDEO_MIME = ['video/mp4', 'video/quicktime', 'video/webm']
-    const AUDIO_MIME = [
-      'audio/mpeg',
-      'audio/ogg',
-      'audio/wav',
-      'audio/mp4',
-      'audio/aac',
-    ]
     const IMAGE_MAX_BYTES = 10 * 1024 * 1024 // 10MB
     const VIDEO_MAX_BYTES = 100 * 1024 * 1024 // 100MB
     const AUDIO_MAX_BYTES = 25 * 1024 * 1024 // 25MB
@@ -76,10 +88,14 @@ export const uploadService = {
     const byType = { IMAGE: 0, VIDEO: 0, AUDIO: 0, FILE: 0 }
     const result: Array<{
       s3Key: string
+      s3Bucket: string
+      publicUrl: string
       uploadUrl: string
       mediaType: string
       order: number
+      expiresInSec: number
     }> = []
+    const conversationId = input.conversationId
     for (let i = 0; i < input.files.length; i++) {
       const file = input.files[i]
       if (file.mediaType === 'IMAGE') {
@@ -144,20 +160,44 @@ export const uploadService = {
             { field: 'files' },
           )
         }
-        if (file.sizeBytes > AUDIO_MAX_BYTES) {
+        const nm = normalizeAudioMime(file.mimeType)
+        if (!isMimeAllowedForAudio(nm)) {
           throw new AppError(
             400,
-            'Audio max 25MB each',
+            `Audio mimeType must be one of: ${AUDIO_ALLOWED_MIMES.join(', ')}`,
             'INVALID_REQUEST',
             { field: 'files' },
           )
         }
-        if (!AUDIO_MIME.includes(file.mimeType)) {
+        const extFromName = (file.fileName.split('.').pop() ?? '').toLowerCase()
+        if (!extensionMatchesAudioMime(nm, extFromName)) {
           throw new AppError(
             400,
-            `Audio mimeType must be one of: ${AUDIO_MIME.join(', ')}`,
+            'Audio file extension does not match declared MIME type',
             'INVALID_REQUEST',
             { field: 'files' },
+          )
+        }
+        const maxAudio =
+          nm === 'audio/wav' || nm === 'audio/x-wav' || nm === 'audio/wave'
+            ? MESSAGING_AUDIO_WAV_MAX_BYTES
+            : AUDIO_MAX_BYTES
+        if (file.sizeBytes > maxAudio) {
+          throw new AppError(
+            400,
+            nm.startsWith('audio/wav')
+              ? `WAV audio max ${MESSAGING_AUDIO_WAV_MAX_BYTES} bytes`
+              : 'Audio max 25MB each',
+            'INVALID_REQUEST',
+            { field: 'files' },
+          )
+        }
+        if (!conversationId) {
+          throw new AppError(
+            400,
+            'conversationId is required for audio uploads',
+            'INVALID_REQUEST',
+            { field: 'conversationId' },
           )
         }
       } else {
@@ -179,21 +219,38 @@ export const uploadService = {
           )
         }
       }
-      const ext =
-        file.mimeType.split('/')[1] ||
-        file.fileName.split('.').pop() ||
-        'bin'
-      const s3Key = `messaging/${userId}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+      let s3Key: string
+      if (file.mediaType === 'AUDIO' && conversationId) {
+        const d = new Date()
+        const yyyy = String(d.getUTCFullYear())
+        const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+        const ext = audioExtensionForMime(file.mimeType)
+        s3Key = `messaging/audio/${conversationId}/${yyyy}/${mm}/${crypto.randomUUID()}.${ext}`
+      } else {
+        const ext =
+          file.mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') ||
+          file.fileName.split('.').pop() ||
+          'bin'
+        s3Key = `messaging/${userId}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+      }
+      const presignTtl = 300
       const uploadUrl = await storageService.getPresignedPutUrl(
         s3Key,
-        file.mimeType,
-        300,
+        file.mimeType.split(';')[0]!.trim(),
+        presignTtl,
+        file.mediaType === 'AUDIO'
+          ? { cacheControl: 'public, max-age=31536000, immutable' }
+          : undefined,
       )
+      const publicUrl = storageService.getCdnOrS3PublicUrl(s3Key)
       result.push({
         s3Key,
+        s3Bucket: s3Bucket,
+        publicUrl,
         uploadUrl,
         mediaType: file.mediaType,
         order: i,
+        expiresInSec: presignTtl,
       })
     }
     return result

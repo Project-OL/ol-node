@@ -135,6 +135,41 @@ export default async function usersRoutes(app: FastifyInstance) {
   )
 
   app.get<{ Params: { publicId: string } }>(
+    '/resolve/:publicId',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Resolve user identity by any visible numeric public id (base, default, or VIP overlay). Returns compact identity fields.',
+        params: {
+          type: 'object',
+          required: ['publicId'],
+          properties: { publicId: { type: 'string', minLength: 1 } },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: true,
+          },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { publicId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const resolved = await userSearchService.resolvePublicIdentity(
+        request.params.publicId,
+      )
+      if (!resolved) {
+        throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+      }
+      return reply.status(200).send(resolved)
+    },
+  )
+
+  app.get<{ Params: { publicId: string } }>(
     '/:publicId/subscription-stats',
     {
       preHandler: [authenticate],

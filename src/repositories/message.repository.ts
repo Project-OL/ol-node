@@ -1,5 +1,12 @@
-import type { Message, MessageReaction, MessageType, MediaType } from '@prisma/client'
-import { Prisma } from '@prisma/client'
+import {
+  Prisma,
+  MediaProcessingStatus,
+  MediaTranscriptionStatus,
+  type Message,
+  type MessageReaction,
+  type MessageType,
+  type MediaType,
+} from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import type { ServerFrame } from '../realtime/types'
@@ -16,6 +23,14 @@ export type MediaItemInput = {
   width?: number
   height?: number
   order: number
+  waveformJson?: Prisma.InputJsonValue
+  codec?: string
+  bitrate?: number
+  sampleRate?: number
+  channels?: number
+  processingStatus?: MediaProcessingStatus
+  transcriptionStatus?: MediaTranscriptionStatus
+  checksumSha256?: string
 }
 
 const senderSelect = {
@@ -46,6 +61,16 @@ export type MessageWithDetails = Message & {
     width: number | null
     height: number | null
     order: number
+    waveformJson: unknown
+    codec: string | null
+    bitrate: number | null
+    sampleRate: number | null
+    channels: number | null
+    processingStatus: MediaProcessingStatus
+    transcriptionStatus: MediaTranscriptionStatus
+    checksumSha256: string | null
+    streamingUrl: string
+    createdAt?: Date | null
   }>
   replyTo: {
     id: string
@@ -154,19 +179,32 @@ export async function sendMessageWithOutbox(
 
       if (data.mediaItems && data.mediaItems.length > 0) {
         await tx.messageMedia.createMany({
-          data: data.mediaItems.map((item) => ({
-            messageId: m.id,
-            mediaType: item.mediaType,
-            s3Key: item.s3Key,
-            s3Bucket: item.s3Bucket,
-            fileName: item.fileName,
-            mimeType: item.mimeType,
-            sizeBytes: item.sizeBytes,
-            durationSec: item.durationSec,
-            width: item.width,
-            height: item.height,
-            order: item.order,
-          })),
+          data: data.mediaItems.map((item) => {
+            const row: Prisma.MessageMediaCreateManyInput = {
+              messageId: m.id,
+              mediaType: item.mediaType,
+              s3Key: item.s3Key,
+              s3Bucket: item.s3Bucket,
+              fileName: item.fileName,
+              mimeType: item.mimeType,
+              sizeBytes: item.sizeBytes,
+              durationSec: item.durationSec,
+              width: item.width,
+              height: item.height,
+              order: item.order,
+              codec: item.codec,
+              bitrate: item.bitrate,
+              sampleRate: item.sampleRate,
+              channels: item.channels,
+              processingStatus: item.processingStatus ?? MediaProcessingStatus.NONE,
+              transcriptionStatus: item.transcriptionStatus ?? MediaTranscriptionStatus.NONE,
+              checksumSha256: item.checksumSha256,
+            }
+            if (item.waveformJson !== undefined) {
+              row.waveformJson = item.waveformJson as Prisma.InputJsonValue
+            }
+            return row
+          }),
         })
       }
 
@@ -231,6 +269,15 @@ function mapToMessageWithDetails(
       width: number | null
       height: number | null
       order: number
+      waveformJson: unknown
+      codec: string | null
+      bitrate: number | null
+      sampleRate: number | null
+      channels: number | null
+      processingStatus: MediaProcessingStatus
+      transcriptionStatus: MediaTranscriptionStatus
+      checksumSha256: string | null
+      createdAt: Date | null
     }>
     replyTo: {
       id: string
@@ -255,10 +302,14 @@ function mapToMessageWithDetails(
     count: v.count,
     reactedByMe: v.reactedByMe,
   }))
-  const mediaItemsWithUrl = msg.mediaItems.map((item) => ({
-    ...item,
-    mediaUrl: storageService.getCdnOrS3PublicUrl(item.s3Key),
-  }))
+  const mediaItemsWithUrl = msg.mediaItems.map((item) => {
+    const url = storageService.getCdnOrS3PublicUrl(item.s3Key)
+    return {
+      ...item,
+      mediaUrl: url,
+      streamingUrl: url,
+    }
+  })
   return {
     ...msg,
     sender: msg.sender,

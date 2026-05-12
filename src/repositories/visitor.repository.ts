@@ -3,7 +3,21 @@ import type { ProfileVisitor, User, UserLevel } from '@prisma/client'
 
 export interface VisitorRow {
   visit: ProfileVisitor
-  user: Pick<User, 'id' | 'publicId' | 'username' | 'firstName' | 'lastName' | 'avatarUrl' | 'country' | 'gender' | 'dateOfBirth'>
+  user: Pick<
+    User,
+    | 'id'
+    | 'publicId'
+    | 'defaultPublicId'
+    | 'currentVipPublicId'
+    | 'isAgent'
+    | 'username'
+    | 'firstName'
+    | 'lastName'
+    | 'avatarUrl'
+    | 'country'
+    | 'gender'
+    | 'dateOfBirth'
+  >
   level: UserLevel | null
 }
 
@@ -83,6 +97,9 @@ export const visitorRepository = {
           select: {
             id: true,
             publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            isAgent: true,
             username: true,
             firstName: true,
             lastName: true,
@@ -128,6 +145,9 @@ export const visitorRepository = {
           select: {
             id: true,
             publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            isAgent: true,
             username: true,
             firstName: true,
             lastName: true,

@@ -223,8 +223,9 @@ export const RedisKeys = {
   /** Agency: GET /users/me agency block cache bust target */
   agencyMe: (userId: string) => `agency:me:${userId}`,
   agencyByPublicId: (publicId: string) => `agency:pub:${publicId}`,
+  /** Bump segment (`v2`) when ranking item shape changes — avoids stale Redis payloads. */
   agencyRanking: (period: string, limit: number, cursor: string) =>
-    `agency:ranking:${period}:${limit}:${cursor}`,
+    `agency:ranking:v2:${period}:${limit}:${cursor}`,
   /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
   userLastActive: (userId: string) => `user:lastActive:${userId}`,
   ratelimitAgencyApply: (userId: string) =>

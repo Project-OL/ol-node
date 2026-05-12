@@ -9,6 +9,9 @@ interface FollowWithUser {
     User,
     | 'id'
     | 'publicId'
+    | 'defaultPublicId'
+    | 'currentVipPublicId'
+    | 'isAgent'
     | 'username'
     | 'firstName'
     | 'lastName'
@@ -93,6 +96,9 @@ export const followRepository = {
           select: {
             id: true,
             publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            isAgent: true,
             username: true,
             firstName: true,
             lastName: true,
@@ -162,6 +168,9 @@ export const followRepository = {
           select: {
             id: true,
             publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            isAgent: true,
             username: true,
             firstName: true,
             lastName: true,
@@ -237,6 +246,9 @@ export const followRepository = {
           select: {
             id: true,
             publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            isAgent: true,
             username: true,
             firstName: true,
             lastName: true,

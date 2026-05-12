@@ -31,7 +31,8 @@
         "wallet:enqueue-level-backfill": "tsx scripts/enqueue-level-backfill.ts",
         "backfill:vip-public-ids": "tsx scripts/backfill-vip-public-ids.ts",
         "typecheck": "tsc --noEmit",
-        "postman:auth": "node scripts/generate-auth-postman-collection.mjs"
+        "postman:auth": "node scripts/generate-auth-postman-collection.mjs",
+        "grant:trading-coins": "tsx scripts/grant-trading-coins.ts"
     },
     "dependencies": {
         "@aws-sdk/client-rekognition": "^3.1042.0",

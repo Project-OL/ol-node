@@ -8,6 +8,10 @@ export type UserCard = {
   userId: string
   username: string
   publicId: string
+  /** Visible ID with rare/VIP overlay — same rule as `GET /users/me`. */
+  displayPublicId: string
+  /** True when `users.is_agent` (owns an agency row). See **`agencyTag`** for host vs agent. */
+  isAgency: boolean
   name?: string
   displayName: string
   avatarUrl: string | null

@@ -63,6 +63,23 @@ export type ServerFrame =
       latestSeq: number
       hasGap: boolean
     }
+  | {
+      t: 'MESSAGE_MEDIA_UPDATE'
+      conversationId: string
+      messageId: string
+      mediaItemId: string
+      seq: number
+      processingStatus: string
+      transcriptionStatus: string
+      waveformJson?: unknown
+      durationSec?: number | null
+      codec?: string | null
+      bitrate?: number | null
+      sampleRate?: number | null
+      channels?: number | null
+      /** CDN/S3 URL for progressive playback (same key as at send time). */
+      streamingUrl: string
+    }
   | { t: 'PRESENCE'; userId: string; online: boolean }
   | { t: 'PONG'; ts: number }
   | { t: 'GOAWAY'; reason?: string }
