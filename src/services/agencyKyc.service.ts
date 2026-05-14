@@ -29,14 +29,6 @@ export const agencyKycService = {
   },
 
   async confirmGovtIdUpload(userId: string, s3Key: string) {
-    const bucket = s3Bucket?.trim();
-    if (!bucket) {
-      throw new AppError(
-        503,
-        "File storage is not configured",
-        "S3_NOT_CONFIGURED",
-      );
-    }
     const application = await agencyAgentApplicationRepository.findByUserId(userId);
     if (!application) {
       throw new AppError(
@@ -45,10 +37,38 @@ export const agencyKycService = {
         "APPLICATION_NOT_FOUND",
       );
     }
+    if (application.status === "APPROVED" || application.status === "REJECTED") {
+      throw new AppError(400, "Application is already resolved", "APPLICATION_RESOLVED");
+    }
+    const kyc = await agencyApplicationKycRepository.getKyc(userId);
+    const pendingKey = kyc?.govtIdS3Key?.trim();
+    if (!pendingKey) {
+      throw new AppError(
+        400,
+        "No pending government ID key. Call POST /agency/kyc/govt-id/upload-url first, upload the file, then confirm.",
+        "GOVT_ID_UPLOAD_URL_REQUIRED",
+      );
+    }
+    if (s3Key.trim() !== pendingKey) {
+      throw new AppError(
+        400,
+        "s3Key does not match the key from your last upload-url response.",
+        "GOVT_ID_KEY_MISMATCH",
+      );
+    }
+
+    const bucket = s3Bucket?.trim();
+    if (!bucket) {
+      throw new AppError(
+        503,
+        "File storage is not configured",
+        "S3_NOT_CONFIGURED",
+      );
+    }
     await agencyApplicationKycRepository.upsertKyc({
       userId,
       applicationId: application.id,
-      govtIdS3Key: s3Key,
+      govtIdS3Key: pendingKey,
       govtIdS3Bucket: bucket,
       govtIdSubmittedAt: new Date(),
     });

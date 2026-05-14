@@ -120,6 +120,8 @@ model User {
   questionnaireAttempts    UserQuestionnaireAttempt[]
   faceProfile              UserFaceProfile?
   faceVerificationAttempts FaceVerificationAttempt[]
+  userLivePhoto            UserLivePhoto?
+  livePhotoVerificationAttempts LivePhotoVerificationAttempt[]
 
   agency                    Agency?
   hostAgencyMembership      AgencyHost?
@@ -1065,6 +1067,17 @@ enum FaceVerificationDecision {
   RATE_LIMITED
 }
 
+// One-time verified live selfie (CompareFaces vs indexed face profile).
+enum LivePhotoVerificationState {
+  NOT_UPLOADED
+  PENDING_UPLOAD
+  PENDING_VERIFICATION
+  PROCESSING
+  VERIFIED
+  FAILED
+  REJECTED
+}
+
 model VipMembershipPurchase {
   id              String            @id @default(uuid()) @db.Uuid
   userId          String            @map("user_id") @db.Uuid
@@ -1908,6 +1921,7 @@ model UserFaceProfile {
   updatedAt          DateTime          @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  livePhotoLinks UserLivePhoto[]
 
   @@index([status])
   @@map("user_face_profiles")
@@ -1933,6 +1947,51 @@ model FaceVerificationAttempt {
   @@index([decision, createdAt(sort: Desc)])
   @@unique([userId, clientRequestId])
   @@map("face_verification_attempts")
+}
+
+model UserLivePhoto {
+  id                  String                     @id @default(uuid()) @db.Uuid
+  userId              String                     @unique @map("user_id") @db.Uuid
+  s3Key               String                     @map("s3_key") @db.Text
+  s3Bucket            String                     @map("s3_bucket") @db.VarChar(255)
+  imageUrl            String?                    @map("image_url") @db.Text
+  verificationState   LivePhotoVerificationState @map("verification_state")
+  similarityScore     Float?                     @map("similarity_score")
+  verifiedAt          DateTime?                  @map("verified_at")
+  failedReason        String?                    @map("failed_reason") @db.Text
+  faceProfileId       String?                    @map("face_profile_id") @db.Uuid
+  /// Incremented on each verify enqueue; worker ignores stale generations (latest upload wins).
+  verifyGeneration    Int                        @default(0) @map("verify_generation")
+  createdAt           DateTime                   @default(now()) @map("created_at")
+  updatedAt           DateTime                   @updatedAt @map("updated_at")
+
+  user        User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  faceProfile UserFaceProfile?             @relation(fields: [faceProfileId], references: [id], onDelete: SetNull)
+  attempts    LivePhotoVerificationAttempt[]
+
+  @@index([verificationState])
+  @@map("user_live_photos")
+}
+
+model LivePhotoVerificationAttempt {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  livePhotoId          String   @map("live_photo_id") @db.Uuid
+  similarityScore      Float?   @map("similarity_score")
+  matched              Boolean  @default(false)
+  rekognitionRequestId String?  @map("rekognition_request_id") @db.VarChar(128)
+  failureReason        String?  @map("failure_reason") @db.Text
+  metadata             Json?    @db.JsonB
+  processingLatencyMs  Int?     @map("processing_latency_ms")
+  rekognitionLatencyMs Int?     @map("rekognition_latency_ms")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  livePhoto UserLivePhoto @relation(fields: [livePhotoId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([livePhotoId, createdAt(sort: Desc)])
+  @@map("live_photo_verification_attempts")
 }
 
 model Questionnaire {

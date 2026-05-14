@@ -99,6 +99,12 @@ export interface MeResponseDto extends MeProfileCache {
     vipPreventBeingKicked: boolean
     vipLiveTranslationEnabled: boolean
   }
+  /** One-time verified live selfie (CompareFaces vs indexed face); async worker. */
+  livePhoto: {
+    verified: boolean
+    imageUrl: string | null
+    verifiedAt: string | null
+  }
 }
 
 export interface PatchMeResponseDto {

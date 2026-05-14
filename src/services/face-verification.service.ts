@@ -321,6 +321,17 @@ export const faceVerificationService = {
     const profile = await faceVerificationRepository.getProfileByUserId(userId)
     const status = profile?.status ?? 'REVOKED'
     const isDuplicate = String(status) === 'DUPLICATE_FACE'
+
+    let referenceImageUrl: string | null = null
+    const refKey = profile?.s3KeyReference?.trim()
+    if (refKey) {
+      try {
+        referenceImageUrl = storageService.getCdnOrS3PublicUrl(refKey)
+      } catch {
+        referenceImageUrl = null
+      }
+    }
+
     return {
       status,
       message: isDuplicate
@@ -331,6 +342,8 @@ export const faceVerificationService = {
       indexedAt: profile?.indexedAt?.toISOString() ?? null,
       lastVerifiedAt: profile?.lastVerifiedAt?.toISOString() ?? null,
       hasReference: Boolean(profile?.s3KeyReference),
+      /** Public URL for the registration image at `s3KeyReference` (same object Rekognition indexed from). */
+      referenceImageUrl,
     }
   },
 

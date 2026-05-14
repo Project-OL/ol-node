@@ -5,13 +5,19 @@ import { AppError } from "../../middlewares/errorHandler";
 import { agencyAgentApplicationService } from "../../services/agencyAgentApplication.service";
 import { agencyKycService } from "../../services/agencyKyc.service";
 
-/** Bucket comes from server `AWS_S3_BUCKET`; optional `s3Bucket` in body is ignored (legacy clients). */
-const confirmSchema = z.object({
-  s3Key: z.string().min(1),
-  s3Bucket: z.string().min(1).optional(),
-});
+/** Strict: only `s3Key`. Bucket is always server `AWS_S3_BUCKET` (never accepted from clients). */
+const confirmSchema = z
+  .object({
+    s3Key: z.string().min(1),
+  })
+  .strict();
+
 const contactSchema = z.object({ phone: z.string().min(3), email: z.string().email() });
-const uploadSchema = z.object({ mimeType: z.string().min(3).default("image/jpeg") });
+const uploadSchema = z
+  .object({
+    mimeType: z.string().min(3).default("image/jpeg"),
+  })
+  .strict();
 
 export default async function agencyKycRoutes(app: FastifyInstance) {
   app.post("/apply", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -34,16 +40,30 @@ export default async function agencyKycRoutes(app: FastifyInstance) {
   app.post("/govt-id/upload-url", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const userId = request.userId;
     if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-    const body = uploadSchema.parse(request.body ?? {});
-    const data = await agencyKycService.getPresignedGovtIdUrl(userId, body.mimeType);
+    const parsed = uploadSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(
+        400,
+        parsed.error.errors[0]?.message ?? "Invalid body",
+        "INVALID_REQUEST",
+      );
+    }
+    const data = await agencyKycService.getPresignedGovtIdUrl(userId, parsed.data.mimeType);
     return reply.send(data);
   });
 
   app.post("/govt-id/confirm", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const userId = request.userId;
     if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-    const body = confirmSchema.parse(request.body ?? {});
-    await agencyKycService.confirmGovtIdUpload(userId, body.s3Key);
+    const parsed = confirmSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      throw new AppError(
+        400,
+        parsed.error.errors[0]?.message ?? "Invalid body",
+        "INVALID_REQUEST",
+      );
+    }
+    await agencyKycService.confirmGovtIdUpload(userId, parsed.data.s3Key);
     return reply.send({ ok: true });
   });
 

@@ -48,6 +48,18 @@ const envSchema = z
     FACE_INDEX_POLL_MS: z.coerce.number().int().positive().default(2000),
     /** Max `PENDING_INDEX` rows processed per poll cycle (capped at 50 in job). */
     FACE_INDEX_BATCH: z.coerce.number().int().positive().default(5),
+
+    LIVE_PHOTO_MATCH_THRESHOLD: z.coerce.number().min(50).max(100).default(95),
+    LIVE_PHOTO_MIN_FACE_AREA: z.coerce.number().min(0.0001).max(1).default(0.004),
+    LIVE_PHOTO_UPLOAD_URL_EXPIRES_SEC: z.coerce.number().int().positive().default(900),
+    LIVE_PHOTO_MAX_SIZE_BYTES: z.coerce.number().int().positive().default(7_340_032),
+    LIVE_PHOTO_UPLOAD_URL_RATE_PER_HOUR: z.coerce.number().int().positive().default(30),
+    LIVE_PHOTO_VERIFY_RATE_PER_HOUR: z.coerce.number().int().positive().default(20),
+    LIVE_PHOTO_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(8),
+    LIVE_PHOTO_PROFILE_CACHE_TTL_SEC: z.coerce.number().int().positive().default(45),
+    LIVE_PHOTO_VERIFY_STATUS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(30),
+    LIVE_PHOTO_VERIFY_LOCK_TTL_SEC: z.coerce.number().int().positive().default(180),
+
     /** If set (non-empty), avatar URLs use https://{domain}/{key}; else S3 virtual-hosted URL. */
     CLOUDFRONT_DOMAIN: z.string().optional(),
     MAX_AVATAR_SIZE_BYTES: z.coerce.number().default(5_242_880),

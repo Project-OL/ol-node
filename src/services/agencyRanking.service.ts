@@ -22,6 +22,8 @@ export type AgencyRankingItem = {
   wealthLevel: number;
   livestreamLevel: number;
   agencyContactNumber: string | null;
+  /** Agency owner `users.avatar_url` (CDN URL or null). */
+  avatarUrl: string | null;
   displayName: string;
   totalHostsCount: number;
   lifetimeHostEarningsPoints: string;
@@ -110,6 +112,7 @@ export const agencyRankingService = {
             currentVipPublicId: true,
             gender: true,
             dateOfBirth: true,
+            avatarUrl: true,
           },
         }),
         prismaRead.agencyApplicationKyc.findMany({
@@ -139,6 +142,7 @@ export const agencyRankingService = {
           wealthLevel: lv?.wealthLevel ?? 0,
           livestreamLevel: lv?.livestreamLevel ?? 0,
           agencyContactNumber: phoneByUserId.get(r.userId) ?? null,
+          avatarUrl: u?.avatarUrl ?? null,
           displayName: r.displayName,
           totalHostsCount: r.totalHostsCount,
           lifetimeHostEarningsPoints: r.lifetimeHostEarningsPoints.toString(),

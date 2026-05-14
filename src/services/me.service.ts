@@ -33,6 +33,7 @@ import { storeService } from './store.service'
 import { richTierService } from './rich-tier.service'
 import { vipMembershipService } from './vip-membership.service'
 import { agencyService } from './agency.service'
+import { livePhotoService } from './livePhoto.service'
 
 const displayNameSchema = z
   .string()
@@ -107,6 +108,7 @@ function buildMeResponse(
       ReturnType<typeof vipMembershipService.buildMeVipMembershipBlock>
     >
     agency: Awaited<ReturnType<typeof agencyService.buildMeAgencyBlock>>
+    livePhoto: Awaited<ReturnType<typeof livePhotoService.buildMeLivePhotoBlock>>
   },
 ): MeResponseDto {
   return {
@@ -118,6 +120,7 @@ function buildMeResponse(
     activeStoreItems: extras.activeStoreItems,
     richTier: extras.richTier,
     agency: extras.agency,
+    livePhoto: extras.livePhoto,
     vipMembership: extras.vipMembership,
     canChangeUsername: BigInt(walletData.coinsBalance) >= USERNAME_CHANGE_COIN_COST,
     usernameNextChangeAt: null,
@@ -211,6 +214,7 @@ export const meService = {
       richTier,
       vipMembership,
       agency,
+      livePhoto,
       activeVipRaw,
     ] = await Promise.all([
       giftGalleryService.getCompletionSummaryForUser(userId),
@@ -222,6 +226,7 @@ export const meService = {
       }),
       vipMembershipService.buildMeVipMembershipBlock(userId),
       agencyService.buildMeAgencyBlock(userId),
+      livePhotoService.buildMeLivePhotoBlock(userId),
       redisClient.get(RedisKeys.userActiveVipId(userId)).catch(() => null),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
@@ -231,6 +236,7 @@ export const meService = {
       richTier,
       vipMembership,
       agency,
+      livePhoto,
     })
     if (activeVipRaw) {
       // Prefer live equipped rare-ID marker over cached profile displayPublicId.
@@ -384,6 +390,7 @@ export const meService = {
       richTier,
       vipMembership,
       agency,
+      livePhoto,
     ] = await Promise.all([
       giftGalleryService.getCompletionSummaryForUser(userId),
       superHostService.isSuperHost(userId),
@@ -394,6 +401,7 @@ export const meService = {
       }),
       vipMembershipService.buildMeVipMembershipBlock(userId),
       agencyService.buildMeAgencyBlock(userId),
+      livePhotoService.buildMeLivePhotoBlock(userId),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
       isSuperHost,
@@ -402,6 +410,7 @@ export const meService = {
       richTier,
       vipMembership,
       agency,
+      livePhoto,
     })
 
     const displayName = displayNameFromUser(fresh)

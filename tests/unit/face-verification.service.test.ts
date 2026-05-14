@@ -36,10 +36,12 @@ vi.mock('../../src/config/redis', () => ({
 }))
 
 const getObjectBuffer = vi.fn()
+const getCdnOrS3PublicUrl = vi.fn((key: string) => `https://cdn.example/${key}`)
 vi.mock('../../src/services/storage.service', () => ({
   storageService: {
     getObjectBuffer,
     getPresignedPutUrl: vi.fn(),
+    getCdnOrS3PublicUrl,
   },
 }))
 
@@ -72,6 +74,7 @@ vi.mock('../../src/repositories/faceVerification.repository', () => ({
 describe('faceVerificationService', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    getCdnOrS3PublicUrl.mockImplementation((key: string) => `https://cdn.example/${key}`)
     redisEval.mockResolvedValue(1)
     redisNx.mockResolvedValue('OK')
     redisSet.mockImplementation((key: string) => {
@@ -138,6 +141,32 @@ describe('faceVerificationService', () => {
       {},
     )
     expect(result.decision).toBe('FAIL')
+  })
+
+  it('getMyFaceProfile includes referenceImageUrl from registration s3 key', async () => {
+    const { faceVerificationService } = await import('../../src/services/face-verification.service')
+    repo.getProfileByUserId.mockResolvedValue({
+      id: 'p1',
+      userId: 'u1',
+      status: 'INDEXED',
+      rekognitionFaceId: 'f1',
+      s3KeyReference: 'face/register/u1/abc.jpg',
+      indexedAt: new Date('2026-01-01T00:00:00.000Z'),
+      lastVerifiedAt: null,
+    })
+    const res = await faceVerificationService.getMyFaceProfile('u1')
+    expect(res.referenceImageUrl).toBe('https://cdn.example/face/register/u1/abc.jpg')
+    expect(res.hasReference).toBe(true)
+    expect(res.status).toBe('INDEXED')
+  })
+
+  it('getMyFaceProfile returns null referenceImageUrl when no profile', async () => {
+    const { faceVerificationService } = await import('../../src/services/face-verification.service')
+    repo.getProfileByUserId.mockResolvedValue(null)
+    const res = await faceVerificationService.getMyFaceProfile('u1')
+    expect(res.referenceImageUrl).toBeNull()
+    expect(res.status).toBe('REVOKED')
+    expect(res.hasReference).toBe(false)
   })
 })
 

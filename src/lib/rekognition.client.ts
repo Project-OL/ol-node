@@ -1,4 +1,5 @@
 import {
+  CompareFacesCommand,
   CreateCollectionCommand,
   DeleteFacesCommand,
   DetectFacesCommand,
@@ -146,6 +147,24 @@ export async function searchFaceInCollection(params: {
     }
     throw error
   }
+}
+
+export async function compareFacesIndexedToLive(params: {
+  sourceImageBytes: Uint8Array
+  targetImageBytes: Uint8Array
+  similarityThreshold: number
+  timeoutMs?: number
+}) {
+  return withTimeout(params.timeoutMs ?? env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+    rekognitionClient.send(
+      new CompareFacesCommand({
+        SourceImage: { Bytes: params.sourceImageBytes },
+        TargetImage: { Bytes: params.targetImageBytes },
+        SimilarityThreshold: params.similarityThreshold,
+      }),
+      { abortSignal },
+    ),
+  )
 }
 
 export async function deleteFaceFromCollection(faceId: string) {

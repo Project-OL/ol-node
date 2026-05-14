@@ -52,6 +52,7 @@ import agencyAdminRoutes from "./routes/v1/agency-admin.routes";
 import questionnaireRoutes from "./routes/v1/questionnaire.routes";
 import questionnaireAdminRoutes from "./routes/v1/questionnaire-admin.routes";
 import faceVerificationRoutes from "./routes/v1/face-verification.routes";
+import livePhotoRoutes from "./routes/v1/live-photo.routes";
 import agencyKycRoutes from "./routes/v1/agency-kyc.routes";
 import coinTradingRoutes from "./routes/v1/coin-trading.routes";
 import { paymentMethodRoutes } from "./routes/v1/payment-method.routes";
@@ -185,6 +186,7 @@ export async function buildApp() {
   await app.register(webhooksRoutes, { prefix: `${prefix}/webhooks` });
   await app.register(questionnaireRoutes, { prefix: `${prefix}/questionnaires` });
   await app.register(faceVerificationRoutes, { prefix: `${prefix}/face-verification` });
+  await app.register(livePhotoRoutes, { prefix: `${prefix}/live-photo` });
   await app.register(agencyAdminRoutes, { prefix: `${prefix}/admin/agency` });
   await app.register(questionnaireAdminRoutes, { prefix: `${prefix}/admin/questionnaires` });
 

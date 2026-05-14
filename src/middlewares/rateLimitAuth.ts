@@ -623,6 +623,20 @@ export const rateLimitFaceVerify = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.faceVerifyRateLimitUser(userId),
 })
 
+export const rateLimitLivePhotoUploadUrl = buildRateLimit({
+  max: env.LIVE_PHOTO_UPLOAD_URL_RATE_PER_HOUR,
+  windowMs: 3_600_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.ratelimitLivePhotoUploadUrl(userId),
+});
+
+export const rateLimitLivePhotoVerify = buildRateLimit({
+  max: env.LIVE_PHOTO_VERIFY_RATE_PER_HOUR,
+  windowMs: 3_600_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.ratelimitLivePhotoVerify(userId),
+});
+
 export const socialRateLimits = {
   follow: createSocialRateLimit({
     endpoint: "social.follow",

@@ -223,9 +223,9 @@ export const RedisKeys = {
   /** Agency: GET /users/me agency block cache bust target */
   agencyMe: (userId: string) => `agency:me:${userId}`,
   agencyByPublicId: (publicId: string) => `agency:pub:${publicId}`,
-  /** Bump segment (`v2`) when ranking item shape changes — avoids stale Redis payloads. */
+  /** Bump segment (`v3`) when ranking item shape changes — avoids stale Redis payloads. */
   agencyRanking: (period: string, limit: number, cursor: string) =>
-    `agency:ranking:v2:${period}:${limit}:${cursor}`,
+    `agency:ranking:v3:${period}:${limit}:${cursor}`,
   /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
   userLastActive: (userId: string) => `user:lastActive:${userId}`,
   ratelimitAgencyApply: (userId: string) =>
@@ -266,6 +266,14 @@ export const RedisKeys = {
   faceVerifyIdem: (userId: string, clientRequestId: string) =>
     `face:verify:idem:${userId}:${clientRequestId}`,
   faceVerifyLastPass: (userId: string) => `face:verify:lastpass:${userId}`,
+  /** Live photo GET /me cache (cache-aside JSON). */
+  livePhotoProfile: (userId: string) => `live-photo:profile:${userId}`,
+  /** Distributed lock during CompareFaces worker segment. */
+  livePhotoVerifyLock: (userId: string) => `live-photo:lock:${userId}`,
+  /** Short-lived processing hint for status pollers. */
+  livePhotoVerifyStatus: (userId: string) => `live-photo:verify-status:${userId}`,
+  ratelimitLivePhotoUploadUrl: (userId: string) => `ratelimit:live-photo:upload-url:${userId}`,
+  ratelimitLivePhotoVerify: (userId: string) => `ratelimit:live-photo:verify:${userId}`,
   /** Phase 3b payroll / withdrawal */
   payrollConfig: () => "payroll:config",
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
