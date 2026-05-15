@@ -9,8 +9,10 @@ import { storageService } from "./storage.service";
 import { faceVerificationRepository } from "../repositories/faceVerification.repository";
 import { livePhotoRepository } from "../repositories/livePhoto.repository";
 import {
+  buildLivePhotoVerifyJobId,
   enqueueLivePhotoS3Purge,
   enqueueLivePhotoVerification,
+  livePhotoVerifyQueue,
 } from "../queues/live-photo.queue";
 import { rootLogger } from "../utils/rootLogger";
 import { bustLivePhotoCaches } from "./live-photo/live-photo-cache";
@@ -30,6 +32,8 @@ export type LivePhotoMeStatusDto = {
   verifiedAt: string | null;
   imageUrl: string | null;
   similarityScore: number | null;
+  /** Set when `verificationState` is `FAILED` or `REJECTED` — worker / server failure code (e.g. `invalid_image_format`). */
+  errorReason: string | null;
 };
 
 function validateOwnedLivePhotoKey(userId: string, s3Key: string): void {
@@ -57,6 +61,7 @@ function rowToMeDto(row: Awaited<ReturnType<typeof livePhotoRepository.findByUse
       verifiedAt: null,
       imageUrl: null,
       similarityScore: null,
+      errorReason: null,
     };
   }
   const hasKey = row.s3Key.trim().length > 0;
@@ -71,6 +76,8 @@ function rowToMeDto(row: Awaited<ReturnType<typeof livePhotoRepository.findByUse
       row.imageUrl?.trim() ||
       (hasKey ? safePublicUrl(row.s3Key) : null);
   }
+  const showErrorReason =
+    row.verificationState === "FAILED" || row.verificationState === "REJECTED";
   return {
     hasLivePhoto,
     verificationState: row.verificationState,
@@ -80,6 +87,7 @@ function rowToMeDto(row: Awaited<ReturnType<typeof livePhotoRepository.findByUse
       row.verificationState === "VERIFIED" && row.similarityScore != null
         ? Math.round(row.similarityScore * 100) / 100
         : null,
+    errorReason: showErrorReason ? (row.failedReason?.trim() || null) : null,
   };
 }
 
@@ -95,10 +103,27 @@ export const livePhotoService = {
   async getMeStatus(userId: string): Promise<LivePhotoMeStatusDto> {
     const cacheKey = RedisKeys.livePhotoProfile(userId);
     const cached = await cacheRedisService.get<LivePhotoMeStatusDto>(cacheKey);
-    if (cached) return cached;
+    if (
+      cached &&
+      cached.verificationState !== LivePhotoVerificationState.PROCESSING &&
+      cached.verificationState !== LivePhotoVerificationState.PENDING_VERIFICATION
+    ) {
+      const staleFailurePayload =
+        (cached.verificationState === LivePhotoVerificationState.FAILED ||
+          cached.verificationState === LivePhotoVerificationState.REJECTED) &&
+        !("errorReason" in cached);
+      if (!staleFailurePayload) {
+        return { ...cached, errorReason: cached.errorReason ?? null };
+      }
+    }
     const row = await livePhotoRepository.findByUserId(userId);
     const dto = rowToMeDto(row);
-    await cacheRedisService.set(cacheKey, dto, env.LIVE_PHOTO_PROFILE_CACHE_TTL_SEC);
+    const inFlight =
+      dto.verificationState === LivePhotoVerificationState.PROCESSING ||
+      dto.verificationState === LivePhotoVerificationState.PENDING_VERIFICATION;
+    if (!inFlight) {
+      await cacheRedisService.set(cacheKey, dto, env.LIVE_PHOTO_PROFILE_CACHE_TTL_SEC);
+    }
     return dto;
   },
 
@@ -192,6 +217,36 @@ export const livePhotoService = {
     }
 
     if (row.verificationState === "PROCESSING" && row.s3Key === s3Key) {
+      const jobId = buildLivePhotoVerifyJobId({
+        userId,
+        s3Key,
+        generation: row.verifyGeneration,
+      });
+      const existing = await livePhotoVerifyQueue.getJob(jobId);
+      let shouldEnqueue = false;
+      if (!existing) {
+        shouldEnqueue = true;
+      } else {
+        const state = await existing.getState();
+        if (state === "waiting" || state === "active" || state === "delayed") {
+          shouldEnqueue = false;
+        } else if (state === "completed" || state === "failed") {
+          await existing.remove().catch(() => undefined);
+          shouldEnqueue = true;
+        }
+      }
+      if (shouldEnqueue) {
+        await enqueueLivePhotoVerification({
+          userId,
+          s3Key,
+          generation: row.verifyGeneration,
+          requestId,
+        });
+        log.info(
+          { userId, generation: row.verifyGeneration, requestId, jobId },
+          "live_photo_verify_re_enqueued_while_processing",
+        );
+      }
       await redisClient.set(
         RedisKeys.livePhotoVerifyStatus(userId),
         JSON.stringify({ state: "PROCESSING", at: Date.now() }),

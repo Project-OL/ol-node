@@ -23,7 +23,7 @@ export default async function agencyKycRoutes(app: FastifyInstance) {
   app.post("/apply", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const userId = request.userId;
     if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-    const result = await agencyAgentApplicationService.applyOrGet(userId);
+    const result = await agencyKycService.applyForAgency(userId);
     return reply.status(result.created ? 201 : 200).send({
       created: result.created,
       application: result.application,

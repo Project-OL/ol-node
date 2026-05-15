@@ -16,6 +16,8 @@ export const faceVerificationRepository = {
       collectionId: string
       s3KeyReference: string
       qualityScore?: number | null
+      /** Set when registration used Amazon Face Liveness (GetFaceLivenessSessionResults confidence). */
+      livenessConfidence?: number | null
     },
     tx?: Prisma.TransactionClient,
   ) {
@@ -26,6 +28,7 @@ export const faceVerificationRepository = {
         collectionId: input.collectionId,
         s3KeyReference: input.s3KeyReference,
         imageQualityScore: input.qualityScore ?? null,
+        livenessConfidence: input.livenessConfidence ?? null,
         status: 'PENDING_INDEX',
         rekognitionFaceId: null,
         failureReason: null,
@@ -37,6 +40,7 @@ export const faceVerificationRepository = {
         collectionId: input.collectionId,
         s3KeyReference: input.s3KeyReference,
         imageQualityScore: input.qualityScore ?? null,
+        livenessConfidence: input.livenessConfidence ?? null,
         status: 'PENDING_INDEX',
       },
     })

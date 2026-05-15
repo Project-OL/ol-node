@@ -9,6 +9,8 @@ vi.mock('../../src/config/env', () => ({
     FACE_MATCH_THRESHOLD_REJECT: 70,
     FACE_MIN_DETECT_CONFIDENCE: 98,
     FACE_LIVENESS_REQUIRED: false,
+    LOG_LEVEL: 'silent',
+    NODE_ENV: 'test',
   },
 }))
 
@@ -69,6 +71,12 @@ const repo = {
 }
 vi.mock('../../src/repositories/faceVerification.repository', () => ({
   faceVerificationRepository: repo,
+}))
+
+vi.mock('../../src/repositories/agencyApplicationKyc.repository', () => ({
+  agencyApplicationKycRepository: {
+    setFaceVerified: vi.fn().mockResolvedValue(undefined),
+  },
 }))
 
 describe('faceVerificationService', () => {

@@ -1,8 +1,10 @@
 import {
   CompareFacesCommand,
   CreateCollectionCommand,
+  CreateFaceLivenessSessionCommand,
   DeleteFacesCommand,
   DetectFacesCommand,
+  GetFaceLivenessSessionResultsCommand,
   IndexFacesCommand,
   QualityFilter,
   RekognitionClient,
@@ -47,6 +49,18 @@ async function withTimeout<T>(timeoutMs: number, run: (abortSignal: AbortSignal)
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Rekognition rejected image bytes — AWS SDK v3 error shapes vary (`name`, `Code`, `__type`, message). */
+export function isRekognitionInvalidImageFormatError(err: unknown): boolean {
+  if (err == null || typeof err !== 'object') return false
+  const e = err as Record<string, unknown>
+  if (String(e.name ?? '') === 'InvalidImageFormatException') return true
+  const code = e.Code ?? e.code
+  if (code === 'InvalidImageFormatException') return true
+  if (String(e.__type ?? '').includes('InvalidImageFormatException')) return true
+  if (/invalid image format/i.test(String(e.message ?? ''))) return true
+  return false
 }
 
 export async function ensureCollectionExists(): Promise<void> {
@@ -174,6 +188,44 @@ export async function deleteFaceFromCollection(faceId: string) {
         CollectionId: env.REKOGNITION_COLLECTION_ID,
         FaceIds: [faceId],
       }),
+      { abortSignal },
+    ),
+  )
+}
+
+export async function createFaceLivenessSession(params: {
+  clientRequestToken: string
+  auditImagesLimit?: number
+  outputBucket?: string
+  outputPrefix?: string
+}) {
+  const timeoutMs = Math.max(env.FACE_VERIFY_TIMEOUT_MS, 15_000)
+  return withTimeout(timeoutMs, async (abortSignal) =>
+    rekognitionClient.send(
+      new CreateFaceLivenessSessionCommand({
+        ClientRequestToken: params.clientRequestToken,
+        Settings: {
+          AuditImagesLimit: params.auditImagesLimit ?? env.FACE_LIVENESS_AUDIT_IMAGES_LIMIT,
+          ...(params.outputBucket
+            ? {
+                OutputConfig: {
+                  S3Bucket: params.outputBucket,
+                  S3KeyPrefix: params.outputPrefix ?? `${env.FACE_LIVENESS_S3_OUTPUT_PREFIX}/`,
+                },
+              }
+            : {}),
+        },
+      }),
+      { abortSignal },
+    ),
+  )
+}
+
+export async function getFaceLivenessSessionResults(sessionId: string) {
+  const timeoutMs = Math.max(env.FACE_VERIFY_TIMEOUT_MS, 15_000)
+  return withTimeout(timeoutMs, async (abortSignal) =>
+    rekognitionClient.send(
+      new GetFaceLivenessSessionResultsCommand({ SessionId: sessionId }),
       { abortSignal },
     ),
   )

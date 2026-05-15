@@ -96,3 +96,12 @@ export async function publishServerFrameToConversation(
   )
   await redisClient.publish(channel, payload)
 }
+
+/** Fan-out to sockets subscribed on `msg:user:{userId}` (same path as MESSAGE_DIGEST). */
+export async function publishServerFrameToUser(userId: string, frame: ServerFrame): Promise<void> {
+  const channel = RedisKeys.userInboxChannel(userId)
+  const payload = JSON.stringify(frame, (_key, value) =>
+    typeof value === 'bigint' ? value.toString() : value,
+  )
+  await redisClient.publish(channel, payload)
+}

@@ -12,8 +12,8 @@ import {
   searchFaceInCollection,
 } from '../lib/rekognition.client'
 import { auditService } from './audit.service'
-import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
+import { faceRegistrationService } from './faceRegistration.service'
 
 const RATE_LIMIT_LUA = `
 local current = redis.call("INCR", KEYS[1])
@@ -294,16 +294,9 @@ export const faceVerificationService = {
         userAgent: toHeaderString(ctx.headers?.['user-agent']),
       })
       try {
-        const agencyApp = await agencyAgentApplicationRepository.findByUserId(userId)
-        if (
-          agencyApp &&
-          agencyApp.status !== 'APPROVED' &&
-          agencyApp.status !== 'REJECTED'
-        ) {
-          await agencyApplicationKycRepository.setFaceVerified(userId, true)
-        }
+        await agencyApplicationKycRepository.setFaceVerified(userId, true)
       } catch {
-        /* non-fatal — KYC row may not exist yet */
+        /* non-fatal — KYC upsert edge cases */
       }
     }
 
@@ -367,8 +360,13 @@ export const faceVerificationService = {
 
   async createLivenessSession(userId: string) {
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
-    // TODO(prod-launch): require liveness in prod
-    return { sessionId: `stub-${userId}-${randomUUID()}`, region: env.AWS_REGION, expiresAtIso: expiresAt.toISOString() }
+    return {
+      sessionId: `stub-${userId}-${randomUUID()}`,
+      region: env.AWS_REGION,
+      expiresAtIso: expiresAt.toISOString(),
+      message:
+        'Legacy stub. Use POST /api/v1/face-registration/session for Amazon Face Liveness (see docs/flow-md/face-registration-liveness-flow.md).',
+    }
   },
 
   async processIndexingJob(payload: { userId: string; faceProfileId: string; s3Key: string }) {
@@ -425,6 +423,9 @@ export const faceVerificationService = {
         userId: payload.userId,
         actionType: 'face_profile_indexed',
         actionStatus: 'success',
+      })
+      await faceRegistrationService.onFaceProfileIndexed(payload.userId).catch(() => {
+        /* non-fatal: registration session may not exist */
       })
     } catch (error) {
       if ((error as { name?: string }).name === 'AbortError') {

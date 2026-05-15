@@ -49,6 +49,26 @@ const envSchema = z
     /** Max `PENDING_INDEX` rows processed per poll cycle (capped at 50 in job). */
     FACE_INDEX_BATCH: z.coerce.number().int().positive().default(5),
 
+    /** Face Liveness + registration session TTL (minutes). */
+    FACE_REGISTRATION_SESSION_TTL_MIN: z.coerce.number().int().positive().default(15),
+    /** Minimum Rekognition Face Liveness confidence (0–100) before accepting reference image. */
+    FACE_LIVENESS_CONFIDENCE_MIN: z.coerce.number().min(0).max(100).default(90),
+    /** Risk score above this tightens liveness threshold by `FACE_LIVENESS_RISK_CONFIDENCE_DELTA`. */
+    FACE_REGISTRATION_RISK_SCORE_STRICT: z.coerce.number().min(0).max(100).default(40),
+    FACE_LIVENESS_RISK_CONFIDENCE_DELTA: z.coerce.number().min(0).max(30).default(5),
+    FACE_REGISTRATION_RATE_SESSION_PER_HOUR: z.coerce.number().int().positive().default(10),
+    FACE_REGISTRATION_RATE_VERIFY_PER_HOUR: z.coerce.number().int().positive().default(20),
+    FACE_REGISTRATION_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+    /** When true, `POST …/verify` requires supplemental video uploaded first. */
+    FACE_REGISTRATION_SUPPLEMENTAL_VIDEO_REQUIRED: z.coerce.boolean().default(false),
+    FACE_REGISTRATION_VIDEO_MAX_BYTES: z.coerce.number().int().positive().default(40_000_000),
+    FACE_REGISTRATION_VIDEO_MIN_SEC: z.coerce.number().positive().default(3),
+    FACE_REGISTRATION_VIDEO_MAX_SEC: z.coerce.number().positive().default(8),
+    /** Audit images returned by GetFaceLivenessSessionResults (0–4). */
+    FACE_LIVENESS_AUDIT_IMAGES_LIMIT: z.coerce.number().int().min(0).max(4).default(2),
+    /** S3 prefix for Rekognition Face Liveness OutputConfig (reference + audit images). */
+    FACE_LIVENESS_S3_OUTPUT_PREFIX: z.string().default('face-liveness'),
+
     LIVE_PHOTO_MATCH_THRESHOLD: z.coerce.number().min(50).max(100).default(95),
     LIVE_PHOTO_MIN_FACE_AREA: z.coerce.number().min(0.0001).max(1).default(0.004),
     LIVE_PHOTO_UPLOAD_URL_EXPIRES_SEC: z.coerce.number().int().positive().default(900),

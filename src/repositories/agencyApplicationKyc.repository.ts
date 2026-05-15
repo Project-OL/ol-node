@@ -1,9 +1,10 @@
+import type { AgencyApplicationKyc } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
 
 type UpsertKycInput = {
   userId: string;
-  applicationId: string;
+  applicationId?: string | null;
   govtIdS3Key?: string;
   govtIdS3Bucket?: string;
   govtIdSubmittedAt?: Date;
@@ -13,11 +14,14 @@ type UpsertKycInput = {
   faceVerified?: boolean;
 };
 
-function buildKycPayload(data: UpsertKycInput): Prisma.AgencyApplicationKycUncheckedCreateInput {
-  const row: Prisma.AgencyApplicationKycUncheckedCreateInput = {
-    userId: data.userId,
-    applicationId: data.applicationId,
+/** Relational `create` shape — Prisma `upsert` requires `user: { connect }` here (unchecked `userId`-only create fails validation). */
+function buildKycCreate(data: UpsertKycInput): Prisma.AgencyApplicationKycCreateInput {
+  const row: Prisma.AgencyApplicationKycCreateInput = {
+    user: { connect: { id: data.userId } },
   };
+  if (data.applicationId != null && data.applicationId !== "") {
+    row.application = { connect: { id: data.applicationId } };
+  }
   if (data.govtIdS3Key !== undefined) row.govtIdS3Key = data.govtIdS3Key;
   if (data.govtIdS3Bucket !== undefined) row.govtIdS3Bucket = data.govtIdS3Bucket;
   if (data.govtIdSubmittedAt !== undefined) row.govtIdSubmittedAt = data.govtIdSubmittedAt;
@@ -31,7 +35,7 @@ function buildKycPayload(data: UpsertKycInput): Prisma.AgencyApplicationKycUnche
 export const agencyApplicationKycRepository = {
   async upsertKyc(data: UpsertKycInput, tx?: Prisma.TransactionClient) {
     const client = tx ?? prisma;
-    const create = buildKycPayload(data);
+    const create = buildKycCreate(data);
     const update: Prisma.AgencyApplicationKycUncheckedUpdateInput = {};
     if (data.applicationId !== undefined) update.applicationId = data.applicationId;
     if (data.govtIdS3Key !== undefined) update.govtIdS3Key = data.govtIdS3Key;
@@ -48,8 +52,29 @@ export const agencyApplicationKycRepository = {
     });
   },
 
-  async getKyc(userId: string) {
+  /** Upsert KYC fields without changing `applicationId` unless explicitly passed. */
+  async upsertKycDetails(
+    userId: string,
+    data: Omit<UpsertKycInput, "userId">,
+    tx?: Prisma.TransactionClient,
+  ) {
+    return agencyApplicationKycRepository.upsertKyc({ userId, ...data }, tx);
+  },
+
+  async linkApplicationToKyc(userId: string, applicationId: string, tx?: Prisma.TransactionClient) {
+    const client = tx ?? prisma;
+    await client.agencyApplicationKyc.update({
+      where: { userId },
+      data: { applicationId },
+    });
+  },
+
+  async getKycByUserId(userId: string): Promise<AgencyApplicationKyc | null> {
     return prismaRead.agencyApplicationKyc.findUnique({ where: { userId } });
+  },
+
+  async getKyc(userId: string) {
+    return agencyApplicationKycRepository.getKycByUserId(userId);
   },
 
   async getKycForAdminReview(userId: string) {
@@ -64,9 +89,13 @@ export const agencyApplicationKycRepository = {
   },
 
   async setFaceVerified(userId: string, verified: boolean) {
-    return prisma.agencyApplicationKyc.update({
+    return prisma.agencyApplicationKyc.upsert({
       where: { userId },
-      data: { faceVerified: verified },
+      create: {
+        user: { connect: { id: userId } },
+        faceVerified: verified,
+      },
+      update: { faceVerified: verified },
     });
   },
 };

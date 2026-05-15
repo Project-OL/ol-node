@@ -274,6 +274,15 @@ export const RedisKeys = {
   livePhotoVerifyStatus: (userId: string) => `live-photo:verify-status:${userId}`,
   ratelimitLivePhotoUploadUrl: (userId: string) => `ratelimit:live-photo:upload-url:${userId}`,
   ratelimitLivePhotoVerify: (userId: string) => `ratelimit:live-photo:verify:${userId}`,
+  faceRegistrationSessionRate: (userId: string) =>
+    `ratelimit:face-registration:session:${userId}`,
+  faceRegistrationVerifyRate: (userId: string) =>
+    `ratelimit:face-registration:verify:${userId}`,
+  faceRegistrationLock: (userId: string) => `face-registration:lock:${userId}`,
+  faceRegistrationVerifyIdem: (sessionId: string, idempotencyKey: string) =>
+    `face-registration:verify:idem:${sessionId}:${idempotencyKey}`,
+  /** Short TTL replay guard: first N bytes hash of supplemental video. */
+  faceRegistrationReplayGuard: (hash: string) => `face-registration:replay:${hash}`,
   /** Phase 3b payroll / withdrawal */
   payrollConfig: () => "payroll:config",
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,

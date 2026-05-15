@@ -35,7 +35,7 @@
         "grant:trading-coins": "tsx scripts/grant-trading-coins.ts"
     },
     "dependencies": {
-        "@aws-sdk/client-rekognition": "^3.1042.0",
+        "@aws-sdk/client-rekognition": "^3.1046.0",
         "@aws-sdk/client-s3": "^3.600.0",
         "@aws-sdk/s3-request-presigner": "^3.600.0",
         "@fastify/compress": "^7.0.0",

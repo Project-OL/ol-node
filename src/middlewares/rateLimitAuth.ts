@@ -637,6 +637,20 @@ export const rateLimitLivePhotoVerify = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.ratelimitLivePhotoVerify(userId),
 });
 
+export const rateLimitFaceRegistrationSession = buildRateLimit({
+  max: env.FACE_REGISTRATION_RATE_SESSION_PER_HOUR,
+  windowMs: 3_600_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.faceRegistrationSessionRate(userId),
+});
+
+export const rateLimitFaceRegistrationVerify = buildRateLimit({
+  max: env.FACE_REGISTRATION_RATE_VERIFY_PER_HOUR,
+  windowMs: 3_600_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.faceRegistrationVerifyRate(userId),
+});
+
 export const socialRateLimits = {
   follow: createSocialRateLimit({
     endpoint: "social.follow",

@@ -83,6 +83,19 @@ export type ServerFrame =
   | { t: 'PRESENCE'; userId: string; online: boolean }
   | { t: 'PONG'; ts: number }
   | { t: 'GOAWAY'; reason?: string }
+  /** Per-user face registration / liveness pipeline (subscribe `msg:user:{userId}` on WS). */
+  | {
+      t: 'FACE_REGISTRATION'
+      event:
+        | 'face.registration.processing'
+        | 'face.registration.liveness_passed'
+        | 'face.registration.liveness_failed'
+        | 'face.registration.index_pending'
+        | 'face.registration.indexed'
+        | 'face.registration.rejected'
+      sessionId: string
+      detail?: Record<string, unknown>
+    }
 
 export type ClientFrame =
   | { t: 'JOIN'; conversationId: string }

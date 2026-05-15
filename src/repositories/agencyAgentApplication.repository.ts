@@ -14,8 +14,9 @@ export const agencyAgentApplicationRepository = {
     });
   },
 
-  async create(userId: string) {
-    return prisma.agencyAgentApplication.create({
+  async create(userId: string, tx?: Prisma.TransactionClient) {
+    const client = tx ?? prisma;
+    return client.agencyAgentApplication.create({
       data: { userId },
     });
   },

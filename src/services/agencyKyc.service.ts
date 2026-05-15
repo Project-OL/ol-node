@@ -1,46 +1,38 @@
+import { Prisma } from "@prisma/client";
 import { s3Bucket } from "../config/s3";
+import { prisma } from "../config/database";
 import { AppError } from "../middlewares/errorHandler";
 import { agencyAgentApplicationRepository } from "../repositories/agencyAgentApplication.repository";
 import { agencyApplicationKycRepository } from "../repositories/agencyApplicationKyc.repository";
+import { userRepository } from "../repositories/user.repository";
 import { storageService } from "./storage.service";
+
+const PRESIGN_TTL_SEC = 600;
+
+function assertApplicationNotTerminal(application: { status: string } | null) {
+  if (application?.status === "APPROVED" || application?.status === "REJECTED") {
+    throw new AppError(400, "Application is already resolved", "APPLICATION_RESOLVED");
+  }
+}
 
 export const agencyKycService = {
   async getPresignedGovtIdUrl(userId: string, mimeType: string) {
     const application = await agencyAgentApplicationRepository.findByUserId(userId);
-    if (!application) {
-      throw new AppError(
-        404,
-        "No agency application found. Call POST /agency/kyc/apply first.",
-        "APPLICATION_NOT_FOUND",
-      );
-    }
-    if (application.status === "APPROVED" || application.status === "REJECTED") {
-      throw new AppError(400, "Application is already resolved", "APPLICATION_RESOLVED");
-    }
+    assertApplicationNotTerminal(application);
 
     const s3Key = `agency/kyc/${userId}/govt-id/${Date.now()}`;
-    const uploadUrl = await storageService.getPresignedPutUrl(s3Key, mimeType, 600);
-    await agencyApplicationKycRepository.upsertKyc({
-      userId,
-      applicationId: application.id,
+    const uploadUrl = await storageService.getPresignedPutUrl(s3Key, mimeType, PRESIGN_TTL_SEC);
+    await agencyApplicationKycRepository.upsertKycDetails(userId, {
       govtIdS3Key: s3Key,
     });
-    return { uploadUrl, s3Key };
+    return { uploadUrl, s3Key, expiresInSec: PRESIGN_TTL_SEC };
   },
 
   async confirmGovtIdUpload(userId: string, s3Key: string) {
     const application = await agencyAgentApplicationRepository.findByUserId(userId);
-    if (!application) {
-      throw new AppError(
-        404,
-        "No agency application found. Call POST /agency/kyc/apply first.",
-        "APPLICATION_NOT_FOUND",
-      );
-    }
-    if (application.status === "APPROVED" || application.status === "REJECTED") {
-      throw new AppError(400, "Application is already resolved", "APPLICATION_RESOLVED");
-    }
-    const kyc = await agencyApplicationKycRepository.getKyc(userId);
+    assertApplicationNotTerminal(application);
+
+    const kyc = await agencyApplicationKycRepository.getKycByUserId(userId);
     const pendingKey = kyc?.govtIdS3Key?.trim();
     if (!pendingKey) {
       throw new AppError(
@@ -65,9 +57,7 @@ export const agencyKycService = {
         "S3_NOT_CONFIGURED",
       );
     }
-    await agencyApplicationKycRepository.upsertKyc({
-      userId,
-      applicationId: application.id,
+    await agencyApplicationKycRepository.upsertKycDetails(userId, {
       govtIdS3Key: pendingKey,
       govtIdS3Bucket: bucket,
       govtIdSubmittedAt: new Date(),
@@ -76,20 +66,57 @@ export const agencyKycService = {
 
   async submitContactInfo(userId: string, payload: { phone: string; email: string }) {
     const application = await agencyAgentApplicationRepository.findByUserId(userId);
-    if (!application) {
-      throw new AppError(
-        404,
-        "No agency application found. Call POST /agency/kyc/apply first.",
-        "APPLICATION_NOT_FOUND",
-      );
-    }
-    await agencyApplicationKycRepository.upsertKyc({
-      userId,
-      applicationId: application.id,
+    assertApplicationNotTerminal(application);
+
+    await agencyApplicationKycRepository.upsertKycDetails(userId, {
       contactPhone: payload.phone,
       contactEmail: payload.email,
       contactSubmittedAt: new Date(),
     });
+  },
+
+  /**
+   * Create agent application after KYC is complete, or return an existing non-terminal application.
+   */
+  async applyForAgency(userId: string) {
+    const user = await userRepository.findById(userId);
+    if (!user) throw new AppError(404, "User not found", "USER_NOT_FOUND");
+    if (user.isAgent) throw new AppError(400, "Already an agent", "ALREADY_AGENT");
+
+    const existing = await agencyAgentApplicationRepository.findByUserId(userId);
+    if (existing) {
+      if (existing.status === "APPROVED") {
+        throw new AppError(400, "Application already approved", "ALREADY_APPROVED");
+      }
+      if (existing.status === "REJECTED") {
+        throw new AppError(
+          400,
+          "Application was rejected. Contact support to appeal.",
+          "APPLICATION_REJECTED",
+        );
+      }
+      return { created: false as const, application: existing };
+    }
+
+    const review = await this.getKycStatusForAdmin(userId);
+    const missing: string[] = [];
+    if (!review.govtIdUploaded) missing.push("govtId");
+    if (!review.contactSubmitted) missing.push("contactNumber");
+    if (!review.faceVerified) missing.push("faceVerification");
+    if (missing.length > 0) {
+      throw new AppError(400, "Complete KYC before applying", "INCOMPLETE_KYC", { missing });
+    }
+
+    const application = await prisma.$transaction(
+      async (tx) => {
+        const created = await agencyAgentApplicationRepository.create(userId, tx);
+        await agencyApplicationKycRepository.linkApplicationToKyc(userId, created.id, tx);
+        return created;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    return { created: true as const, application };
   },
 
   async getKycStatusForAdmin(userId: string) {
