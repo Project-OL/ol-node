@@ -94,13 +94,6 @@ export const rateLimitAgencyApply = buildRateLimit({
   keyBuilder: RedisKeys.ratelimitAgencyApply,
 });
 
-export const rateLimitAgencyAccept = buildRateLimit({
-  max: 30,
-  windowMs: 60_000,
-  keyFn: (r) => r.userId ?? "",
-  keyBuilder: RedisKeys.ratelimitAgencyAccept,
-});
-
 export const rateLimitAgencyLeaveApply = buildRateLimit({
   max: 3,
   windowMs: 60_000,

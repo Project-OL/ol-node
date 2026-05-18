@@ -21,9 +21,32 @@ export const agencyRepository = {
     });
   },
 
+  /**
+   * Resolve an agency by any externally visible numeric id:
+   * - `agencies.default_public_id` (canonical agency id)
+   * - agency owner's `public_id`, `default_public_id`, or `current_vip_public_id`
+   */
   async getAgencyByPublicId(publicId: bigint) {
-    return prismaRead.agency.findUnique({
+    const byDefault = await prismaRead.agency.findUnique({
       where: { defaultPublicId: publicId },
+    });
+    if (byDefault) return byDefault;
+
+    const owner = await prismaRead.user.findFirst({
+      where: {
+        isAgent: true,
+        OR: [
+          { publicId },
+          { defaultPublicId: publicId },
+          { currentVipPublicId: publicId },
+        ],
+      },
+      select: { id: true },
+    });
+    if (!owner) return null;
+
+    return prismaRead.agency.findUnique({
+      where: { userId: owner.id },
     });
   },
 

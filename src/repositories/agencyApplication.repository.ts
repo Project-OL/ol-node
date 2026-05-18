@@ -5,6 +5,7 @@ import type {
 import { prismaRead } from "../config/database";
 
 export const agencyApplicationRepository = {
+  /** @deprecated Instant join uses {@link createAcceptedApplication}. Retained for scripts / legacy tooling. */
   async createApplication(
     data: {
       agencyUserId: string;
@@ -23,6 +24,28 @@ export const agencyApplicationRepository = {
     });
   },
 
+  /** Audit row for instant join (`resolved_by` null = system auto-accept). */
+  async createAcceptedApplication(
+    data: {
+      agencyUserId: string;
+      hostUserId: string;
+      message?: string | null;
+      resolvedAt: Date;
+    },
+    tx: Prisma.TransactionClient,
+  ) {
+    return tx.agencyHostApplication.create({
+      data: {
+        agencyUserId: data.agencyUserId,
+        hostUserId: data.hostUserId,
+        status: "ACCEPTED",
+        message: data.message ?? undefined,
+        resolvedAt: data.resolvedAt,
+        resolvedByUserId: null,
+      },
+    });
+  },
+
   async getApplicationById(id: string) {
     return prismaRead.agencyHostApplication.findUnique({
       where: { id },
@@ -35,6 +58,7 @@ export const agencyApplicationRepository = {
     });
   },
 
+  /** @deprecated Agent join inbox removed — instant auto-join. */
   async listInbox(
     agencyUserId: string,
     params: {
@@ -74,6 +98,7 @@ export const agencyApplicationRepository = {
     });
   },
 
+  /** @deprecated Agent accept/reject removed — instant auto-join. */
   async updateStatus(
     params: {
       id: string;

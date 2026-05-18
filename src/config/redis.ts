@@ -230,8 +230,6 @@ export const RedisKeys = {
   userLastActive: (userId: string) => `user:lastActive:${userId}`,
   ratelimitAgencyApply: (userId: string) =>
     `ratelimit:agency:apply:${userId}`,
-  ratelimitAgencyAccept: (userId: string) =>
-    `ratelimit:agency:accept:${userId}`,
   ratelimitAgencyLeaveApply: (userId: string) =>
     `ratelimit:agency:leave:apply:${userId}`,
   /** Agency Phase 2: level ladder + derived rates (60s) */

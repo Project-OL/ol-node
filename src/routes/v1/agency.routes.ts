@@ -2,7 +2,6 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { authenticate } from "../../middlewares/auth.middleware";
 import {
-  rateLimitAgencyAccept,
   rateLimitAgencyApply,
   rateLimitAgencyLeaveApply,
 } from "../../middlewares/rateLimitAuth";
@@ -10,7 +9,6 @@ import { AppError } from "../../middlewares/errorHandler";
 import { agencyService } from "../../services/agency.service";
 import { agencyHostService } from "../../services/agencyHost.service";
 import { agencyRankingService } from "../../services/agencyRanking.service";
-import { agencyApplicationRepository } from "../../repositories/agencyApplication.repository";
 import { agencyLeaveApplicationRepository } from "../../repositories/agencyLeaveApplication.repository";
 import { agencyHostRepository } from "../../repositories/agencyHost.repository";
 import { registerAgencyCommissionRoutes } from "./agency-commission.routes";
@@ -137,12 +135,12 @@ export default async function agencyRoutes(app: FastifyInstance) {
           "INVALID_REQUEST",
         );
       }
-      await agencyHostService.applyToAgency(
+      const result = await agencyHostService.applyToAgency(
         userId,
         parsed.data.agencyPublicId,
         parsed.data.message,
       );
-      return reply.status(201).send({ ok: true });
+      return reply.status(201).send(result);
     },
   );
 
@@ -155,8 +153,29 @@ export default async function agencyRoutes(app: FastifyInstance) {
     ) => {
       const userId = request.userId;
       if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      await agencyHostService.cancelApplication(userId, request.params.id);
-      return reply.status(204).send();
+      const { prismaRead } = await import("../../config/database");
+      const app = await prismaRead.agencyHostApplication.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!app || app.hostUserId !== userId) {
+        throw new AppError(404, "Application not found", "NOT_FOUND");
+      }
+      if (app.status === "ACCEPTED") {
+        throw new AppError(
+          409,
+          "Cannot cancel an accepted application",
+          "INVALID_STATE",
+        );
+      }
+      if (app.status === "PENDING") {
+        await agencyHostService.cancelApplication(userId, request.params.id);
+        return reply.status(204).send();
+      }
+      throw new AppError(
+        410,
+        "Join applications are instant; cancel is no longer supported",
+        "JOIN_CANCEL_DEPRECATED",
+      );
     },
   );
 
@@ -184,89 +203,6 @@ export default async function agencyRoutes(app: FastifyInstance) {
           resolvedAt: r.resolvedAt?.toISOString() ?? null,
         })),
       });
-    },
-  );
-
-  app.get(
-    "/applications/inbox",
-    { preHandler: preAuth },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      const agencyRow = await agencyService.getAgencyByOwnerId(userId);
-      if (!agencyRow) {
-        throw new AppError(403, "Not an agency owner", "FORBIDDEN");
-      }
-      const q = request.query as Record<string, string | undefined>;
-      const limit = Math.min(50, Math.max(1, Number(q.limit ?? "20") || 20));
-      const cursor = q.cursor ?? undefined;
-      const status = q.status as
-        | import("@prisma/client").AgencyApplicationStatus
-        | undefined;
-      const rows = await agencyApplicationRepository.listInbox(agencyRow.userId, {
-        status,
-        limit,
-        cursor,
-      });
-      const hasMore = rows.length > limit;
-      const page = hasMore ? rows.slice(0, limit) : rows;
-      const nextCursor =
-        hasMore && page.length > 0
-          ? `${page[page.length - 1]!.createdAt.toISOString()}|${page[page.length - 1]!.id}`
-          : null;
-      return reply.send({
-        items: page.map((r) => ({
-          id: r.id,
-          hostUserId: r.hostUserId,
-          status: r.status,
-          message: r.message,
-          createdAt: r.createdAt.toISOString(),
-          resolvedAt: r.resolvedAt?.toISOString() ?? null,
-        })),
-        nextCursor,
-      });
-    },
-  );
-
-  app.post<{ Params: { id: string } }>(
-    "/applications/:id/accept",
-    {
-      preHandler: [...preAuth, rateLimitAgencyAccept],
-    },
-    async (
-      request: FastifyRequest<{ Params: { id: string } }>,
-      reply: FastifyReply,
-    ) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      await agencyHostService.acceptApplication(userId, request.params.id);
-      return reply.send({ ok: true });
-    },
-  );
-
-  app.post<{ Params: { id: string } }>(
-    "/applications/:id/reject",
-    { preHandler: preAuth },
-    async (
-      request: FastifyRequest<{ Params: { id: string } }>,
-      reply: FastifyReply,
-    ) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      const parsed = RejectSchema.safeParse(request.body ?? {});
-      if (!parsed.success) {
-        throw new AppError(
-          400,
-          parsed.error.errors[0]?.message ?? "Invalid body",
-          "INVALID_REQUEST",
-        );
-      }
-      await agencyHostService.rejectApplication(
-        userId,
-        request.params.id,
-        parsed.data.reason,
-      );
-      return reply.send({ ok: true });
     },
   );
 
@@ -590,17 +526,11 @@ export default async function agencyRoutes(app: FastifyInstance) {
       if (reserved.has(publicId)) {
         throw new AppError(400, "Invalid path", "INVALID_REQUEST");
       }
-      const ag = await agencyService.getAgencyByPublicIdString(publicId);
-      if (!ag) {
+      const profile = await agencyRankingService.getAgencyPublicProfile(publicId);
+      if (!profile) {
         throw new AppError(404, "Agency not found", "AGENCY_NOT_FOUND");
       }
-      return reply.send({
-        agencyPublicId: ag.defaultPublicId.toString(),
-        displayName: ag.displayName,
-        totalHostsCount: ag.totalHostsCount,
-        currentLevel: ag.currentLevel,
-        paused: ag.pausedAt != null,
-      });
+      return reply.send(profile);
     },
   );
 }

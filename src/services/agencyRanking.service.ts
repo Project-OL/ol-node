@@ -5,13 +5,13 @@ import {
   redisClient,
 } from "../config/redis";
 import { prismaRead } from "../config/database";
+import { AppError } from "../middlewares/errorHandler";
 import { agencyRepository } from "../repositories/agency.repository";
 import { walletLevelService } from "./user-level.service";
 
 export type AgencyRankingPeriod = "DAILY" | "WEEKLY" | "MONTHLY" | "ALL_TIME";
 
-export type AgencyRankingItem = {
-  rank: number;
+export type AgencyPublicProfile = {
   agencyPublicId: string;
   agencyUserId: string;
   userId: string;
@@ -29,6 +29,10 @@ export type AgencyRankingItem = {
   lifetimeHostEarningsPoints: string;
   currentLevel: string;
   paused: boolean;
+};
+
+export type AgencyRankingItem = AgencyPublicProfile & {
+  rank: number;
 };
 
 function encodeCursor(skip: number): string {
@@ -57,7 +61,97 @@ function computeAgeFromDob(dob: Date | null | undefined): number | null {
   return years >= 0 ? years : null;
 }
 
+type AgencyRowForProfile = {
+  userId: string;
+  defaultPublicId: bigint;
+  displayName: string;
+  totalHostsCount: number;
+  lifetimeHostEarningsPoints: bigint;
+  currentLevel: string;
+  pausedAt: Date | null;
+};
+
+type OwnerUserForProfile = {
+  publicId: bigint;
+  defaultPublicId: bigint;
+  currentVipPublicId: bigint | null;
+  gender: string | null;
+  dateOfBirth: Date | null;
+  avatarUrl: string | null;
+} | null;
+
+export function mapAgencyToPublicProfile(params: {
+  agency: AgencyRowForProfile;
+  owner: OwnerUserForProfile;
+  wealthLevel: number;
+  livestreamLevel: number;
+  agencyContactNumber: string | null;
+}): AgencyPublicProfile {
+  const { agency, owner } = params;
+  const displayPublicId = owner
+    ? String(owner.currentVipPublicId ?? owner.defaultPublicId ?? owner.publicId)
+    : agency.defaultPublicId.toString();
+  return {
+    agencyPublicId: agency.defaultPublicId.toString(),
+    agencyUserId: agency.userId,
+    userId: agency.userId,
+    publicId: owner ? String(owner.publicId) : null,
+    displayPublicId,
+    gender: owner?.gender ?? null,
+    age: computeAgeFromDob(owner?.dateOfBirth ?? null),
+    wealthLevel: params.wealthLevel,
+    livestreamLevel: params.livestreamLevel,
+    agencyContactNumber: params.agencyContactNumber,
+    avatarUrl: owner?.avatarUrl ?? null,
+    displayName: agency.displayName,
+    totalHostsCount: agency.totalHostsCount,
+    lifetimeHostEarningsPoints: agency.lifetimeHostEarningsPoints.toString(),
+    currentLevel: agency.currentLevel,
+    paused: agency.pausedAt != null,
+  };
+}
+
 export const agencyRankingService = {
+  /** Full agency card by canonical or display public id (same shape as ranking items, without `rank`). */
+  async getAgencyPublicProfile(publicIdString: string): Promise<AgencyPublicProfile | null> {
+    let pid: bigint;
+    try {
+      pid = BigInt(publicIdString.trim());
+    } catch {
+      throw new AppError(400, "Invalid agency public id", "INVALID_AGENCY_ID");
+    }
+
+    const agency = await agencyRepository.getAgencyByPublicId(pid);
+    if (!agency) return null;
+
+    const [levelsMap, owner, kyc] = await Promise.all([
+      walletLevelService.getDisplayLevelsForUsers([agency.userId]),
+      prismaRead.user.findUnique({
+        where: { id: agency.userId },
+        select: {
+          publicId: true,
+          defaultPublicId: true,
+          currentVipPublicId: true,
+          gender: true,
+          dateOfBirth: true,
+          avatarUrl: true,
+        },
+      }),
+      prismaRead.agencyApplicationKyc.findUnique({
+        where: { userId: agency.userId },
+        select: { contactPhone: true },
+      }),
+    ]);
+
+    const lv = levelsMap.get(agency.userId);
+    return mapAgencyToPublicProfile({
+      agency,
+      owner,
+      wealthLevel: lv?.wealthLevel ?? 0,
+      livestreamLevel: lv?.livestreamLevel ?? 0,
+      agencyContactNumber: kyc?.contactPhone ?? null,
+    });
+  },
   /**
    * Phase 1: sorted by `totalHostsCount` DESC for every period (placeholder until Phase 2 earnings).
    */
@@ -124,32 +218,16 @@ export const agencyRankingService = {
       const phoneByUserId = new Map(
         kycRows.map((k) => [k.userId, k.contactPhone]),
       );
-      items = page.map((r, i) => {
-        const u = userById.get(r.userId);
-        const lv = levelsMap.get(r.userId);
-        const displayPublicId = u
-          ? String(u.currentVipPublicId ?? u.defaultPublicId ?? u.publicId)
-          : r.defaultPublicId.toString();
-        return {
-          rank: skip + i + 1,
-          agencyPublicId: r.defaultPublicId.toString(),
-          agencyUserId: r.userId,
-          userId: r.userId,
-          publicId: u ? String(u.publicId) : null,
-          displayPublicId,
-          gender: u?.gender ?? null,
-          age: computeAgeFromDob(u?.dateOfBirth ?? null),
-          wealthLevel: lv?.wealthLevel ?? 0,
-          livestreamLevel: lv?.livestreamLevel ?? 0,
+      items = page.map((r, i) => ({
+        rank: skip + i + 1,
+        ...mapAgencyToPublicProfile({
+          agency: r,
+          owner: userById.get(r.userId) ?? null,
+          wealthLevel: levelsMap.get(r.userId)?.wealthLevel ?? 0,
+          livestreamLevel: levelsMap.get(r.userId)?.livestreamLevel ?? 0,
           agencyContactNumber: phoneByUserId.get(r.userId) ?? null,
-          avatarUrl: u?.avatarUrl ?? null,
-          displayName: r.displayName,
-          totalHostsCount: r.totalHostsCount,
-          lifetimeHostEarningsPoints: r.lifetimeHostEarningsPoints.toString(),
-          currentLevel: r.currentLevel,
-          paused: r.pausedAt != null,
-        };
-      });
+        }),
+      }));
     }
 
     const payload = {

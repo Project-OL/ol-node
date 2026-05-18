@@ -4,7 +4,9 @@ import {
   Prisma,
 } from "@prisma/client";
 import { prisma } from "../config/database";
+import { RedisKeys } from "../config/redis";
 import { AppError } from "../middlewares/errorHandler";
+import { cacheRedisService } from "./cacheRedis.service";
 import { agencyRepository } from "../repositories/agency.repository";
 import { agencyApplicationRepository } from "../repositories/agencyApplication.repository";
 import { agencyHostRepository } from "../repositories/agencyHost.repository";
@@ -69,6 +71,25 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
+async function assertJoinCooldown(hostUserId: string): Promise<void> {
+  const recentExit = await agencyHostRepository.getRecentExitForHost(hostUserId);
+  if (recentExit && Date.now() - recentExit.exitedAt.getTime() < COOLDOWN_MS) {
+    throw new AppError(429, "Agency application cooldown", "AGENCY_APPLICATION_COOLDOWN", {
+      nextAllowedAt: nextAllowedFrom(recentExit.exitedAt).toISOString(),
+    });
+  }
+
+  const recentReject = await agencyHostRepository.findLatestRejectedApplication(hostUserId);
+  if (
+    recentReject?.resolvedAt &&
+    Date.now() - recentReject.resolvedAt.getTime() < COOLDOWN_MS
+  ) {
+    throw new AppError(429, "Agency application cooldown", "AGENCY_APPLICATION_COOLDOWN", {
+      nextAllowedAt: nextAllowedFrom(recentReject.resolvedAt).toISOString(),
+    });
+  }
+}
+
 export const agencyHostService = {
   async applyToAgency(
     hostUserId: string,
@@ -111,53 +132,49 @@ export const agencyHostService = {
       throw new AppError(409, "Already in an agency", "ALREADY_IN_AGENCY");
     }
 
-    const pendingApp = await agencyApplicationRepository.getPendingForHost(hostUserId);
-    if (pendingApp) {
-      throw new AppError(409, "Application pending", "APPLICATION_PENDING");
-    }
+    await assertJoinCooldown(hostUserId);
 
-    const recentExit = await agencyHostRepository.getRecentExitForHost(hostUserId);
-    if (recentExit && Date.now() - recentExit.exitedAt.getTime() < COOLDOWN_MS) {
-      throw new AppError(429, "Agency application cooldown", "AGENCY_APPLICATION_COOLDOWN", {
-        nextAllowedAt: nextAllowedFrom(recentExit.exitedAt).toISOString(),
-      });
-    }
-
-    const recentReject = await agencyHostRepository.findLatestRejectedApplication(hostUserId);
-    if (
-      recentReject?.resolvedAt &&
-      Date.now() - recentReject.resolvedAt.getTime() < COOLDOWN_MS
-    ) {
-      throw new AppError(429, "Agency application cooldown", "AGENCY_APPLICATION_COOLDOWN", {
-        nextAllowedAt: nextAllowedFrom(recentReject.resolvedAt).toISOString(),
-      });
-    }
-
+    const now = new Date();
     try {
       await prisma.$transaction(
         async (tx) => {
-          await agencyApplicationRepository.createApplication(
+          await agencyApplicationRepository.createAcceptedApplication(
             {
               agencyUserId: agency.userId,
               hostUserId,
               message: message ?? undefined,
+              resolvedAt: now,
             },
             tx,
           );
+          await agencyHostRepository.insertHost(
+            { agencyUserId: agency.userId, hostUserId },
+            tx,
+          );
+          await tx.user.update({
+            where: { id: hostUserId },
+            data: { currentAgencyId: agency.userId },
+          });
+          await agencyRepository.incrementHostCount(agency.userId, 1, tx);
         },
         { isolationLevel: "Serializable", timeout: TX_MS },
       );
     } catch (e) {
       if (isUniqueViolation(e)) {
-        throw new AppError(409, "Application pending", "APPLICATION_PENDING");
+        throw new AppError(409, "Already in an agency", "ALREADY_IN_AGENCY");
       }
       throw e;
     }
 
+    await cacheRedisService.del(RedisKeys.agencyMe(hostUserId));
     await agencyService.onAgencyMutation(agency.userId);
-    return { ok: true as const };
+    return { ok: true as const, immediate: true as const };
   },
 
+  /**
+   * @deprecated Instant join — cancel is no longer part of the happy path.
+   * Legacy PENDING rows may still be deleted; ACCEPTED rows return INVALID_STATE.
+   */
   async cancelApplication(hostUserId: string, applicationId: string) {
     const app = await agencyApplicationRepository.getApplicationById(applicationId);
     if (!app || app.hostUserId !== hostUserId) {
@@ -176,6 +193,7 @@ export const agencyHostService = {
     return { ok: true as const };
   },
 
+  /** @deprecated Instant auto-join — agent accept removed from HTTP API. */
   async acceptApplication(agentUserId: string, applicationId: string) {
     await prisma.$transaction(
       async (tx) => {
@@ -231,6 +249,7 @@ export const agencyHostService = {
     return { ok: true as const };
   },
 
+  /** @deprecated Instant auto-join — agent reject removed from HTTP API. */
   async rejectApplication(
     agentUserId: string,
     applicationId: string,
