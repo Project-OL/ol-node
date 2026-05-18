@@ -29,7 +29,13 @@ export const agencyHostRepository = {
   async getHostWithAgency(hostUserId: string) {
     return prismaRead.agencyHost.findUnique({
       where: { hostUserId },
-      include: { agency: true },
+      include: {
+        agency: {
+          include: {
+            user: { select: { avatarUrl: true } },
+          },
+        },
+      },
     });
   },
 

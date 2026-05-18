@@ -3,7 +3,7 @@ import {
   PointTxType,
   Prisma,
 } from "@prisma/client";
-import { prisma } from "../config/database";
+import { prisma, prismaRead } from "../config/database";
 import { RedisKeys } from "../config/redis";
 import { AppError } from "../middlewares/errorHandler";
 import { cacheRedisService } from "./cacheRedis.service";
@@ -24,7 +24,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const COOLDOWN_MS = 30 * DAY_MS;
 const REMOVAL_TENURE_MS = 7 * DAY_MS;
 const REMOVAL_INACTIVE_MS = 30 * DAY_MS;
-const IMMEDIATE_LEAVE_MS = 24 * DAY_MS;
+/** Membership shorter than 24 hours → immediate exit (no leave application). */
+const IMMEDIATE_LEAVE_MS = DAY_MS;
 const LATE_APPROVE_MS = 14 * DAY_MS;
 const AUTO_APPROVE_MS = 7 * DAY_MS;
 
@@ -69,6 +70,21 @@ function isUniqueViolation(err: unknown): boolean {
   return (
     err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002"
   );
+}
+
+/** Same face gate as agency KYC: `face_verified` on KYC row or indexed face profile. */
+async function isHostFaceVerified(hostUserId: string): Promise<boolean> {
+  const [kyc, profile] = await Promise.all([
+    prismaRead.agencyApplicationKyc.findUnique({
+      where: { userId: hostUserId },
+      select: { faceVerified: true },
+    }),
+    prismaRead.userFaceProfile.findUnique({
+      where: { userId: hostUserId },
+      select: { status: true },
+    }),
+  ]);
+  return Boolean(kyc?.faceVerified) || profile?.status === "INDEXED";
 }
 
 async function assertJoinCooldown(hostUserId: string): Promise<void> {
@@ -308,7 +324,10 @@ export const agencyHostService = {
     }
 
     const joinedMs = Date.now() - membership.joinedAt.getTime();
-    if (joinedMs < IMMEDIATE_LEAVE_MS) {
+    const faceVerified = await isHostFaceVerified(hostUserId);
+    const immediateLeave = joinedMs < IMMEDIATE_LEAVE_MS || !faceVerified;
+
+    if (immediateLeave) {
       await prisma.$transaction(
         async (tx) => {
           await finalizeAgencyHostExit(
@@ -316,7 +335,10 @@ export const agencyHostService = {
             hostUserId,
             "LEAVE_AUTO_APPROVED",
             tx,
-            { immediateWithin24h: true },
+            {
+              immediateWithin24h: joinedMs < IMMEDIATE_LEAVE_MS,
+              immediateUnverifiedFace: !faceVerified,
+            },
           );
         },
         { isolationLevel: "Serializable", timeout: TX_MS },
@@ -360,18 +382,24 @@ export const agencyHostService = {
       throw new AppError(409, "Cannot cancel", "INVALID_STATE");
     }
     await removeLeaveAutoApproveJob(applicationId);
-    await prisma.$transaction(
+    const now = new Date();
+    const updated = await prisma.$transaction(
       async (tx) => {
-        await agencyLeaveApplicationRepository.deletePending(
+        const count = await agencyLeaveApplicationRepository.cancelPending(
           applicationId,
           hostUserId,
           tx,
         );
+        return count;
       },
       { isolationLevel: "Serializable", timeout: TX_MS },
     );
+    if (updated.count === 0) {
+      throw new AppError(409, "Cannot cancel", "INVALID_STATE");
+    }
+    await cacheRedisService.del(RedisKeys.agencyMe(hostUserId));
     await agencyService.onAgencyMutation(row.agencyUserId);
-    return { ok: true as const };
+    return { ok: true as const, cancelledAt: now.toISOString() };
   },
 
   async acceptLeaveApplication(agentUserId: string, applicationId: string) {

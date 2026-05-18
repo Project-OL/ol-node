@@ -17,6 +17,28 @@ const log = rootLogger.child({ module: "agency.service" });
 
 const TX_TIMEOUT_MS = 20_000;
 
+type HostWithAgencyRow = NonNullable<
+  Awaited<ReturnType<typeof agencyHostRepository.getHostWithAgency>>
+>;
+
+export function mapHostAgencyMeBlock(
+  hostRow: HostWithAgencyRow,
+  pendingLeave: { id: string; autoApproveAt: Date } | null,
+) {
+  return {
+    agencyPublicId: hostRow.agency.defaultPublicId.toString(),
+    agencyDisplayName: hostRow.agency.displayName,
+    avatarUrl: hostRow.agency.user?.avatarUrl ?? null,
+    joinedAt: hostRow.joinedAt.toISOString(),
+    pendingLeaveApplication: pendingLeave
+      ? {
+          id: pendingLeave.id,
+          autoApproveAt: pendingLeave.autoApproveAt.toISOString(),
+        }
+      : undefined,
+  };
+}
+
 export const agencyService = {
   async bustCachesForAgency(userId: string, defaultPublicId: bigint) {
     await cacheRedisService.del(
@@ -234,9 +256,13 @@ export const agencyService = {
   },
 
   async getMyAgency(userId: string) {
-    const [owned, hostRow] = await Promise.all([
+    const [owned, hostRow, selfProfile] = await Promise.all([
       agencyRepository.getAgencyByUserId(userId),
       agencyHostRepository.getHostWithAgency(userId),
+      prismaRead.user.findUnique({
+        where: { id: userId },
+        select: { avatarUrl: true },
+      }),
     ]);
 
     let pendingJoin = 0;
@@ -254,6 +280,7 @@ export const agencyService = {
 
     return {
       owned,
+      ownedAvatarUrl: owned ? (selfProfile?.avatarUrl ?? null) : null,
       hostMembership: hostRow,
       pendingJoinInbox: pendingJoin,
       pendingLeaveInbox: pendingLeave,
@@ -262,10 +289,14 @@ export const agencyService = {
 
   /** Compact agency slice for `GET /users/me`. */
   async buildMeAgencyBlock(userId: string) {
-    const [owned, hostRow, pendingLeave] = await Promise.all([
+    const [owned, hostRow, pendingLeave, selfProfile] = await Promise.all([
       agencyRepository.getAgencyByUserId(userId),
       agencyHostRepository.getHostWithAgency(userId),
       agencyLeaveApplicationRepository.getPendingForHost(userId),
+      prismaRead.user.findUnique({
+        where: { id: userId },
+        select: { avatarUrl: true },
+      }),
     ]);
 
     let role: "AGENT" | "HOST" | "NONE" = "NONE";
@@ -282,6 +313,7 @@ export const agencyService = {
         ? {
             agencyPublicId: owned.defaultPublicId.toString(),
             displayName: owned.displayName,
+            avatarUrl: selfProfile?.avatarUrl ?? null,
             totalHostsCount: owned.totalHostsCount,
             currentLevel: owned.currentLevel,
             payrollEnabled: owned.payrollEnabled,
@@ -290,17 +322,7 @@ export const agencyService = {
           }
         : undefined,
       asHost: hostRow
-        ? {
-            agencyPublicId: hostRow.agency.defaultPublicId.toString(),
-            agencyDisplayName: hostRow.agency.displayName,
-            joinedAt: hostRow.joinedAt.toISOString(),
-            pendingLeaveApplication: pendingLeave
-              ? {
-                  id: pendingLeave.id,
-                  autoApproveAt: pendingLeave.autoApproveAt.toISOString(),
-                }
-              : undefined,
-          }
+        ? mapHostAgencyMeBlock(hostRow, pendingLeave)
         : undefined,
     };
   },

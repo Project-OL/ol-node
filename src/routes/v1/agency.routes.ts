@@ -6,7 +6,10 @@ import {
   rateLimitAgencyLeaveApply,
 } from "../../middlewares/rateLimitAuth";
 import { AppError } from "../../middlewares/errorHandler";
-import { agencyService } from "../../services/agency.service";
+import {
+  agencyService,
+  mapHostAgencyMeBlock,
+} from "../../services/agency.service";
 import { agencyHostService } from "../../services/agencyHost.service";
 import { agencyRankingService } from "../../services/agencyRanking.service";
 import { agencyLeaveApplicationRepository } from "../../repositories/agencyLeaveApplication.repository";
@@ -66,6 +69,7 @@ export default async function agencyRoutes(app: FastifyInstance) {
           ? {
               agencyPublicId: view.owned.defaultPublicId.toString(),
               displayName: view.owned.displayName,
+              avatarUrl: view.ownedAvatarUrl,
               totalHostsCount: view.owned.totalHostsCount,
               currentLevel: view.owned.currentLevel,
               payrollEnabled: view.owned.payrollEnabled,
@@ -76,18 +80,7 @@ export default async function agencyRoutes(app: FastifyInstance) {
           : null,
         host:
           view.hostMembership != null
-            ? {
-                agencyPublicId:
-                  view.hostMembership.agency.defaultPublicId.toString(),
-                agencyDisplayName: view.hostMembership.agency.displayName,
-                joinedAt: view.hostMembership.joinedAt.toISOString(),
-                pendingLeaveApplication: pendingLeave
-                  ? {
-                      id: pendingLeave.id,
-                      autoApproveAt: pendingLeave.autoApproveAt.toISOString(),
-                    }
-                  : undefined,
-              }
+            ? mapHostAgencyMeBlock(view.hostMembership, pendingLeave)
             : null,
       });
     },
@@ -227,18 +220,29 @@ export default async function agencyRoutes(app: FastifyInstance) {
     },
   );
 
+  const cancelLeaveApplicationHandler = async (
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+  ) => {
+    const userId = request.userId;
+    if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+    const result = await agencyHostService.cancelLeaveApplication(
+      userId,
+      request.params.id,
+    );
+    return reply.send(result);
+  };
+
   app.delete<{ Params: { id: string } }>(
     "/leave-applications/:id",
     { preHandler: preAuth },
-    async (
-      request: FastifyRequest<{ Params: { id: string } }>,
-      reply: FastifyReply,
-    ) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      await agencyHostService.cancelLeaveApplication(userId, request.params.id);
-      return reply.status(204).send();
-    },
+    cancelLeaveApplicationHandler,
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/leave-applications/:id/cancel",
+    { preHandler: preAuth },
+    cancelLeaveApplicationHandler,
   );
 
   app.get(

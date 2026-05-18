@@ -97,9 +97,15 @@ export const agencyLeaveApplicationRepository = {
     });
   },
 
-  async deletePending(id: string, hostUserId: string, tx: Prisma.TransactionClient) {
-    return tx.agencyLeaveApplication.deleteMany({
+  /** Host withdraws a PENDING leave request (keeps row for audit). */
+  async cancelPending(id: string, hostUserId: string, tx: Prisma.TransactionClient) {
+    return tx.agencyLeaveApplication.updateMany({
       where: { id, hostUserId, status: "PENDING" },
+      data: {
+        status: "CANCELLED",
+        resolvedAt: new Date(),
+        resolvedByUserId: null,
+      },
     });
   },
 

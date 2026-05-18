@@ -72,6 +72,7 @@ export interface MeResponseDto extends MeProfileCache {
     asAgent?: {
       agencyPublicId: string
       displayName: string
+      avatarUrl: string | null
       totalHostsCount: number
       currentLevel: string
       payrollEnabled: boolean
@@ -80,6 +81,7 @@ export interface MeResponseDto extends MeProfileCache {
     asHost?: {
       agencyPublicId: string
       agencyDisplayName: string
+      avatarUrl: string | null
       joinedAt: string
       pendingLeaveApplication?: { id: string; autoApproveAt: string }
     },
