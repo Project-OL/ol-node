@@ -155,8 +155,10 @@ export const RedisKeys = {
   walletCoinBalance: (userId: string) => `wallet:coins:${userId}`,
   walletPointBalance: (userId: string) => `wallet:points:${userId}`,
   ctBalance: (userId: string) => `ct:balance:${userId}`,
+  ctRecentUsers: (userId: string) => `ct:recent-users:${userId}`,
   ctTopupRates: () => "ct:topup-rates",
   ctExchangeRates: () => "ct:exchange-rates",
+  coinsellerSettings: (agencyUserId: string) => `agency:coinseller:${agencyUserId}`,
   walletIdem: (key: string) => `wallet:idem:${key}`,
   walletRateLimit: (userId: string, action: string) => `wallet:rl:${userId}:${action}`,
   /** Wallet ledger level snapshots (wealth / livestream cumulative credits). */
@@ -223,9 +225,9 @@ export const RedisKeys = {
   /** Agency: GET /users/me agency block cache bust target */
   agencyMe: (userId: string) => `agency:me:${userId}`,
   agencyByPublicId: (publicId: string) => `agency:pub:${publicId}`,
-  /** Bump segment (`v3`) when ranking item shape changes — avoids stale Redis payloads. */
+  /** Bump segment when ranking item shape changes — avoids stale Redis payloads. */
   agencyRanking: (period: string, limit: number, cursor: string) =>
-    `agency:ranking:v3:${period}:${limit}:${cursor}`,
+    `agency:ranking:v4:${period}:${limit}:${cursor}`,
   /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
   userLastActive: (userId: string) => `user:lastActive:${userId}`,
   ratelimitAgencyApply: (userId: string) =>
@@ -328,7 +330,9 @@ export const BLOCK_LIST_TTL = 60 * 60
 /** Wallet: cached balance TTL (5 minutes). */
 export const WALLET_BALANCE_TTL = 300
 export const CT_BALANCE_TTL = 300
+export const CT_RECENT_USERS_TTL = 120
 export const CT_RATES_TTL = 3600
+export const COINSELLER_SETTINGS_TTL = 300
 /** Wallet: idempotency key TTL (5 minutes). */
 export const WALLET_IDEM_TTL = 300
 /** Wallet: per-action rate limit window (1 minute). */

@@ -7,6 +7,8 @@ import {
 import { prismaRead } from "../config/database";
 import { AppError } from "../middlewares/errorHandler";
 import { agencyRepository } from "../repositories/agency.repository";
+import { agencyCoinsellerRepository } from "../repositories/agencyCoinseller.repository";
+import { agencyCoinsellerService } from "./agencyCoinseller.service";
 import { walletLevelService } from "./user-level.service";
 
 export type AgencyRankingPeriod = "DAILY" | "WEEKLY" | "MONTHLY" | "ALL_TIME";
@@ -22,6 +24,9 @@ export type AgencyPublicProfile = {
   wealthLevel: number;
   livestreamLevel: number;
   agencyContactNumber: string | null;
+  priceImageUrl: string | null;
+  whatsappNumber: string | null;
+  transferChannel: string;
   /** Agency owner `users.avatar_url` (CDN URL or null). */
   avatarUrl: string | null;
   displayName: string;
@@ -80,12 +85,19 @@ type OwnerUserForProfile = {
   avatarUrl: string | null;
 } | null;
 
+type CoinsellerForProfile = {
+  priceImageS3Key: string | null;
+  whatsappNumber: string | null;
+  transferChannel: string;
+} | null;
+
 export function mapAgencyToPublicProfile(params: {
   agency: AgencyRowForProfile;
   owner: OwnerUserForProfile;
   wealthLevel: number;
   livestreamLevel: number;
   agencyContactNumber: string | null;
+  coinseller?: CoinsellerForProfile;
 }): AgencyPublicProfile {
   const { agency, owner } = params;
   const displayPublicId = owner
@@ -102,6 +114,11 @@ export function mapAgencyToPublicProfile(params: {
     wealthLevel: params.wealthLevel,
     livestreamLevel: params.livestreamLevel,
     agencyContactNumber: params.agencyContactNumber,
+    priceImageUrl: agencyCoinsellerService.getPriceImageUrl(
+      params.coinseller?.priceImageS3Key ?? null,
+    ),
+    whatsappNumber: params.coinseller?.whatsappNumber ?? null,
+    transferChannel: params.coinseller?.transferChannel ?? "EPAY",
     avatarUrl: owner?.avatarUrl ?? null,
     displayName: agency.displayName,
     totalHostsCount: agency.totalHostsCount,
@@ -124,7 +141,7 @@ export const agencyRankingService = {
     const agency = await agencyRepository.getAgencyByPublicId(pid);
     if (!agency) return null;
 
-    const [levelsMap, owner, kyc] = await Promise.all([
+    const [levelsMap, owner, kyc, coinsellerRows] = await Promise.all([
       walletLevelService.getDisplayLevelsForUsers([agency.userId]),
       prismaRead.user.findUnique({
         where: { id: agency.userId },
@@ -141,8 +158,10 @@ export const agencyRankingService = {
         where: { userId: agency.userId },
         select: { contactPhone: true },
       }),
+      agencyCoinsellerRepository.findManyByAgencyUserIds([agency.userId]),
     ]);
 
+    const coinseller = coinsellerRows[0] ?? null;
     const lv = levelsMap.get(agency.userId);
     return mapAgencyToPublicProfile({
       agency,
@@ -150,6 +169,13 @@ export const agencyRankingService = {
       wealthLevel: lv?.wealthLevel ?? 0,
       livestreamLevel: lv?.livestreamLevel ?? 0,
       agencyContactNumber: kyc?.contactPhone ?? null,
+      coinseller: coinseller
+        ? {
+            priceImageS3Key: coinseller.priceImageS3Key,
+            whatsappNumber: coinseller.whatsappNumber,
+            transferChannel: coinseller.transferChannel,
+          }
+        : null,
     });
   },
   /**
@@ -195,7 +221,7 @@ export const agencyRankingService = {
     let items: AgencyRankingItem[] = [];
     if (page.length > 0) {
       const userIds = page.map((r) => r.userId);
-      const [levelsMap, users, kycRows] = await Promise.all([
+      const [levelsMap, users, kycRows, coinsellerRows] = await Promise.all([
         walletLevelService.getDisplayLevelsForUsers(userIds),
         prismaRead.user.findMany({
           where: { id: { in: userIds } },
@@ -213,21 +239,35 @@ export const agencyRankingService = {
           where: { userId: { in: userIds } },
           select: { userId: true, contactPhone: true },
         }),
+        agencyCoinsellerRepository.findManyByAgencyUserIds(userIds),
       ]);
       const userById = new Map(users.map((u) => [u.id, u]));
       const phoneByUserId = new Map(
         kycRows.map((k) => [k.userId, k.contactPhone]),
       );
-      items = page.map((r, i) => ({
-        rank: skip + i + 1,
-        ...mapAgencyToPublicProfile({
-          agency: r,
-          owner: userById.get(r.userId) ?? null,
-          wealthLevel: levelsMap.get(r.userId)?.wealthLevel ?? 0,
-          livestreamLevel: levelsMap.get(r.userId)?.livestreamLevel ?? 0,
-          agencyContactNumber: phoneByUserId.get(r.userId) ?? null,
-        }),
-      }));
+      const coinsellerByUserId = new Map(
+        coinsellerRows.map((c) => [c.agencyUserId, c]),
+      );
+      items = page.map((r, i) => {
+        const cs = coinsellerByUserId.get(r.userId);
+        return {
+          rank: skip + i + 1,
+          ...mapAgencyToPublicProfile({
+            agency: r,
+            owner: userById.get(r.userId) ?? null,
+            wealthLevel: levelsMap.get(r.userId)?.wealthLevel ?? 0,
+            livestreamLevel: levelsMap.get(r.userId)?.livestreamLevel ?? 0,
+            agencyContactNumber: phoneByUserId.get(r.userId) ?? null,
+            coinseller: cs
+              ? {
+                  priceImageS3Key: cs.priceImageS3Key,
+                  whatsappNumber: cs.whatsappNumber,
+                  transferChannel: cs.transferChannel,
+                }
+              : null,
+          }),
+        };
+      });
     }
 
     const payload = {

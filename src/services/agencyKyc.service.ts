@@ -132,6 +132,16 @@ export const agencyKycService = {
     };
   },
 
+  async updateAgentContact(
+    userId: string,
+    data: { phone?: string; email?: string },
+  ) {
+    const patch: { contactPhone?: string; contactEmail?: string } = {};
+    if (data.phone) patch.contactPhone = data.phone;
+    if (data.email) patch.contactEmail = data.email;
+    await agencyApplicationKycRepository.updateContactByAgentUserId(userId, patch);
+  },
+
   async validateKycComplete(userId: string) {
     const review = await this.getKycStatusForAdmin(userId);
     const missing: ("GOVT_ID" | "CONTACT_INFO" | "FACE_AUTH")[] = [];

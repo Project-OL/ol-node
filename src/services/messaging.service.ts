@@ -26,6 +26,9 @@ import {
 } from '../utils/ws-publisher'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
 import { enqueueMessageMediaAudioProcessing } from '../queues/message-media-audio.queue'
+import { enqueueAutoReply } from '../queues/agencyAutoReply.queue'
+import { prismaRead } from '../config/database'
+import { rootLogger } from '../utils/rootLogger'
 import type { SendMessageInput } from '../models/messaging.schemas'
 import { s3Bucket } from '../config/s3'
 import type { MediaItemInput } from '../repositories/message.repository'
@@ -62,6 +65,29 @@ type ReadDebounceEntry = {
 }
 
 const readReceiptDebounce = new Map<string, ReadDebounceEntry>()
+const messagingLog = rootLogger.child({ module: 'messaging' })
+
+async function maybeEnqueueAutoReply(conversationId: string, triggerSeq: bigint): Promise<void> {
+  const members = await prismaRead.conversationMember.findMany({
+    where: { conversationId },
+    include: { user: { select: { id: true, isAgent: true } } },
+  })
+  const agencyMember = members.find((m) => m.user.isAgent)
+  if (!agencyMember) return
+
+  const settings = await prismaRead.agencyCoinseller.findUnique({
+    where: { agencyUserId: agencyMember.userId },
+    select: { autoReply: true },
+  })
+  if (!settings?.autoReply) return
+
+  await enqueueAutoReply({
+    conversationId,
+    agencyUserId: agencyMember.userId,
+    autoReplyText: settings.autoReply,
+    triggerMessageSeq: Number(triggerSeq),
+  })
+}
 
 function readReceiptDebounceKey(userId: string, conversationId: string): string {
   return `${userId}:${conversationId}`
@@ -240,9 +266,79 @@ export const messagingService = {
           await enqueueMessageMediaAudioProcessing(mi.id)
         }
       }
+      if (input.type === 'TEXT_COINS') {
+        setImmediate(() => {
+          void maybeEnqueueAutoReply(conversationId, msg.seq).catch((err) => {
+            messagingLog.warn({ err, conversationId }, 'TEXT_COINS auto-reply enqueue failed')
+          })
+        })
+      }
     }
 
     return msg
+  },
+
+  async sendAutoReply(params: {
+    conversationId: string
+    senderUserId: string
+    content: string
+    clientMessageId: string
+  }): Promise<void> {
+    const { conversationId, senderUserId, content, clientMessageId } = params
+
+    const member = await prismaRead.conversationMember.findUnique({
+      where: { conversationId_userId: { conversationId, userId: senderUserId } },
+    })
+    if (!member) {
+      messagingLog.warn({ conversationId, senderUserId }, 'auto-reply aborted: sender not a member')
+      return
+    }
+
+    const conv = await conversationRepository.findConversationById(
+      conversationId,
+      senderUserId,
+    )
+    if (!conv) return
+
+    const otherMemberIds = conv.members
+      .filter((m) => m.userId !== senderUserId)
+      .map((m) => m.userId)
+
+    const result = await messageRepository.sendMessageWithOutbox({
+      conversationId,
+      senderId: senderUserId,
+      type: 'TEXT',
+      content,
+      clientMessageId,
+      mediaItems: [],
+      isAutoReply: true,
+    })
+
+    if (result.status !== 'created') return
+
+    const msg = result.message
+    await Promise.all(
+      conv.members.map((m: { userId: string }) =>
+        cacheService.delete(RedisKeys.userConversations(m.userId)),
+      ),
+    )
+
+    const msgKey = RedisKeys.convMessages(conversationId)
+    const msgJson = JSON.stringify(
+      {
+        ...msg,
+        createdAt: msg.createdAt.toISOString(),
+      },
+      (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+    )
+    const zscore = Number(msg.seq)
+    await redisClient.zadd(msgKey, zscore, msgJson)
+    await redisClient.expire(msgKey, MSG_HOT_TTL)
+    await redisClient.zremrangebyrank(msgKey, 0, -101)
+    for (const uid of otherMemberIds) {
+      await redisClient.incr(RedisKeys.unreadCount(uid, conversationId))
+    }
+    await enqueueMessageOutboxPublish(result.outboxId)
   },
 
   async listMessages(

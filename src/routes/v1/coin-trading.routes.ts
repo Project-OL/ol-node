@@ -17,6 +17,15 @@ const transferSchema = z.object({
   securityPassword: z.string().optional(),
 });
 
+const ListTransfersQuerySchema = z.object({
+  role: z.enum(["sender", "recipient", "all"]).default("all"),
+  direction: z.enum(["credit", "debit"]).optional(),
+  fromDate: z.string().datetime().optional(),
+  toDate: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().optional(),
+});
+
 export default async function coinTradingRoutes(app: FastifyInstance) {
   app.get("/balance", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = await userRepository.findById(request.userId!);
@@ -77,10 +86,22 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
   });
 
   app.get("/transfers", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const q = request.query as { role?: "sender" | "recipient" | "all"; limit?: string; cursor?: string };
-    const limit = Math.min(100, Math.max(1, Number(q.limit ?? "20") || 20));
-    const role = q.role ?? "all";
-    const rows = await coinTradingService.listTransferHistory(request.userId!, { role, limit, cursor: q.cursor });
-    return reply.send({ items: rows });
+    const parsed = ListTransfersQuerySchema.parse(request.query ?? {});
+    const result = await coinTradingService.listTransferHistory(request.userId!, {
+      role: parsed.role,
+      direction: parsed.direction,
+      fromDate: parsed.fromDate ? new Date(parsed.fromDate) : undefined,
+      toDate: parsed.toDate ? new Date(parsed.toDate) : undefined,
+      limit: parsed.limit,
+      cursor: parsed.cursor,
+    });
+    return reply.send(result);
+  });
+
+  app.get("/recent-users", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await userRepository.findById(request.userId!);
+    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+    const rows = await coinTradingService.getRecentTransactionUsers(request.userId!);
+    return reply.send({ users: rows });
   });
 }

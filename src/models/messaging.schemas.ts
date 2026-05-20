@@ -43,7 +43,7 @@ export const SendMessageSchema = z
     /** UUID v4 from client — idempotent retries must reuse the same value per logical send. */
     clientMessageId: z.string().uuid(),
     content: z.string().max(4000).optional(),
-    type: z.enum(['TEXT', 'IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
+    type: z.enum(['TEXT', 'TEXT_COINS', 'IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
     // Client payloads often send null for "no reply"; normalize to undefined.
     replyToId: z.preprocess((v) => (v === null ? undefined : v), z.string().cuid().optional()),
     mediaItems: z.array(sendMessageMediaItemSchema).max(10).optional(),

@@ -55,6 +55,7 @@ import faceVerificationRoutes from "./routes/v1/face-verification.routes";
 import faceRegistrationRoutes from "./routes/v1/face-registration.routes";
 import livePhotoRoutes from "./routes/v1/live-photo.routes";
 import agencyKycRoutes from "./routes/v1/agency-kyc.routes";
+import agencyCoinsellerRoutes from "./routes/v1/agency-coinseller.routes";
 import coinTradingRoutes from "./routes/v1/coin-trading.routes";
 import { paymentMethodRoutes } from "./routes/v1/payment-method.routes";
 import { withdrawalRoutes } from "./routes/v1/withdrawal.routes";
@@ -181,6 +182,7 @@ export async function buildApp() {
   await app.register(vipMembershipRoutes, { prefix: `${prefix}/vip-membership` });
   await app.register(agencyRoutes, { prefix: `${prefix}/agency` });
   await app.register(agencyKycRoutes, { prefix: `${prefix}/agency/kyc` });
+  await app.register(agencyCoinsellerRoutes, { prefix: `${prefix}/agency/coinseller` });
   await app.register(coinTradingRoutes, { prefix: `${prefix}/coin-trading` });
   await app.register(paymentMethodRoutes, { prefix: `${prefix}/payment-methods` });
   await app.register(withdrawalRoutes, { prefix: `${prefix}/withdrawal` });

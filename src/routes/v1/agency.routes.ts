@@ -12,6 +12,9 @@ import {
 } from "../../services/agency.service";
 import { agencyHostService } from "../../services/agencyHost.service";
 import { agencyRankingService } from "../../services/agencyRanking.service";
+import { agencyKycService } from "../../services/agencyKyc.service";
+import { agencyRepository } from "../../repositories/agency.repository";
+import { redisClient, RedisKeys } from "../../config/redis";
 import { agencyLeaveApplicationRepository } from "../../repositories/agencyLeaveApplication.repository";
 import { agencyHostRepository } from "../../repositories/agencyHost.repository";
 import { registerAgencyCommissionRoutes } from "./agency-commission.routes";
@@ -51,8 +54,33 @@ const SettingsSchema = z.object({
   payrollEnabled: z.boolean().optional(),
 });
 
+const UpdateContactSchema = z
+  .object({
+    phone: z
+      .string()
+      .regex(/^\+[1-9]\d{6,19}$/)
+      .optional(),
+    email: z.string().email().optional(),
+  })
+  .refine((d) => d.phone || d.email, { message: "Provide at least phone or email" });
+
 export default async function agencyRoutes(app: FastifyInstance) {
   await registerAgencyCommissionRoutes(app);
+
+  app.put("/contact", { preHandler: preAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const userId = request.userId;
+    if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+    const user = await userRepository.findById(userId);
+    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+    const body = UpdateContactSchema.parse(request.body ?? {});
+    await agencyKycService.updateAgentContact(userId, body);
+    const agency = await agencyRepository.getAgencyByUserId(userId);
+    if (agency) {
+      await redisClient.del(RedisKeys.agencyByPublicId(agency.defaultPublicId.toString()));
+    }
+    await agencyService.bustRankingCache();
+    return reply.send({ ok: true });
+  });
 
   app.get(
     "/me",

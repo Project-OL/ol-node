@@ -88,6 +88,12 @@ import {
   processPayrollSlaJob,
   runPayrollSlaSafetyNet,
 } from "./jobs/payroll-sla.job";
+import {
+  AGENCY_AUTO_REPLY_JOB,
+  AGENCY_AUTO_REPLY_QUEUE,
+} from "./queues/agencyAutoReply.constants";
+import { processAgencyAutoReplyJob } from "./jobs/agencyAutoReply.job";
+import { agencyAutoReplyQueue, type AutoReplyJobData } from "./queues/agencyAutoReply.queue";
 
 const ACCOUNT_DELETION_QUEUE = "account-deletion";
 
@@ -272,6 +278,16 @@ async function main() {
     { connection, concurrency: 2 },
   );
 
+  const autoReplyWorker = new Worker(
+    AGENCY_AUTO_REPLY_QUEUE,
+    async (job: Job<AutoReplyJobData>) => {
+      if (job.name === AGENCY_AUTO_REPLY_JOB) {
+        await processAgencyAutoReplyJob(job);
+      }
+    },
+    { connection, concurrency: 20 },
+  );
+
   const messageOutboxWorker = new Worker(
     MESSAGE_OUTBOX_QUEUE,
     async (job: Job<{ outboxId?: string }>) => {
@@ -389,6 +405,10 @@ async function main() {
     console.error("[Agency level recompute] Job failed:", job?.id, err);
   });
 
+  autoReplyWorker.on("failed", (job, err) => {
+    console.error("[Agency auto-reply] Job failed:", job?.id, err);
+  });
+
   messageOutboxWorker.on("failed", (job, err) => {
     console.error("[Message outbox] Job failed:", job?.id, err);
   });
@@ -406,7 +426,7 @@ async function main() {
   });
 
   console.info(
-    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; message-outbox; message-media-audio; epay-webhook-retry (face: `npm run worker:face-index` — live-photo-verify, face-registration, PENDING_INDEX poll)",
+    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; agency-auto-reply; message-outbox; message-media-audio; epay-webhook-retry (face: `npm run worker:face-index` — live-photo-verify, face-registration, PENDING_INDEX poll)",
   );
 
   const shutdown = async () => {
@@ -415,6 +435,8 @@ async function main() {
     await epayWebhookRetryWorker.close();
     await messageMediaAudioWorker.close();
     await messageMediaAudioQueue.close();
+    await autoReplyWorker.close();
+    await agencyAutoReplyQueue.close();
     await messageOutboxWorker.close();
     await messageOutboxQueue.close();
     await agencyLevelRecomputeWorker.close();

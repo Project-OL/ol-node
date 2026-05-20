@@ -98,4 +98,26 @@ export const agencyApplicationKycRepository = {
       update: { faceVerified: verified },
     });
   },
+
+  async updateContactByAgentUserId(
+    userId: string,
+    data: { contactPhone?: string; contactEmail?: string },
+  ) {
+    const create = buildKycCreate({
+      userId,
+      ...(data.contactPhone !== undefined ? { contactPhone: data.contactPhone } : {}),
+      ...(data.contactEmail !== undefined ? { contactEmail: data.contactEmail } : {}),
+      contactSubmittedAt: new Date(),
+    });
+    const update: Prisma.AgencyApplicationKycUncheckedUpdateInput = {
+      contactSubmittedAt: new Date(),
+    };
+    if (data.contactPhone !== undefined) update.contactPhone = data.contactPhone;
+    if (data.contactEmail !== undefined) update.contactEmail = data.contactEmail;
+    return prisma.agencyApplicationKyc.upsert({
+      where: { userId },
+      create,
+      update,
+    });
+  },
 };

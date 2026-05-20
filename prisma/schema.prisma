@@ -711,6 +711,7 @@ enum ConversationType {
 
 enum MessageType {
   TEXT
+  TEXT_COINS
   IMAGE
   VIDEO
   AUDIO
@@ -804,6 +805,7 @@ model Message {
   deletedAt       DateTime?         @map("deleted_at")
   // Idempotency key (UUID) when set; unique per conversation
   clientMessageId String?           @map("client_message_id")
+  isAutoReply     Boolean           @default(false) @map("is_auto_reply")
   // Per-conversation monotonic order
   seq             BigInt            @map("seq")
   createdAt       DateTime          @default(now()) @map("created_at")
@@ -1681,12 +1683,34 @@ model Agency {
   applications      AgencyHostApplication[]
   leaveApplications AgencyLeaveApplication[]
   dailyEarnings     AgencyDailyEarning[]
+  coinsellerSettings AgencyCoinseller?
 
   @@index([payrollEnabled, pausedAt])
   @@index([payrollEnabled, pausedAt, lastPayrollAssignedAt])
   @@index([currentLevel, currentWindowTotalPoints(sort: Desc)])
   @@index([totalHostsCount(sort: Desc)])
   @@map("agencies")
+}
+
+enum AgencyTransferChannel {
+  BANK
+  EPAY
+}
+
+model AgencyCoinseller {
+  id                 String                @id @default(uuid()) @db.Uuid
+  agencyUserId       String                @unique @map("agency_user_id") @db.Uuid
+  transferChannel    AgencyTransferChannel @default(EPAY) @map("transfer_channel")
+  whatsappNumber     String?               @map("whatsapp_number") @db.VarChar(30)
+  priceImageS3Key    String?               @map("price_image_s3_key") @db.VarChar(512)
+  priceImageS3Bucket String?               @map("price_image_s3_bucket") @db.VarChar(128)
+  autoReply          String?               @map("auto_reply") @db.VarChar(100)
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+
+  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+
+  @@map("agency_coinseller_settings")
 }
 
 model AgencyHost {

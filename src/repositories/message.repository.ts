@@ -109,6 +109,7 @@ export type SendMessageWithOutboxInput = {
   content?: string
   replyToId?: string
   mediaItems?: MediaItemInput[]
+  isAutoReply?: boolean
 }
 
 export type SendMessageWithOutboxResult =
@@ -174,6 +175,7 @@ export async function sendMessageWithOutbox(
           replyToId: data.replyToId,
           seq,
           clientMessageId: data.clientMessageId,
+          isAutoReply: data.isAutoReply ?? false,
         },
       })
 
@@ -253,6 +255,7 @@ function mapToMessageWithDetails(
     replyToId: string | null
     isDeleted: boolean
     deletedAt: Date | null
+    isAutoReply: boolean
     createdAt: Date
     updatedAt: Date
     sender: { id: string; username: string; defaultPublicId: bigint; avatarUrl: string | null }

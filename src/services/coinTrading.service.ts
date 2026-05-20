@@ -1,5 +1,12 @@
 import { CoinTxType, LedgerDirection, PointTxType, Prisma, WalletCurrencyType } from "@prisma/client";
-import { redisClient, RedisKeys, CT_BALANCE_TTL, CT_RATES_TTL } from "../config/redis";
+import {
+  redisClient,
+  RedisKeys,
+  CT_BALANCE_TTL,
+  CT_RATES_TTL,
+  CT_RECENT_USERS_TTL,
+  getRedisForRead,
+} from "../config/redis";
 import { AppError } from "../middlewares/errorHandler";
 import { coinTradingRepository } from "../repositories/coinTrading.repository";
 import { walletRepository } from "../repositories/wallet.repository";
@@ -188,6 +195,7 @@ export const coinTradingService = {
       RedisKeys.ctBalance(senderAgentUserId),
       RedisKeys.ctBalance(recipient.id),
       RedisKeys.walletCoinBalance(recipient.id),
+      RedisKeys.ctRecentUsers(senderAgentUserId),
     );
     return transfer;
   },
@@ -231,7 +239,62 @@ export const coinTradingService = {
   listTopupHistory(agentUserId: string, opts: { limit: number; cursor?: string }) {
     return coinTradingRepository.listTopupOrders(agentUserId, opts);
   },
-  listTransferHistory(userId: string, opts: { role: "sender" | "recipient" | "all"; limit: number; cursor?: string }) {
-    return coinTradingRepository.listTransfers(userId, opts);
+  async listTransferHistory(
+    userId: string,
+    opts: {
+      role: "sender" | "recipient" | "all";
+      direction?: "credit" | "debit";
+      fromDate?: Date;
+      toDate?: Date;
+      limit: number;
+      cursor?: string;
+    },
+  ) {
+    if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
+      throw new AppError(400, "fromDate must be before or equal to toDate", "INVALID_DATE_RANGE");
+    }
+    const rows = await coinTradingRepository.listTransfers({
+      userId,
+      role: opts.role,
+      direction: opts.direction,
+      fromDate: opts.fromDate,
+      toDate: opts.toDate,
+      limit: opts.limit,
+      cursor: opts.cursor,
+    });
+    const hasMore = rows.length > opts.limit;
+    const page = hasMore ? rows.slice(0, opts.limit) : rows;
+    const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null;
+    const items = page.map((row) => {
+      const isDebit = row.senderAgentUserId === userId;
+      const counterpartyUser = isDebit ? row.recipient : row.senderAgent;
+      return {
+        id: row.id,
+        direction: isDebit ? ("debit" as const) : ("credit" as const),
+        tradingCoinsDebited: row.tradingCoinsDebited.toString(),
+        coinsCredited: row.coinsCredited.toString(),
+        recipientWalletType: row.recipientWalletType,
+        createdAt: row.createdAt.toISOString(),
+        counterparty: {
+          id: counterpartyUser.id,
+          name: counterpartyUser.username,
+          avatarUrl: counterpartyUser.avatarUrl,
+          publicId: counterpartyUser.publicId.toString(),
+        },
+      };
+    });
+    return { items, nextCursor };
+  },
+
+  async getRecentTransactionUsers(agencyUserId: string) {
+    const redis = getRedisForRead();
+    const cacheKey = RedisKeys.ctRecentUsers(agencyUserId);
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as Awaited<
+      ReturnType<typeof coinTradingRepository.getRecentTransactionUsers>
+    >;
+    const rows = await coinTradingRepository.getRecentTransactionUsers(agencyUserId);
+    await redisClient.set(cacheKey, JSON.stringify(rows), "EX", CT_RECENT_USERS_TTL);
+    return rows;
   },
 };
