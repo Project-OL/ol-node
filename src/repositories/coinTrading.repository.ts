@@ -18,6 +18,17 @@ export const coinTradingRepository = {
       orderBy: { sortOrder: "asc" },
     });
   },
+  getTopupPackages() {
+    return prismaRead.coinTradingTopupPackage.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: "asc" },
+    });
+  },
+  getTopupPackageById(id: string) {
+    return prismaRead.coinTradingTopupPackage.findFirst({
+      where: { id, isActive: true },
+    });
+  },
   getExchangeRates() {
     return prismaRead.agentExchangeRate.findMany({
       where: { isActive: true },

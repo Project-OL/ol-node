@@ -4,7 +4,9 @@ import { prisma } from "../config/database";
 import { AppError } from "../middlewares/errorHandler";
 import { agencyAgentApplicationRepository } from "../repositories/agencyAgentApplication.repository";
 import { agencyApplicationKycRepository } from "../repositories/agencyApplicationKyc.repository";
+import { agencyRepository } from "../repositories/agency.repository";
 import { userRepository } from "../repositories/user.repository";
+import { agencyCoinsellerService } from "./agencyCoinseller.service";
 import { storageService } from "./storage.service";
 
 const PRESIGN_TTL_SEC = 600;
@@ -73,6 +75,10 @@ export const agencyKycService = {
       contactEmail: payload.email,
       contactSubmittedAt: new Date(),
     });
+    const agency = await agencyRepository.getAgencyByUserId(userId);
+    if (agency) {
+      await agencyCoinsellerService.syncWhatsappFromKycPhone(userId, payload.phone);
+    }
   },
 
   /**
@@ -140,6 +146,9 @@ export const agencyKycService = {
     if (data.phone) patch.contactPhone = data.phone;
     if (data.email) patch.contactEmail = data.email;
     await agencyApplicationKycRepository.updateContactByAgentUserId(userId, patch);
+    if (data.phone) {
+      await agencyCoinsellerService.syncWhatsappFromKycPhone(userId, data.phone);
+    }
   },
 
   async validateKycComplete(userId: string) {

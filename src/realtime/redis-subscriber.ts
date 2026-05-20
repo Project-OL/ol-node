@@ -60,8 +60,25 @@ class RedisRealtimeSubscriber {
     this.client.on('message', (channel: string, message: string) => {
       const convId = conversationIdFromChannel(channel)
       if (convId) {
+        let parsed: { t?: string; message?: { senderId?: string; isAutoReply?: boolean } } | null =
+          null
+        try {
+          parsed = JSON.parse(message) as {
+            t?: string
+            message?: { senderId?: string; isAutoReply?: boolean }
+          }
+        } catch {
+          parsed = null
+        }
         const sockets = conversationRooms.getSockets(convId)
         for (const rs of sockets) {
+          if (
+            parsed?.t === 'NEW_MESSAGE' &&
+            parsed.message?.isAutoReply &&
+            parsed.message.senderId === rs.userId
+          ) {
+            continue
+          }
           try {
             if (rs.ws.readyState === WebSocket.OPEN) {
               rs.ws.send(message)

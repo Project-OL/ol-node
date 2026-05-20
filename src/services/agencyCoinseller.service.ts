@@ -9,6 +9,8 @@ import {
   agencyCoinsellerRepository,
   type CoinsellerSettingsInput,
 } from "../repositories/agencyCoinseller.repository";
+import { agencyRepository } from "../repositories/agency.repository";
+import { agencyApplicationKycRepository } from "../repositories/agencyApplicationKyc.repository";
 import { AppError } from "../middlewares/errorHandler";
 import { storageService } from "./storage.service";
 
@@ -23,14 +25,23 @@ export const agencyCoinsellerService = {
     if (cached) return JSON.parse(cached);
 
     const row = await agencyCoinsellerRepository.findByAgencyUserId(agencyUserId);
-    const result = row ?? {
-      agencyUserId,
-      transferChannel: "EPAY" as const,
-      whatsappNumber: null,
-      priceImageS3Key: null,
-      priceImageS3Bucket: null,
-      autoReply: null,
-    };
+    const kyc =
+      !row?.whatsappNumber
+        ? await agencyApplicationKycRepository.getKycByUserId(agencyUserId)
+        : null;
+    const result = row
+      ? {
+          ...row,
+          whatsappNumber: row.whatsappNumber ?? kyc?.contactPhone ?? null,
+        }
+      : {
+          agencyUserId,
+          transferChannel: "EPAY" as const,
+          whatsappNumber: kyc?.contactPhone ?? null,
+          priceImageS3Key: null,
+          priceImageS3Bucket: null,
+          autoReply: null,
+        };
     await redisClient.set(cacheKey, JSON.stringify(result), "EX", COINSELLER_SETTINGS_TTL);
     return result;
   },
@@ -98,6 +109,22 @@ export const agencyCoinsellerService = {
   getPriceImageUrl(s3Key: string | null | undefined): string | null {
     if (!s3Key) return null;
     return storageService.getCdnOrS3PublicUrl(s3Key);
+  },
+
+  /**
+   * Copy KYC / agency contact phone into coinseller WhatsApp when the agency row exists.
+   */
+  async syncWhatsappFromKycPhone(agencyUserId: string, phone: string | null | undefined) {
+    const normalized = phone?.trim();
+    if (!normalized) return;
+    const agency = await agencyRepository.getAgencyByUserId(agencyUserId);
+    if (!agency) return;
+    const existing = await agencyCoinsellerRepository.findByAgencyUserId(agencyUserId);
+    await agencyCoinsellerRepository.upsertSettings(agencyUserId, {
+      whatsappNumber: normalized,
+      ...(existing ? {} : { transferChannel: "EPAY" }),
+    });
+    await agencyCoinsellerService._bustCache(agencyUserId);
   },
 
   async _bustCache(agencyUserId: string) {

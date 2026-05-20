@@ -24,7 +24,35 @@ function parseUsd(v: Prisma.Decimal): number {
   return Number(v.toString());
 }
 
+function formatPackage(row: {
+  id: string;
+  tradingCoins: bigint;
+  priceCents: number;
+  coinsPerUsd: number;
+  currency: string;
+  label: string | null;
+}) {
+  return {
+    id: row.id,
+    tradingCoins: row.tradingCoins.toString(),
+    priceCents: row.priceCents,
+    amountUsd: (row.priceCents / 100).toFixed(2),
+    coinsPerUsd: row.coinsPerUsd,
+    currency: row.currency,
+    label: row.label,
+  };
+}
+
 export const coinTradingService = {
+  async getTopupPackages() {
+    const key = RedisKeys.ctTopupPackages();
+    const cached = await redisClient.get(key);
+    if (cached) return JSON.parse(cached);
+    const rows = await coinTradingRepository.getTopupPackages();
+    const packages = rows.map(formatPackage);
+    await redisClient.set(key, JSON.stringify(packages), "EX", CT_RATES_TTL);
+    return packages;
+  },
   async getTopupRates() {
     const key = RedisKeys.ctTopupRates();
     const cached = await redisClient.get(key);
@@ -56,33 +84,64 @@ export const coinTradingService = {
     const tradingCoinsAwarded = BigInt(Math.floor((Number(pointsToExchange) * tier.coinsPerUsd) / 10000));
     return { usdEquiv, coinsPerUsd: tier.coinsPerUsd, tradingCoinsAwarded };
   },
-  async initiateTopup(agentUserId: string, amountUsd: number, currency: string, callbackUrl: string, returnUrl: string) {
+  async initiateTopup(
+    agentUserId: string,
+    input: { packageId?: string; amountUsd?: number; currency: string; callbackUrl: string; returnUrl: string },
+  ) {
     const user = await userRepository.findById(agentUserId);
     if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
     await agencyService.enforcePauseGate(agentUserId);
-    const rate = await this.lookupTopupRate(amountUsd);
+
+    let amountUsd: number;
+    let tradingCoinsAwarded: bigint;
+    let rateApplied: number;
+    let packageId: string | undefined;
+
+    if (input.packageId) {
+      const pkg = await coinTradingRepository.getTopupPackageById(input.packageId);
+      if (!pkg) throw new AppError(404, "Package not found", "PACKAGE_NOT_FOUND");
+      packageId = pkg.id;
+      amountUsd = pkg.priceCents / 100;
+      tradingCoinsAwarded = pkg.tradingCoins;
+      rateApplied = pkg.coinsPerUsd;
+    } else if (input.amountUsd != null) {
+      const rate = await this.lookupTopupRate(input.amountUsd);
+      amountUsd = input.amountUsd;
+      tradingCoinsAwarded = rate.totalCoins;
+      rateApplied = rate.coinsPerUsd;
+    } else {
+      throw new AppError(400, "packageId or amountUsd required", "TOPUP_INPUT_REQUIRED");
+    }
+
     const idempotencyKey = `trading-topup:${agentUserId}:${Date.now()}`;
     const order = await prisma.coinTradingTopupOrder.create({
       data: {
         agentUserId,
+        packageId,
         amountUsd: new Prisma.Decimal(amountUsd.toFixed(2)),
-        tradingCoinsAwarded: rate.totalCoins,
-        rateApplied: rate.coinsPerUsd,
+        tradingCoinsAwarded,
+        rateApplied,
         idempotencyKey,
         status: "PENDING",
       },
     });
     const epay = await epayClient.createOrder({
       amountUsd,
-      currency,
+      currency: input.currency,
       orderId: order.id,
       orderType: "TRADING_TOPUP",
       description: "Trading coin top-up",
-      callbackUrl,
-      returnUrl,
+      callbackUrl: input.callbackUrl,
+      returnUrl: input.returnUrl,
     });
     await prisma.coinTradingTopupOrder.update({ where: { id: order.id }, data: { epayRef: epay.gatewayRef } });
-    return { paymentUrl: epay.paymentUrl, orderId: order.id };
+    return {
+      paymentUrl: epay.paymentUrl,
+      orderId: order.id,
+      amountUsd: amountUsd.toFixed(2),
+      tradingCoinsAwarded: tradingCoinsAwarded.toString(),
+      packageId: packageId ?? null,
+    };
   },
   async confirmTopup(order: { id: string; agentUserId: string; amountUsd: Prisma.Decimal; tradingCoinsAwarded: bigint; status: string }, payload: { gatewayRef: string; amountUsd: number }) {
     await prisma.$transaction(async (tx) => {

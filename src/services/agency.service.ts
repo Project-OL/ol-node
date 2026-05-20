@@ -1,4 +1,4 @@
-import { SupportTicketType, WalletCurrencyType } from "@prisma/client";
+import { AgencyTransferChannel, Prisma, SupportTicketType, WalletCurrencyType } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
 import { RedisKeys } from "../config/redis";
 import { cacheRedisService } from "./cacheRedis.service";
@@ -12,6 +12,7 @@ import { rootLogger } from "../utils/rootLogger";
 import { displayNameFromUser } from "../utils/profileDisplay";
 import { agencyCommissionService } from "./agencyCommission.service";
 import { agencyKycService } from "./agencyKyc.service";
+import { agencyCoinsellerService } from "./agencyCoinseller.service";
 
 const log = rootLogger.child({ module: "agency.service" });
 
@@ -133,6 +134,7 @@ export const agencyService = {
             updatedAt: now,
           },
         });
+        await seedCoinsellerWhatsappFromKyc(tx, userRow.id);
         return ag;
       },
       { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS },
@@ -142,6 +144,8 @@ export const agencyService = {
       agency.userId,
       agency.defaultPublicId,
     );
+    await agencyCoinsellerService._bustCache(agency.userId);
+    await agencyService.bustRankingCache();
     await meServiceInvalidateSafe(params.applicantUserId);
 
     return { agency, created: true as const };
@@ -226,6 +230,7 @@ export const agencyService = {
             reviewedAt: now,
           },
         });
+        await seedCoinsellerWhatsappFromKyc(tx, userRow.id);
         return ag;
       },
       { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS },
@@ -235,6 +240,8 @@ export const agencyService = {
       agency.userId,
       agency.defaultPublicId,
     );
+    await agencyCoinsellerService._bustCache(agency.userId);
+    await agencyService.bustRankingCache();
     await meServiceInvalidateSafe(params.applicantUserId);
 
     return { agency, created: true as const };
@@ -385,6 +392,23 @@ export const agencyService = {
     }
   },
 };
+
+async function seedCoinsellerWhatsappFromKyc(tx: Prisma.TransactionClient, userId: string) {
+  const kyc = await tx.agencyApplicationKyc.findUnique({
+    where: { userId },
+    select: { contactPhone: true },
+  });
+  if (!kyc?.contactPhone) return;
+  await tx.agencyCoinseller.upsert({
+    where: { agencyUserId: userId },
+    create: {
+      agencyUserId: userId,
+      whatsappNumber: kyc.contactPhone,
+      transferChannel: AgencyTransferChannel.EPAY,
+    },
+    update: { whatsappNumber: kyc.contactPhone },
+  });
+}
 
 async function meServiceInvalidateSafe(userId: string) {
   try {

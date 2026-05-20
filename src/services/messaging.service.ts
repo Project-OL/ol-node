@@ -336,6 +336,7 @@ export const messagingService = {
     await redisClient.expire(msgKey, MSG_HOT_TTL)
     await redisClient.zremrangebyrank(msgKey, 0, -101)
     for (const uid of otherMemberIds) {
+      if (uid === senderUserId) continue
       await redisClient.incr(RedisKeys.unreadCount(uid, conversationId))
     }
     await enqueueMessageOutboxPublish(result.outboxId)

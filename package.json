@@ -33,7 +33,9 @@
         "typecheck": "tsc --noEmit",
         "postman:auth": "node scripts/generate-auth-postman-collection.mjs",
         "grant:trading-coins": "tsx scripts/grant-trading-coins.ts",
-        "seed:agency-agent-dev": "tsx scripts/seed-agency-agent-dev.ts"
+        "seed:agency-agent-dev": "tsx scripts/seed-agency-agent-dev.ts",
+        "seed:coin-trading-rates": "tsx scripts/seed-coin-trading-rates.ts",
+        "seed:coin-trading-topup-packages": "tsx scripts/seed-coin-trading-topup-packages.ts"
     },
     "dependencies": {
         "@aws-sdk/client-rekognition": "^3.1046.0",

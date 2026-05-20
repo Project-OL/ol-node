@@ -1,4 +1,9 @@
 import { LevelType, PrismaClient } from "@prisma/client";
+import {
+  DEFAULT_AGENT_EXCHANGE_RATES,
+  DEFAULT_COIN_TRADING_TOPUP_RATES,
+} from "../src/config/coin-trading-rates.defaults";
+import { DEFAULT_COIN_TRADING_TOPUP_PACKAGES } from "../src/config/coin-trading-topup-packages.defaults";
 
 const prisma = new PrismaClient();
 
@@ -96,20 +101,33 @@ async function main() {
   });
 
   await prisma.coinTradingTopupRate.createMany({
-    data: [
-      { minUsd: "0.00", maxUsd: "500.00", coinsPerUsd: 9200, sortOrder: 1 },
-      { minUsd: "500.00", maxUsd: "2000.00", coinsPerUsd: 9500, sortOrder: 2 },
-      { minUsd: "2000.00", maxUsd: null, coinsPerUsd: 9900, sortOrder: 3 },
-    ],
+    data: DEFAULT_COIN_TRADING_TOPUP_RATES.map((tier, i) => ({
+      minUsd: String(tier.minUsd),
+      maxUsd: tier.maxUsd == null ? null : String(tier.maxUsd),
+      coinsPerUsd: tier.coinsPerUsd,
+      sortOrder: i + 1,
+    })),
     skipDuplicates: true,
   });
 
   await prisma.agentExchangeRate.createMany({
-    data: [
-      { minUsdEquiv: "0.00", maxUsdEquiv: "50.00", coinsPerUsd: 9500, sortOrder: 1 },
-      { minUsdEquiv: "50.00", maxUsdEquiv: "1000.00", coinsPerUsd: 9500, sortOrder: 2 },
-      { minUsdEquiv: "1000.00", maxUsdEquiv: null, coinsPerUsd: 9900, sortOrder: 3 },
-    ],
+    data: DEFAULT_AGENT_EXCHANGE_RATES.map((tier, i) => ({
+      minUsdEquiv: String(tier.minUsd),
+      maxUsdEquiv: tier.maxUsd == null ? null : String(tier.maxUsd),
+      coinsPerUsd: tier.coinsPerUsd,
+      sortOrder: i + 1,
+    })),
+    skipDuplicates: true,
+  });
+
+  await prisma.coinTradingTopupPackage.createMany({
+    data: DEFAULT_COIN_TRADING_TOPUP_PACKAGES.map((pkg) => ({
+      tradingCoins: pkg.tradingCoins,
+      priceCents: pkg.priceCents,
+      coinsPerUsd: pkg.coinsPerUsd,
+      sortOrder: pkg.sortOrder,
+      label: pkg.label ?? null,
+    })),
     skipDuplicates: true,
   });
 }

@@ -1228,9 +1228,29 @@ model AgencyApplicationKyc {
   @@map("agency_application_kyc")
 }
 
+model CoinTradingTopupPackage {
+  id           String   @id @default(uuid()) @db.Uuid
+  tradingCoins BigInt   @map("trading_coins")
+  priceCents   Int      @map("price_cents")
+  coinsPerUsd  Int      @map("coins_per_usd")
+  currency     String   @default("USD") @db.VarChar(10)
+  label        String?  @db.VarChar(100)
+  isActive     Boolean  @default(true) @map("is_active")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  topupOrders CoinTradingTopupOrder[]
+
+  @@unique([tradingCoins, priceCents])
+  @@index([isActive, sortOrder])
+  @@map("coin_trading_topup_packages")
+}
+
 model CoinTradingTopupOrder {
   id                  String   @id @default(uuid()) @db.Uuid
   agentUserId         String   @map("agent_user_id") @db.Uuid
+  packageId           String?  @map("package_id") @db.Uuid
   amountUsd           Decimal  @map("amount_usd") @db.Decimal(12, 2)
   tradingCoinsAwarded BigInt   @map("trading_coins_awarded")
   rateApplied         Int      @map("rate_applied")
@@ -1241,7 +1261,8 @@ model CoinTradingTopupOrder {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  agent User @relation("TradingCoinTopupsByAgent", fields: [agentUserId], references: [id], onDelete: Cascade)
+  agent   User                       @relation("TradingCoinTopupsByAgent", fields: [agentUserId], references: [id], onDelete: Cascade)
+  package CoinTradingTopupPackage?   @relation(fields: [packageId], references: [id], onDelete: Restrict)
 
   @@index([agentUserId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])

@@ -5,12 +5,15 @@ import { AppError } from "../../middlewares/errorHandler";
 import { rateLimitAgencyPointTransfer } from "../../middlewares/rateLimitAuth";
 import { agencyCommissionService } from "../../services/agencyCommission.service";
 import { agencyRepository } from "../../repositories/agency.repository";
+import { securityPasswordService } from "../../services/security-password.service";
 
 const preAuth = [authenticate];
 
 const TransferSchema = z.object({
   recipientAgentPublicId: z.string().min(1),
   points: z.string().min(1),
+  /** Prefer header `X-Security-Password`; body field discouraged vs header. */
+  securityPassword: z.string().optional(),
 });
 
 export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
@@ -118,6 +121,11 @@ export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
       } catch {
         throw new AppError(400, "Invalid points", "INVALID_REQUEST");
       }
+
+      const securityPassword = String(
+        request.headers["x-security-password"] ?? parsed.data.securityPassword ?? "",
+      );
+      await securityPasswordService.verifyCurrentPassword(userId, securityPassword);
 
       const recipientAgency = await agencyRepository.getAgencyByPublicId(recipientPid);
       if (!recipientAgency) {

@@ -487,10 +487,13 @@ export async function updateReadCursor(
   }
   const msg = await prismaRead.message.findFirst({
     where: { id: messageId, conversationId, isDeleted: false },
-    select: { id: true, createdAt: true, seq: true },
+    select: { id: true, createdAt: true, seq: true, senderId: true, isAutoReply: true },
   })
   if (!msg) {
     throw new AppError(400, 'Invalid message', 'INVALID_MESSAGE')
+  }
+  if (msg.isAutoReply && msg.senderId === userId) {
+    return false
   }
   if (member.lastReadMessageId) {
     const prev = await prismaRead.message.findUnique({

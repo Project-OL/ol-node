@@ -157,6 +157,7 @@ export const RedisKeys = {
   ctBalance: (userId: string) => `ct:balance:${userId}`,
   ctRecentUsers: (userId: string) => `ct:recent-users:${userId}`,
   ctTopupRates: () => "ct:topup-rates",
+  ctTopupPackages: () => "ct:topup-packages",
   ctExchangeRates: () => "ct:exchange-rates",
   coinsellerSettings: (agencyUserId: string) => `agency:coinseller:${agencyUserId}`,
   walletIdem: (key: string) => `wallet:idem:${key}`,

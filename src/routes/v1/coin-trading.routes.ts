@@ -7,8 +7,21 @@ import { securityPasswordService } from "../../services/security-password.servic
 import { rateLimitCtExchange, rateLimitCtTopup, rateLimitCtTransfer } from "../../middlewares/rateLimitAuth";
 import { userRepository } from "../../repositories/user.repository";
 
-const topupSchema = z.object({ amountUsd: z.number().positive(), currency: z.string().default("USD"), callbackUrl: z.string().url().optional(), returnUrl: z.string().url().optional() });
-const exchangeSchema = z.object({ pointsToExchange: z.string().min(1) });
+const topupSchema = z
+  .object({
+    packageId: z.string().uuid().optional(),
+    amountUsd: z.number().positive().optional(),
+    currency: z.string().default("USD"),
+    callbackUrl: z.string().url().optional(),
+    returnUrl: z.string().url().optional(),
+  })
+  .refine((b) => b.packageId != null || b.amountUsd != null, {
+    message: "packageId or amountUsd required",
+  });
+const exchangeSchema = z.object({
+  pointsToExchange: z.string().min(1),
+  securityPassword: z.string().optional(),
+});
 const transferSchema = z.object({
   recipientPublicId: z.string().min(1),
   tradingCoins: z.string().min(1),
@@ -39,17 +52,24 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
     return reply.send({ topupRates, exchangeRates });
   });
 
+  app.get("/topup/packages", { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await userRepository.findById(request.userId!);
+    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+    const packages = await coinTradingService.getTopupPackages();
+    return reply.send({ packages });
+  });
+
   app.post("/topup/initiate", { preHandler: [authenticate, rateLimitCtTopup] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = await userRepository.findById(request.userId!);
     if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
     const body = topupSchema.parse(request.body ?? {});
-    const result = await coinTradingService.initiateTopup(
-      request.userId!,
-      body.amountUsd,
-      body.currency,
-      body.callbackUrl ?? `${request.protocol}://${request.hostname}/api/v1/webhooks/epay`,
-      body.returnUrl ?? `${request.protocol}://${request.hostname}`,
-    );
+    const result = await coinTradingService.initiateTopup(request.userId!, {
+      packageId: body.packageId,
+      amountUsd: body.amountUsd,
+      currency: body.currency,
+      callbackUrl: body.callbackUrl ?? `${request.protocol}://${request.hostname}/api/v1/webhooks/epay`,
+      returnUrl: body.returnUrl ?? `${request.protocol}://${request.hostname}`,
+    });
     return reply.status(201).send(result);
   });
 
@@ -66,7 +86,14 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
     const user = await userRepository.findById(request.userId!);
     if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
     const body = exchangeSchema.parse(request.body ?? {});
-    const result = await coinTradingService.exchangePointsForTradingCoins(request.userId!, BigInt(body.pointsToExchange));
+    const securityPassword = String(
+      request.headers["x-security-password"] ?? body.securityPassword ?? "",
+    );
+    await securityPasswordService.verifyCurrentPassword(request.userId!, securityPassword);
+    const result = await coinTradingService.exchangePointsForTradingCoins(
+      request.userId!,
+      BigInt(body.pointsToExchange),
+    );
     return reply.send(result);
   });
 
