@@ -27,7 +27,6 @@ const transferSchema = z.object({
   tradingCoins: z.string().min(1),
   targetWalletType: z.enum(["PERSONAL", "TRADING"]).optional(),
   idempotencyKey: z.string().min(1),
-  securityPassword: z.string().optional(),
 });
 
 const ListTransfersQuerySchema = z.object({
@@ -101,8 +100,6 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
     const user = await userRepository.findById(request.userId!);
     if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
     const body = transferSchema.parse(request.body ?? {});
-    const securityPassword = String(request.headers["x-security-password"] ?? body.securityPassword ?? "");
-    await securityPasswordService.verifyCurrentPassword(request.userId!, securityPassword);
     const result = await coinTradingService.transferTradingCoins(request.userId!, {
       recipientPublicId: body.recipientPublicId,
       tradingCoins: BigInt(body.tradingCoins),
