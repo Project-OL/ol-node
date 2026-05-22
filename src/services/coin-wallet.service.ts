@@ -560,6 +560,8 @@ export const coinWalletService = {
       description?: string;
       metadata?: Prisma.JsonValue;
       counterpartyId?: string;
+      /** Defaults to personal COIN; pass TRADING_COIN for agent trading flows. */
+      currencyType?: WalletCurrencyType;
     },
   ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
     const existing = await coinLedgerRepository.findByIdempotencyKey(
@@ -573,17 +575,21 @@ export const coinWalletService = {
       };
     }
 
+    const currencyType = options.currencyType ?? WalletCurrencyType.COIN;
     const wallet = await tx.wallet.upsert({
       where: {
         userId_currencyType: {
           userId,
-          currencyType: WalletCurrencyType.COIN,
+          currencyType,
         },
       },
-      create: { userId, currencyType: WalletCurrencyType.COIN },
+      create: { userId, currencyType },
       update: {},
     });
-    if (wallet.currencyType === WalletCurrencyType.TRADING_COIN) {
+    if (
+      currencyType === WalletCurrencyType.COIN &&
+      wallet.currencyType === WalletCurrencyType.TRADING_COIN
+    ) {
       throw new AppError(
         403,
         "Trading coins cannot be used for in-app purchases",
@@ -635,6 +641,8 @@ export const coinWalletService = {
       metadata?: Prisma.JsonValue;
       counterpartyId?: string;
       applyWealthCredit: boolean;
+      /** Defaults to personal COIN; pass TRADING_COIN for agent trading flows. */
+      currencyType?: WalletCurrencyType;
     },
   ): Promise<{
     ledgerEntryId: string;
@@ -655,14 +663,15 @@ export const coinWalletService = {
       };
     }
 
+    const currencyType = options.currencyType ?? WalletCurrencyType.COIN;
     const wallet = await tx.wallet.upsert({
       where: {
         userId_currencyType: {
           userId,
-          currencyType: WalletCurrencyType.COIN,
+          currencyType,
         },
       },
-      create: { userId, currencyType: WalletCurrencyType.COIN },
+      create: { userId, currencyType },
       update: {},
     });
     await walletRepository.lockForUpdate(tx, wallet.id);
@@ -674,7 +683,10 @@ export const coinWalletService = {
     const balance = last?.balanceAfter ?? 0n;
     const newBalance = balance + amount;
 
-    const levelResult = options.applyWealthCredit
+    const applyWealth =
+      options.applyWealthCredit &&
+      currencyType === WalletCurrencyType.COIN;
+    const levelResult = applyWealth
       ? await walletLevelService.applyCredit(
           tx,
           userId,

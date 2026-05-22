@@ -114,6 +114,14 @@ export const walletService = {
     }
   },
 
+  async adjustTradingBalanceCache(userId: string) {
+    try {
+      await redisClient.del(RedisKeys.ctBalance(userId));
+    } catch {
+      // ignore
+    }
+  },
+
   async acquireIdemKey(key: string): Promise<boolean> {
     const redisKey = RedisKeys.walletIdem(key);
     const result = await redisClient.set(

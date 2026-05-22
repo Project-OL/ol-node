@@ -13,12 +13,44 @@ import { walletRepository } from "../repositories/wallet.repository";
 import { coinLedgerRepository } from "../repositories/coin-ledger.repository";
 import { pointWalletService } from "./point-wallet.service";
 import { coinWalletService } from "./coin-wallet.service";
+import { walletService } from "./wallet.service";
 import { agencyService } from "./agency.service";
 import { userRepository } from "../repositories/user.repository";
 import { epayClient } from "../lib/epay.client";
 import { prisma } from "../config/database";
 
 const TX_TIMEOUT_MS = 20_000;
+
+function resolveRecipientWalletType(
+  recipient: { isAgent: boolean },
+  targetWalletType?: "PERSONAL" | "TRADING",
+): WalletCurrencyType {
+  if (!recipient.isAgent) return WalletCurrencyType.COIN;
+  if (targetWalletType === "PERSONAL") return WalletCurrencyType.COIN;
+  return WalletCurrencyType.TRADING_COIN;
+}
+
+function walletTypeFromTransferRecord(
+  recipientWalletType: string,
+): WalletCurrencyType {
+  return recipientWalletType === "TRADING"
+    ? WalletCurrencyType.TRADING_COIN
+    : WalletCurrencyType.COIN;
+}
+
+async function invalidateTradingTransferCaches(
+  senderUserId: string,
+  recipientUserId: string,
+  recipientWalletType: WalletCurrencyType,
+) {
+  await walletService.adjustTradingBalanceCache(senderUserId);
+  if (recipientWalletType === WalletCurrencyType.COIN) {
+    await walletService.adjustCoinBalanceCache(recipientUserId, 0n);
+  } else {
+    await walletService.adjustTradingBalanceCache(recipientUserId);
+  }
+  await redisClient.del(RedisKeys.ctRecentUsers(senderUserId));
+}
 
 function parseUsd(v: Prisma.Decimal): number {
   return Number(v.toString());
@@ -169,7 +201,7 @@ export const coinTradingService = {
         data: { status: "COMPLETED", ledgerEntryId: entry.id },
       });
     }, { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS });
-    await redisClient.del(RedisKeys.ctBalance(order.agentUserId));
+    await walletService.adjustTradingBalanceCache(order.agentUserId);
   },
   async exchangePointsForTradingCoins(agentUserId: string, pointsToExchange: bigint) {
     if (pointsToExchange < 10_000n) throw new AppError(400, "Minimum 10,000 points", "MIN_POINTS_EXCHANGE");
@@ -186,9 +218,11 @@ export const coinTradingService = {
         idempotencyKey: `exchange-ct:${agentUserId}:${Date.now()}`,
         description: "Trading coins from points exchange",
         applyWealthCredit: false,
+        currencyType: WalletCurrencyType.TRADING_COIN,
       });
     }, { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS });
-    await redisClient.del(RedisKeys.walletPointBalance(agentUserId), RedisKeys.ctBalance(agentUserId));
+    await walletService.adjustPointBalanceCache(agentUserId, 0n);
+    await walletService.adjustTradingBalanceCache(agentUserId);
     return { tradingCoinsAwarded: rate.tradingCoinsAwarded.toString() };
   },
   async transferTradingCoins(
@@ -208,10 +242,10 @@ export const coinTradingService = {
     const recipient = await userRepository.findByPublicId(pid);
     if (!recipient) throw new AppError(404, "Recipient not found", "RECIPIENT_NOT_FOUND");
     if (recipient.id === senderAgentUserId) throw new AppError(400, "Self transfer blocked", "SELF_TRANSFER");
-    const recipientWalletType =
-      recipient.isAgent && input.targetWalletType !== "PERSONAL"
-        ? WalletCurrencyType.TRADING_COIN
-        : WalletCurrencyType.COIN;
+    const recipientWalletType = resolveRecipientWalletType(
+      recipient,
+      input.targetWalletType,
+    );
     const transfer = await prisma.$transaction(async (tx) => {
       const senderDebit = await coinWalletService.debit(
         senderAgentUserId,
@@ -222,6 +256,7 @@ export const coinTradingService = {
           idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:out`,
           description: "Trading coin transfer out",
           counterpartyId: recipient.id,
+          currencyType: WalletCurrencyType.TRADING_COIN,
         },
       );
       const recipientCredit = await coinWalletService.credit(
@@ -234,6 +269,7 @@ export const coinTradingService = {
           description: "Trading coin transfer in",
           counterpartyId: senderAgentUserId,
           applyWealthCredit: false,
+          currencyType: recipientWalletType,
         },
       );
       return coinTradingRepository.createTransfer(
@@ -250,11 +286,10 @@ export const coinTradingService = {
         tx,
       );
     }, { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS });
-    await redisClient.del(
-      RedisKeys.ctBalance(senderAgentUserId),
-      RedisKeys.ctBalance(recipient.id),
-      RedisKeys.walletCoinBalance(recipient.id),
-      RedisKeys.ctRecentUsers(senderAgentUserId),
+    await invalidateTradingTransferCaches(
+      senderAgentUserId,
+      recipient.id,
+      recipientWalletType,
     );
     return transfer;
   },
@@ -262,6 +297,9 @@ export const coinTradingService = {
     const transfer = await coinTradingRepository.getTransferById(transferId);
     if (!transfer) throw new AppError(404, "Transfer not found", "TRANSFER_NOT_FOUND");
     if (transfer.reversedAt) throw new AppError(409, "Transfer already reversed", "TRANSFER_ALREADY_REVERSED");
+    const recipientWalletType = walletTypeFromTransferRecord(
+      transfer.recipientWalletType,
+    );
     await prisma.$transaction(async (tx) => {
       await coinWalletService.credit(
         transfer.senderAgentUserId,
@@ -272,6 +310,7 @@ export const coinTradingService = {
           idempotencyKey: `trading-reversal:${transfer.id}:sender`,
           description: "Admin fraud reversal credit",
           applyWealthCredit: false,
+          currencyType: WalletCurrencyType.TRADING_COIN,
         },
       );
       await coinWalletService.debit(
@@ -282,10 +321,16 @@ export const coinTradingService = {
         {
           idempotencyKey: `trading-reversal:${transfer.id}:recipient`,
           description: "Admin fraud reversal debit",
+          currencyType: recipientWalletType,
         },
       );
       await coinTradingRepository.reverseTransfer({ id: transfer.id, reversedByUserId: adminUserId, reason }, tx);
     }, { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS });
+    await invalidateTradingTransferCaches(
+      transfer.senderAgentUserId,
+      transfer.recipientUserId,
+      recipientWalletType,
+    );
   },
   async getTradingBalance(agentUserId: string) {
     const key = RedisKeys.ctBalance(agentUserId);
