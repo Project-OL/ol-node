@@ -26,6 +26,8 @@ export type WithdrawalWithMethodRow = {
     requestedAt: Date;
     processedAt: Date | null;
     hostPayoutUsd: Prisma.Decimal | null;
+    platformFeePoints: bigint | null;
+    agentRewardPoints: bigint | null;
     assignmentCount: number;
   };
   paymentMethod: {
@@ -34,6 +36,9 @@ export type WithdrawalWithMethodRow = {
     epayEmail: string | null;
     bankName: string | null;
     bankAccountHolder: string | null;
+    accountHolderFirstName: string | null;
+    accountHolderLastName: string | null;
+    branch: string | null;
     bankAccountNumber: string | null;
     bankIfscCode: string | null;
     upiNumber: string | null;
@@ -42,6 +47,14 @@ export type WithdrawalWithMethodRow = {
   } | null;
   revealPii: boolean;
 };
+
+export type InboxAssignmentRow = Prisma.WithdrawalPayrollAssignmentGetPayload<{
+  include: {
+    withdrawal: {
+      include: { paymentMethod: true };
+    };
+  };
+}>;
 
 export const payrollAssignmentRepository = {
   async create(
@@ -76,6 +89,11 @@ export const payrollAssignmentRepository = {
   getByIdForAgent(id: string, agencyUserId: string) {
     return prismaRead.withdrawalPayrollAssignment.findFirst({
       where: { id, agencyUserId },
+      include: {
+        withdrawal: {
+          include: { paymentMethod: true },
+        },
+      },
     });
   },
 
@@ -132,11 +150,46 @@ export const payrollAssignmentRepository = {
         requestedAt: row.withdrawal.requestedAt,
         processedAt: row.withdrawal.processedAt,
         hostPayoutUsd: row.withdrawal.hostPayoutUsd,
+        platformFeePoints: row.withdrawal.platformFeePoints,
+        agentRewardPoints: row.withdrawal.agentRewardPoints,
         assignmentCount: row.withdrawal.assignmentCount,
       },
       paymentMethod,
       revealPii,
     };
+  },
+
+  findInboxByStatus(
+    agencyUserId: string,
+    status: "PENDING" | "COMPLETED" | "REJECTED" | "EXPIRED",
+    cursor?: string,
+    limit = 20,
+  ): Promise<InboxAssignmentRow[]> {
+    return prismaRead.withdrawalPayrollAssignment.findMany({
+      where: { agencyUserId, status },
+      include: {
+        withdrawal: {
+          include: { paymentMethod: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+  },
+
+  async countInboxByStatus(
+    agencyUserId: string,
+  ): Promise<{ pending: number; completed: number }> {
+    const [pending, completed] = await Promise.all([
+      prismaRead.withdrawalPayrollAssignment.count({
+        where: { agencyUserId, status: "PENDING" },
+      }),
+      prismaRead.withdrawalPayrollAssignment.count({
+        where: { agencyUserId, status: "COMPLETED" },
+      }),
+    ]);
+    return { pending, completed };
   },
 
   async listForAgent(
@@ -162,7 +215,9 @@ export const payrollAssignmentRepository = {
           }
         : {}),
       include: {
-        withdrawal: { select: { id: true, status: true, amountPoints: true } },
+        withdrawal: {
+          include: { paymentMethod: true },
+        },
       },
     });
   },

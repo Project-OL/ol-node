@@ -7,6 +7,17 @@ const PENDING_STATUSES: WithdrawalStatus[] = [
   "PENDING_PLATFORM",
 ];
 
+export type WithdrawalDetailRow = Prisma.WithdrawalGetPayload<{
+  include: {
+    paymentMethod: true;
+    payrollAssignments: {
+      include: {
+        agencyUser: { select: { username: true; firstName: true; lastName: true } };
+      };
+    };
+  };
+}>;
+
 export const withdrawalRepository = {
   async create(
     data: {
@@ -22,6 +33,7 @@ export const withdrawalRepository = {
       platformFeePoints: bigint;
       agentRewardPoints: bigint;
       idempotencyKey: string;
+      notes?: string | null;
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -39,6 +51,7 @@ export const withdrawalRepository = {
         platformFeePoints: data.platformFeePoints,
         agentRewardPoints: data.agentRewardPoints,
         idempotencyKey: data.idempotencyKey,
+        notes: data.notes ?? null,
       },
     });
   },
@@ -50,6 +63,36 @@ export const withdrawalRepository = {
   getByIdForUser(id: string, userId: string) {
     return prismaRead.withdrawal.findFirst({
       where: { id, userId },
+    });
+  },
+
+  findWithdrawalDetailForHost(
+    withdrawalId: string,
+    userId: string,
+  ): Promise<WithdrawalDetailRow | null> {
+    return prismaRead.withdrawal.findFirst({
+      where: { id: withdrawalId, userId },
+      include: {
+        paymentMethod: true,
+        payrollAssignments: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          include: {
+            agencyUser: {
+              select: { username: true, firstName: true, lastName: true },
+            },
+          },
+        },
+      },
+    });
+  },
+
+  countActiveWithdrawalsForUser(userId: string): Promise<number> {
+    return prismaRead.withdrawal.count({
+      where: {
+        userId,
+        status: { in: PENDING_STATUSES },
+      },
     });
   },
 
@@ -105,12 +148,7 @@ export const withdrawalRepository = {
   },
 
   async hasPendingWithdrawal(userId: string): Promise<boolean> {
-    const n = await prismaRead.withdrawal.count({
-      where: {
-        userId,
-        status: { in: PENDING_STATUSES },
-      },
-    });
+    const n = await this.countActiveWithdrawalsForUser(userId);
     return n > 0;
   },
 

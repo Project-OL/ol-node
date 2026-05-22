@@ -186,11 +186,13 @@ export const pointWalletService = {
     amountPoints: bigint,
     paymentMethodId: string,
     idempotencyKey: string,
+    notes?: string,
   ) {
     const result = (await withdrawalService.createWithdrawal(userId, {
       grossPoints: amountPoints,
       paymentMethodId,
       idempotencyKey,
+      notes,
     })) as { withdrawalId: string; status: string };
 
     auditService.log({

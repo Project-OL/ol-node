@@ -296,6 +296,7 @@ export const RedisKeys = {
   ratelimitPayrollReject: (userId: string) =>
     `ratelimit:payroll:reject:${userId}`,
   ratelimitPmBind: (userId: string) => `ratelimit:pm:bind:${userId}`,
+  payrollSummary: (agencyUserId: string) => `payroll:summary:${agencyUserId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -384,6 +385,8 @@ export const RICH_STATE_TTL = 300
 export const RICH_CONFIG_TTL = 3600
 /** Payroll fee config singleton cache. */
 export const PAYROLL_CONFIG_TTL = 3600
+/** Agent payroll dashboard summary (tab counts + toggle). */
+export const PAYROLL_SUMMARY_TTL = 30
 /** GET rich-tier read endpoints: 60 requests / 60s per user. */
 export const RICH_READ_RL_TTL = 60
 

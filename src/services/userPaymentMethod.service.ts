@@ -11,6 +11,7 @@ import {
   maskAccountNumber,
   maskEmail,
 } from "../utils/payment-method-mask";
+import type { BindBankInput } from "../models/paymentMethod.schemas";
 
 export { maskAccountNumber, maskEmail, maskPaymentMethodForDisplay };
 
@@ -29,41 +30,9 @@ export const userPaymentMethodService = {
     await redisClient.del(RedisKeys.userPaymentMethods(userId));
   },
 
-  async bindBank(
-    userId: string,
-    body: {
-      accountHolderName: string;
-      bankName: string;
-      ifscCode: string;
-      accountNumber: string;
-      upiNumber?: string;
-      registeredPhone?: string;
-      registeredEmail?: string;
-    },
-  ) {
-    if (
-      !body.accountHolderName?.trim() ||
-      !body.bankName?.trim() ||
-      !body.ifscCode?.trim() ||
-      !body.accountNumber?.trim()
-    ) {
-      throw new AppError(
-        422,
-        "Missing required bank fields",
-        "INVALID_BANK_FIELDS",
-      );
-    }
-    await userPaymentMethodRepository.upsert({
-      userId,
-      methodType: "BANK",
-      bankAccountHolder: body.accountHolderName,
-      bankName: body.bankName,
-      bankIfscCode: body.ifscCode,
-      bankAccountNumber: body.accountNumber,
-      upiNumber: body.upiNumber,
-      registeredPhone: body.registeredPhone,
-      registeredEmail: body.registeredEmail,
-    });
+  async bindBank(userId: string, body: BindBankInput, securityPassword: string) {
+    await securityPasswordService.verifyCurrentPassword(userId, securityPassword);
+    await userPaymentMethodRepository.upsertBank(userId, body);
     await redisClient.del(RedisKeys.userPaymentMethods(userId));
   },
 
@@ -110,6 +79,24 @@ export const userPaymentMethodService = {
   serializeMaskedList(
     rows: Awaited<ReturnType<typeof userPaymentMethodRepository.findAllForUser>>,
   ) {
-    return rows.map((r) => maskPaymentMethodForDisplay(r));
+    return rows.map((r) => {
+      const masked = maskPaymentMethodForDisplay(r);
+      if (r.methodType === "BANK") {
+        return {
+          id: r.id,
+          methodType: "BANK" as const,
+          bankName: masked.bankName,
+          accountNumber: masked.bankAccountNumber,
+          firstName: masked.firstName ?? null,
+          lastName: masked.lastName ?? null,
+          branch: masked.branch ?? null,
+        };
+      }
+      return {
+        id: r.id,
+        methodType: "EPAY" as const,
+        epayEmail: masked.epayEmail,
+      };
+    });
   },
 };

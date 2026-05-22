@@ -85,4 +85,5 @@ export const WithdrawInitiateSchema = z.object({
   amountPoints: z.coerce.bigint().positive(),
   paymentMethodId: z.string().uuid(),
   idempotencyKey: z.string().min(8).max(128),
+  notes: z.string().max(500).optional(),
 });

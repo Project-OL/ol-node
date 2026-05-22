@@ -8,18 +8,13 @@ import {
   rateLimitWithdrawalDispute,
 } from "../../middlewares/rateLimitAuth";
 import { userRepository } from "../../repositories/user.repository";
+import {
+  CreateWithdrawalSchema,
+  DisputeWithdrawalSchema,
+  DisputeEvidenceUrlSchema,
+} from "../../models/withdrawal.schemas";
 
-const CreateSchema = z.object({
-  grossPoints: z.coerce.bigint().positive(),
-  paymentMethodId: z.string().uuid(),
-  idempotencyKey: z.string().min(8).max(128),
-});
-
-const DisputeSchema = z.object({
-  description: z.string().max(2000).optional(),
-});
-
-const ProofUploadSchema = z.object({
+const ProofUploadBodySchema = z.object({
   assignmentId: z.string().uuid(),
   mimeType: z.string().min(1).max(100),
 });
@@ -29,7 +24,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     "/",
     { preHandler: [authenticate, rateLimitWithdrawalCreate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const body = CreateSchema.parse(request.body ?? {});
+      const body = CreateWithdrawalSchema.parse(request.body ?? {});
       const result = await withdrawalService.createWithdrawal(request.userId!, body);
       return reply.status(201).send(result);
     },
@@ -60,7 +55,7 @@ export async function withdrawalRoutes(app: FastifyInstance) {
       if (!u?.isAgent) {
         throw new AppError(403, "Agent only", "AGENT_ONLY");
       }
-      const body = ProofUploadSchema.parse(request.body ?? {});
+      const body = ProofUploadBodySchema.parse(request.body ?? {});
       const result = await withdrawalService.getPresignedProofUrl(
         request.userId!,
         body.assignmentId,
@@ -74,11 +69,25 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     "/:id",
     { preHandler: [authenticate] },
     async (request, reply: FastifyReply) => {
-      const row = await withdrawalService.getWithdrawalById(
-        request.userId!,
+      const detail = await withdrawalService.getWithdrawalDetail(
         request.params.id,
+        request.userId!,
       );
-      return reply.send(row);
+      return reply.send(detail);
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/:id/dispute-evidence-url",
+    { preHandler: [authenticate] },
+    async (request, reply: FastifyReply) => {
+      const body = DisputeEvidenceUrlSchema.parse(request.body ?? {});
+      const result = await withdrawalService.createDisputeEvidenceUploadUrl(
+        request.params.id,
+        request.userId!,
+        body.mimeType,
+      );
+      return reply.send(result);
     },
   );
 
@@ -86,11 +95,11 @@ export async function withdrawalRoutes(app: FastifyInstance) {
     "/:id/dispute",
     { preHandler: [authenticate, rateLimitWithdrawalDispute] },
     async (request, reply: FastifyReply) => {
-      const body = DisputeSchema.parse(request.body ?? {});
-      const result = await withdrawalService.raiseDispute(
+      const body = DisputeWithdrawalSchema.parse(request.body ?? {});
+      const result = await withdrawalService.disputeWithdrawal(
         request.userId!,
         request.params.id,
-        body.description,
+        body,
       );
       return reply.send(result);
     },

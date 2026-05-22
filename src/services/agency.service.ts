@@ -1,6 +1,12 @@
 import { AgencyTransferChannel, Prisma, SupportTicketType, WalletCurrencyType } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
-import { RedisKeys } from "../config/redis";
+import { redisClient, RedisKeys, PAYROLL_SUMMARY_TTL } from "../config/redis";
+import { payrollAssignmentRepository } from "../repositories/payrollAssignment.repository";
+import { withdrawalService } from "./withdrawal.service";
+import {
+  mapPaymentMethodFull,
+  mapPaymentMethodMaskedForAgent,
+} from "../utils/payment-method-mask";
 import { cacheRedisService } from "./cacheRedis.service";
 import { AppError } from "../middlewares/errorHandler";
 import { agencyRepository } from "../repositories/agency.repository";
@@ -390,6 +396,84 @@ export const agencyService = {
     if (ag?.pausedAt != null) {
       throw new AppError(403, "Agency is paused", "AGENCY_PAUSED");
     }
+  },
+
+  async getPayrollSummary(agencyUserId: string) {
+    const cacheKey = RedisKeys.payrollSummary(agencyUserId);
+    const cached = await redisClient.get(cacheKey);
+    if (cached) return JSON.parse(cached) as Record<string, unknown>;
+
+    const [agency, rewardSummary, tabCounts] = await Promise.all([
+      prismaRead.agency.findUnique({
+        where: { userId: agencyUserId },
+        select: { payrollEnabled: true, pausedAt: true },
+      }),
+      prismaRead.pointLedgerEntry.aggregate({
+        where: {
+          wallet: { userId: agencyUserId, currencyType: "POINT" },
+          txType: "PAYROLL_PROCESSING_REWARD",
+          direction: "CREDIT",
+        },
+        _sum: { amount: true },
+      }),
+      payrollAssignmentRepository.countInboxByStatus(agencyUserId),
+    ]);
+
+    if (!agency) throw new AppError(404, "Agency not found", "NOT_FOUND");
+
+    const result = {
+      takeOrderEnabled: agency.payrollEnabled && !agency.pausedAt,
+      payrollEnabled: agency.payrollEnabled,
+      isPaused: !!agency.pausedAt,
+      totalRewardPoints: (rewardSummary._sum.amount ?? BigInt(0)).toString(),
+      tabCounts,
+    };
+
+    await redisClient.setex(cacheKey, PAYROLL_SUMMARY_TTL, JSON.stringify(result));
+    return result;
+  },
+
+  async getAssignmentDetail(assignmentId: string, agencyUserId: string) {
+    const assignment = await payrollAssignmentRepository.getByIdForAgent(
+      assignmentId,
+      agencyUserId,
+    );
+    if (!assignment) throw new AppError(404, "Assignment not found", "NOT_FOUND");
+
+    const config = await withdrawalService.getPayrollConfig();
+
+    const isPendingAndActive =
+      assignment.status === "PENDING" && assignment.expiresAt > new Date();
+
+    const hostPayoutUsd = Number(assignment.withdrawal.hostPayoutUsd ?? 0);
+
+    return {
+      id: assignment.id,
+      status: assignment.status,
+      expiresAt: assignment.expiresAt.toISOString(),
+      slaRemainingSeconds: Math.max(
+        0,
+        Math.round((assignment.expiresAt.getTime() - Date.now()) / 1000),
+      ),
+      assignmentNumber: assignment.assignmentNumber,
+      proofS3Key: assignment.proofS3Key ?? null,
+      completedAt: assignment.completedAt?.toISOString() ?? null,
+      grossPoints: assignment.withdrawal.amountPoints.toString(),
+      hostPayoutPoints: (
+        Number(assignment.withdrawal.amountPoints) -
+        Number(assignment.withdrawal.platformFeePoints ?? 0)
+      ).toString(),
+      agentRewardPoints: assignment.withdrawal.agentRewardPoints?.toString() ?? "0",
+      hostPayoutUsd: assignment.withdrawal.hostPayoutUsd?.toString() ?? null,
+      localCurrencyAmount: (hostPayoutUsd * Number(config.inrPerUsd)).toFixed(2),
+      localCurrencyCode: "INR",
+      paymentMethod: assignment.withdrawal.paymentMethod
+        ? isPendingAndActive
+          ? mapPaymentMethodFull(assignment.withdrawal.paymentMethod)
+          : mapPaymentMethodMaskedForAgent(assignment.withdrawal.paymentMethod)
+        : null,
+      requestedAt: assignment.withdrawal.requestedAt.toISOString(),
+    };
   },
 };
 

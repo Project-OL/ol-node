@@ -1329,6 +1329,7 @@ model Withdrawal {
   status          WithdrawalStatus @default(PENDING)
   payoutRef       String?          @map("payout_ref") @db.VarChar(256)
   failReason      String?          @map("fail_reason") @db.Text
+  notes           String?          @db.Text
   idempotencyKey  String           @unique @map("idempotency_key") @db.VarChar(200)
   requestedAt     DateTime         @default(now()) @map("requested_at")
   processedAt     DateTime?        @map("processed_at")
@@ -1355,13 +1356,16 @@ model UserPaymentMethod {
   userId            String   @map("user_id") @db.Uuid
   methodType        String   @map("method_type") @db.VarChar(10)
   epayEmail         String?  @map("epay_email") @db.VarChar(255)
-  bankName          String?  @map("bank_name") @db.VarChar(255)
-  bankAccountHolder String?  @map("bank_account_holder") @db.VarChar(255)
-  bankAccountNumber String?  @map("bank_account_number") @db.VarChar(50)
-  bankIfscCode      String?  @map("bank_ifsc_code") @db.VarChar(20)
-  upiNumber         String?  @map("upi_number") @db.VarChar(50)
-  registeredPhone   String?  @map("registered_phone") @db.VarChar(20)
-  registeredEmail   String?  @map("registered_email") @db.VarChar(255)
+  bankName                 String?  @map("bank_name") @db.VarChar(255)
+  bankAccountHolder        String?  @map("bank_account_holder") @db.VarChar(255)
+  accountHolderFirstName   String?  @map("account_holder_first_name") @db.VarChar(100)
+  accountHolderLastName    String?  @map("account_holder_last_name") @db.VarChar(100)
+  branch                   String?  @db.VarChar(150)
+  bankAccountNumber        String?  @map("bank_account_number") @db.VarChar(50)
+  bankIfscCode             String?  @map("bank_ifsc_code") @db.VarChar(20)
+  upiNumber                String?  @map("upi_number") @db.VarChar(50)
+  registeredPhone          String?  @map("registered_phone") @db.VarChar(30)
+  registeredEmail          String?  @map("registered_email") @db.VarChar(255)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -1687,7 +1691,7 @@ model Agency {
   userId                     String    @id @map("user_id") @db.Uuid
   defaultPublicId            BigInt    @unique @map("default_public_id")
   displayName                String    @map("display_name") @db.VarChar(255)
-  payrollEnabled             Boolean   @default(false) @map("payroll_enabled")
+  payrollEnabled             Boolean   @default(true) @map("payroll_enabled")
   pausedAt                   DateTime? @map("paused_at")
   pausedUntil                DateTime? @map("paused_until")
   totalHostsCount            Int       @default(0) @map("total_hosts_count")

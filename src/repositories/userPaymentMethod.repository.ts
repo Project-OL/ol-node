@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
+import type { BindBankInput } from "../models/paymentMethod.schemas";
 
 export type MethodType = "EPAY" | "BANK";
 
@@ -11,6 +12,9 @@ export const userPaymentMethodRepository = {
       epayEmail?: string | null;
       bankName?: string | null;
       bankAccountHolder?: string | null;
+      accountHolderFirstName?: string | null;
+      accountHolderLastName?: string | null;
+      branch?: string | null;
       bankAccountNumber?: string | null;
       bankIfscCode?: string | null;
       upiNumber?: string | null;
@@ -30,6 +34,9 @@ export const userPaymentMethodRepository = {
         epayEmail: data.epayEmail ?? undefined,
         bankName: data.bankName ?? undefined,
         bankAccountHolder: data.bankAccountHolder ?? undefined,
+        accountHolderFirstName: data.accountHolderFirstName ?? undefined,
+        accountHolderLastName: data.accountHolderLastName ?? undefined,
+        branch: data.branch ?? undefined,
         bankAccountNumber: data.bankAccountNumber ?? undefined,
         bankIfscCode: data.bankIfscCode ?? undefined,
         upiNumber: data.upiNumber ?? undefined,
@@ -40,12 +47,33 @@ export const userPaymentMethodRepository = {
         epayEmail: data.epayEmail ?? undefined,
         bankName: data.bankName ?? undefined,
         bankAccountHolder: data.bankAccountHolder ?? undefined,
+        accountHolderFirstName: data.accountHolderFirstName ?? undefined,
+        accountHolderLastName: data.accountHolderLastName ?? undefined,
+        branch: data.branch ?? undefined,
         bankAccountNumber: data.bankAccountNumber ?? undefined,
         bankIfscCode: data.bankIfscCode ?? undefined,
         upiNumber: data.upiNumber ?? undefined,
         registeredPhone: data.registeredPhone ?? undefined,
         registeredEmail: data.registeredEmail ?? undefined,
       },
+    });
+  },
+
+  async upsertBank(userId: string, data: BindBankInput) {
+    const holderName = `${data.firstName} ${data.lastName}`.trim();
+    return this.upsert({
+      userId,
+      methodType: "BANK",
+      accountHolderFirstName: data.firstName,
+      accountHolderLastName: data.lastName,
+      bankAccountHolder: holderName,
+      bankName: data.bankName,
+      branch: data.branch ?? null,
+      bankIfscCode: data.ifscCode,
+      bankAccountNumber: data.accountNumber,
+      upiNumber: data.upiId ?? null,
+      registeredEmail: data.email ?? null,
+      registeredPhone: data.phone ?? null,
     });
   },
 

@@ -20,8 +20,21 @@ import { supportService } from "./support.service";
 import { storageService } from "./storage.service";
 import { enqueuePayrollSla, removePayrollSla } from "../queues/payroll.queue";
 import { s3Bucket } from "../config/s3";
+import {
+  mapPaymentMethodForAgent,
+  mapPaymentMethodMaskedForHost,
+} from "../utils/payment-method-mask";
+import {
+  formatDuration,
+} from "../utils/withdrawal-formatters";
+import type { DisputeWithdrawalInput } from "../models/withdrawal.schemas";
 
 const INTERACTIVE_TX_MS = 25_000;
+const DISPUTE_EVIDENCE_PRESIGN_TTL = 600;
+
+async function bustPayrollSummaryCache(agencyUserId: string) {
+  await redisClient.del(RedisKeys.payrollSummary(agencyUserId));
+}
 
 export type PayrollConfigSnapshot = {
   id: number;
@@ -141,6 +154,7 @@ export const withdrawalService = {
       grossPoints: bigint;
       paymentMethodId: string;
       idempotencyKey: string;
+      notes?: string;
     },
   ) {
     const idem = `withdrawal-create:${userId}:${params.idempotencyKey}`;
@@ -202,6 +216,7 @@ export const withdrawalService = {
             platformFeePoints: amounts.platformFeePoints,
             agentRewardPoints: amounts.agentRewardPoints,
             idempotencyKey: `withdrawal:${userId}:${withdrawalId}`,
+            notes: params.notes ?? null,
           },
           tx,
         );
@@ -330,6 +345,11 @@ export const withdrawalService = {
 
     if (assignmentIdOut && expiresAtOut) {
       await enqueuePayrollSla(assignmentIdOut, expiresAtOut);
+      const assignment = await prismaRead.withdrawalPayrollAssignment.findUnique({
+        where: { id: assignmentIdOut },
+        select: { agencyUserId: true },
+      });
+      if (assignment) await bustPayrollSummaryCache(assignment.agencyUserId);
     }
   },
 
@@ -446,6 +466,7 @@ export const withdrawalService = {
     );
 
     await removePayrollSla(assignmentId);
+    await bustPayrollSummaryCache(agentUserId);
     if (withdrawalId) await withdrawalService.assignToAgency(withdrawalId);
   },
 
@@ -476,12 +497,14 @@ export const withdrawalService = {
     agentUserId: string,
     assignmentId: string,
     params: { proofS3Key: string; proofS3Bucket: string },
-  ) {
+  ): Promise<{ agentRewardPoints: string }> {
     const now = new Date();
     const prefix = `payroll/proofs/${assignmentId}/`;
     if (!params.proofS3Key.startsWith(prefix)) {
       throw new AppError(400, "Invalid proof key", "INVALID_PROOF_KEY");
     }
+
+    let rewardOut = "0";
 
     await prisma.$transaction(
       async (tx) => {
@@ -498,6 +521,7 @@ export const withdrawalService = {
         }
 
         const reward = a.withdrawal.agentRewardPoints ?? 0n;
+        rewardOut = reward.toString();
         const withdrawalUserId = a.withdrawal.userId;
 
         await payrollAssignmentRepository.updateStatus(
@@ -541,17 +565,52 @@ export const withdrawalService = {
     );
 
     await removePayrollSla(assignmentId);
+    await bustPayrollSummaryCache(agentUserId);
     await walletService.adjustPointBalanceCache(agentUserId, 0n);
 
     console.info(
       `[withdrawal] Payroll complete assignment=${assignmentId} agent=${agentUserId} — host notify stub`,
     );
+
+    return { agentRewardPoints: rewardOut };
   },
 
-  async raiseDispute(
+  async createDisputeEvidenceUploadUrl(
+    withdrawalId: string,
+    userId: string,
+    mimeType: string,
+  ): Promise<{ uploadUrl: string; s3Key: string; expiresInSec: number }> {
+    const row = await prismaRead.withdrawal.findFirst({
+      where: { id: withdrawalId, userId },
+      select: { status: true },
+    });
+    if (!row) throw new AppError(404, "Withdrawal not found", "NOT_FOUND");
+    if (row.status !== "PAID" && row.status !== "DISPUTED") {
+      throw new AppError(
+        400,
+        "Evidence upload only allowed for PAID or DISPUTED withdrawals",
+        "INVALID_STATE",
+      );
+    }
+
+    const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "jpg";
+    const s3Key = `withdrawal/disputes/${userId}/${withdrawalId}/${Date.now()}.${ext}`;
+    const uploadUrl = await storageService.getPresignedPutUrl(
+      s3Key,
+      mimeType,
+      DISPUTE_EVIDENCE_PRESIGN_TTL,
+    );
+    return {
+      uploadUrl,
+      s3Key,
+      expiresInSec: DISPUTE_EVIDENCE_PRESIGN_TTL,
+    };
+  },
+
+  async disputeWithdrawal(
     hostUserId: string,
     withdrawalId: string,
-    description?: string,
+    input: DisputeWithdrawalInput,
   ) {
     const w = await prismaRead.withdrawal.findFirst({
       where: { id: withdrawalId, userId: hostUserId },
@@ -580,11 +639,15 @@ export const withdrawalService = {
     const completed =
       await payrollAssignmentRepository.findCompletedForWithdrawal(withdrawalId);
 
+    const evidenceUrl = input.evidenceS3Key
+      ? storageService.getPublicUrl(input.evidenceS3Key)
+      : undefined;
+
     const ticket = await supportService.createTicket(hostUserId, {
       type: "REPORT_COMPLAINTS",
       subType: "WITHDRAWAL_DISPUTE",
-      description: `Withdrawal dispute for ID: ${withdrawalId}. ${description ?? ""}`,
-      imageUrl: undefined,
+      description: `Withdrawal dispute for ID: ${withdrawalId}. ${input.description}`,
+      imageUrl: evidenceUrl,
     });
 
     await prisma.withdrawal.update({
@@ -604,10 +667,22 @@ export const withdrawalService = {
         ticketPublicId: ticket.publicId,
         agencyUserId: completed?.agencyUserId,
         proofS3Key: completed?.proofS3Key,
+        evidenceS3Key: input.evidenceS3Key,
       },
     });
 
     return { ticketId: ticket.publicId };
+  },
+
+  /** @deprecated use disputeWithdrawal */
+  async raiseDispute(
+    hostUserId: string,
+    withdrawalId: string,
+    description?: string,
+  ) {
+    return withdrawalService.disputeWithdrawal(hostUserId, withdrawalId, {
+      description: description ?? "Withdrawal dispute",
+    });
   },
 
   async adminReverseWithdrawal(
@@ -708,9 +783,56 @@ export const withdrawalService = {
   },
 
   async getWithdrawalById(userId: string, id: string) {
-    const w = await withdrawalRepository.getByIdForUser(id, userId);
-    if (!w) throw new AppError(404, "Withdrawal not found", "NOT_FOUND");
-    return withdrawalService.serializeWithdrawal(w);
+    return withdrawalService.getWithdrawalDetail(id, userId);
+  },
+
+  async getWithdrawalDetail(withdrawalId: string, userId: string) {
+    const row = await withdrawalRepository.findWithdrawalDetailForHost(
+      withdrawalId,
+      userId,
+    );
+    if (!row) throw new AppError(404, "Withdrawal not found", "NOT_FOUND");
+
+    const config = await withdrawalService.getPayrollConfig();
+
+    const timeTakenSeconds =
+      row.status === "PAID" && row.processedAt
+        ? Math.round((row.processedAt.getTime() - row.requestedAt.getTime()) / 1000)
+        : null;
+
+    const localCurrencyAmount =
+      row.hostPayoutUsd !== null
+        ? Number(row.hostPayoutUsd) * Number(config.inrPerUsd)
+        : null;
+
+    const maskedMethod = row.paymentMethod
+      ? mapPaymentMethodMaskedForHost(row.paymentMethod)
+      : null;
+
+    return {
+      id: row.id,
+      status: row.status,
+      grossPoints: row.amountPoints.toString(),
+      grossUsd: (Number(row.amountPoints) / 10_000).toFixed(2),
+      hostPayoutPoints: (
+        Number(row.amountPoints) - Number(row.platformFeePoints ?? 0)
+      ).toString(),
+      hostPayoutUsd: row.hostPayoutUsd?.toString() ?? null,
+      platformFeePoints: row.platformFeePoints?.toString() ?? null,
+      agentRewardPoints: row.agentRewardPoints?.toString() ?? null,
+      notes: row.notes ?? null,
+      timeTakenSeconds,
+      timeTakenFormatted:
+        timeTakenSeconds != null ? formatDuration(timeTakenSeconds) : null,
+      localCurrencyAmount: localCurrencyAmount?.toFixed(2) ?? null,
+      localCurrencyCode: "INR",
+      paymentMethod: maskedMethod,
+      requestedAt: row.requestedAt.toISOString(),
+      processedAt: row.processedAt?.toISOString() ?? null,
+      disputeTicketId: row.disputeTicketId ?? null,
+      assignmentCount: row.assignmentCount,
+      payoutRef: row.payoutRef ?? null,
+    };
   },
 
   serializeWithdrawal(w: {
@@ -743,26 +865,69 @@ export const withdrawalService = {
     };
   },
 
+  async getAgentPayrollInbox(
+    agencyUserId: string,
+    status: "PENDING" | "COMPLETED",
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    const rows = await payrollAssignmentRepository.findInboxByStatus(
+      agencyUserId,
+      status,
+      cursor,
+      limit,
+    );
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? page[page.length - 1]?.id : undefined;
+    const config = await withdrawalService.getPayrollConfig();
+
+    const tabCounts = await payrollAssignmentRepository.countInboxByStatus(
+      agencyUserId,
+    );
+
+    return {
+      items: page.map((a) => {
+        const hostPayoutUsd = Number(a.withdrawal.hostPayoutUsd ?? 0);
+        return {
+          id: a.id,
+          status: a.status,
+          expiresAt: a.expiresAt.toISOString(),
+          slaRemainingSeconds: Math.max(
+            0,
+            Math.round((a.expiresAt.getTime() - Date.now()) / 1000),
+          ),
+          grossPoints: a.withdrawal.amountPoints.toString(),
+          hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
+          localCurrencyAmount: (hostPayoutUsd * Number(config.inrPerUsd)).toFixed(
+            2,
+          ),
+          localCurrencyCode: "INR",
+          agentRewardPoints: a.withdrawal.agentRewardPoints?.toString() ?? "0",
+          paymentMethod: mapPaymentMethodForAgent(
+            a.withdrawal.paymentMethod,
+            a.status,
+            a.expiresAt,
+          ),
+        };
+      }),
+      nextCursor: nextCursor ?? null,
+      total: status === "PENDING" ? tabCounts.pending : tabCounts.completed,
+    };
+  },
+
   async getPayrollInbox(
     agencyUserId: string,
     opts: { status?: string; limit: number; cursor?: string },
   ) {
-    const rows = await payrollAssignmentRepository.listForAgent(agencyUserId, opts);
-    const hasMore = rows.length > opts.limit;
-    const page = hasMore ? rows.slice(0, opts.limit) : rows;
-    const nextCursor = hasMore ? page[page.length - 1]?.id : undefined;
-    return {
-      items: page.map((r) => ({
-        assignmentId: r.id,
-        withdrawalId: r.withdrawalId,
-        status: r.status,
-        assignedAt: r.assignedAt.toISOString(),
-        expiresAt: r.expiresAt.toISOString(),
-        withdrawal: r.withdrawal,
-      })),
-      nextCursor,
-      hasMore,
-    };
+    const status =
+      opts.status === "COMPLETED" ? "COMPLETED" : ("PENDING" as const);
+    return withdrawalService.getAgentPayrollInbox(
+      agencyUserId,
+      status,
+      opts.cursor,
+      opts.limit,
+    );
   },
 
   async getPayrollAssignmentDetailForAgent(

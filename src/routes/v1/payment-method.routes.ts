@@ -1,25 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod";
 import { authenticate } from "../../middlewares/auth.middleware";
 import { AppError } from "../../middlewares/errorHandler";
 import { userPaymentMethodService } from "../../services/userPaymentMethod.service";
-import {
-  rateLimitPmBind,
-} from "../../middlewares/rateLimitAuth";
-
-const EpaySchema = z.object({
-  epayEmail: z.string().email(),
-});
-
-const BankSchema = z.object({
-  accountHolderName: z.string().min(1),
-  bankName: z.string().min(1),
-  ifscCode: z.string().min(1),
-  accountNumber: z.string().min(1),
-  upiNumber: z.string().optional(),
-  registeredPhone: z.string().optional(),
-  registeredEmail: z.string().email().optional(),
-});
+import { rateLimitPmBind } from "../../middlewares/rateLimitAuth";
+import { BindEpaySchema, BindBankSchema } from "../../models/paymentMethod.schemas";
 
 export async function paymentMethodRoutes(app: FastifyInstance) {
   app.get(
@@ -35,7 +19,7 @@ export async function paymentMethodRoutes(app: FastifyInstance) {
     "/epay",
     { preHandler: [authenticate, rateLimitPmBind] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const body = EpaySchema.parse(request.body ?? {});
+      const body = BindEpaySchema.parse(request.body ?? {});
       const pwd =
         (request.headers["x-security-password"] as string | undefined)?.trim() ??
         "";
@@ -55,8 +39,18 @@ export async function paymentMethodRoutes(app: FastifyInstance) {
     "/bank",
     { preHandler: [authenticate, rateLimitPmBind] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const body = BankSchema.parse(request.body ?? {});
-      await userPaymentMethodService.bindBank(request.userId!, body);
+      const body = BindBankSchema.parse(request.body ?? {});
+      const pwd =
+        (request.headers["x-security-password"] as string | undefined)?.trim() ??
+        "";
+      if (!pwd) {
+        throw new AppError(
+          400,
+          "X-Security-Password header required",
+          "SECURITY_PASSWORD_REQUIRED",
+        );
+      }
+      await userPaymentMethodService.bindBank(request.userId!, body, pwd);
       return reply.send({ ok: true });
     },
   );

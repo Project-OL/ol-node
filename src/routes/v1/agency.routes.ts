@@ -35,6 +35,12 @@ const PayrollRejectSchema = z.object({
   reason: z.string().max(2000).optional(),
 });
 
+const PayrollInboxQuerySchema = z.object({
+  status: z.enum(["PENDING", "COMPLETED"]).default("PENDING"),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().optional(),
+});
+
 const preAuth = [authenticate];
 
 const ApplySchema = z.object({
@@ -453,6 +459,19 @@ export default async function agencyRoutes(app: FastifyInstance) {
   );
 
   app.get(
+    "/payroll/summary",
+    { preHandler: preAuth },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId;
+      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const u = await userRepository.findById(userId);
+      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const summary = await agencyService.getPayrollSummary(userId);
+      return reply.send(summary);
+    },
+  );
+
+  app.get(
     "/payroll/inbox",
     { preHandler: preAuth },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -460,20 +479,13 @@ export default async function agencyRoutes(app: FastifyInstance) {
       if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
       const u = await userRepository.findById(userId);
       if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
-      const q = request.query as {
-        status?: string;
-        limit?: string;
-        cursor?: string;
-      };
-      const limit = Math.min(
-        50,
-        Math.max(1, Number(q.limit ?? "20") || 20),
+      const query = PayrollInboxQuerySchema.parse(request.query ?? {});
+      const result = await withdrawalService.getAgentPayrollInbox(
+        userId,
+        query.status,
+        query.cursor,
+        query.limit,
       );
-      const result = await withdrawalService.getPayrollInbox(userId, {
-        status: q.status,
-        limit,
-        cursor: q.cursor,
-      });
       return reply.send(result);
     },
   );
@@ -486,18 +498,20 @@ export default async function agencyRoutes(app: FastifyInstance) {
       if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
       const u = await userRepository.findById(userId);
       if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
-      const detail = await withdrawalService.getPayrollAssignmentDetailForAgent(
-        userId,
+      const detail = await agencyService.getAssignmentDetail(
         request.params.id,
+        userId,
       );
-      if (detail.revealPii) {
+      if (
+        detail.status === "PENDING" &&
+        detail.slaRemainingSeconds > 0
+      ) {
         auditService.log({
           userId,
           actionType: "PAYROLL_PII_ACCESS",
           actionStatus: "success",
           actionDetails: {
-            assignmentId: detail.assignment.id,
-            withdrawalId: detail.withdrawal.id,
+            assignmentId: detail.id,
           },
         });
       }
@@ -514,8 +528,12 @@ export default async function agencyRoutes(app: FastifyInstance) {
       const u = await userRepository.findById(userId);
       if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
       const body = PayrollCompleteSchema.parse(request.body ?? {});
-      await withdrawalService.agentCompletePayroll(userId, request.params.id, body);
-      return reply.send({ ok: true });
+      const result = await withdrawalService.agentCompletePayroll(
+        userId,
+        request.params.id,
+        body,
+      );
+      return reply.send({ ok: true, agentRewardPoints: result.agentRewardPoints });
     },
   );
 

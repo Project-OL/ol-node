@@ -37,6 +37,7 @@ export async function walletPointsRoutes(app: FastifyInstance) {
         body.amountPoints,
         body.paymentMethodId,
         body.idempotencyKey,
+        body.notes,
       );
       return reply.status(201).send(result);
     },
