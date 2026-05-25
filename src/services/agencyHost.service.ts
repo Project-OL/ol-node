@@ -18,6 +18,8 @@ import {
 import { agencyService } from "./agency.service";
 import { pointWalletService } from "./point-wallet.service";
 import { walletService } from "./wallet.service";
+import { walletLevelService } from "./user-level.service";
+import { userRepository } from "../repositories/user.repository";
 
 const TX_MS = 20_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -31,6 +33,71 @@ const AUTO_APPROVE_MS = 7 * DAY_MS;
 
 function nextAllowedFrom(ts: Date): Date {
   return new Date(ts.getTime() + COOLDOWN_MS);
+}
+
+function buildDisplayName(user: {
+  username: string;
+  firstName: string | null;
+  lastName: string | null;
+}): string {
+  const fullName =
+    user.firstName && user.lastName
+      ? `${user.firstName} ${user.lastName}`
+      : user.firstName ?? user.lastName;
+  const trimmed = fullName?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : user.username;
+}
+
+function computeAge(dob: Date | null): number | null {
+  if (!dob) return null;
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+    age--;
+  }
+  return age >= 0 ? age : null;
+}
+
+function mapHostListItem(
+  row: {
+    hostUserId: string;
+    joinedAt: Date;
+    host: {
+      id: string;
+      publicId: bigint;
+      defaultPublicId: bigint;
+      currentVipPublicId: bigint | null;
+      username: string;
+      firstName: string | null;
+      lastName: string | null;
+      avatarUrl: string | null;
+      gender: string | null;
+      dateOfBirth: Date | null;
+      isTagged: boolean;
+    };
+  },
+  levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
+) {
+  const level = levels.get(row.hostUserId);
+  return {
+    hostUserId: row.hostUserId,
+    userId: row.host.id,
+    publicId: row.host.publicId.toString(),
+    displayPublicId: String(
+      row.host.currentVipPublicId ??
+        row.host.defaultPublicId ??
+        row.host.publicId,
+    ),
+    gender: row.host.gender,
+    age: computeAge(row.host.dateOfBirth),
+    wealthLevel: level?.wealthLevel ?? 0,
+    livestreamLevel: level?.livestreamLevel ?? 0,
+    isTagged: row.host.isTagged,
+    avatarUrl: row.host.avatarUrl,
+    displayName: buildDisplayName(row.host),
+    joinedAt: row.joinedAt.toISOString(),
+  };
 }
 
 async function finalizeAgencyHostExit(
@@ -680,5 +747,53 @@ export const agencyHostService = {
       "HOST_DELETED",
       tx,
     );
+  },
+
+  async listHosts(
+    agencyUserId: string,
+    params: { limit: number; cursor?: string | null },
+  ) {
+    const rows = await agencyHostRepository.listHosts(agencyUserId, params);
+    const hasMore = rows.length > params.limit;
+    const page = hasMore ? rows.slice(0, params.limit) : rows;
+    const hostIds = page.map((r) => r.hostUserId);
+    const levels =
+      hostIds.length > 0
+        ? await walletLevelService.getDisplayLevelsForUsers(hostIds)
+        : new Map<string, { livestreamLevel: number; wealthLevel: number }>();
+    const nextCursor =
+      hasMore && page.length > 0
+        ? `${page[page.length - 1]!.joinedAt.toISOString()}|${page[page.length - 1]!.hostUserId}`
+        : null;
+    return {
+      items: page.map((row) => mapHostListItem(row, levels)),
+      nextCursor,
+    };
+  },
+
+  async setHostTagged(
+    agentUserId: string,
+    hostUserId: string,
+    isTagged: boolean,
+  ) {
+    const agency = await agencyRepository.getAgencyByUserId(agentUserId);
+    if (!agency) {
+      throw new AppError(403, "Not an agency owner", "FORBIDDEN");
+    }
+    const membership = await agencyHostRepository.getHost(hostUserId);
+    if (!membership || membership.agencyUserId !== agency.userId) {
+      throw new AppError(404, "Host not in your agency", "HOST_NOT_FOUND");
+    }
+    const updated = await userRepository.setIsTagged(hostUserId, isTagged);
+    return { ok: true, userId: updated.id, isTagged: updated.isTagged };
+  },
+
+  async setHostTaggedByAdmin(hostUserId: string, isTagged: boolean) {
+    const membership = await agencyHostRepository.getHost(hostUserId);
+    if (!membership) {
+      throw new AppError(404, "User is not an agency host", "HOST_NOT_FOUND");
+    }
+    const updated = await userRepository.setIsTagged(hostUserId, isTagged);
+    return { ok: true, userId: updated.id, isTagged: updated.isTagged };
   },
 };

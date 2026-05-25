@@ -16,7 +16,6 @@ import { agencyKycService } from "../../services/agencyKyc.service";
 import { agencyRepository } from "../../repositories/agency.repository";
 import { redisClient, RedisKeys } from "../../config/redis";
 import { agencyLeaveApplicationRepository } from "../../repositories/agencyLeaveApplication.repository";
-import { agencyHostRepository } from "../../repositories/agencyHost.repository";
 import { registerAgencyCommissionRoutes } from "./agency-commission.routes";
 import { withdrawalService } from "../../services/withdrawal.service";
 import { auditService } from "../../services/audit.service";
@@ -58,6 +57,10 @@ const LeaveSchema = z.object({
 
 const SettingsSchema = z.object({
   payrollEnabled: z.boolean().optional(),
+});
+
+const HostTagSchema = z.object({
+  isTagged: z.boolean(),
 });
 
 const UpdateContactSchema = z
@@ -398,23 +401,37 @@ export default async function agencyRoutes(app: FastifyInstance) {
       const q = request.query as Record<string, string | undefined>;
       const limit = Math.min(100, Math.max(1, Number(q.limit ?? "20") || 20));
       const cursor = q.cursor ?? undefined;
-      const rows = await agencyHostRepository.listHosts(agencyRow.userId, {
+      const result = await agencyHostService.listHosts(agencyRow.userId, {
         limit,
         cursor,
       });
-      const hasMore = rows.length > limit;
-      const page = hasMore ? rows.slice(0, limit) : rows;
-      const nextCursor =
-        hasMore && page.length > 0
-          ? `${page[page.length - 1]!.joinedAt.toISOString()}|${page[page.length - 1]!.hostUserId}`
-          : null;
-      return reply.send({
-        items: page.map((r) => ({
-          hostUserId: r.hostUserId,
-          joinedAt: r.joinedAt.toISOString(),
-        })),
-        nextCursor,
-      });
+      return reply.send(result);
+    },
+  );
+
+  app.patch<{ Params: { hostUserId: string } }>(
+    "/hosts/:hostUserId/tag",
+    { preHandler: preAuth },
+    async (
+      request: FastifyRequest<{ Params: { hostUserId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const userId = request.userId;
+      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const parsed = HostTagSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? "Invalid body",
+          "INVALID_REQUEST",
+        );
+      }
+      const result = await agencyHostService.setHostTagged(
+        userId,
+        request.params.hostUserId,
+        parsed.data.isTagged,
+      );
+      return reply.send(result);
     },
   );
 

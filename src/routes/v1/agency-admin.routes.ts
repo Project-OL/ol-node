@@ -73,6 +73,10 @@ const WithdrawalAssignSchema = z.object({
   agencyUserId: z.string().uuid().optional(),
 });
 
+const HostTagSchema = z.object({
+  isTagged: z.boolean(),
+});
+
 export default async function agencyAdminRoutes(app: FastifyInstance) {
   app.get(
     "/applications",
@@ -149,6 +153,29 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     ) => {
       await agencyService.unpauseAgency(request.params.userId);
       return reply.send({ ok: true });
+    },
+  );
+
+  app.patch<{ Params: { hostUserId: string } }>(
+    "/host/:hostUserId/tag",
+    { preHandler: [requireAdmin] },
+    async (
+      request: FastifyRequest<{ Params: { hostUserId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const parsed = HostTagSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? "Invalid body",
+          "INVALID_REQUEST",
+        );
+      }
+      const result = await agencyHostService.setHostTaggedByAdmin(
+        request.params.hostUserId,
+        parsed.data.isTagged,
+      );
+      return reply.send(result);
     },
   );
 

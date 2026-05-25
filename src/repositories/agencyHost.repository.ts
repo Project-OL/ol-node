@@ -71,6 +71,21 @@ export const agencyHostRepository = {
       select: {
         hostUserId: true,
         joinedAt: true,
+        host: {
+          select: {
+            id: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+            gender: true,
+            dateOfBirth: true,
+            isTagged: true,
+          },
+        },
       },
     });
   },

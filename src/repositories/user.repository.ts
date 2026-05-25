@@ -294,4 +294,12 @@ export const userRepository = {
       },
     })
   },
+
+  async setIsTagged(userId: string, isTagged: boolean) {
+    return prisma.user.update({
+      where: { id: userId },
+      data: { isTagged },
+      select: { id: true, isTagged: true },
+    });
+  },
 }
