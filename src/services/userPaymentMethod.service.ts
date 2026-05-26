@@ -10,10 +10,25 @@ import {
   maskPaymentMethodForDisplay,
   maskAccountNumber,
   maskEmail,
+  mapPaymentMethodFull,
 } from "../utils/payment-method-mask";
 import type { BindBankInput } from "../models/paymentMethod.schemas";
+import type { PayoutRailPublicDto } from "./withdrawalPayoutRailConfig.service";
+import { withdrawalPayoutRailConfigService } from "./withdrawalPayoutRailConfig.service";
 
 export { maskAccountNumber, maskEmail, maskPaymentMethodForDisplay };
+
+function railFieldsForType(
+  methodType: MethodType,
+  rails: PayoutRailPublicDto,
+): { feeRateBp: number; feePercent: number; arrivalTime: string } {
+  const rail = methodType === "EPAY" ? rails.epay : rails.bank;
+  return {
+    feeRateBp: rail.feeRateBp,
+    feePercent: rail.feePercent,
+    arrivalTime: rail.arrivalTime,
+  };
+}
 
 export const userPaymentMethodService = {
   async bindEpay(
@@ -59,44 +74,60 @@ export const userPaymentMethodService = {
 
   async getMyMethods(userId: string) {
     const cacheKey = RedisKeys.userPaymentMethods(userId);
+    const rails = await withdrawalPayoutRailConfigService.getPublicConfig();
     const cached = await redisClient.get(cacheKey);
+    let methods: ReturnType<typeof userPaymentMethodService.serializeOwnerList>;
     if (cached) {
-      return JSON.parse(cached) as ReturnType<
-        typeof userPaymentMethodService.serializeMaskedList
+      methods = JSON.parse(cached) as ReturnType<
+        typeof userPaymentMethodService.serializeOwnerList
       >;
+    } else {
+      const rows = await userPaymentMethodRepository.findAllForUser(userId);
+      methods = userPaymentMethodService.serializeOwnerList(rows);
+      await redisClient.setex(cacheKey, WALLET_BALANCE_TTL, JSON.stringify(methods));
     }
-
-    const rows = await userPaymentMethodRepository.findAllForUser(userId);
-    const masked = userPaymentMethodService.serializeMaskedList(rows);
-    await redisClient.setex(
-      cacheKey,
-      WALLET_BALANCE_TTL,
-      JSON.stringify(masked),
-    );
-    return masked;
+    return {
+      methods: methods.map((m) => ({
+        ...m,
+        ...railFieldsForType(m.methodType, rails),
+      })),
+    };
   },
 
-  serializeMaskedList(
+  /** Full unmasked details for the owning user (`GET /payment-methods`). */
+  serializeOwnerList(
     rows: Awaited<ReturnType<typeof userPaymentMethodRepository.findAllForUser>>,
   ) {
     return rows.map((r) => {
-      const masked = maskPaymentMethodForDisplay(r);
-      if (r.methodType === "BANK") {
+      const lastUsed = r.lastUsedAt?.toISOString() ?? null;
+      const full = mapPaymentMethodFull(r);
+      if (full.methodType === "BANK") {
         return {
           id: r.id,
           methodType: "BANK" as const,
-          bankName: masked.bankName,
-          accountNumber: masked.bankAccountNumber,
-          firstName: masked.firstName ?? null,
-          lastName: masked.lastName ?? null,
-          branch: masked.branch ?? null,
+          firstName: full.firstName ?? null,
+          lastName: full.lastName ?? null,
+          bankName: full.bankName ?? null,
+          branch: full.branch ?? null,
+          ifscCode: full.ifscCode ?? null,
+          accountNumber: full.accountNumber ?? null,
+          upiId: full.upiId ?? null,
+          email: full.email ?? null,
+          phone: full.phone ?? null,
+          lastUsed,
         };
       }
       return {
         id: r.id,
         methodType: "EPAY" as const,
-        epayEmail: masked.epayEmail,
+        epayEmail: full.epayEmail ?? null,
+        lastUsed,
       };
     });
+  },
+
+  async touchLastUsed(userId: string, paymentMethodId: string) {
+    await userPaymentMethodRepository.touchLastUsed(paymentMethodId, userId);
+    await redisClient.del(RedisKeys.userPaymentMethods(userId));
   },
 };

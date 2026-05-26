@@ -220,10 +220,13 @@ export const withdrawalService = {
           },
           tx,
         );
+
+        await userPaymentMethodRepository.touchLastUsed(method.id, userId, tx);
       },
       { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_MS },
     );
 
+    await redisClient.del(RedisKeys.userPaymentMethods(userId));
     await walletService.adjustPointBalanceCache(userId, -params.grossPoints);
 
     await withdrawalService.assignToAgency(withdrawalId);

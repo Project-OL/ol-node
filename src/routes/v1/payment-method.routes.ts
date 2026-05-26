@@ -11,7 +11,7 @@ export async function paymentMethodRoutes(app: FastifyInstance) {
     { preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const rows = await userPaymentMethodService.getMyMethods(request.userId!);
-      return reply.send({ methods: rows });
+      return reply.send(rows);
     },
   );
 

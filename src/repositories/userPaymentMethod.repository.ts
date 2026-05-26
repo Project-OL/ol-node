@@ -20,10 +20,12 @@ export const userPaymentMethodRepository = {
       upiNumber?: string | null;
       registeredPhone?: string | null;
       registeredEmail?: string | null;
+      lastUsedAt?: Date;
     },
     tx?: Prisma.TransactionClient,
   ) {
     const db = tx ?? prisma;
+    const now = data.lastUsedAt ?? new Date();
     return db.userPaymentMethod.upsert({
       where: {
         userId_methodType: { userId: data.userId, methodType: data.methodType },
@@ -42,6 +44,7 @@ export const userPaymentMethodRepository = {
         upiNumber: data.upiNumber ?? undefined,
         registeredPhone: data.registeredPhone ?? undefined,
         registeredEmail: data.registeredEmail ?? undefined,
+        lastUsedAt: now,
       },
       update: {
         epayEmail: data.epayEmail ?? undefined,
@@ -55,6 +58,7 @@ export const userPaymentMethodRepository = {
         upiNumber: data.upiNumber ?? undefined,
         registeredPhone: data.registeredPhone ?? undefined,
         registeredEmail: data.registeredEmail ?? undefined,
+        lastUsedAt: now,
       },
     });
   },
@@ -86,6 +90,18 @@ export const userPaymentMethodRepository = {
   async findById(id: string, userId: string) {
     return prismaRead.userPaymentMethod.findFirst({
       where: { id, userId },
+    });
+  },
+
+  async touchLastUsed(
+    id: string,
+    userId: string,
+    tx?: Prisma.TransactionClient,
+  ) {
+    const db = tx ?? prisma;
+    return db.userPaymentMethod.updateMany({
+      where: { id, userId },
+      data: { lastUsedAt: new Date() },
     });
   },
 

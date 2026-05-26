@@ -1368,6 +1368,7 @@ model UserPaymentMethod {
   upiNumber                String?  @map("upi_number") @db.VarChar(50)
   registeredPhone          String?  @map("registered_phone") @db.VarChar(30)
   registeredEmail          String?  @map("registered_email") @db.VarChar(255)
+  lastUsedAt               DateTime? @map("last_used_at")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -1417,6 +1418,18 @@ model PayrollConfig {
   updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
 
   @@map("payroll_config")
+}
+
+model WithdrawalPayoutRailConfig {
+  id              Int      @id @default(1)
+  epayFeeRateBp   Int      @default(600) @map("epay_fee_rate_bp")
+  epayArrivalTime String   @default("Within 24 hours") @map("epay_arrival_time") @db.VarChar(200)
+  bankFeeRateBp   Int      @default(600) @map("bank_fee_rate_bp")
+  bankArrivalTime String   @default("3-5 business days") @map("bank_arrival_time") @db.VarChar(200)
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("withdrawal_payout_rail_config")
 }
 
 model WalletIdempotencyLog {

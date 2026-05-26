@@ -286,6 +286,7 @@ export const RedisKeys = {
   faceRegistrationReplayGuard: (hash: string) => `face-registration:replay:${hash}`,
   /** Phase 3b payroll / withdrawal */
   payrollConfig: () => "payroll:config",
+  payoutRailConfig: () => "withdrawal:payout-rail-config",
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
   ratelimitWithdrawalCreate: (userId: string) =>
     `ratelimit:withdrawal:create:${userId}`,
@@ -389,6 +390,8 @@ export const RICH_STATE_TTL = 300
 export const RICH_CONFIG_TTL = 3600
 /** Payroll fee config singleton cache. */
 export const PAYROLL_CONFIG_TTL = 3600
+/** Public withdrawal payout rail (EPAY/BANK fee + arrival copy). */
+export const PAYOUT_RAIL_CONFIG_TTL = 300
 /** Agent payroll dashboard summary (tab counts + toggle). */
 export const PAYROLL_SUMMARY_TTL = 30
 /** GET rich-tier read endpoints: 60 requests / 60s per user. */

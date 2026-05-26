@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticate } from "../../middlewares/auth.middleware";
 import { AppError } from "../../middlewares/errorHandler";
 import { withdrawalService } from "../../services/withdrawal.service";
+import { withdrawalPayoutRailConfigService } from "../../services/withdrawalPayoutRailConfig.service";
 import {
   rateLimitWithdrawalCreate,
   rateLimitWithdrawalDispute,
@@ -20,6 +21,11 @@ const ProofUploadBodySchema = z.object({
 });
 
 export async function withdrawalRoutes(app: FastifyInstance) {
+  app.get("/payout-rails", async (_request, reply: FastifyReply) => {
+    const config = await withdrawalPayoutRailConfigService.getPublicConfig();
+    return reply.send(config);
+  });
+
   app.post(
     "/",
     { preHandler: [authenticate, rateLimitWithdrawalCreate] },

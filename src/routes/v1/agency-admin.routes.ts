@@ -11,8 +11,10 @@ import { agencyKycService } from "../../services/agencyKyc.service";
 import { coinTradingService } from "../../services/coinTrading.service";
 import { payrollAdminService } from "../../services/payrollAdmin.service";
 import { withdrawalService } from "../../services/withdrawal.service";
+import { withdrawalPayoutRailConfigService } from "../../services/withdrawalPayoutRailConfig.service";
 import { redisClient, RedisKeys } from "../../config/redis";
 import { prisma } from "../../config/database";
+import { PayoutRailConfigUpdateSchema } from "../../models/withdrawalPayoutRail.schemas";
 
 const DEFAULT_AGENT_APP_LIST_STATUSES: AgencyAgentApplicationStatus[] = [
   "PENDING",
@@ -328,6 +330,30 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     await payrollAdminService.updateConfig(adminUserId, body);
     return reply.send({ ok: true });
   });
+
+  app.get(
+    "/withdrawal/payout-rails",
+    { preHandler: [requireAdmin] },
+    async (_request, reply) => {
+      const config = await withdrawalPayoutRailConfigService.getPublicConfig();
+      return reply.send(config);
+    },
+  );
+
+  app.put(
+    "/withdrawal/payout-rails",
+    { preHandler: [requireAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.userId;
+      if (!adminUserId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const body = PayoutRailConfigUpdateSchema.parse(request.body ?? {});
+      const config = await withdrawalPayoutRailConfigService.updateConfig(
+        adminUserId,
+        body,
+      );
+      return reply.send(config);
+    },
+  );
 
   app.get("/payroll/pending-platform", { preHandler: [requireAdmin] }, async (request, reply) => {
     const q = request.query as { limit?: string; cursor?: string };
