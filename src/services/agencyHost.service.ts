@@ -59,6 +59,38 @@ function computeAge(dob: Date | null): number | null {
   return age >= 0 ? age : null;
 }
 
+function mapHostProfileFields(
+  hostUserId: string,
+  host: {
+    id: string;
+    publicId: bigint;
+    defaultPublicId: bigint;
+    currentVipPublicId: bigint | null;
+    username: string;
+    firstName: string | null;
+    lastName: string | null;
+    avatarUrl: string | null;
+    gender: string | null;
+    dateOfBirth: Date | null;
+  },
+  levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
+) {
+  const level = levels.get(hostUserId);
+  return {
+    userId: host.id,
+    publicId: host.publicId.toString(),
+    displayPublicId: String(
+      host.currentVipPublicId ?? host.defaultPublicId ?? host.publicId,
+    ),
+    gender: host.gender,
+    age: computeAge(host.dateOfBirth),
+    wealthLevel: level?.wealthLevel ?? 0,
+    livestreamLevel: level?.livestreamLevel ?? 0,
+    avatarUrl: host.avatarUrl,
+    displayName: buildDisplayName(host),
+  };
+}
+
 function mapHostListItem(
   row: {
     hostUserId: string;
@@ -79,23 +111,10 @@ function mapHostListItem(
   },
   levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
 ) {
-  const level = levels.get(row.hostUserId);
   return {
     hostUserId: row.hostUserId,
-    userId: row.host.id,
-    publicId: row.host.publicId.toString(),
-    displayPublicId: String(
-      row.host.currentVipPublicId ??
-        row.host.defaultPublicId ??
-        row.host.publicId,
-    ),
-    gender: row.host.gender,
-    age: computeAge(row.host.dateOfBirth),
-    wealthLevel: level?.wealthLevel ?? 0,
-    livestreamLevel: level?.livestreamLevel ?? 0,
+    ...mapHostProfileFields(row.hostUserId, row.host, levels),
     isTagged: row.host.isTagged,
-    avatarUrl: row.host.avatarUrl,
-    displayName: buildDisplayName(row.host),
     joinedAt: row.joinedAt.toISOString(),
   };
 }
@@ -747,6 +766,37 @@ export const agencyHostService = {
       "HOST_DELETED",
       tx,
     );
+  },
+
+  async listLeaveApplicationsInbox(
+    agencyUserId: string,
+    params: { limit: number; cursor?: string | null },
+  ) {
+    const rows = await agencyLeaveApplicationRepository.listInbox(agencyUserId, params);
+    const hasMore = rows.length > params.limit;
+    const page = hasMore ? rows.slice(0, params.limit) : rows;
+    const hostIds = page.map((r) => r.hostUserId);
+    const levels =
+      hostIds.length > 0
+        ? await walletLevelService.getDisplayLevelsForUsers(hostIds)
+        : new Map<string, { livestreamLevel: number; wealthLevel: number }>();
+    const nextCursor =
+      hasMore && page.length > 0
+        ? `${page[page.length - 1]!.createdAt.toISOString()}|${page[page.length - 1]!.id}`
+        : null;
+    return {
+      items: page.map((row) => ({
+        id: row.id,
+        hostUserId: row.hostUserId,
+        status: row.status,
+        reason: row.reason,
+        createdAt: row.createdAt.toISOString(),
+        autoApproveAt: row.autoApproveAt.toISOString(),
+        lateApproveUntil: row.lateApproveUntil?.toISOString() ?? null,
+        ...mapHostProfileFields(row.hostUserId, row.host, levels),
+      })),
+      nextCursor,
+    };
   },
 
   async listHosts(

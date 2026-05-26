@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   agencyCommissionRollingWindowDays,
+  resolveCommissionPeriod,
   utcDayFromTimestamp,
+  utcRollingPeriodDays,
 } from "../../src/utils/datetime";
+import { AppError } from "../../src/middlewares/errorHandler";
 
 describe("agency commission UTC helpers", () => {
   it("rolling window uses yesterday as latest full day", () => {
@@ -17,5 +20,27 @@ describe("agency commission UTC helpers", () => {
     expect(d.getUTCHours()).toBe(0);
     expect(d.getUTCMinutes()).toBe(0);
     expect(d.getUTCDate()).toBe(4);
+  });
+
+  it("resolveCommissionPeriod accepts inclusive from/to", () => {
+    const { start, end } = resolveCommissionPeriod({
+      from: "2026-01-01",
+      to: "2026-01-31",
+    });
+    expect(start.toISOString().slice(0, 10)).toBe("2026-01-01");
+    expect(end.toISOString().slice(0, 10)).toBe("2026-01-31");
+  });
+
+  it("resolveCommissionPeriod rejects from after to", () => {
+    expect(() =>
+      resolveCommissionPeriod({ from: "2026-02-01", to: "2026-01-01" }),
+    ).toThrow(AppError);
+  });
+
+  it("resolveCommissionPeriod falls back to periodDays", () => {
+    const { start, end } = resolveCommissionPeriod({ periodDays: 7 });
+    const expected = utcRollingPeriodDays(7);
+    expect(start.toISOString()).toBe(expected.fromDay.toISOString());
+    expect(end.toISOString()).toBe(expected.toDay.toISOString());
   });
 });

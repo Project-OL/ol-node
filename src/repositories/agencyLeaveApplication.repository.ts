@@ -73,6 +73,22 @@ export const agencyLeaveApplicationRepository = {
       where,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: params.limit + 1,
+      include: {
+        host: {
+          select: {
+            id: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+            gender: true,
+            dateOfBirth: true,
+          },
+        },
+      },
     });
   },
 

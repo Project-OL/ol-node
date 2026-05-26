@@ -26,3 +26,11 @@ if (env.NODE_ENV !== 'production') {
   global.__prisma = prisma
   global.__prismaRead = prismaRead
 }
+
+/** Warm pooler connections on process start (avoids first-request P1017 on Neon). */
+export async function connectDatabases(): Promise<void> {
+  await prisma.$connect()
+  if (prismaRead !== prisma) {
+    await prismaRead.$connect()
+  }
+}

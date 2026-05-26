@@ -1,10 +1,17 @@
 import { buildApp } from './app'
 import { env } from './config/env'
-import { prisma } from './config/database'
+import { prisma, connectDatabases } from './config/database'
 import { redisClient } from './config/redis'
 import { ensureCollectionExists } from './lib/rekognition.client'
 
 async function start() {
+  try {
+    await connectDatabases()
+  } catch (error) {
+    console.error('Failed to connect to database', error)
+    process.exit(1)
+  }
+
   try {
     await ensureCollectionExists()
   } catch (error) {

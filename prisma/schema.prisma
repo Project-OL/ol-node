@@ -145,6 +145,7 @@ model User {
   tradingCoinTransferReversals CoinTradingTransfer[]         @relation("TradingCoinTransferReversedBy")
   paymentMethods               UserPaymentMethod[]
   payrollAssignmentsAsAgent    WithdrawalPayrollAssignment[] @relation("AgencyPayrollAssignments")
+  hostLiveSessions             HostLiveSession[]
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -1828,6 +1829,7 @@ model AgencyDailyEarning {
   hostCommissionPoints BigInt    @default(0) @map("host_commission_points")
   hostWasActive        Boolean   @default(true) @map("host_was_active")
   lastCreditAt         DateTime? @map("last_credit_at")
+  liveDurationSeconds  BigInt    @default(0) @map("live_duration_seconds")
 
   agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
   host   User   @relation("AgencyDailyHost", fields: [hostUserId], references: [id], onDelete: Cascade)
@@ -1844,6 +1846,24 @@ model AgencyCommissionProcessed {
   createdAt         DateTime @default(now()) @map("created_at")
 
   @@map("agency_commission_processed")
+}
+
+model HostLiveSession {
+  id              String    @id @default(uuid()) @db.Uuid
+  hostUserId      String    @map("host_user_id") @db.Uuid
+  agencyUserId    String    @map("agency_user_id") @db.Uuid
+  roomId          String    @map("room_id")
+  startedAt       DateTime  @default(now()) @map("started_at")
+  endedAt         DateTime? @map("ended_at")
+  durationSeconds BigInt?   @map("duration_seconds")
+  status          String    @default("ACTIVE")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  host User @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@index([hostUserId, status])
+  @@index([agencyUserId, startedAt])
+  @@map("host_live_sessions")
 }
 
 model AgentPointTransfer {

@@ -2,6 +2,8 @@
  * UTC calendar helpers — no external timezone library.
  */
 
+import { AppError } from "../middlewares/errorHandler";
+
 export function utcNow(): Date {
   return new Date();
 }
@@ -80,4 +82,50 @@ export function utcRollingPeriodDays(
   const yesterday = addUtcDays(utcStartOfDay(now), -1);
   const fromDay = addUtcDays(yesterday, -(periodDays - 1));
   return { fromDay, toDay: yesterday };
+}
+
+function parseUtcDate(s: string): Date {
+  const [year, month, day] = s.split("-").map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day!));
+}
+
+/**
+ * Resolves a commission query period from either:
+ *   - periodDays (integer, rolling window ending yesterday)
+ *   - from + to (ISO date strings, inclusive UTC calendar days)
+ *
+ * Returns { start: Date (UTC midnight), end: Date (UTC midnight, inclusive) }
+ */
+export function resolveCommissionPeriod(params: {
+  periodDays?: number;
+  from?: string;
+  to?: string;
+}): { start: Date; end: Date } {
+  if (params.from && params.to) {
+    const start = parseUtcDate(params.from);
+    const end = parseUtcDate(params.to);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new AppError(400, "Invalid date format. Use YYYY-MM-DD", "INVALID_DATE_RANGE");
+    }
+    if (end < start) {
+      throw new AppError(400, '"to" must be on or after "from"', "INVALID_DATE_RANGE");
+    }
+    const maxRangeMs = 365 * 24 * 60 * 60 * 1000;
+    if (end.getTime() - start.getTime() > maxRangeMs) {
+      throw new AppError(400, "Date range cannot exceed 365 days", "DATE_RANGE_TOO_LARGE");
+    }
+    return { start, end };
+  }
+
+  const periodDays = params.periodDays ?? 30;
+  const { fromDay, toDay } = utcRollingPeriodDays(periodDays);
+  return { start: fromDay, end: toDay };
+}
+
+/** Half-open ledger bounds `[from, toExclusive)` for an inclusive UTC calendar day range. */
+export function commissionPeriodToLedgerBounds(
+  start: Date,
+  end: Date,
+): { from: Date; toExclusive: Date } {
+  return { from: start, toExclusive: addUtcDays(end, 1) };
 }

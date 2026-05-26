@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { authenticate } from "../../middlewares/auth.middleware";
+import { requireAgent } from "../../middlewares/requireAgent.middleware";
 import {
   rateLimitAgencyApply,
   rateLimitAgencyLeaveApply,
@@ -41,6 +42,7 @@ const PayrollInboxQuerySchema = z.object({
 });
 
 const preAuth = [authenticate];
+const preAgent = [authenticate, requireAgent];
 
 const ApplySchema = z.object({
   agencyPublicId: z.string().min(1),
@@ -306,31 +308,11 @@ export default async function agencyRoutes(app: FastifyInstance) {
       const q = request.query as Record<string, string | undefined>;
       const limit = Math.min(50, Math.max(1, Number(q.limit ?? "20") || 20));
       const cursor = q.cursor ?? undefined;
-      const rows = await agencyLeaveApplicationRepository.listInbox(
+      const result = await agencyHostService.listLeaveApplicationsInbox(
         agencyRow.userId,
-        {
-          limit,
-          cursor,
-        },
+        { limit, cursor },
       );
-      const hasMore = rows.length > limit;
-      const page = hasMore ? rows.slice(0, limit) : rows;
-      const nextCursor =
-        hasMore && page.length > 0
-          ? `${page[page.length - 1]!.createdAt.toISOString()}|${page[page.length - 1]!.id}`
-          : null;
-      return reply.send({
-        items: page.map((r) => ({
-          id: r.id,
-          hostUserId: r.hostUserId,
-          status: r.status,
-          reason: r.reason,
-          createdAt: r.createdAt.toISOString(),
-          autoApproveAt: r.autoApproveAt.toISOString(),
-          lateApproveUntil: r.lateApproveUntil?.toISOString() ?? null,
-        })),
-        nextCursor,
-      });
+      return reply.send(result);
     },
   );
 
@@ -477,12 +459,9 @@ export default async function agencyRoutes(app: FastifyInstance) {
 
   app.get(
     "/payroll/summary",
-    { preHandler: preAuth },
+    { preHandler: preAgent },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      const u = await userRepository.findById(userId);
-      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const userId = request.userId!;
       const summary = await agencyService.getPayrollSummary(userId);
       return reply.send(summary);
     },
@@ -490,12 +469,9 @@ export default async function agencyRoutes(app: FastifyInstance) {
 
   app.get(
     "/payroll/inbox",
-    { preHandler: preAuth },
+    { preHandler: preAgent },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      const u = await userRepository.findById(userId);
-      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const userId = request.userId!;
       const query = PayrollInboxQuerySchema.parse(request.query ?? {});
       const result = await withdrawalService.getAgentPayrollInbox(
         userId,
@@ -509,12 +485,9 @@ export default async function agencyRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { id: string } }>(
     "/payroll/assignments/:id",
-    { preHandler: preAuth },
+    { preHandler: preAgent },
     async (request, reply: FastifyReply) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      const u = await userRepository.findById(userId);
-      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const userId = request.userId!;
       const detail = await agencyService.getAssignmentDetail(
         request.params.id,
         userId,
@@ -538,12 +511,9 @@ export default async function agencyRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string } }>(
     "/payroll/assignments/:id/complete",
-    { preHandler: [...preAuth, rateLimitPayrollComplete] },
+    { preHandler: [...preAgent, rateLimitPayrollComplete] },
     async (request, reply: FastifyReply) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      const u = await userRepository.findById(userId);
-      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const userId = request.userId!;
       const body = PayrollCompleteSchema.parse(request.body ?? {});
       const result = await withdrawalService.agentCompletePayroll(
         userId,
@@ -556,12 +526,9 @@ export default async function agencyRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string } }>(
     "/payroll/assignments/:id/reject",
-    { preHandler: [...preAuth, rateLimitPayrollReject] },
+    { preHandler: [...preAgent, rateLimitPayrollReject] },
     async (request, reply: FastifyReply) => {
-      const userId = request.userId;
-      if (!userId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
-      const u = await userRepository.findById(userId);
-      if (!u?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
+      const userId = request.userId!;
       const body = PayrollRejectSchema.parse(request.body ?? {});
       await withdrawalService.agentRejectPayroll(
         userId,

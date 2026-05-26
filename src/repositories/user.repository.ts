@@ -1,6 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { prisma, prismaRead } from '../config/database'
+import { withDbRetry } from '../utils/prismaRetry'
 import { auditRepository } from './audit.repository'
 import type { UserStatus } from '../models/types'
 
@@ -26,13 +27,25 @@ export const userRepository = {
   },
 
   async findById(id: string) {
-    return prismaRead.user.findUnique({
-      where: { id },
-      include: {
-        authIdentifiers: true,
-        authPassword: true,
-      },
-    })
+    return withDbRetry(prismaRead, () =>
+      prismaRead.user.findUnique({
+        where: { id },
+        include: {
+          authIdentifiers: true,
+          authPassword: true,
+        },
+      }),
+    )
+  },
+
+  async isAgentUser(id: string): Promise<boolean> {
+    const row = await withDbRetry(prismaRead, () =>
+      prismaRead.user.findUnique({
+        where: { id },
+        select: { isAgent: true },
+      }),
+    )
+    return row?.isAgent === true
   },
 
   /**

@@ -73,6 +73,7 @@ export const PointTxTypeEnum = z.enum([
   "AGENCY_FORCE_EXIT_PENALTY",
   "AGENT_COMMISSION",
   "AGENT_POINT_TRANSFER",
+  "PAYROLL_PROCESSING_REWARD",
 ]);
 
 export const PointHistoryQuerySchema = DateRangeSchema.merge(

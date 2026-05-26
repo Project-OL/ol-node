@@ -238,9 +238,9 @@ export const RedisKeys = {
   /** Agency Phase 2: level ladder + derived rates (60s) */
   agencyRate: (agencyUserId: string) => `agency:rate:${agencyUserId}`,
   /** Commission GET /me / panel fragments */
-  agencyCommissionMe: (agencyUserId: string, periodDays?: number) =>
-    periodDays != null
-      ? `agency:commission:me:${agencyUserId}:${periodDays}`
+  agencyCommissionMe: (agencyUserId: string, periodKey?: string | number) =>
+    periodKey != null
+      ? `agency:commission:me:${agencyUserId}:${periodKey}`
       : `agency:commission:me:${agencyUserId}`,
   agencyHostBreakdown: (agencyUserId: string, period: string) =>
     `agency:host:breakdown:${agencyUserId}:${period}`,
@@ -297,6 +297,10 @@ export const RedisKeys = {
     `ratelimit:payroll:reject:${userId}`,
   ratelimitPmBind: (userId: string) => `ratelimit:pm:bind:${userId}`,
   payrollSummary: (agencyUserId: string) => `payroll:summary:${agencyUserId}`,
+  /** Active live stream session metadata (JSON: sessionId, agencyUserId, startedAt, roomId). */
+  liveActiveSession: (hostUserId: string) => `live:active:${hostUserId}`,
+  /** Reserved for future rate limiting on session start. */
+  liveStartRateLimit: (hostUserId: string) => `live:rl:start:${hostUserId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -407,6 +411,8 @@ export const AGENCY_LEVEL_CONFIG_CACHE_TTL = 3600
 export const AGENCY_RATE_CACHE_TTL = 60
 export const AGENCY_COMMISSION_ME_CACHE_TTL = 60
 export const AGENCY_HOST_BREAKDOWN_CACHE_TTL = 300
+/** Active live session Redis marker — slightly over max session timeout. */
+export const LIVE_ACTIVE_SESSION_TTL = 25 * 60 * 60
 /** POST /agency/transfer-points */
 export const AGENCY_POINT_TRANSFER_RL_TTL = 60
 /** lastActiveTracker middleware — skip DB write if key exists (600s). */

@@ -94,6 +94,13 @@ import {
 } from "./queues/agencyAutoReply.constants";
 import { processAgencyAutoReplyJob } from "./jobs/agencyAutoReply.job";
 import { agencyAutoReplyQueue, type AutoReplyJobData } from "./queues/agencyAutoReply.queue";
+import {
+  LIVE_SESSION_JOBS,
+  LIVE_SESSION_QUEUE,
+} from "./queues/live-session.constants";
+import { liveSessionQueue } from "./queues/live-session.queue";
+import { liveSessionRepository } from "./repositories/liveSession.repository";
+import { liveSessionService } from "./services/liveSession.service";
 
 const ACCOUNT_DELETION_QUEUE = "account-deletion";
 
@@ -357,6 +364,71 @@ async function main() {
     { connection, concurrency: 2 },
   );
 
+  await liveSessionQueue.add(
+    LIVE_SESSION_JOBS.SAFETY_NET_CRON,
+    {},
+    {
+      repeat: { pattern: "*/30 * * * *", tz: "UTC" },
+      jobId: "live-session-safety-net-cron-utc",
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  );
+
+  const liveSessionWorker = new Worker(
+    LIVE_SESSION_QUEUE,
+    async (job: Job<{ sessionId?: string; hostUserId?: string }>) => {
+      if (job.name === LIVE_SESSION_JOBS.SAFETY_NET_SESSION) {
+        const { sessionId, hostUserId } = job.data;
+        if (!sessionId || !hostUserId) return;
+
+        const session = await prisma.hostLiveSession.findUnique({
+          where: { id: sessionId },
+          select: { status: true, startedAt: true },
+        });
+
+        if (!session || session.status !== "ACTIVE") return;
+
+        console.warn(
+          "[Live session] Safety-net triggered — interrupting stale session",
+          { sessionId, hostUserId },
+        );
+        await liveSessionService.interruptStaleSession(
+          sessionId,
+          hostUserId,
+          session.startedAt,
+        );
+      } else if (job.name === LIVE_SESSION_JOBS.SAFETY_NET_CRON) {
+        const cutoff = new Date(
+          Date.now() - env.LIVE_SESSION_TIMEOUT_HOURS * 60 * 60 * 1000,
+        );
+        const stale = await liveSessionRepository.findStaleActiveSessions(cutoff);
+
+        console.info("[Live session] Safety-net cron: found stale sessions", {
+          count: stale.length,
+        });
+
+        for (const s of stale) {
+          try {
+            await liveSessionService.interruptStaleSession(
+              s.id,
+              s.hostUserId,
+              s.startedAt,
+            );
+          } catch (err) {
+            console.error("[Live session] Safety-net failed to interrupt session", {
+              err,
+              sessionId: s.id,
+            });
+          }
+        }
+      }
+    },
+    { connection, concurrency: 5 },
+  );
+
   accountDeletionWorker.on("failed", (job, err) => {
     console.error("[Account Deletion] Job failed:", job?.id, err);
   });
@@ -425,11 +497,17 @@ async function main() {
     console.error("[Payroll SLA] Job failed:", job?.id, err);
   });
 
+  liveSessionWorker.on("failed", (job, err) => {
+    console.error("[Live session] Job failed:", job?.id, err);
+  });
+
   console.info(
-    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; agency-auto-reply; message-outbox; message-media-audio; epay-webhook-retry (face: `npm run worker:face-index` — live-photo-verify, face-registration, PENDING_INDEX poll)",
+    "Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; agency-auto-reply; message-outbox; message-media-audio; epay-webhook-retry; live-session-safety-net (face: `npm run worker:face-index` — live-photo-verify, face-registration, PENDING_INDEX poll)",
   );
 
   const shutdown = async () => {
+    await liveSessionWorker.close();
+    await liveSessionQueue.close();
     await payrollSlaWorker.close();
     await payrollSlaQueue.close();
     await epayWebhookRetryWorker.close();

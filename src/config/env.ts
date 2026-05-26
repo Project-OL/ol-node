@@ -138,6 +138,10 @@ const envSchema = z
     EPAY_API_KEY: z.string().min(1).default("epay-test-key"),
     EPAY_WEBHOOK_SECRET: z.string().min(1).default("epay-test-secret"),
 
+    /** Shared secret for LiveKit backend → ol-node-rest live session webhooks (must match LiveKit server). */
+    LIVE_WEBHOOK_SECRET: z.string().min(32),
+    LIVE_SESSION_TIMEOUT_HOURS: z.coerce.number().int().positive().default(6),
+
     // Wallet / coins
     COIN_TOPUP_RATE_LIMIT_MAX: z.coerce.number().default(5),
     COIN_TOPUP_RATE_LIMIT_WINDOW: z.coerce.number().default(60000),

@@ -16,6 +16,33 @@ const TransferSchema = z.object({
   securityPassword: z.string().optional(),
 });
 
+const DateRangeQuerySchema = z
+  .object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })
+  .refine((v) => (v.from == null) === (v.to == null), {
+    message: "from and to must be provided together",
+  });
+
+function parseCommissionPeriodQuery(q: Record<string, string | undefined>) {
+  const range = DateRangeQuerySchema.safeParse({
+    from: q.from,
+    to: q.to,
+  });
+  if (!range.success) {
+    throw new AppError(400, range.error.errors[0]?.message ?? "Invalid query", "INVALID_REQUEST");
+  }
+  if (range.data.from && range.data.to) {
+    return { from: range.data.from, to: range.data.to };
+  }
+  const periodDays = Math.min(
+    365,
+    Math.max(1, Number(q.periodDays ?? q.period ?? "30") || 30),
+  );
+  return { periodDays };
+}
+
 export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
   app.get("/commission/config", async (_request: FastifyRequest, reply: FastifyReply) => {
     const rows = await agencyCommissionService.getLevelConfig();
@@ -33,13 +60,10 @@ export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
         throw new AppError(403, "Agent only", "NOT_AN_AGENT");
       }
       const q = request.query as Record<string, string | undefined>;
-      const periodDays = Math.min(
-        365,
-        Math.max(1, Number(q.periodDays ?? "30") || 30),
-      );
+      const periodParams = parseCommissionPeriodQuery(q);
       const snap = await agencyCommissionService.getCommissionMeSnapshot(
         userId,
-        periodDays,
+        periodParams,
       );
       return reply.send(snap);
     },
@@ -56,15 +80,12 @@ export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
         throw new AppError(403, "Agent only", "NOT_AN_AGENT");
       }
       const q = request.query as Record<string, string | undefined>;
-      const periodDays = Math.min(
-        365,
-        Math.max(1, Number(q.period ?? q.periodDays ?? "30") || 30),
-      );
+      const periodParams = parseCommissionPeriodQuery(q);
       const limit = Math.min(100, Math.max(1, Number(q.limit ?? "20") || 20));
       const offset = Math.max(0, Number(q.cursor ?? "0") || 0);
       const result = await agencyCommissionService.listHostsByEarnings(
         userId,
-        periodDays,
+        periodParams,
         { limit, offset },
       );
       return reply.send(result);
@@ -82,14 +103,11 @@ export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
         throw new AppError(403, "Agent only", "NOT_AN_AGENT");
       }
       const q = request.query as Record<string, string | undefined>;
-      const periodDays = Math.min(
-        365,
-        Math.max(1, Number(q.period ?? "30") || 30),
-      );
+      const periodParams = parseCommissionPeriodQuery(q);
       const detail = await agencyCommissionService.getHostCommissionDetail(
         userId,
         request.params.hostUserId,
-        periodDays,
+        periodParams,
       );
       return reply.send(detail);
     },

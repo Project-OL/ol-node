@@ -17,9 +17,10 @@ import { AppError } from "../middlewares/errorHandler";
 import {
   addUtcDays,
   agencyCommissionRollingWindowDays,
+  commissionPeriodToLedgerBounds,
+  resolveCommissionPeriod,
   utcDateString,
   utcNow,
-  utcRollingPeriodDays,
   utcStartOfDay,
 } from "../utils/datetime";
 import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from "../queues/agency-commission.queue";
@@ -44,6 +45,25 @@ export const COMMISSION_ELIGIBLE_TX_TYPES = new Set<PointTxType>([
 ]);
 
 export type CommissionCategory = "LIVE" | "MATCH_CHAT";
+
+export type CommissionPeriodParams = {
+  periodDays?: number;
+  from?: string;
+  to?: string;
+};
+
+function formatDuration(seconds: bigint): string {
+  const s = Number(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function commissionCacheKey(params: CommissionPeriodParams): string {
+  if (params.from && params.to) return `${params.from}_${params.to}`;
+  return String(params.periodDays ?? 30);
+}
 
 function categoryForTx(txType: PointTxType): CommissionCategory | null {
   if (LIVE_COMMISSION_TX_TYPES.has(txType)) return "LIVE";
@@ -161,7 +181,7 @@ export const agencyCommissionService = {
   },
 
   async buildMeAgentCommissionSummary(agentUserId: string) {
-    const snap = await this.getCommissionMeSnapshot(agentUserId, 30);
+    const snap = await this.getCommissionMeSnapshot(agentUserId, { periodDays: 30 });
     return {
       currentLevel: snap.currentLevel,
       currentLiveRatePercent: snap.currentLiveRateBp / 100,
@@ -348,7 +368,7 @@ export const agencyCommissionService = {
 
   async getCommissionMeSnapshot(
     agencyUserId: string,
-    periodDays: number,
+    periodParams: CommissionPeriodParams,
   ): Promise<{
     currentLevel: string;
     currentWindowTotalPoints: string;
@@ -357,10 +377,15 @@ export const agencyCommissionService = {
     nextLevel: string | null;
     nextLevelMinWindowPoints: string | null;
     lackingPointsToNextLevel: string | null;
-    periodDays: number;
+    periodDays: number | null;
+    from: string | null;
+    to: string | null;
+    liveDurationSeconds: string;
+    liveDurationFormatted: string;
     byTxType: Array<{ txType: string; totalAmount: string }>;
   }> {
-    const key = RedisKeys.agencyCommissionMe(agencyUserId, periodDays);
+    const periodKey = commissionCacheKey(periodParams);
+    const key = RedisKeys.agencyCommissionMe(agencyUserId, periodKey);
     try {
       const hit = await getRedisForRead().get(key);
       if (hit) return JSON.parse(hit) as never;
@@ -368,7 +393,8 @@ export const agencyCommissionService = {
       /* miss */
     }
 
-    const { from, toExclusive } = this.resolvePeriodBounds(periodDays);
+    const period = resolveCommissionPeriod(periodParams);
+    const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end);
     const ag = await prismaRead.agency.findUnique({
       where: { userId: agencyUserId },
     });
@@ -387,11 +413,18 @@ export const agencyCommissionService = {
       toDay,
     );
 
-    const agg = await agencyCommissionRepository.aggregateLedgerByTxTypeForAgencyHosts({
-      agencyUserId,
-      from,
-      toExclusive,
-    });
+    const [agg, liveDurationSeconds] = await Promise.all([
+      agencyCommissionRepository.aggregateLedgerByTxTypeForAgencyHosts({
+        agencyUserId,
+        from,
+        toExclusive,
+      }),
+      agencyCommissionRepository.sumLiveDurationForAgency(
+        agencyUserId,
+        period.start,
+        period.end,
+      ),
+    ]);
 
     let lacking: bigint | null = null;
     if (nextRow) {
@@ -407,7 +440,11 @@ export const agencyCommissionService = {
       nextLevel: nextRow?.level ?? null,
       nextLevelMinWindowPoints: nextRow?.minWindowPoints.toString() ?? null,
       lackingPointsToNextLevel: lacking?.toString() ?? null,
-      periodDays,
+      periodDays: periodParams.from && periodParams.to ? null : (periodParams.periodDays ?? 30),
+      from: periodParams.from ?? null,
+      to: periodParams.to ?? null,
+      liveDurationSeconds: liveDurationSeconds.toString(),
+      liveDurationFormatted: formatDuration(liveDurationSeconds),
       byTxType: agg.map((r) => ({
         txType: r.txType,
         totalAmount: r.totalAmount.toString(),
@@ -424,14 +461,14 @@ export const agencyCommissionService = {
 
   async listHostsByEarnings(
     agencyUserId: string,
-    periodDays: number,
+    periodParams: CommissionPeriodParams,
     opts: { limit: number; offset: number },
   ) {
-    const { fromDay, toDay } = utcRollingPeriodDays(periodDays);
+    const period = resolveCommissionPeriod(periodParams);
     const rows = await agencyCommissionRepository.sumHostEarningsByHost(
       agencyUserId,
-      fromDay,
-      toDay,
+      period.start,
+      period.end,
       { limit: opts.limit, offset: opts.offset },
     );
     const hasMore = rows.length > opts.limit;
@@ -441,15 +478,20 @@ export const agencyCommissionService = {
         hostUserId: r.hostUserId,
         hostEarningsPoints: r.hostEarningsPoints.toString(),
         hostCommissionPoints: r.hostCommissionPoints.toString(),
+        liveDurationSeconds: r.liveDurationSeconds.toString(),
+        liveDurationFormatted: formatDuration(r.liveDurationSeconds),
       })),
       nextOffset: hasMore ? opts.offset + opts.limit : null,
+      periodDays: periodParams.from && periodParams.to ? null : (periodParams.periodDays ?? 30),
+      from: periodParams.from ?? null,
+      to: periodParams.to ?? null,
     };
   },
 
   async getHostCommissionDetail(
     agencyUserId: string,
     hostUserId: string,
-    periodDays: number,
+    periodParams: CommissionPeriodParams,
   ) {
     const membership = await prismaRead.agencyHost.findUnique({
       where: { hostUserId },
@@ -459,13 +501,22 @@ export const agencyCommissionService = {
       throw new AppError(403, "Host not in your agency", "FORBIDDEN");
     }
 
-    const { from, toExclusive } = this.resolvePeriodBounds(periodDays);
-    const rows = await agencyCommissionRepository.aggregateLedgerForSingleHost({
-      hostUserId,
-      agencyUserId,
-      from,
-      toExclusive,
-    });
+    const period = resolveCommissionPeriod(periodParams);
+    const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end);
+    const [rows, liveDurationSeconds] = await Promise.all([
+      agencyCommissionRepository.aggregateLedgerForSingleHost({
+        hostUserId,
+        agencyUserId,
+        from,
+        toExclusive,
+      }),
+      agencyCommissionRepository.sumLiveDurationForHost(
+        agencyUserId,
+        hostUserId,
+        period.start,
+        period.end,
+      ),
+    ]);
     const map = Object.fromEntries(rows.map((r) => [r.txType, r.totalAmount])) as Record<
       string,
       bigint
@@ -491,7 +542,11 @@ export const agencyCommissionService = {
 
     return {
       hostUserId,
-      periodDays,
+      periodDays: periodParams.from && periodParams.to ? null : (periodParams.periodDays ?? 30),
+      from: periodParams.from ?? null,
+      to: periodParams.to ?? null,
+      liveDurationSeconds: liveDurationSeconds.toString(),
+      liveDurationFormatted: formatDuration(liveDurationSeconds),
       totals: {
         allCredits: Object.values(map).reduce((a, b) => a + b, 0n).toString(),
         liveEarnings: liveEarnings.toString(),

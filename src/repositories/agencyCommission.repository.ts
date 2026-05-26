@@ -130,6 +130,7 @@ export const agencyCommissionRepository = {
       hostUserId: string;
       hostEarningsPoints: bigint;
       hostCommissionPoints: bigint;
+      liveDurationSeconds: bigint;
     }>
   > {
     const limit = opts?.limit ?? 50;
@@ -139,13 +140,15 @@ export const agencyCommissionRepository = {
         host_user_id: string;
         earnings: bigint;
         commission: bigint;
+        live_duration: bigint;
       }[]
     >`
       SELECT * FROM (
         SELECT
           e.host_user_id,
           COALESCE(SUM(e.host_earnings_points), 0)::bigint AS earnings,
-          COALESCE(SUM(e.host_commission_points), 0)::bigint AS commission
+          COALESCE(SUM(e.host_commission_points), 0)::bigint AS commission,
+          COALESCE(SUM(e.live_duration_seconds), 0)::bigint AS live_duration
         FROM agency_daily_earnings e
         INNER JOIN users u ON u.id = e.host_user_id
         WHERE e.agency_user_id = ${agencyUserId}::uuid
@@ -163,7 +166,42 @@ export const agencyCommissionRepository = {
       hostUserId: r.host_user_id,
       hostEarningsPoints: r.earnings,
       hostCommissionPoints: r.commission,
+      liveDurationSeconds: r.live_duration,
     }));
+  },
+
+  async sumLiveDurationForAgency(
+    agencyUserId: string,
+    fromDay: Date,
+    toDay: Date,
+  ): Promise<bigint> {
+    const rows = await prismaRead.$queryRaw<{ s: bigint }[]>`
+      SELECT COALESCE(SUM(e.live_duration_seconds), 0)::bigint AS s
+      FROM agency_daily_earnings e
+      INNER JOIN users u ON u.id = e.host_user_id
+      WHERE e.agency_user_id = ${agencyUserId}::uuid
+        AND e.day >= ${fromDay}::date
+        AND e.day <= ${toDay}::date
+        AND u.status NOT IN ('suspended', 'deleted')
+    `;
+    return rows[0]?.s ?? 0n;
+  },
+
+  async sumLiveDurationForHost(
+    agencyUserId: string,
+    hostUserId: string,
+    fromDay: Date,
+    toDay: Date,
+  ): Promise<bigint> {
+    const rows = await prismaRead.$queryRaw<{ s: bigint }[]>`
+      SELECT COALESCE(SUM(e.live_duration_seconds), 0)::bigint AS s
+      FROM agency_daily_earnings e
+      WHERE e.agency_user_id = ${agencyUserId}::uuid
+        AND e.host_user_id = ${hostUserId}::uuid
+        AND e.day >= ${fromDay}::date
+        AND e.day <= ${toDay}::date
+    `;
+    return rows[0]?.s ?? 0n;
   },
 
   /** Point ledger aggregation for hosts currently under this agency (recompute-time filter uses daily table; this uses live membership). */

@@ -316,19 +316,27 @@ export const pointWalletService = {
     });
     await walletRepository.bumpVersion(tx, wallet.id);
 
-    const { agencyCommissionService } = await import(
-      "./agencyCommission.service"
-    );
-    await agencyCommissionService.applyCommission(
-      {
-        hostUserId: userId,
-        hostLedgerEntryId: entry.id,
-        hostPointsCredited: amount,
-        hostTxType: txType,
-        day: utcDayFromTimestamp(new Date()),
-      },
-      tx,
-    );
+    const applyCommission =
+      txType === PointTxType.LIVESTREAM_GIFT ||
+      txType === PointTxType.GIFT_RECEIVE ||
+      txType === PointTxType.VIDEO_CALL ||
+      txType === PointTxType.SUBSCRIPTION;
+
+    if (applyCommission) {
+      const { agencyCommissionService } = await import(
+        "./agencyCommission.service"
+      );
+      await agencyCommissionService.applyCommission(
+        {
+          hostUserId: userId,
+          hostLedgerEntryId: entry.id,
+          hostPointsCredited: amount,
+          hostTxType: txType,
+          day: utcDayFromTimestamp(new Date()),
+        },
+        tx,
+      );
+    }
 
     const applyXp = options.applyLivestreamLevel !== false;
     if (
