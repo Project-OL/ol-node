@@ -18,6 +18,7 @@ import { agencyRepository } from "../../repositories/agency.repository";
 import { redisClient, RedisKeys } from "../../config/redis";
 import { agencyLeaveApplicationRepository } from "../../repositories/agencyLeaveApplication.repository";
 import { registerAgencyCommissionRoutes } from "./agency-commission.routes";
+import { registerAgencyDashboardRoutes } from "./agency-dashboard.routes";
 import { withdrawalService } from "../../services/withdrawal.service";
 import { auditService } from "../../services/audit.service";
 import { userRepository } from "../../repositories/user.repository";
@@ -39,6 +40,12 @@ const PayrollInboxQuerySchema = z.object({
   status: z.enum(["PENDING", "COMPLETED"]).default("PENDING"),
   limit: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().optional(),
+});
+
+const PayrollSummaryQuerySchema = z.object({
+  periodDays: z.coerce.number().int().min(1).max(365).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 const preAuth = [authenticate];
@@ -77,6 +84,7 @@ const UpdateContactSchema = z
 
 export default async function agencyRoutes(app: FastifyInstance) {
   await registerAgencyCommissionRoutes(app);
+  await registerAgencyDashboardRoutes(app);
 
   app.put("/contact", { preHandler: preAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
     const userId = request.userId;
@@ -462,7 +470,8 @@ export default async function agencyRoutes(app: FastifyInstance) {
     { preHandler: preAgent },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.userId!;
-      const summary = await agencyService.getPayrollSummary(userId);
+      const query = PayrollSummaryQuerySchema.parse(request.query ?? {});
+      const summary = await withdrawalService.getAgentPayrollSummary(userId, query);
       return reply.send(summary);
     },
   );
@@ -556,6 +565,7 @@ export default async function agencyRoutes(app: FastifyInstance) {
         "commission",
         "transfer-points",
         "payroll",
+        "dashboard",
       ]);
       if (reserved.has(publicId)) {
         throw new AppError(400, "Invalid path", "INVALID_REQUEST");

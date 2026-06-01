@@ -178,6 +178,16 @@ export const agencyCommissionService = {
     } catch {
       /* ignore */
     }
+    // Non-blocking refresh of the dashboard "today" surfaces so the live
+    // "earned today" figure updates within seconds of a commission credit
+    // rather than waiting for the 30s TTL. Best-effort only.
+    void Promise.all([
+      redisClient.del(RedisKeys.agencyDashboardToday(agencyUserId)),
+      redisClient.del(RedisKeys.agencyDashboardEarnings(agencyUserId, "TODAY")),
+      redisClient.del(RedisKeys.agencyDashboardHostSummary(agencyUserId, "TODAY")),
+    ]).catch(() => {
+      /* non-fatal */
+    });
   },
 
   async buildMeAgentCommissionSummary(agentUserId: string) {

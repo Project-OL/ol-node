@@ -1,5 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
+import {
+  redisClient,
+  getRedisForRead,
+  RedisKeys,
+  WALLET_BALANCE_TTL,
+} from "../config/redis";
 import { AppError } from "../middlewares/errorHandler";
 import { walletRepository } from "../repositories/wallet.repository";
 import { pointLedgerRepository } from "../repositories/point-ledger.repository";
@@ -25,6 +31,8 @@ export const pointWalletService = {
       userId,
       WalletCurrencyType.POINT,
     );
+    const unconfirmed = wallet.unconfirmedPoints ?? 0n;
+    const available = balance - unconfirmed;
     const earnings = await prismaRead.pointLedgerEntry.groupBy({
       by: ["txType"],
       where: { walletId: wallet.id, direction: LedgerDirection.CREDIT },
@@ -37,6 +45,9 @@ export const pointWalletService = {
 
     return {
       remainingPoints: balance.toString(),
+      totalPoints: balance.toString(),
+      availablePoints: available.toString(),
+      unconfirmedPoints: unconfirmed.toString(),
       earnings: {
         livestream: earningsMap.LIVESTREAM_GIFT ?? "0",
         commissions: earningsMap.COMMISSION ?? "0",
@@ -370,6 +381,13 @@ export const pointWalletService = {
       metadata?: Prisma.JsonValue;
       counterpartyId?: string;
       refId?: string;
+      /**
+       * When true (default), the debit is gated on AVAILABLE points
+       * (ledger sum − unconfirmedPoints), not the raw ledger sum. Set to
+       * false for system-initiated debits (escrow settlement, reversals,
+       * penalties) where correctness is enforced by upstream business logic.
+       */
+      availabilityCheck?: boolean;
     },
   ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
     const existing = await pointLedgerRepository.findByIdempotencyKey(
@@ -400,11 +418,20 @@ export const pointWalletService = {
       select: { balanceAfter: true },
     });
     const balance = last?.balanceAfter ?? 0n;
-    if (balance < amount) {
-      throw new AppError(400, "Insufficient points", "INSUFFICIENT_POINTS", {
-        balance: balance.toString(),
-        required: amount.toString(),
-      });
+    const unconfirmed = wallet.unconfirmedPoints ?? 0n;
+    const checkAvailability = options.availabilityCheck !== false;
+    const available = checkAvailability ? balance - unconfirmed : balance;
+    if (available < amount) {
+      throw new AppError(
+        400,
+        "Insufficient available points",
+        "INSUFFICIENT_POINTS",
+        {
+          balance: available.toString(),
+          required: amount.toString(),
+          unconfirmed: unconfirmed.toString(),
+        },
+      );
     }
 
     const entry = await pointLedgerRepository.insert(tx, {
@@ -421,5 +448,104 @@ export const pointWalletService = {
     });
     await walletRepository.bumpVersion(tx, wallet.id);
     return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter };
+  },
+
+  /**
+   * SOFT escrow entry for a withdrawal. Inserts a DEBIT `point_ledger_entries`
+   * row that does NOT reduce the ledger sum (`balanceAfter` carries the previous
+   * running balance forward). Availability is tracked separately via
+   * `wallets.unconfirmedPoints` (incremented by the caller in the same tx).
+   *
+   * The availability check is expected to be done by the caller BEFORE the tx;
+   * this method performs no balance check. Idempotent on `idempotencyKey`.
+   */
+  async escrow(
+    userId: string,
+    amount: bigint,
+    txType: PointTxType,
+    tx: Prisma.TransactionClient,
+    options: {
+      idempotencyKey: string;
+      description?: string;
+      metadata?: Prisma.JsonValue;
+      counterpartyId?: string;
+      refId?: string;
+    },
+  ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
+    const existing = await pointLedgerRepository.findByIdempotencyKey(
+      tx,
+      options.idempotencyKey,
+    );
+    if (existing) {
+      return {
+        ledgerEntryId: existing.id,
+        balanceAfter: existing.balanceAfter,
+      };
+    }
+
+    const wallet = await tx.wallet.upsert({
+      where: {
+        userId_currencyType: {
+          userId,
+          currencyType: WalletCurrencyType.POINT,
+        },
+      },
+      create: { userId, currencyType: WalletCurrencyType.POINT },
+      update: {},
+    });
+    await walletRepository.lockForUpdate(tx, wallet.id);
+    const last = await tx.pointLedgerEntry.findFirst({
+      where: { walletId: wallet.id },
+      orderBy: { createdAt: "desc" },
+      select: { balanceAfter: true },
+    });
+    // balanceAfter unchanged — escrow does not move the ledger sum.
+    const runningBalance = last?.balanceAfter ?? 0n;
+
+    const entry = await pointLedgerRepository.insert(tx, {
+      walletId: wallet.id,
+      direction: LedgerDirection.DEBIT,
+      txType,
+      amount,
+      balanceAfter: runningBalance,
+      refId: options.refId,
+      counterpartyId: options.counterpartyId,
+      description: options.description,
+      metadata: options.metadata as object | undefined,
+      idempotencyKey: options.idempotencyKey,
+    });
+    await walletRepository.bumpVersion(tx, wallet.id);
+    return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter };
+  },
+
+  /** Cached in-flight escrow total for a POINT wallet (`wallets.unconfirmedPoints`). */
+  async getUnconfirmedPoints(userId: string): Promise<bigint> {
+    const key = RedisKeys.walletPointsUnconfirmed(userId);
+    try {
+      const cached = await getRedisForRead().get(key);
+      if (cached !== null) return BigInt(cached);
+    } catch {
+      // fall through to Postgres
+    }
+    const wallet = await walletRepository.getOrCreate(
+      userId,
+      WalletCurrencyType.POINT,
+    );
+    const val = wallet.unconfirmedPoints ?? 0n;
+    try {
+      await redisClient.set(key, val.toString(), "EX", WALLET_BALANCE_TTL);
+    } catch {
+      // ignore cache write failure
+    }
+    return val;
+  },
+
+  /** Spendable points = ledger sum (totalPoints) − unconfirmedPoints. */
+  async getAvailablePoints(userId: string): Promise<bigint> {
+    const [total, unconfirmed] = await Promise.all([
+      walletService.getPointBalance(userId),
+      pointWalletService.getUnconfirmedPoints(userId),
+    ]);
+    return total - unconfirmed;
   },
 };

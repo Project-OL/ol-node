@@ -129,3 +129,116 @@ export function commissionPeriodToLedgerBounds(
 ): { from: Date; toExclusive: Date } {
   return { from: start, toExclusive: addUtcDays(end, 1) };
 }
+
+// ── Agency dashboard period resolution ────────────────────────────────────────
+
+/** `YYYY-MM-DD` in UTC for use with Postgres `DATE` columns. */
+export function toUTCDateOnly(d: Date): string {
+  return utcDateString(d);
+}
+
+/** First instant (00:00:00.000) of the UTC calendar day for `d`. */
+export function startOfUTCDay(d: Date): Date {
+  return utcStartOfDay(d);
+}
+
+/** Last instant (23:59:59.999) of the UTC calendar day for `d`. */
+export function endOfUTCDay(d: Date): Date {
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999),
+  );
+}
+
+export type DashboardPeriod =
+  | "TODAY"
+  | "YESTERDAY"
+  | "THIS_WEEK"
+  | "THIS_MONTH"
+  | "LAST_30_DAYS";
+
+export interface DashboardPeriodQuery {
+  period?: DashboardPeriod;
+  from?: string;
+  to?: string;
+}
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Resolves an agency dashboard query into an inclusive UTC instant range plus a
+ * stable cache label.
+ *
+ * Precedence: an explicit custom range (`from`/`to`) wins over `period`.
+ * Defaults to LAST_30_DAYS (today + prior 29 UTC days) when nothing supplied.
+ *
+ * Throws `AppError`:
+ *   - 400 INVALID_DATE_RANGE   — only one of from/to, bad format, or from > to.
+ *   - 400 DATE_RANGE_TOO_LARGE — custom range spans more than 365 days.
+ */
+export function resolveDashboardPeriod(q: DashboardPeriodQuery): {
+  start: Date;
+  end: Date;
+  label: string;
+} {
+  const now = utcNow();
+
+  if (q.from || q.to) {
+    if (!q.from || !q.to) {
+      throw new AppError(
+        400,
+        "Both from and to are required for a custom range",
+        "INVALID_DATE_RANGE",
+      );
+    }
+    if (!YMD_RE.test(q.from) || !YMD_RE.test(q.to)) {
+      throw new AppError(400, "Invalid date format. Use YYYY-MM-DD", "INVALID_DATE_RANGE");
+    }
+    const start = startOfUTCDay(new Date(`${q.from}T00:00:00.000Z`));
+    const end = endOfUTCDay(new Date(`${q.to}T00:00:00.000Z`));
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      throw new AppError(400, "Invalid date format. Use YYYY-MM-DD", "INVALID_DATE_RANGE");
+    }
+    if (start > end) {
+      throw new AppError(400, '"from" must be on or before "to"', "INVALID_DATE_RANGE");
+    }
+    const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDays > 365) {
+      throw new AppError(400, "Date range cannot exceed 365 days", "DATE_RANGE_TOO_LARGE");
+    }
+    return { start, end, label: `${q.from}_${q.to}` };
+  }
+
+  const period: DashboardPeriod = q.period ?? "LAST_30_DAYS";
+
+  switch (period) {
+    case "TODAY":
+      return { start: startOfUTCDay(now), end: endOfUTCDay(now), label: "TODAY" };
+    case "YESTERDAY": {
+      const yesterday = addUtcDays(now, -1);
+      return {
+        start: startOfUTCDay(yesterday),
+        end: endOfUTCDay(yesterday),
+        label: "YESTERDAY",
+      };
+    }
+    case "THIS_WEEK": {
+      // Monday 00:00 UTC → end of today UTC.
+      const dayOfWeek = now.getUTCDay(); // 0=Sun, 1=Mon, …
+      const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      const monday = addUtcDays(now, -daysFromMonday);
+      return { start: startOfUTCDay(monday), end: endOfUTCDay(now), label: "THIS_WEEK" };
+    }
+    case "THIS_MONTH": {
+      const firstOfMonth = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+      );
+      return { start: firstOfMonth, end: endOfUTCDay(now), label: "THIS_MONTH" };
+    }
+    case "LAST_30_DAYS":
+    default: {
+      // Inclusive: today + prior 29 UTC days = 30 days total.
+      const startDay = addUtcDays(now, -29);
+      return { start: startOfUTCDay(startDay), end: endOfUTCDay(now), label: "LAST_30_DAYS" };
+    }
+  }
+}

@@ -68,7 +68,15 @@ export const pointLedgerRepository = {
       _sum: { amount: true },
     });
     const debits = await prismaRead.pointLedgerEntry.aggregate({
-      where: { walletId, direction: LedgerDirection.DEBIT },
+      where: {
+        walletId,
+        direction: LedgerDirection.DEBIT,
+        // WITHDRAWAL_ESCROW is a SOFT marker (in-flight escrow). It does not
+        // reduce the ledger sum (totalPoints); availability is derived separately
+        // as totalPoints - wallets.unconfirmedPoints. The real debit happens at
+        // settlement via WITHDRAWAL_ESCROW_SETTLED.
+        txType: { not: PointTxType.WITHDRAWAL_ESCROW },
+      },
       _sum: { amount: true },
     });
     return (credits._sum.amount ?? 0n) - (debits._sum.amount ?? 0n);

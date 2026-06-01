@@ -108,6 +108,14 @@ export const rateLimitAgencyPointTransfer = buildRateLimit({
   keyBuilder: RedisKeys.ratelimitAgencyPointTransfer,
 });
 
+/** Agency dashboard reads: shared bucket — 30 req / 60s per agent. */
+export const rateLimitAgencyDashboard = buildRateLimit({
+  max: 30,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: RedisKeys.ratelimitAgencyDashboard,
+});
+
 export const rateLimitCtTopup = buildRateLimit({
   max: 5,
   windowMs: 60_000,

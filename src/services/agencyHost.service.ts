@@ -675,6 +675,8 @@ export const agencyHostService = {
               idempotencyKey: `${idemBase}:points`,
               description: "Agency force exit (CS)",
               refId: params.ticketId.toString(),
+              // System-initiated penalty — not subject to the available-points gate.
+              availabilityCheck: false,
             },
           );
         }

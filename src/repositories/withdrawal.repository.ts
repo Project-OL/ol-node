@@ -1,11 +1,14 @@
 import type { Prisma, WithdrawalStatus } from "@prisma/client";
-import { prismaRead } from "../config/database";
+import { prisma, prismaRead } from "../config/database";
 
 const PENDING_STATUSES: WithdrawalStatus[] = [
   "PENDING",
   "PROCESSING",
   "PENDING_PLATFORM",
 ];
+
+/** Open (escrow-locked) statuses for v2 escrow accounting. */
+const ESCROWED_STATUSES: WithdrawalStatus[] = ["PENDING", "PENDING_PLATFORM"];
 
 export type WithdrawalDetailRow = Prisma.WithdrawalGetPayload<{
   include: {
@@ -34,6 +37,7 @@ export const withdrawalRepository = {
       agentRewardPoints: bigint;
       idempotencyKey: string;
       notes?: string | null;
+      withdrawalVersion?: number;
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -52,6 +56,7 @@ export const withdrawalRepository = {
         agentRewardPoints: data.agentRewardPoints,
         idempotencyKey: data.idempotencyKey,
         notes: data.notes ?? null,
+        withdrawalVersion: data.withdrawalVersion ?? 2,
       },
     });
   },
@@ -147,9 +152,28 @@ export const withdrawalRepository = {
     });
   },
 
-  async hasPendingWithdrawal(userId: string): Promise<boolean> {
-    const n = await this.countActiveWithdrawalsForUser(userId);
-    return n > 0;
+  /**
+   * Total grossPoints currently escrowed (open v2 withdrawals in PENDING /
+   * PENDING_PLATFORM). v1 (legacy real-debit) withdrawals are excluded — their
+   * points were already removed from the ledger sum at create time.
+   *
+   * Note: `wallets.unconfirmedPoints` is the authoritative source for the
+   * availability check; this helper is a reconciliation/observability aid.
+   */
+  async getTotalEscrowedPoints(
+    userId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<bigint> {
+    const db = tx ?? prisma;
+    const agg = await db.withdrawal.aggregate({
+      where: {
+        userId,
+        withdrawalVersion: 2,
+        status: { in: ESCROWED_STATUSES },
+      },
+      _sum: { amountPoints: true },
+    });
+    return agg._sum.amountPoints ?? 0n;
   },
 
   async hasPendingWithdrawalUsingMethod(

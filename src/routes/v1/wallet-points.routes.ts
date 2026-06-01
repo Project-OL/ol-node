@@ -22,8 +22,19 @@ export async function walletPointsRoutes(app: FastifyInstance) {
     "/balance",
     { preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const balance = await walletService.getPointBalance(request.userId!);
-      return reply.send({ balance: balance.toString() });
+      const userId = request.userId!;
+      const [total, unconfirmed] = await Promise.all([
+        walletService.getPointBalance(userId),
+        pointWalletService.getUnconfirmedPoints(userId),
+      ]);
+      const available = total - unconfirmed;
+      return reply.send({
+        // `balance` retained for backward compatibility (== totalPoints).
+        balance: total.toString(),
+        totalPoints: total.toString(),
+        availablePoints: available.toString(),
+        unconfirmedPoints: unconfirmed.toString(),
+      });
     },
   );
 

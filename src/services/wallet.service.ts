@@ -114,6 +114,15 @@ export const walletService = {
     }
   },
 
+  /** Invalidate the cached unconfirmed (in-flight escrow) points for a user. */
+  async bustUnconfirmedCache(userId: string) {
+    try {
+      await redisClient.del(RedisKeys.walletPointsUnconfirmed(userId));
+    } catch {
+      // ignore — recomputed from Postgres on next read
+    }
+  },
+
   async adjustTradingBalanceCache(userId: string) {
     try {
       await redisClient.del(RedisKeys.ctBalance(userId));

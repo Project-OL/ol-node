@@ -989,6 +989,10 @@ enum PointTxType {
   AGENT_COMMISSION
   AGENT_POINT_TRANSFER
   PAYROLL_PROCESSING_REWARD
+  // Withdrawal & payroll v2 — escrow model
+  WITHDRAWAL_ESCROW // host: soft mark of in-flight escrow (does NOT reduce ledger sum)
+  WITHDRAWAL_ESCROW_SETTLED // host: real debit at payroll completion (reduces ledger sum)
+  PAYROLL_HOST_PAYOUT // agent: credit of hostPayoutPoints at payroll completion
 }
 
 enum WithdrawalStatus {
@@ -1026,6 +1030,9 @@ model Wallet {
   userId       String             @map("user_id") @db.Uuid
   currencyType WalletCurrencyType @map("currency_type")
   version      BigInt             @default(0)
+  // Sum of grossPoints across all open (escrowed) withdrawals. POINT wallet only.
+  // availablePoints = ledger sum (totalPoints) - unconfirmedPoints.
+  unconfirmedPoints BigInt        @default(0) @map("unconfirmed_points")
   createdAt    DateTime           @default(now()) @map("created_at")
   updatedAt    DateTime           @updatedAt @map("updated_at")
 
@@ -1161,6 +1168,9 @@ model PointLedgerEntry {
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([walletId, txType, createdAt(sort: Desc)])
+  // Serves agency dashboard agent-own-earnings / payroll sums: filter by wallet +
+  // tx type + direction within a time window.
+  @@index([walletId, txType, direction, createdAt])
   @@index([idempotencyKey])
   @@map("point_ledger_entries")
 }
@@ -1343,6 +1353,8 @@ model Withdrawal {
   agentRewardPoints BigInt?  @map("agent_reward_points")
   assignmentCount   Int      @default(0) @map("assignment_count")
   disputeTicketId   String?  @map("dispute_ticket_id") @db.VarChar(255)
+  // 1 = legacy real-debit flow (WITHDRAWAL). 2 = escrow flow (WITHDRAWAL_ESCROW).
+  withdrawalVersion Int      @default(1) @map("withdrawal_version")
 
   wallet             Wallet                        @relation(fields: [walletId], references: [id], onDelete: Cascade)
   paymentMethod      UserPaymentMethod?            @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)

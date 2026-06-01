@@ -154,6 +154,9 @@ export const RedisKeys = {
   // Wallet Redis keys
   walletCoinBalance: (userId: string) => `wallet:coins:${userId}`,
   walletPointBalance: (userId: string) => `wallet:points:${userId}`,
+  /** Cached unconfirmed (in-flight escrow) points for a POINT wallet. */
+  walletPointsUnconfirmed: (userId: string) =>
+    `wallet:points:unconfirmed:${userId}`,
   ctBalance: (userId: string) => `ct:balance:${userId}`,
   ctRecentUsers: (userId: string) => `ct:recent-users:${userId}`,
   ctTopupRates: () => "ct:topup-rates",
@@ -247,6 +250,18 @@ export const RedisKeys = {
   agencyLevelConfig: () => `agency:level:config`,
   ratelimitAgencyPointTransfer: (userId: string) =>
     `ratelimit:agency:point-transfer:${userId}`,
+  /** Agency dashboard: earnings & commission overview per period label (30s TODAY / 60s others). */
+  agencyDashboardEarnings: (agencyUserId: string, periodLabel: string) =>
+    `agency:dashboard:earnings:${agencyUserId}:${periodLabel}`,
+  /** Agency dashboard: host data summary per period label. */
+  agencyDashboardHostSummary: (agencyUserId: string, periodLabel: string) =>
+    `agency:dashboard:hosts:${agencyUserId}:${periodLabel}`,
+  /** Agency dashboard: "earned today" + accumulated + points balance (30s). */
+  agencyDashboardToday: (agencyUserId: string) =>
+    `agency:dashboard:today:${agencyUserId}`,
+  /** Agency dashboard: shared read rate-limit bucket across all dashboard endpoints. */
+  ratelimitAgencyDashboard: (userId: string) =>
+    `ratelimit:agency:dashboard:${userId}`,
   ratelimitCtTopup: (userId: string) => `ratelimit:ct:topup:${userId}`,
   ratelimitCtExchange: (userId: string) => `ratelimit:ct:exchange:${userId}`,
   ratelimitCtTransfer: (userId: string) => `ratelimit:ct:transfer:${userId}`,
@@ -298,6 +313,9 @@ export const RedisKeys = {
     `ratelimit:payroll:reject:${userId}`,
   ratelimitPmBind: (userId: string) => `ratelimit:pm:bind:${userId}`,
   payrollSummary: (agencyUserId: string) => `payroll:summary:${agencyUserId}`,
+  /** Agent payroll summary with period earnings; periodKey = `30` or `2026-01-01_2026-01-31`. */
+  payrollSummaryPeriod: (agencyUserId: string, periodKey: string) =>
+    `payroll:summary:${agencyUserId}:${periodKey}`,
   /** Active live stream session metadata (JSON: sessionId, agencyUserId, startedAt, roomId). */
   liveActiveSession: (hostUserId: string) => `live:active:${hostUserId}`,
   /** Reserved for future rate limiting on session start. */
@@ -414,6 +432,10 @@ export const AGENCY_LEVEL_CONFIG_CACHE_TTL = 3600
 export const AGENCY_RATE_CACHE_TTL = 60
 export const AGENCY_COMMISSION_ME_CACHE_TTL = 60
 export const AGENCY_HOST_BREAKDOWN_CACHE_TTL = 300
+/** Agency dashboard: fast-refresh cache for the live "earned today" figures (30s). */
+export const DASHBOARD_TTL_TODAY = 30
+/** Agency dashboard: 1-minute cache for historical / period aggregates. */
+export const DASHBOARD_TTL_PERIOD = 60
 /** Active live session Redis marker — slightly over max session timeout. */
 export const LIVE_ACTIVE_SESSION_TTL = 25 * 60 * 60
 /** POST /agency/transfer-points */

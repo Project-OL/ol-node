@@ -4,9 +4,20 @@ import {
   WithdrawalStatus,
   PointTxType,
   WalletCurrencyType,
+  LedgerDirection,
 } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
-import { redisClient, RedisKeys, PAYROLL_CONFIG_TTL } from "../config/redis";
+import {
+  redisClient,
+  RedisKeys,
+  PAYROLL_CONFIG_TTL,
+  PAYROLL_SUMMARY_TTL,
+} from "../config/redis";
+import {
+  resolveCommissionPeriod,
+  commissionPeriodToLedgerBounds,
+  utcDateString,
+} from "../utils/datetime";
 import { AppError } from "../middlewares/errorHandler";
 import { walletRepository } from "../repositories/wallet.repository";
 import { withdrawalRepository } from "../repositories/withdrawal.repository";
@@ -34,6 +45,15 @@ const DISPUTE_EVIDENCE_PRESIGN_TTL = 600;
 
 async function bustPayrollSummaryCache(agencyUserId: string) {
   await redisClient.del(RedisKeys.payrollSummary(agencyUserId));
+  // Period-scoped summary caches (payroll:summary:{id}:{periodKey}).
+  try {
+    const keys = await redisClient.keys(
+      `${RedisKeys.payrollSummary(agencyUserId)}:*`,
+    );
+    if (keys.length > 0) await redisClient.del(...keys);
+  } catch {
+    /* ignore — caches expire within 30s */
+  }
 }
 
 export type PayrollConfigSnapshot = {
@@ -148,6 +168,133 @@ export const withdrawalService = {
     return calculateWithdrawalAmounts(grossPoints, config);
   },
 
+  /**
+   * Agent payroll dashboard summary with period earnings.
+   *
+   * Keeps existing all-time/toggle fields and adds, for the resolved period:
+   *   - paymentAmountProcessed: { usd, count } — COMPLETED, non-reversed payouts
+   *   - pointsEarnings: { hostPayoutPoints, rewardPoints, totalPoints }
+   *
+   * Reversed (withdrawal status FAILED) payrolls are excluded from both.
+   */
+  async getAgentPayrollSummary(
+    agencyUserId: string,
+    periodParams: { periodDays?: number; from?: string; to?: string },
+  ) {
+    const { start, end } = resolveCommissionPeriod(periodParams);
+    const periodKey =
+      periodParams.from && periodParams.to
+        ? `${periodParams.from}_${periodParams.to}`
+        : String(periodParams.periodDays ?? 30);
+
+    const cacheKey = RedisKeys.payrollSummaryPeriod(agencyUserId, periodKey);
+    const cached = await redisClient.get(cacheKey);
+    if (cached) return JSON.parse(cached) as Record<string, unknown>;
+
+    const { from, toExclusive } = commissionPeriodToLedgerBounds(start, end);
+
+    const wallet = await walletRepository.getOrCreate(
+      agencyUserId,
+      WalletCurrencyType.POINT,
+    );
+
+    const [agency, rewardSummary, tabCounts, periodEntries, completedAssignments] =
+      await Promise.all([
+        prismaRead.agency.findUnique({
+          where: { userId: agencyUserId },
+          select: { payrollEnabled: true, pausedAt: true },
+        }),
+        prismaRead.pointLedgerEntry.aggregate({
+          where: {
+            walletId: wallet.id,
+            txType: PointTxType.PAYROLL_PROCESSING_REWARD,
+            direction: LedgerDirection.CREDIT,
+          },
+          _sum: { amount: true },
+        }),
+        payrollAssignmentRepository.countInboxByStatus(agencyUserId),
+        prismaRead.pointLedgerEntry.findMany({
+          where: {
+            walletId: wallet.id,
+            direction: LedgerDirection.CREDIT,
+            txType: {
+              in: [
+                PointTxType.PAYROLL_HOST_PAYOUT,
+                PointTxType.PAYROLL_PROCESSING_REWARD,
+              ],
+            },
+            createdAt: { gte: from, lt: toExclusive },
+          },
+          select: { txType: true, amount: true, refId: true },
+        }),
+        prismaRead.withdrawalPayrollAssignment.findMany({
+          where: {
+            agencyUserId,
+            status: "COMPLETED",
+            completedAt: { gte: from, lt: toExclusive },
+            withdrawal: { status: { not: WithdrawalStatus.FAILED } },
+          },
+          select: { withdrawal: { select: { hostPayoutUsd: true } } },
+        }),
+      ]);
+
+    if (!agency) throw new AppError(404, "Agency not found", "NOT_FOUND");
+
+    // Exclude ledger credits whose withdrawal was reversed (FAILED).
+    const refIds = [
+      ...new Set(periodEntries.map((e) => e.refId).filter((r): r is string => !!r)),
+    ];
+    const reversed = refIds.length
+      ? await prismaRead.withdrawal.findMany({
+          where: { id: { in: refIds }, status: WithdrawalStatus.FAILED },
+          select: { id: true },
+        })
+      : [];
+    const reversedSet = new Set(reversed.map((r) => r.id));
+
+    let hostPayoutPoints = 0n;
+    let rewardPoints = 0n;
+    for (const e of periodEntries) {
+      if (e.refId && reversedSet.has(e.refId)) continue;
+      if (e.txType === PointTxType.PAYROLL_HOST_PAYOUT) {
+        hostPayoutPoints += e.amount;
+      } else if (e.txType === PointTxType.PAYROLL_PROCESSING_REWARD) {
+        rewardPoints += e.amount;
+      }
+    }
+
+    let usd = new Prisma.Decimal(0);
+    for (const a of completedAssignments) {
+      if (a.withdrawal.hostPayoutUsd) usd = usd.add(a.withdrawal.hostPayoutUsd);
+    }
+
+    const result = {
+      takeOrderEnabled: agency.payrollEnabled && !agency.pausedAt,
+      payrollEnabled: agency.payrollEnabled,
+      isPaused: !!agency.pausedAt,
+      totalRewardPoints: (rewardSummary._sum.amount ?? 0n).toString(),
+      tabCounts,
+      pendingCount: tabCounts.pending,
+      completedCount: tabCounts.completed,
+      period: {
+        from: utcDateString(start),
+        to: utcDateString(end),
+      },
+      paymentAmountProcessed: {
+        usd: usd.toFixed(2),
+        count: completedAssignments.length,
+      },
+      pointsEarnings: {
+        hostPayoutPoints: hostPayoutPoints.toString(),
+        rewardPoints: rewardPoints.toString(),
+        totalPoints: (hostPayoutPoints + rewardPoints).toString(),
+      },
+    };
+
+    await redisClient.setex(cacheKey, PAYROLL_SUMMARY_TTL, JSON.stringify(result));
+    return result;
+  },
+
   async createWithdrawal(
     userId: string,
     params: {
@@ -174,13 +321,9 @@ export const withdrawalService = {
       throw new AppError(404, "Payment method not found", "NOT_FOUND");
     }
 
-    if (await withdrawalRepository.hasPendingWithdrawal(userId)) {
-      throw new AppError(
-        409,
-        "A withdrawal is already in progress",
-        "WITHDRAWAL_IN_PROGRESS",
-      );
-    }
+    // Multiple open withdrawals are allowed (v2). Spending is capped by the
+    // host's AVAILABLE points (totalPoints − unconfirmedPoints), enforced inside
+    // the Serializable transaction below.
 
     const config = await withdrawalService.getPayrollConfig();
     const amounts = calculateWithdrawalAmounts(params.grossPoints, config);
@@ -193,16 +336,51 @@ export const withdrawalService = {
 
     await prisma.$transaction(
       async (tx) => {
-        await pointWalletService.debit(
+        // Lock the POINT wallet row first so the availability check and escrow
+        // increment are serialized against concurrent withdrawal creation.
+        await walletRepository.lockForUpdate(tx, wallet.id);
+        const walletRow = await tx.wallet.findUniqueOrThrow({
+          where: { id: wallet.id },
+          select: { unconfirmedPoints: true },
+        });
+        const last = await tx.pointLedgerEntry.findFirst({
+          where: { walletId: wallet.id },
+          orderBy: { createdAt: "desc" },
+          select: { balanceAfter: true },
+        });
+        const totalPoints = last?.balanceAfter ?? 0n;
+        const unconfirmed = walletRow.unconfirmedPoints ?? 0n;
+        const available = totalPoints - unconfirmed;
+        if (available < params.grossPoints) {
+          throw new AppError(
+            400,
+            "Insufficient available points",
+            "INSUFFICIENT_POINTS",
+            {
+              balance: available.toString(),
+              required: params.grossPoints.toString(),
+              unconfirmed: unconfirmed.toString(),
+            },
+          );
+        }
+
+        // Soft escrow: marks points in-flight without reducing the ledger sum.
+        await pointWalletService.escrow(
           userId,
           params.grossPoints,
-          PointTxType.WITHDRAWAL,
+          PointTxType.WITHDRAWAL_ESCROW,
           tx,
           {
-            idempotencyKey: `withdrawal-debit:${withdrawalId}`,
-            description: "Withdrawal request",
+            idempotencyKey: `withdrawal-escrow:${withdrawalId}`,
+            refId: withdrawalId,
+            description: "Withdrawal escrow",
           },
         );
+
+        await tx.wallet.update({
+          where: { id: wallet.id },
+          data: { unconfirmedPoints: { increment: params.grossPoints } },
+        });
 
         await withdrawalRepository.create(
           {
@@ -217,6 +395,7 @@ export const withdrawalService = {
             agentRewardPoints: amounts.agentRewardPoints,
             idempotencyKey: `withdrawal:${userId}:${withdrawalId}`,
             notes: params.notes ?? null,
+            withdrawalVersion: 2,
           },
           tx,
         );
@@ -227,7 +406,10 @@ export const withdrawalService = {
     );
 
     await redisClient.del(RedisKeys.userPaymentMethods(userId));
-    await walletService.adjustPointBalanceCache(userId, -params.grossPoints);
+    // totalPoints (ledger sum) is unchanged by soft escrow; bust to force a
+    // recompute, and bust the unconfirmed cache (now higher).
+    await walletService.adjustPointBalanceCache(userId, 0n);
+    await walletService.bustUnconfirmedCache(userId);
 
     await withdrawalService.assignToAgency(withdrawalId);
 
@@ -500,7 +682,7 @@ export const withdrawalService = {
     agentUserId: string,
     assignmentId: string,
     params: { proofS3Key: string; proofS3Bucket: string },
-  ): Promise<{ agentRewardPoints: string }> {
+  ): Promise<{ agentRewardPoints: string; hostPayoutPoints: string }> {
     const now = new Date();
     const prefix = `payroll/proofs/${assignmentId}/`;
     if (!params.proofS3Key.startsWith(prefix)) {
@@ -508,6 +690,9 @@ export const withdrawalService = {
     }
 
     let rewardOut = "0";
+    let hostPayoutOut = "0";
+    let hostUserIdOut = "";
+    let settledEscrow = false;
 
     await prisma.$transaction(
       async (tx) => {
@@ -523,9 +708,17 @@ export const withdrawalService = {
           throw new AppError(400, "SLA expired", "SLA_EXPIRED");
         }
 
+        const grossPoints = a.withdrawal.amountPoints;
+        const platformFeePoints = a.withdrawal.platformFeePoints ?? 0n;
+        const hostPayoutPoints = grossPoints - platformFeePoints;
         const reward = a.withdrawal.agentRewardPoints ?? 0n;
+        const isV2 = a.withdrawal.withdrawalVersion === 2;
+        const hostUserId = a.withdrawal.userId;
+
         rewardOut = reward.toString();
-        const withdrawalUserId = a.withdrawal.userId;
+        hostPayoutOut = hostPayoutPoints.toString();
+        hostUserIdOut = hostUserId;
+        settledEscrow = isV2;
 
         await payrollAssignmentRepository.updateStatus(
           {
@@ -548,6 +741,52 @@ export const withdrawalService = {
           tx,
         );
 
+        // Step 1 (v2 only): settle escrow — REAL debit consuming the escrowed
+        // points from the host wallet, then release the unconfirmed counter.
+        // v1 (legacy) withdrawals already debited the points at create time.
+        if (isV2) {
+          await pointWalletService.debit(
+            hostUserId,
+            grossPoints,
+            PointTxType.WITHDRAWAL_ESCROW_SETTLED,
+            tx,
+            {
+              idempotencyKey: `withdrawal-settled:${assignmentId}`,
+              refId: a.withdrawalId,
+              counterpartyId: agentUserId,
+              description: "Withdrawal escrow settled",
+              availabilityCheck: false,
+            },
+          );
+          await tx.wallet.update({
+            where: {
+              userId_currencyType: {
+                userId: hostUserId,
+                currencyType: WalletCurrencyType.POINT,
+              },
+            },
+            data: { unconfirmedPoints: { decrement: grossPoints } },
+          });
+        }
+
+        // Step 2: credit agent hostPayoutPoints (new in v2 flow).
+        if (hostPayoutPoints > 0n) {
+          await pointWalletService.creditInTransaction(
+            agentUserId,
+            hostPayoutPoints,
+            PointTxType.PAYROLL_HOST_PAYOUT,
+            tx,
+            {
+              idempotencyKey: `payroll-host-payout:${assignmentId}`,
+              refId: a.withdrawalId,
+              counterpartyId: hostUserId,
+              description: "Payroll host payout",
+              applyLivestreamLevel: false,
+            },
+          );
+        }
+
+        // Step 3: credit agent processing reward (existing).
         if (reward > 0n) {
           await pointWalletService.creditInTransaction(
             agentUserId,
@@ -557,7 +796,7 @@ export const withdrawalService = {
             {
               idempotencyKey: `payroll-reward:${assignmentId}`,
               refId: a.withdrawalId,
-              counterpartyId: withdrawalUserId,
+              counterpartyId: hostUserId,
               description: "Payroll processing reward",
               applyLivestreamLevel: false,
             },
@@ -570,12 +809,16 @@ export const withdrawalService = {
     await removePayrollSla(assignmentId);
     await bustPayrollSummaryCache(agentUserId);
     await walletService.adjustPointBalanceCache(agentUserId, 0n);
+    if (settledEscrow && hostUserIdOut) {
+      await walletService.adjustPointBalanceCache(hostUserIdOut, 0n);
+      await walletService.bustUnconfirmedCache(hostUserIdOut);
+    }
 
     console.info(
       `[withdrawal] Payroll complete assignment=${assignmentId} agent=${agentUserId} — host notify stub`,
     );
 
-    return { agentRewardPoints: rewardOut };
+    return { agentRewardPoints: rewardOut, hostPayoutPoints: hostPayoutOut };
   },
 
   async createDisputeEvidenceUploadUrl(
@@ -700,31 +943,92 @@ export const withdrawalService = {
     if (w.status === "FAILED") {
       return w;
     }
-    if (w.status !== "PAID" && w.status !== "DISPUTED") {
+    // v2 allows cancelling open (escrowed) withdrawals in addition to reversing
+    // settled (PAID/DISPUTED) ones.
+    const REVERSIBLE: WithdrawalStatus[] = [
+      "PAID",
+      "DISPUTED",
+      "PENDING",
+      "PENDING_PLATFORM",
+    ];
+    if (!REVERSIBLE.includes(w.status)) {
       throw new AppError(400, "Withdrawal cannot be reversed", "INVALID_STATE");
     }
+
+    const isV2 = w.withdrawalVersion === 2;
+    // A real ledger debit reduced totalPoints when: v1 (debited at create) OR a
+    // v2 escrow was settled (status reached PAID/DISPUTED). Only then must a
+    // WITHDRAWAL_REFUND credit restore the balance.
+    const wasSettled = w.status === "PAID" || w.status === "DISPUTED";
+    const realDebitHappened = !isV2 || wasSettled;
 
     const completed =
       await payrollAssignmentRepository.findCompletedForWithdrawal(withdrawalId);
     const agencyUserId = completed?.agencyUserId ?? null;
+    const hostPayoutPoints = w.amountPoints - (w.platformFeePoints ?? 0n);
+    const agentReward = w.agentRewardPoints ?? 0n;
+
+    // Open (still-pending) assignment must be cancelled so an agent can't
+    // complete a reversed withdrawal.
+    const openAssignment = await prismaRead.withdrawalPayrollAssignment.findFirst(
+      { where: { withdrawalId, status: "PENDING" } },
+    );
 
     await prisma.$transaction(
       async (tx) => {
-        await pointWalletService.creditInTransaction(
-          w.userId,
-          w.amountPoints,
-          PointTxType.WITHDRAWAL_REFUND,
-          tx,
-          {
-            idempotencyKey: `withdrawal-refund:${withdrawalId}`,
-            refId: withdrawalId,
-            description: `Withdrawal reversal: ${reason}`,
-            applyLivestreamLevel: false,
-          },
-        );
+        if (realDebitHappened) {
+          // Restore the points that were really debited from the ledger sum.
+          await pointWalletService.creditInTransaction(
+            w.userId,
+            w.amountPoints,
+            PointTxType.WITHDRAWAL_REFUND,
+            tx,
+            {
+              idempotencyKey: `withdrawal-refund:${withdrawalId}`,
+              refId: withdrawalId,
+              description: `Withdrawal reversal: ${reason}`,
+              applyLivestreamLevel: false,
+            },
+          );
+        }
 
-        if (agencyUserId && (w.agentRewardPoints ?? 0n) > 0n) {
-          const rewardKey = `payroll-reward:${completed!.id}`;
+        if (isV2 && !wasSettled) {
+          // Soft escrow still locked — release the unconfirmed counter only.
+          // No WITHDRAWAL_REFUND: the ledger sum was never reduced.
+          await tx.wallet.update({
+            where: {
+              userId_currencyType: {
+                userId: w.userId,
+                currencyType: WalletCurrencyType.POINT,
+              },
+            },
+            data: { unconfirmedPoints: { decrement: w.amountPoints } },
+          });
+        }
+
+        // Claw back agent host-payout credit (v2 completion only).
+        if (agencyUserId && completed && hostPayoutPoints > 0n) {
+          const payoutKey = `payroll-host-payout:${completed.id}`;
+          const existingPayout =
+            await pointLedgerRepository.findByIdempotencyKey(tx, payoutKey);
+          if (existingPayout) {
+            await pointWalletService.debit(
+              agencyUserId,
+              hostPayoutPoints,
+              PointTxType.ADJUSTMENT,
+              tx,
+              {
+                idempotencyKey: `payroll-host-payout-reversal:${completed.id}`,
+                description: `Payroll host payout reversal for withdrawal ${withdrawalId}`,
+                availabilityCheck: false,
+              },
+            );
+          }
+        }
+
+        // Claw back agent processing reward (existing).
+        if (agencyUserId && completed && agentReward > 0n) {
+          const rewardKey = `payroll-reward:${completed.id}`;
           const existing = await pointLedgerRepository.findByIdempotencyKey(
             tx,
             rewardKey,
@@ -732,15 +1036,27 @@ export const withdrawalService = {
           if (existing) {
             await pointWalletService.debit(
               agencyUserId,
-              w.agentRewardPoints!,
+              agentReward,
               PointTxType.ADJUSTMENT,
               tx,
               {
-                idempotencyKey: `payroll-reward-reversal:${completed!.id}`,
+                idempotencyKey: `payroll-reward-reversal:${completed.id}`,
                 description: `Payroll reward reversal for withdrawal ${withdrawalId}`,
+                availabilityCheck: false,
               },
             );
           }
+        }
+
+        if (openAssignment) {
+          await payrollAssignmentRepository.updateStatus(
+            {
+              id: openAssignment.id,
+              status: "EXPIRED",
+              rejectionReason: `Withdrawal reversed: ${reason}`,
+            },
+            tx,
+          );
         }
 
         await withdrawalRepository.updateStatus(
@@ -755,9 +1071,16 @@ export const withdrawalService = {
       { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_MS },
     );
 
+    if (openAssignment) {
+      await removePayrollSla(openAssignment.id);
+      await bustPayrollSummaryCache(openAssignment.agencyUserId);
+    }
+
     await walletService.adjustPointBalanceCache(w.userId, 0n);
+    await walletService.bustUnconfirmedCache(w.userId);
     if (agencyUserId) {
       await walletService.adjustPointBalanceCache(agencyUserId, 0n);
+      await bustPayrollSummaryCache(agencyUserId);
     }
 
     auditService.log({
