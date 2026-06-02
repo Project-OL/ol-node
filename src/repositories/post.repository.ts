@@ -1,5 +1,6 @@
 import type { Post, Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+import type { FeedCursor } from '../utils/cursor'
 
 export type PostWithRelations = Prisma.PostGetPayload<{
   include: {
@@ -75,6 +76,65 @@ export const postRepository = {
   async findById(postId: string): Promise<PostWithRelations | null> {
     return prismaRead.post.findUnique({
       where: { id: postId },
+      include: {
+        tags: {
+          include: {
+            taggedUser: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                publicId: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            avatarUrl: true,
+            gender: true,
+            dateOfBirth: true,
+          },
+        },
+      },
+    })
+  },
+
+  async getSubscriptionFeed(
+    creatorUserIds: string[],
+    limit: number,
+    cursor?: FeedCursor,
+  ): Promise<PostWithRelations[]> {
+    if (creatorUserIds.length === 0) {
+      return []
+    }
+
+    const where: Prisma.PostWhereInput = {
+      userId: { in: creatorUserIds },
+      ...(cursor
+        ? {
+            OR: [
+              { createdAt: { lt: new Date(cursor.createdAt) } },
+              {
+                createdAt: new Date(cursor.createdAt),
+                id: { lt: cursor.postId },
+              },
+            ],
+          }
+        : {}),
+    }
+
+    return prismaRead.post.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
       include: {
         tags: {
           include: {

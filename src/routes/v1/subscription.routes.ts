@@ -1,7 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { authenticate } from '../../middlewares/auth.middleware'
-import { perUserRateLimit } from '../../middlewares/rateLimitAuth'
+import {
+  perUserRateLimit,
+  subscriptionFeedRateLimit,
+  subscriptionTopCreatorsRateLimit,
+} from '../../middlewares/rateLimitAuth'
 import { AppError } from '../../middlewares/errorHandler'
 import { subscriptionService } from '../../services/subscription.service'
 
@@ -12,6 +16,11 @@ const createBodySchema = z.object({
 const checkQuerySchema = z.object({
   subscriberId: z.string().min(1),
   creatorId: z.string().min(1),
+})
+
+const feedQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().optional(),
 })
 
 const mutatePre = [authenticate, perUserRateLimit]
@@ -67,6 +76,85 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       }
       const items = await subscriptionService.listMySubscriptions(userId)
       return reply.status(200).send({ items })
+    },
+  )
+
+  app.get(
+    '/status',
+    {
+      preHandler: [authenticate, perUserRateLimit],
+      schema: {
+        tags: ['Subscriptions'],
+        description:
+          'Whether the caller has any ACTIVE paid subscriptions and how many.',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId
+      if (!userId) {
+        throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      }
+      const result = await subscriptionService.getSubscriptionStatus(userId)
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.get(
+    '/top-creators',
+    {
+      preHandler: [authenticate, subscriptionTopCreatorsRateLimit],
+      schema: {
+        tags: ['Subscriptions'],
+        description:
+          'Top creators in the caller country by ACTIVE subscriber count (excludes caller). Requires profile country.',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId
+      if (!userId) {
+        throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      }
+      const result = await subscriptionService.getTopCreatorsByCountry(userId)
+      return reply.status(200).send(result)
+    },
+  )
+
+  app.get(
+    '/feed',
+    {
+      preHandler: [authenticate, subscriptionFeedRateLimit],
+      schema: {
+        tags: ['Subscriptions'],
+        description:
+          'Paginated post feed from all creators the caller actively subscribes to.',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+            cursor: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId
+      if (!userId) {
+        throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      }
+      const parsed = feedQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await subscriptionService.getSubscriptionFeed(
+        userId,
+        parsed.data.limit,
+        parsed.data.cursor,
+      )
+      return reply.status(200).send(result)
     },
   )
 

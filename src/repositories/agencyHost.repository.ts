@@ -90,6 +90,46 @@ export const agencyHostRepository = {
     });
   },
 
+  /**
+   * All-time per-host earnings/commission/live-duration aggregates from
+   * `agency_daily_earnings`, keyed by hostUserId. Hosts with no rows are absent
+   * (callers default to zero).
+   */
+  async getHostEarningsAggregates(
+    agencyUserId: string,
+    hostUserIds: string[],
+  ): Promise<
+    Map<
+      string,
+      { hostEarnings: bigint; hostCommission: bigint; liveDurationSeconds: bigint }
+    >
+  > {
+    const map = new Map<
+      string,
+      { hostEarnings: bigint; hostCommission: bigint; liveDurationSeconds: bigint }
+    >();
+    if (hostUserIds.length === 0) return map;
+
+    const rows = await prismaRead.agencyDailyEarning.groupBy({
+      by: ["hostUserId"],
+      where: { agencyUserId, hostUserId: { in: hostUserIds } },
+      _sum: {
+        hostEarningsPoints: true,
+        hostCommissionPoints: true,
+        liveDurationSeconds: true,
+      },
+    });
+
+    for (const r of rows) {
+      map.set(r.hostUserId, {
+        hostEarnings: r._sum.hostEarningsPoints ?? 0n,
+        hostCommission: r._sum.hostCommissionPoints ?? 0n,
+        liveDurationSeconds: r._sum.liveDurationSeconds ?? 0n,
+      });
+    }
+    return map;
+  },
+
   async insertHistory(
     row: {
       agencyUserId: string;

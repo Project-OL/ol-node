@@ -7,7 +7,11 @@ import { followRepository } from '../repositories/follow.repository'
 import { storageService } from './storage.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { AuditMeta } from './follow.service'
-import type { CreatePostDto, PostAuthor, PostResponse, TaggedUser } from '../types/post.types'
+import type { CreatePostDto, PostResponse, TaggedUser } from '../types/post.types'
+import {
+  assembleLockedPostResponse,
+  assemblePostResponse,
+} from './post-response.builder'
 import { subscriptionService } from './subscription.service'
 import { videoThumbnailService } from './video-thumbnail.service'
 import { rootLogger } from '../utils/rootLogger'
@@ -32,103 +36,6 @@ function buildMediaKeyRegex(userId: string): RegExp {
   return new RegExp(
     `^posts\\/${escapedUserId}\\/[a-z0-9-]+\\.(jpg|jpeg|png|webp|mp4|mov|webm)$`,
   )
-}
-
-function computeAge(dob: Date | null): number | null {
-  if (!dob) return null
-  const today = new Date()
-  let age = today.getFullYear() - dob.getFullYear()
-  const m = today.getMonth() - dob.getMonth()
-  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
-    age--
-  }
-  return age >= 0 ? age : null
-}
-
-function toTaggedUser(user: {
-  id: string
-  username: string
-  firstName: string | null
-  lastName: string | null
-  publicId: bigint
-  avatarUrl: string | null
-}): TaggedUser {
-  const fullName =
-    user.firstName && user.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : user.firstName ?? user.lastName
-  const trimmed = fullName?.trim()
-  const displayName = trimmed && trimmed.length > 0 ? trimmed : user.username
-
-  return {
-    userId: user.id,
-    displayName,
-    publicId: String(user.publicId),
-    avatarUrl: user.avatarUrl,
-  }
-}
-
-function toPostAuthor(user: {
-  id: string
-  username: string
-  firstName: string | null
-  lastName: string | null
-  publicId: bigint
-  avatarUrl: string | null
-  gender: string | null
-  dateOfBirth: Date | null
-}): PostAuthor {
-  return {
-    ...toTaggedUser(user),
-    gender: user.gender,
-    age: computeAge(user.dateOfBirth),
-  }
-}
-
-function assemblePostResponse(
-  post: NonNullable<Awaited<ReturnType<typeof postRepository.findById>>>,
-  options: { isLiked: boolean },
-): PostResponse {
-  const author = toPostAuthor(post.user)
-  const tags: TaggedUser[] = post.tags.map((tag) => toTaggedUser(tag.taggedUser))
-
-  return {
-    postId: post.id,
-    mediaUrl: post.mediaUrl,
-    mediaType: post.mediaType,
-    thumbnailUrl: post.thumbnailUrl,
-    caption: post.caption ?? null,
-    visibility: post.visibility,
-    likesCount: post.likesCount,
-    isLiked: options.isLiked,
-    tags,
-    author,
-    createdAt: post.createdAt,
-    subscriberOnly: post.subscriberOnly,
-  }
-}
-
-function assembleLockedPostResponse(
-  post: NonNullable<Awaited<ReturnType<typeof postRepository.findById>>>,
-  options: { isLiked: boolean },
-): PostResponse {
-  const author = toPostAuthor(post.user)
-  return {
-    postId: post.id,
-    mediaUrl: '',
-    mediaType: post.mediaType,
-    thumbnailUrl: post.thumbnailUrl,
-    caption: null,
-    visibility: post.visibility,
-    likesCount: post.likesCount,
-    isLiked: options.isLiked,
-    tags: [],
-    author,
-    createdAt: post.createdAt,
-    subscriberOnly: post.subscriberOnly,
-    locked: true,
-    previewUrl: null,
-  }
 }
 
 async function canViewSubscriberOnlyPost(

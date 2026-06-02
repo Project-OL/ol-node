@@ -1,6 +1,9 @@
 import type { CreatorSubscription, Prisma } from '@prisma/client'
 import { CreatorSubscriptionStatus } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+import { USER_STATUSES } from '../models/types'
+
+const BLOCKED_USER_STATUSES = ['suspended', 'deleted'] as const satisfies readonly (typeof USER_STATUSES)[number][]
 
 const userListSelect = {
   id: true,
@@ -31,6 +34,15 @@ export const subscriptionRepository = {
   async countActiveByCreatorId(creatorId: string): Promise<number> {
     return prismaRead.creatorSubscription.count({
       where: { creatorId, status: CreatorSubscriptionStatus.ACTIVE },
+    })
+  },
+
+  async getActiveSubscriptions(
+    subscriberId: string,
+  ): Promise<{ creatorId: string }[]> {
+    return prismaRead.creatorSubscription.findMany({
+      where: { subscriberId, status: CreatorSubscriptionStatus.ACTIVE },
+      select: { creatorId: true },
     })
   },
 
@@ -109,6 +121,36 @@ export const subscriptionRepository = {
       where: { id },
       data,
     })
+  },
+
+  async queryTopCreatorsByCountry(country: string, limit: number) {
+    const rows = await prismaRead.user.findMany({
+      where: {
+        country,
+        status: { notIn: [...BLOCKED_USER_STATUSES] },
+        creatorSubsAsHost: { some: { status: CreatorSubscriptionStatus.ACTIVE } },
+      },
+      select: {
+        id: true,
+        publicId: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        avatarUrl: true,
+        _count: {
+          select: {
+            creatorSubsAsHost: {
+              where: { status: CreatorSubscriptionStatus.ACTIVE },
+            },
+          },
+        },
+      },
+      orderBy: {
+        creatorSubsAsHost: { _count: 'desc' },
+      },
+      take: limit,
+    })
+    return rows
   },
 
   async updateByIdInTx(

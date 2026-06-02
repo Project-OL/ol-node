@@ -20,6 +20,13 @@ import { pointWalletService } from "./point-wallet.service";
 import { walletService } from "./wallet.service";
 import { walletLevelService } from "./user-level.service";
 import { userRepository } from "../repositories/user.repository";
+import { bigIntToStr, formatDuration } from "../utils/bigint";
+
+type HostEarningsAgg = {
+  hostEarnings: bigint;
+  hostCommission: bigint;
+  liveDurationSeconds: bigint;
+};
 
 const TX_MS = 20_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -110,12 +117,19 @@ function mapHostListItem(
     };
   },
   levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
+  earnings: Map<string, HostEarningsAgg>,
 ) {
+  const agg = earnings.get(row.hostUserId);
+  const liveDurationSeconds = agg?.liveDurationSeconds ?? 0n;
   return {
     hostUserId: row.hostUserId,
     ...mapHostProfileFields(row.hostUserId, row.host, levels),
     isTagged: row.host.isTagged,
     joinedAt: row.joinedAt.toISOString(),
+    hostEarnings: bigIntToStr(agg?.hostEarnings ?? 0n),
+    hostCommission: bigIntToStr(agg?.hostCommission ?? 0n),
+    liveDurationSeconds: bigIntToStr(liveDurationSeconds),
+    liveDurationFormatted: formatDuration(liveDurationSeconds),
   };
 }
 
@@ -809,16 +823,18 @@ export const agencyHostService = {
     const hasMore = rows.length > params.limit;
     const page = hasMore ? rows.slice(0, params.limit) : rows;
     const hostIds = page.map((r) => r.hostUserId);
-    const levels =
+    const [levels, earnings] = await Promise.all([
       hostIds.length > 0
-        ? await walletLevelService.getDisplayLevelsForUsers(hostIds)
-        : new Map<string, { livestreamLevel: number; wealthLevel: number }>();
+        ? walletLevelService.getDisplayLevelsForUsers(hostIds)
+        : new Map<string, { livestreamLevel: number; wealthLevel: number }>(),
+      agencyHostRepository.getHostEarningsAggregates(agencyUserId, hostIds),
+    ]);
     const nextCursor =
       hasMore && page.length > 0
         ? `${page[page.length - 1]!.joinedAt.toISOString()}|${page[page.length - 1]!.hostUserId}`
         : null;
     return {
-      items: page.map((row) => mapHostListItem(row, levels)),
+      items: page.map((row) => mapHostListItem(row, levels, earnings)),
       nextCursor,
     };
   },

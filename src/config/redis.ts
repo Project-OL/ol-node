@@ -188,6 +188,11 @@ export const RedisKeys = {
   subscriptionCreatorCount: (creatorId: string) => `sub:count:${creatorId}`,
   /** Per-user cap for mutating subscription routes (after JWT). */
   subscriptionMutationRateLimit: (userId: string) => `ratelimit:subscription:mut:${userId}`,
+  /** Country-scoped top creators by ACTIVE subscriber count (discovery). */
+  subscriptionTopCreators: (country: string) => `sub:top-creators:${country}`,
+  subscriptionTopCreatorsRateLimit: (userId: string) =>
+    `ratelimit:subscription:top-creators:${userId}`,
+  subscriptionFeedRateLimit: (userId: string) => `ratelimit:subscription:feed:${userId}`,
   /** Cached top active guardian for a target profile card. */
   guardianActive: (targetUserId: string) => `guardian:active:${targetUserId}`,
   /** Cached super-host flag for a profile card. */
@@ -383,6 +388,9 @@ export const FAN_RANK_WEEK_MONTH_TTL = 300
 
 /** Paid subscriber count cache per creator (eventually consistent display stat). */
 export const SUBSCRIPTION_COUNT_CACHE_TTL = 300
+
+/** Top creators by country (shared across users in that country). */
+export const SUB_TOP_CREATORS_TTL = 300
 
 /** Guardian: active top guardian per target (recalculated on purchase/expiry). */
 export const GUARDIAN_ACTIVE_TTL = 300

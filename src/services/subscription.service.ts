@@ -1,12 +1,17 @@
 import crypto from 'crypto'
 import { CreatorSubscriptionStatus } from '@prisma/client'
-import { prisma } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 import {
   getRedisForRead,
   redisClient,
   RedisKeys,
   SUBSCRIPTION_COUNT_CACHE_TTL,
+  SUB_TOP_CREATORS_TTL,
 } from '../config/redis'
+import { decodeCursor, encodeCursor } from '../utils/cursor'
+import { postRepository } from '../repositories/post.repository'
+import { assembleUnlockedPostResponse } from './post-response.builder'
+import type { PostResponse } from '../types/post.types'
 import { AppError } from '../middlewares/errorHandler'
 import {
   SUBSCRIPTION_COIN_COST,
@@ -65,6 +70,14 @@ async function readThroughActiveSubscriberCount(creatorId: string): Promise<numb
   return count
 }
 
+export type TopCreatorCard = {
+  userId: string
+  publicId: string
+  displayName: string
+  avatarUrl: string | null
+  subscriberCount: number
+}
+
 function buildDisplayName(user: {
   username: string
   firstName: string | null
@@ -78,7 +91,97 @@ function buildDisplayName(user: {
   return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
 
+function mapTopCreatorRow(
+  row: Awaited<ReturnType<typeof subscriptionRepository.queryTopCreatorsByCountry>>[number],
+): TopCreatorCard {
+  return {
+    userId: row.id,
+    publicId: row.publicId.toString(),
+    displayName: buildDisplayName(row),
+    avatarUrl: row.avatarUrl,
+    subscriberCount: row._count.creatorSubsAsHost,
+  }
+}
+
 export const subscriptionService = {
+  async getSubscriptionStatus(
+    userId: string,
+  ): Promise<{ hasActiveSubscriptions: boolean; activeCount: number }> {
+    const count = await prismaRead.creatorSubscription.count({
+      where: { subscriberId: userId, status: CreatorSubscriptionStatus.ACTIVE },
+    })
+    return { hasActiveSubscriptions: count > 0, activeCount: count }
+  },
+
+  async getTopCreatorsByCountry(
+    userId: string,
+  ): Promise<{ creators: TopCreatorCard[]; country: string }> {
+    const user = await prismaRead.user.findUnique({
+      where: { id: userId },
+      select: { country: true },
+    })
+    if (!user?.country) {
+      throw new AppError(
+        400,
+        'Please set your country in your profile to see top creators',
+        'COUNTRY_NOT_SET',
+      )
+    }
+
+    const country = user.country
+    const cacheKey = RedisKeys.subscriptionTopCreators(country)
+    const cached = await getRedisForRead().get(cacheKey)
+
+    let top4: TopCreatorCard[]
+    if (cached) {
+      top4 = JSON.parse(cached) as TopCreatorCard[]
+    } else {
+      const rows = await subscriptionRepository.queryTopCreatorsByCountry(country, 4)
+      top4 = rows.map(mapTopCreatorRow)
+      await redisClient.set(cacheKey, JSON.stringify(top4), 'EX', SUB_TOP_CREATORS_TTL)
+    }
+
+    const creators = top4.filter((c) => c.userId !== userId).slice(0, 3)
+    return { creators, country }
+  },
+
+  async getSubscriptionFeed(
+    userId: string,
+    limit: number,
+    rawCursor?: string,
+  ): Promise<{
+    posts: PostResponse[]
+    nextCursor: string | null
+    hasSubscriptions: boolean
+  }> {
+    const subs = await subscriptionRepository.getActiveSubscriptions(userId)
+    if (subs.length === 0) {
+      return { posts: [], nextCursor: null, hasSubscriptions: false }
+    }
+
+    const creatorIds = subs.map((s) => s.creatorId)
+    const cursor = rawCursor ? decodeCursor(rawCursor) : undefined
+    const rows = await postRepository.getSubscriptionFeed(creatorIds, limit, cursor)
+
+    let nextCursor: string | null = null
+    let page = rows
+    if (rows.length > limit) {
+      page = rows.slice(0, limit)
+      const last = page[page.length - 1]!
+      nextCursor = encodeCursor(last.createdAt, last.id)
+    }
+
+    const likedSet = await postRepository.batchExistsLike(
+      page.map((p) => p.id),
+      userId,
+    )
+    const posts = page.map((post) =>
+      assembleUnlockedPostResponse(post, likedSet.has(post.id)),
+    )
+
+    return { posts, nextCursor, hasSubscriptions: true }
+  },
+
   async createSubscription(subscriberId: string, creatorId: string) {
     if (subscriberId === creatorId) {
       throw new AppError(400, 'Cannot subscribe to yourself', 'INVALID_REQUEST')

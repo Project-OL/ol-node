@@ -547,6 +547,22 @@ export const perUserRateLimit = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.subscriptionMutationRateLimit(userId),
 });
 
+/** GET /subscriptions/top-creators — 30 req/min per user. */
+export const subscriptionTopCreatorsRateLimit = buildRateLimit({
+  max: 30,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.subscriptionTopCreatorsRateLimit(userId),
+});
+
+/** GET /subscriptions/feed — 60 req/min per user. */
+export const subscriptionFeedRateLimit = buildRateLimit({
+  max: 60,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? "",
+  keyBuilder: (userId) => RedisKeys.subscriptionFeedRateLimit(userId),
+});
+
 /** Guardian purchase: max 5 per minute per authenticated user. */
 export const guardianPurchaseRateLimit = buildRateLimit({
   max: 5,

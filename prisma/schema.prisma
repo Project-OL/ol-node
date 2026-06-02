@@ -579,6 +579,7 @@ model CreatorSubscription {
 
   @@unique([subscriberId, creatorId])
   @@index([nextRenewalAt, status])
+  @@index([subscriberId, status])
   @@map("creator_subscriptions")
 }
 
@@ -671,6 +672,7 @@ model Post {
   likes PostLike[]
 
   @@index([userId, createdAt])
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)], map: "posts_user_id_created_at_id_idx")
   @@index([createdAt])
   @@map("posts")
 }

@@ -17,6 +17,8 @@ const listActiveCreatorsForSubscriber = vi.fn()
 const listActiveSubscribersForCreator = vi.fn()
 const upsertActiveInTx = vi.fn()
 const updateById = vi.fn()
+const getActiveSubscriptions = vi.fn()
+const queryTopCreatorsByCountry = vi.fn()
 vi.mock('../../src/repositories/subscription.repository', () => ({
   subscriptionRepository: {
     findByPair: (...a: unknown[]) => findByPair(...a),
@@ -29,6 +31,34 @@ vi.mock('../../src/repositories/subscription.repository', () => ({
       listActiveSubscribersForCreator(...a),
     upsertActiveInTx: (...a: unknown[]) => upsertActiveInTx(...a),
     updateById: (...a: unknown[]) => updateById(...a),
+    getActiveSubscriptions: (...a: unknown[]) => getActiveSubscriptions(...a),
+    queryTopCreatorsByCountry: (...a: unknown[]) => queryTopCreatorsByCountry(...a),
+  },
+}))
+
+const getSubscriptionFeed = vi.fn()
+const batchExistsLike = vi.fn()
+vi.mock('../../src/repositories/post.repository', () => ({
+  postRepository: {
+    getSubscriptionFeed: (...a: unknown[]) => getSubscriptionFeed(...a),
+    batchExistsLike: (...a: unknown[]) => batchExistsLike(...a),
+  },
+}))
+
+const prismaReadCount = vi.fn()
+const prismaReadUserFindUnique = vi.fn()
+vi.mock('../../src/config/database', () => ({
+  prisma: {
+    $transaction: async (fn: (tx: Record<string, never>) => Promise<unknown>) =>
+      fn({}),
+  },
+  prismaRead: {
+    creatorSubscription: {
+      count: (...a: unknown[]) => prismaReadCount(...a),
+    },
+    user: {
+      findUnique: (...a: unknown[]) => prismaReadUserFindUnique(...a),
+    },
   },
 }))
 
@@ -86,15 +116,10 @@ vi.mock('../../src/config/redis', () => ({
     subscriptionAccess: (subscriberId: string, creatorId: string) =>
       `sub:access:${subscriberId}:${creatorId}`,
     subscriptionCreatorCount: (creatorId: string) => `sub:count:${creatorId}`,
+    subscriptionTopCreators: (country: string) => `sub:top-creators:${country}`,
   },
   SUBSCRIPTION_COUNT_CACHE_TTL: 300,
-}))
-
-vi.mock('../../src/config/database', () => ({
-  prisma: {
-    $transaction: async (fn: (tx: Record<string, never>) => Promise<unknown>) =>
-      fn({}),
-  },
+  SUB_TOP_CREATORS_TTL: 300,
 }))
 
 const { subscriptionService } = await import('../../src/services/subscription.service')
@@ -337,5 +362,81 @@ describe('subscriptionService', () => {
     expect(redisDel).toHaveBeenCalledWith('sub:access:fan-1:creator-1')
     expect(deletePair).toHaveBeenCalledWith('fan-1', 'creator-1')
     expect(cancelSubscriptionGraceJob).toHaveBeenCalledWith('sub-1')
+  })
+
+  it('getSubscriptionStatus returns active count only', async () => {
+    prismaReadCount.mockResolvedValue(2)
+
+    const result = await subscriptionService.getSubscriptionStatus('fan-1')
+
+    expect(result).toEqual({ hasActiveSubscriptions: true, activeCount: 2 })
+    expect(prismaReadCount).toHaveBeenCalledWith({
+      where: { subscriberId: 'fan-1', status: CreatorSubscriptionStatus.ACTIVE },
+    })
+  })
+
+  it('getTopCreatorsByCountry throws COUNTRY_NOT_SET when profile country missing', async () => {
+    prismaReadUserFindUnique.mockResolvedValue({ country: null })
+
+    await expect(subscriptionService.getTopCreatorsByCountry('fan-1')).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'COUNTRY_NOT_SET',
+    })
+  })
+
+  it('getTopCreatorsByCountry excludes caller from cached top-4', async () => {
+    prismaReadUserFindUnique.mockResolvedValue({ country: 'IN' })
+    redisGet.mockResolvedValueOnce(
+      JSON.stringify([
+        {
+          userId: 'fan-1',
+          publicId: '1',
+          displayName: 'Me',
+          avatarUrl: null,
+          subscriberCount: 99,
+        },
+        {
+          userId: 'c2',
+          publicId: '2',
+          displayName: 'B',
+          avatarUrl: null,
+          subscriberCount: 50,
+        },
+        {
+          userId: 'c3',
+          publicId: '3',
+          displayName: 'C',
+          avatarUrl: null,
+          subscriberCount: 40,
+        },
+        {
+          userId: 'c4',
+          publicId: '4',
+          displayName: 'D',
+          avatarUrl: null,
+          subscriberCount: 30,
+        },
+      ]),
+    )
+
+    const result = await subscriptionService.getTopCreatorsByCountry('fan-1')
+
+    expect(result.country).toBe('IN')
+    expect(result.creators).toHaveLength(3)
+    expect(result.creators.every((c) => c.userId !== 'fan-1')).toBe(true)
+    expect(queryTopCreatorsByCountry).not.toHaveBeenCalled()
+  })
+
+  it('getSubscriptionFeed returns empty when no ACTIVE subscriptions', async () => {
+    getActiveSubscriptions.mockResolvedValue([])
+
+    const result = await subscriptionService.getSubscriptionFeed('fan-1', 20)
+
+    expect(result).toEqual({
+      posts: [],
+      nextCursor: null,
+      hasSubscriptions: false,
+    })
+    expect(getSubscriptionFeed).not.toHaveBeenCalled()
   })
 })
