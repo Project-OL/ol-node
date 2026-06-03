@@ -1,6 +1,8 @@
 import crypto from 'crypto'
 import type { Guardian, GuardianTier } from '@prisma/client'
+import { PointTxType } from '@prisma/client'
 import { prisma } from '../config/database'
+import { hostRevenuePointsFromCoins } from '../config/host-revenue-shares'
 import { AppError } from '../middlewares/errorHandler'
 import {
   RedisKeys,
@@ -9,6 +11,7 @@ import {
 } from '../config/redis'
 import { cacheService } from './cache.service'
 import { coinWalletService } from './coin-wallet.service'
+import { pointWalletService } from './point-wallet.service'
 import { walletService } from './wallet.service'
 import { userRepository } from '../repositories/user.repository'
 import {
@@ -302,6 +305,7 @@ export const guardianService = {
     const expiresAt = addMonths(new Date(), input.durationMonths)
     const idempotencyKey = `guardian-purchase:${crypto.randomUUID()}`
 
+    let bustAgentUserId: string | null = null
     const guardian = await prisma.$transaction(
       async (tx) => {
         await coinWalletService.debitForGuardianPurchase(
@@ -313,7 +317,7 @@ export const guardianService = {
           },
           tx,
         )
-        return guardianRepository.upsertGuardian(
+        const row = await guardianRepository.upsertGuardian(
           {
             guardianUserId,
             targetUserId: input.targetUserId,
@@ -324,11 +328,43 @@ export const guardianService = {
           },
           tx,
         )
+
+        const hostPoints = hostRevenuePointsFromCoins(totalCoins)
+        if (hostPoints > 0n) {
+          const credited = await pointWalletService.creditInTransaction(
+            input.targetUserId,
+            hostPoints,
+            PointTxType.GUARDIAN_PURCHASE,
+            tx,
+            {
+              idempotencyKey: `guardian-host-pts:${row.id}`,
+              refId: row.id,
+              counterpartyId: guardianUserId,
+              description: 'Guardian purchase revenue (50%)',
+              metadata: {
+                coinsPaid: totalCoins.toString(),
+                tier: input.tier,
+                hostShareBp: 5000,
+              },
+            },
+          )
+          bustAgentUserId = credited.bustAgentUserId
+        }
+
+        return row
       },
       { isolationLevel: 'Serializable' },
     )
 
     await walletService.adjustCoinBalanceCache(guardianUserId, totalCoins)
+    const hostPoints = hostRevenuePointsFromCoins(totalCoins)
+    if (hostPoints > 0n) {
+      await walletService.adjustPointBalanceCache(input.targetUserId, hostPoints)
+    }
+    if (bustAgentUserId) {
+      const { agencyCommissionService } = await import('./agencyCommission.service')
+      await agencyCommissionService.bustAgentCommissionCaches(bustAgentUserId)
+    }
     await enqueueGuardianExpiry(guardian.id, expiresAt)
 
     const activeRows = await guardianRepository.findActiveGuardiansForTarget(

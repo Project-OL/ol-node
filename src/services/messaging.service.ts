@@ -67,6 +67,30 @@ type ReadDebounceEntry = {
 const readReceiptDebounce = new Map<string, ReadDebounceEntry>()
 const messagingLog = rootLogger.child({ module: 'messaging' })
 
+export type CanUserMessageOptions = {
+  /**
+   * When true, only block checks apply (TEXT_COINS / coinseller agent thread).
+   * Skips allowMsgFromMutual / allowMsgFromFollowing / allowMsgFromStranger.
+   */
+  bypassDmPrivacy?: boolean
+}
+
+async function shouldBypassDmPrivacyForSend(params: {
+  messageType: string
+  senderId: string
+  conversationId: string
+}): Promise<boolean> {
+  if (params.messageType === 'TEXT_COINS') return true
+
+  const sender = await prismaRead.user.findUnique({
+    where: { id: params.senderId },
+    select: { isAgent: true },
+  })
+  if (!sender?.isAgent) return false
+
+  return messageRepository.conversationHasTextCoins(params.conversationId)
+}
+
 async function maybeEnqueueAutoReply(conversationId: string, triggerSeq: bigint): Promise<void> {
   const members = await prismaRead.conversationMember.findMany({
     where: { conversationId },
@@ -105,7 +129,11 @@ function mediaItemsWithServerBucket(items: MediaItemInput[]): MediaItemInput[] {
 }
 
 export const messagingService = {
-  async canUserMessage(senderId: string, recipientId: string): Promise<void> {
+  async canUserMessage(
+    senderId: string,
+    recipientId: string,
+    options?: CanUserMessageOptions,
+  ): Promise<void> {
     if (await blockRepository.isBlocked(recipientId, senderId)) {
       // Evict any cached permission — block state wins regardless of TTL
       await redisClient.del(RedisKeys.allowedMessaging(recipientId, senderId)).catch(() => {})
@@ -114,6 +142,8 @@ export const messagingService = {
     if (await blockRepository.isBlocked(senderId, recipientId)) {
       throw new AppError(403, 'You have blocked this user', 'YOU_ARE_BLOCKED')
     }
+    if (options?.bypassDmPrivacy) return
+
     const settings = await userSettingsService.getOrCreateSettings(recipientId)
     const allowAny =
       settings.allowMsgFromMutual ||
@@ -163,7 +193,9 @@ export const messagingService = {
       throw new AppError(404, 'User not found', 'NOT_FOUND')
     }
     const recipientId = recipient.userId
-    await this.canUserMessage(initiatorId, recipientId)
+    await this.canUserMessage(initiatorId, recipientId, {
+      bypassDmPrivacy: recipient.isAgency,
+    })
 
     const existing = await conversationRepository.findDirectConversation(
       initiatorId,
@@ -202,8 +234,13 @@ export const messagingService = {
     const otherMemberIds = conv.members
       .filter((m) => m.userId !== senderId)
       .map((m) => m.userId)
+    const bypassDmPrivacy = await shouldBypassDmPrivacyForSend({
+      messageType: input.type,
+      senderId,
+      conversationId,
+    })
     for (const otherId of otherMemberIds) {
-      await this.canUserMessage(senderId, otherId)
+      await this.canUserMessage(senderId, otherId, { bypassDmPrivacy })
     }
     if (input.replyToId) {
       const replyTo = await messageRepository.findMessageById(input.replyToId)

@@ -5,6 +5,7 @@ import { pointWalletService } from "../../services/point-wallet.service";
 import {
   WithdrawInitiateSchema,
   PointHistoryQuerySchema,
+  PointLedgerEntryParamsSchema,
 } from "../../models/wallet.schemas";
 
 export async function walletPointsRoutes(app: FastifyInstance) {
@@ -64,12 +65,25 @@ export async function walletPointsRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const query = PointHistoryQuerySchema.parse(request.query);
       const result = await pointWalletService.getHistory(request.userId!, {
-        types: query.types,
+        types: query.types as string[] | undefined,
         from: query.from,
         to: query.to,
         cursor: query.cursor,
         limit: query.limit,
       });
+      return reply.send(result);
+    },
+  );
+
+  app.get(
+    "/history/:entryId",
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { entryId } = PointLedgerEntryParamsSchema.parse(request.params);
+      const result = await pointWalletService.getTransactionDetail(
+        request.userId!,
+        entryId,
+      );
       return reply.send(result);
     },
   );

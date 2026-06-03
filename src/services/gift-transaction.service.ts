@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { prisma } from "../config/database";
-import { env } from "../config/env";
+import { hostGiftPointsFromCoinSpend } from "../config/host-revenue-shares";
 import { redisClient, RedisKeys } from "../config/redis";
 import { AppError } from "../middlewares/errorHandler";
 import { giftRepository } from "../repositories/gift.repository";
@@ -68,9 +68,7 @@ export const giftTransactionService = {
     }
 
     const coinCost = gift.coinCost;
-    const pointsAwarded = Math.floor(
-      coinCost * env.GIFT_COIN_TO_POINT_RATE,
-    );
+    const pointsAwarded = hostGiftPointsFromCoinSpend(coinCost);
     const idemBase = `gift:${crypto.randomUUID()}`;
     const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys();
 

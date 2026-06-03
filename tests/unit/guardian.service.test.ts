@@ -36,9 +36,18 @@ vi.mock('../../src/repositories/user.repository', () => ({
 }))
 
 const adjustCoinBalanceCache = vi.fn()
+const adjustPointBalanceCache = vi.fn()
 vi.mock('../../src/services/wallet.service', () => ({
   walletService: {
     adjustCoinBalanceCache: (...a: unknown[]) => adjustCoinBalanceCache(...a),
+    adjustPointBalanceCache: (...a: unknown[]) => adjustPointBalanceCache(...a),
+  },
+}))
+
+const creditInTransaction = vi.fn()
+vi.mock('../../src/services/point-wallet.service', () => ({
+  pointWalletService: {
+    creditInTransaction: (...a: unknown[]) => creditInTransaction(...a),
   },
 }))
 
@@ -82,6 +91,11 @@ describe('guardianService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     debitForGuardianPurchase.mockResolvedValue(undefined)
+    creditInTransaction.mockResolvedValue({
+      ledgerEntryId: 'pt-1',
+      balanceAfter: 75000n,
+      bustAgentUserId: null,
+    })
     findByIdUser.mockResolvedValue({ id: 'target-1', username: 'target' })
     upsertGuardian.mockResolvedValue(
       makeGuardian({
@@ -177,8 +191,10 @@ describe('guardianService', () => {
 
     expect(debitForGuardianPurchase).toHaveBeenCalled()
     expect(upsertGuardian).toHaveBeenCalled()
+    expect(creditInTransaction).toHaveBeenCalled()
     expect(enqueueGuardianExpiry).toHaveBeenCalledWith('g-1', expect.any(Date))
     expect(adjustCoinBalanceCache).toHaveBeenCalledWith('guardian-1', 150000n)
+    expect(adjustPointBalanceCache).toHaveBeenCalledWith('target-1', 75000n)
     expect(result.guardianId).toBe('g-1')
     expect(result.coinsPaid).toBe('150000')
     expect(cacheDelete).toHaveBeenCalled()

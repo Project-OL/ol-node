@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { CreatorSubscriptionStatus } from '@prisma/client'
+import { CreatorSubscriptionStatus, PointTxType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
   getRedisForRead,
@@ -27,8 +27,51 @@ import {
 import { subscriptionRepository } from '../repositories/subscription.repository'
 import { userRepository } from '../repositories/user.repository'
 import { userSubscriberRepository } from '../repositories/userSubscriber.repository'
+import { hostRevenuePointsFromCoins } from '../config/host-revenue-shares'
 import { coinWalletService } from './coin-wallet.service'
+import { pointWalletService } from './point-wallet.service'
 import { walletService } from './wallet.service'
+
+async function bustAgentCommissionIfNeeded(agentUserId: string | null): Promise<void> {
+  if (!agentUserId) return
+  const { agencyCommissionService } = await import('./agencyCommission.service')
+  await agencyCommissionService.bustAgentCommissionCaches(agentUserId)
+}
+
+async function creditCreatorSubscriptionPoints(
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  params: {
+    creatorId: string
+    subscriberId: string
+    subscriptionId: string
+    coinsPaid: bigint
+    idempotencyKey: string
+    description: string
+  },
+): Promise<{ hostPoints: bigint; bustAgentUserId: string | null }> {
+  const hostPoints = hostRevenuePointsFromCoins(params.coinsPaid)
+  if (hostPoints <= 0n) {
+    return { hostPoints: 0n, bustAgentUserId: null }
+  }
+
+  const { bustAgentUserId } = await pointWalletService.creditInTransaction(
+    params.creatorId,
+    hostPoints,
+    PointTxType.SUBSCRIPTION,
+    tx,
+    {
+      idempotencyKey: params.idempotencyKey,
+      refId: params.subscriptionId,
+      counterpartyId: params.subscriberId,
+      description: params.description,
+      metadata: {
+        coinsPaid: params.coinsPaid.toString(),
+        hostShareBp: 5000,
+      },
+    },
+  )
+  return { hostPoints, bustAgentUserId }
+}
 
 function accessTtlSeconds(nextRenewalAt: Date): number {
   return Math.max(1, Math.floor((nextRenewalAt.getTime() - Date.now()) / 1000))
@@ -204,6 +247,7 @@ export const subscriptionService = {
     const nextRenewalAt = new Date(Date.now() + SUBSCRIPTION_PERIOD_MS)
     const idempotencyKey = `sub:create:${subscriberId}:${creatorId}:${crypto.randomUUID()}`
 
+    let bustAgentUserId: string | null = null
     const row = await prisma.$transaction(
       async (tx) => {
         await coinWalletService.debitForCreatorSubscription(
@@ -225,12 +269,28 @@ export const subscriptionService = {
         })
 
         await userSubscriberRepository.upsertPairInTx(tx, subscriberId, creatorId)
+
+        const credited = await creditCreatorSubscriptionPoints(tx, {
+          creatorId,
+          subscriberId,
+          subscriptionId: created.id,
+          coinsPaid: SUBSCRIPTION_COIN_COST,
+          idempotencyKey: `sub-host-pts:${created.id}:initial`,
+          description: 'Creator subscription revenue (50%)',
+        })
+        bustAgentUserId = credited.bustAgentUserId
+
         return created
       },
       { isolationLevel: 'Serializable' },
     )
 
     await walletService.adjustCoinBalanceCache(subscriberId, SUBSCRIPTION_COIN_COST)
+    const creatorPoints = hostRevenuePointsFromCoins(SUBSCRIPTION_COIN_COST)
+    if (creatorPoints > 0n) {
+      await walletService.adjustPointBalanceCache(creatorId, creatorPoints)
+    }
+    await bustAgentCommissionIfNeeded(bustAgentUserId)
     await setSubscriptionAccess(subscriberId, creatorId, row.nextRenewalAt)
     await invalidateSubscriberCountCache(creatorId)
     await enqueueSubscriptionRenewal(row.id, row.nextRenewalAt)
@@ -353,18 +413,45 @@ export const subscriptionService = {
     }
 
     const idempotencyKey = `sub-renewal:${subscriptionId}:${sub.nextRenewalAt.toISOString()}`
+    const hostPtsIdem = `sub-host-pts:renewal:${subscriptionId}:${sub.nextRenewalAt.toISOString()}`
 
     try {
-      await coinWalletService.debitForCreatorSubscription(
+      let bustAgentUserId: string | null = null
+      await prisma.$transaction(
+        async (tx) => {
+          await coinWalletService.debitForCreatorSubscription(
+            sub.subscriberId,
+            SUBSCRIPTION_COIN_COST,
+            {
+              creatorId: sub.creatorId,
+              subscriptionId: sub.id,
+              idempotencyKey,
+              description: 'Creator subscription renewal',
+            },
+            tx,
+          )
+          const credited = await creditCreatorSubscriptionPoints(tx, {
+            creatorId: sub.creatorId,
+            subscriberId: sub.subscriberId,
+            subscriptionId: sub.id,
+            coinsPaid: SUBSCRIPTION_COIN_COST,
+            idempotencyKey: hostPtsIdem,
+            description: 'Creator subscription renewal revenue (50%)',
+          })
+          bustAgentUserId = credited.bustAgentUserId
+        },
+        { isolationLevel: 'Serializable' },
+      )
+
+      await walletService.adjustCoinBalanceCache(
         sub.subscriberId,
         SUBSCRIPTION_COIN_COST,
-        {
-          creatorId: sub.creatorId,
-          subscriptionId: sub.id,
-          idempotencyKey,
-          description: 'Creator subscription renewal',
-        },
       )
+      const creatorPoints = hostRevenuePointsFromCoins(SUBSCRIPTION_COIN_COST)
+      if (creatorPoints > 0n) {
+        await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
+      }
+      await bustAgentCommissionIfNeeded(bustAgentUserId)
 
       const nextRenewalAt = new Date(sub.nextRenewalAt.getTime() + SUBSCRIPTION_PERIOD_MS)
       await subscriptionRepository.updateById(sub.id, {
@@ -413,18 +500,45 @@ export const subscriptionService = {
     }
 
     const idempotencyKey = `sub-grace:${subscriptionId}:${sub.graceUntil.toISOString()}`
+    const hostPtsIdem = `sub-host-pts:grace:${subscriptionId}:${sub.graceUntil.toISOString()}`
 
     try {
-      await coinWalletService.debitForCreatorSubscription(
+      let bustAgentUserId: string | null = null
+      await prisma.$transaction(
+        async (tx) => {
+          await coinWalletService.debitForCreatorSubscription(
+            sub.subscriberId,
+            SUBSCRIPTION_COIN_COST,
+            {
+              creatorId: sub.creatorId,
+              subscriptionId: sub.id,
+              idempotencyKey,
+              description: 'Creator subscription (grace recovery)',
+            },
+            tx,
+          )
+          const credited = await creditCreatorSubscriptionPoints(tx, {
+            creatorId: sub.creatorId,
+            subscriberId: sub.subscriberId,
+            subscriptionId: sub.id,
+            coinsPaid: SUBSCRIPTION_COIN_COST,
+            idempotencyKey: hostPtsIdem,
+            description: 'Creator subscription grace recovery revenue (50%)',
+          })
+          bustAgentUserId = credited.bustAgentUserId
+        },
+        { isolationLevel: 'Serializable' },
+      )
+
+      await walletService.adjustCoinBalanceCache(
         sub.subscriberId,
         SUBSCRIPTION_COIN_COST,
-        {
-          creatorId: sub.creatorId,
-          subscriptionId: sub.id,
-          idempotencyKey,
-          description: 'Creator subscription (grace recovery)',
-        },
       )
+      const creatorPoints = hostRevenuePointsFromCoins(SUBSCRIPTION_COIN_COST)
+      if (creatorPoints > 0n) {
+        await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
+      }
+      await bustAgentCommissionIfNeeded(bustAgentUserId)
 
       const nextRenewalAt = new Date(Date.now() + SUBSCRIPTION_PERIOD_MS)
       await subscriptionRepository.updateById(sub.id, {

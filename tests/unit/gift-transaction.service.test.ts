@@ -105,9 +105,6 @@ vi.mock("../../src/config/database", () => ({
   },
 }));
 
-vi.mock("../../src/config/env", () => ({
-  env: { GIFT_COIN_TO_POINT_RATE: 1 },
-}));
 
 vi.mock("../../src/services/agencyCommission.service", () => ({
   agencyCommissionService: {
@@ -227,7 +224,7 @@ describe("giftTransactionService.sendGift", () => {
     });
     expect(result.transactionId).toBe("gt-1");
     expect(result.coinCost).toBe(500);
-    expect(result.pointsAwarded).toBe(500);
+    expect(result.pointsAwarded).toBe(300);
     expect(result.galleryUpdated).toBe(true);
     expect(result.galleryNowFull).toBe(true);
     expect(coinInsert).toHaveBeenCalled();

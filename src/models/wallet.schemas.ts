@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { POINT_HISTORY_FILTER_VALUES } from "../config/point-earnings-categories";
 
 function queryStringArray<T extends z.ZodTypeAny>(itemSchema: T) {
   return z.preprocess((v) => {
@@ -60,6 +61,7 @@ export const TopupConfirmSchema = z.object({
 export const PointTxTypeEnum = z.enum([
   "LIVESTREAM_GIFT",
   "SUBSCRIPTION",
+  "GUARDIAN_PURCHASE",
   "COMMISSION",
   "TRANSFER_IN",
   "TRANSFER_OUT",
@@ -73,12 +75,24 @@ export const PointTxTypeEnum = z.enum([
   "AGENT_COMMISSION",
   "AGENT_POINT_TRANSFER",
   "PAYROLL_PROCESSING_REWARD",
+  "WITHDRAWAL_ESCROW",
+  "WITHDRAWAL_ESCROW_SETTLED",
+  "PAYROLL_HOST_PAYOUT",
 ]);
+
+/** Category aliases (`livestream`, `commission`, …) or raw `PointTxType` values. */
+export const PointHistoryFilterEnum = z.enum(
+  POINT_HISTORY_FILTER_VALUES as unknown as [string, ...string[]],
+);
 
 export const PointHistoryQuerySchema = DateRangeSchema.merge(
   CursorPaginationSchema,
 ).extend({
-  types: queryStringArray(PointTxTypeEnum),
+  types: queryStringArray(PointHistoryFilterEnum),
+});
+
+export const PointLedgerEntryParamsSchema = z.object({
+  entryId: z.string().uuid(),
 });
 
 export const WithdrawInitiateSchema = z.object({

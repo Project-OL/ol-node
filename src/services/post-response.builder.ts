@@ -48,11 +48,13 @@ function toPostAuthor(user: {
   avatarUrl: string | null
   gender: string | null
   dateOfBirth: Date | null
+  country?: string | null
 }): PostAuthor {
   return {
     ...toTaggedUser(user),
     gender: user.gender,
     age: computeAge(user.dateOfBirth),
+    country: user.country ?? null,
   }
 }
 

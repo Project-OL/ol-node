@@ -20,9 +20,48 @@ import {
 import { walletLevelService } from "./user-level.service";
 import { utcDayFromTimestamp } from "../utils/datetime";
 import { formatPointsAsUsd } from "../utils/points-currency";
+import {
+  earningsCategoryForTxType,
+  resolvePointHistoryTxTypes,
+  sumCreditsByCategory,
+} from "../config/point-earnings-categories";
 import { withdrawalService } from "./withdrawal.service";
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
+
+const LEDGER_USER_SELECT = {
+  id: true,
+  username: true,
+  firstName: true,
+  lastName: true,
+  avatarUrl: true,
+} as const;
+
+type LedgerUserRow = {
+  id: string;
+  username: string;
+  firstName: string | null;
+  lastName: string | null;
+  avatarUrl: string | null;
+};
+
+function ledgerUserDisplayName(user: LedgerUserRow): string {
+  const fullName =
+    user.firstName && user.lastName
+      ? `${user.firstName} ${user.lastName}`
+      : user.firstName ?? user.lastName;
+  const trimmed = fullName?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : user.username;
+}
+
+function mapLedgerParticipant(user: LedgerUserRow) {
+  return {
+    userId: user.id,
+    username: user.username,
+    displayName: ledgerUserDisplayName(user),
+    avatarUrl: user.avatarUrl,
+  };
+}
 
 export const pointWalletService = {
   async getSummary(userId: string) {
@@ -40,22 +79,16 @@ export const pointWalletService = {
       _sum: { amount: true },
     });
 
-    const earningsMap = Object.fromEntries(
-      earnings.map((e) => [e.txType, (e._sum.amount ?? 0n).toString()]),
-    ) as Partial<Record<PointTxType, string>>;
+    const totalsByTxType = Object.fromEntries(
+      earnings.map((e) => [e.txType, e._sum.amount ?? 0n]),
+    ) as Partial<Record<PointTxType, bigint>>;
 
     return {
       remainingPoints: balance.toString(),
       totalPoints: balance.toString(),
       availablePoints: available.toString(),
       unconfirmedPoints: unconfirmed.toString(),
-      earnings: {
-        livestream: earningsMap.LIVESTREAM_GIFT ?? "0",
-        commissions: earningsMap.COMMISSION ?? "0",
-        transferPoints: earningsMap.TRANSFER_IN ?? "0",
-        platformRewards: earningsMap.PLATFORM_REWARD ?? "0",
-        subscription: earningsMap.SUBSCRIPTION ?? "0",
-      },
+      earnings: sumCreditsByCategory(totalsByTxType),
     };
   },
 
@@ -222,13 +255,24 @@ export const pointWalletService = {
   async getHistory(
     userId: string,
     filter: {
-      types?: PointTxType[];
+      types?: string[];
       from?: string;
       to?: string;
       cursor?: string;
       limit: number;
     },
   ) {
+    let ledgerTypes: PointTxType[] | undefined;
+    try {
+      ledgerTypes = resolvePointHistoryTxTypes(filter.types);
+    } catch (e) {
+      throw new AppError(
+        400,
+        e instanceof Error ? e.message : "Invalid types filter",
+        "INVALID_REQUEST",
+      );
+    }
+
     const wallet = await walletRepository.getOrCreate(
       userId,
       WalletCurrencyType.POINT,
@@ -236,7 +280,7 @@ export const pointWalletService = {
 
     const entries = await pointLedgerRepository.list({
       walletId: wallet.id,
-      types: filter.types,
+      types: ledgerTypes,
       from: filter.from ? new Date(filter.from) : undefined,
       to: filter.to ? new Date(filter.to) : undefined,
       cursor: filter.cursor,
@@ -266,6 +310,66 @@ export const pointWalletService = {
   },
 
   /**
+   * Single point ledger row for the authenticated user's POINT wallet, with
+   * self + counterparty profile cards.
+   */
+  async getTransactionDetail(userId: string, entryId: string) {
+    const wallet = await walletRepository.getOrCreate(
+      userId,
+      WalletCurrencyType.POINT,
+    );
+
+    const entry = await pointLedgerRepository.findByIdForWallet(
+      entryId,
+      wallet.id,
+    );
+    if (!entry) {
+      throw new AppError(404, "Point transaction not found", "NOT_FOUND");
+    }
+
+    const userIds = [userId];
+    if (entry.counterpartyId && entry.counterpartyId !== userId) {
+      userIds.push(entry.counterpartyId);
+    }
+
+    const users = await prismaRead.user.findMany({
+      where: { id: { in: userIds } },
+      select: LEDGER_USER_SELECT,
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+
+    const selfRow = byId.get(userId);
+    if (!selfRow) {
+      throw new AppError(404, "User not found", "NOT_FOUND");
+    }
+
+    const counterpartyRow = entry.counterpartyId
+      ? byId.get(entry.counterpartyId) ?? null
+      : null;
+
+    const transactionDateTime = entry.createdAt.toISOString();
+
+    return {
+      id: entry.id,
+      direction: entry.direction,
+      txType: entry.txType,
+      amount: entry.amount.toString(),
+      balanceAfter: entry.balanceAfter.toString(),
+      refId: entry.refId,
+      transactionDateTime,
+      description: entry.description,
+      metadata: entry.metadata,
+      idempotencyKey: entry.idempotencyKey,
+      createdAt: transactionDateTime,
+      earningsCategory: earningsCategoryForTxType(entry.txType),
+      self: mapLedgerParticipant(selfRow),
+      counterparty: counterpartyRow
+        ? mapLedgerParticipant(counterpartyRow)
+        : null,
+    };
+  },
+
+  /**
    * Point credit inside a caller-owned transaction. Idempotent on `idempotencyKey`.
    * When `applyLivestreamLevel` is true (default), applies livestream cumulative XP
    * (host earnings). Set false for agent commission / internal transfers.
@@ -283,7 +387,11 @@ export const pointWalletService = {
       metadata?: Prisma.JsonValue;
       applyLivestreamLevel?: boolean;
     },
-  ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
+  ): Promise<{
+    ledgerEntryId: string;
+    balanceAfter: bigint;
+    bustAgentUserId: string | null;
+  }> {
     const existing = await pointLedgerRepository.findByIdempotencyKey(
       tx,
       options.idempotencyKey,
@@ -292,6 +400,7 @@ export const pointWalletService = {
       return {
         ledgerEntryId: existing.id,
         balanceAfter: existing.balanceAfter,
+        bustAgentUserId: null,
       };
     }
 
@@ -331,13 +440,15 @@ export const pointWalletService = {
       txType === PointTxType.LIVESTREAM_GIFT ||
       txType === PointTxType.GIFT_RECEIVE ||
       txType === PointTxType.VIDEO_CALL ||
-      txType === PointTxType.SUBSCRIPTION;
+      txType === PointTxType.SUBSCRIPTION ||
+      txType === PointTxType.GUARDIAN_PURCHASE;
 
+    let bustAgentUserId: string | null = null;
     if (applyCommission) {
       const { agencyCommissionService } = await import(
         "./agencyCommission.service"
       );
-      await agencyCommissionService.applyCommission(
+      const ac = await agencyCommissionService.applyCommission(
         {
           hostUserId: userId,
           hostLedgerEntryId: entry.id,
@@ -347,6 +458,7 @@ export const pointWalletService = {
         },
         tx,
       );
+      bustAgentUserId = ac.bustAgentUserId;
     }
 
     const applyXp = options.applyLivestreamLevel !== false;
@@ -363,7 +475,11 @@ export const pointWalletService = {
       );
     }
 
-    return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter };
+    return {
+      ledgerEntryId: entry.id,
+      balanceAfter: entry.balanceAfter,
+      bustAgentUserId,
+    };
   },
 
   /**

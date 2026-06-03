@@ -47,7 +47,11 @@ async function main() {
     skipDuplicates: true,
   });
 
-  await seedWalletLevelConfigs(LevelType.WEALTH, DEFAULT_WEALTH_LEVEL_THRESHOLDS);
+  await seedWalletLevelConfigs(
+    LevelType.WEALTH,
+    DEFAULT_WEALTH_LEVEL_THRESHOLDS,
+    200,
+  );
   await seedWalletLevelConfigs(
     LevelType.LIVESTREAM,
     DEFAULT_LIVESTREAM_LEVEL_THRESHOLDS,

@@ -38,6 +38,12 @@ export const pointLedgerRepository = {
     return tx.pointLedgerEntry.create({ data });
   },
 
+  async findByIdForWallet(entryId: string, walletId: string) {
+    return prismaRead.pointLedgerEntry.findFirst({
+      where: { id: entryId, walletId },
+    });
+  },
+
   async list(filter: PointLedgerFilter) {
     const createdAt: Prisma.DateTimeFilter = {};
     if (filter.from) createdAt.gte = filter.from;

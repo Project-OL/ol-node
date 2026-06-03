@@ -28,6 +28,7 @@ export type PostWithRelations = Prisma.PostGetPayload<{
         avatarUrl: true
         gender: true
         dateOfBirth: true
+        country: true
       }
     }
   }
@@ -101,6 +102,7 @@ export const postRepository = {
             avatarUrl: true,
             gender: true,
             dateOfBirth: true,
+            country: true,
           },
         },
       },
@@ -160,6 +162,7 @@ export const postRepository = {
             avatarUrl: true,
             gender: true,
             dateOfBirth: true,
+            country: true,
           },
         },
       },
@@ -206,6 +209,7 @@ export const postRepository = {
             avatarUrl: true,
             gender: true,
             dateOfBirth: true,
+            country: true,
           },
         },
       },

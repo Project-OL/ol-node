@@ -37,6 +37,7 @@ export const LIVE_COMMISSION_TX_TYPES = new Set<PointTxType>([
 export const MATCH_CHAT_COMMISSION_TX_TYPES = new Set<PointTxType>([
   PointTxType.VIDEO_CALL,
   PointTxType.SUBSCRIPTION,
+  PointTxType.GUARDIAN_PURCHASE,
 ]);
 
 export const COMMISSION_ELIGIBLE_TX_TYPES = new Set<PointTxType>([

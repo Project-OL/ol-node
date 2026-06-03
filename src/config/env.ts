@@ -149,8 +149,8 @@ const envSchema = z
     POINTS_WITHDRAW_MAX_WEEKLY: z.coerce.bigint().default(1050000n),
     POINTS_TO_USD_RATE: z.coerce.number().default(210),
 
-    /** 1 = 1 coin → 1 point (receiver); 0.5 = 2 coins → 1 point */
-    GIFT_COIN_TO_POINT_RATE: z.coerce.number().positive().default(1),
+    /** @deprecated Gifts use fixed 60% share in `host-revenue-shares.ts`; kept for env compat only. */
+    GIFT_COIN_TO_POINT_RATE: z.coerce.number().positive().default(0.6),
 
     /** Comma-separated user UUIDs allowed to call gift/gallery admin APIs */
     ADMIN_USER_IDS: z

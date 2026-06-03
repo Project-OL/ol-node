@@ -80,9 +80,18 @@ vi.mock('../../src/repositories/userSubscriber.repository', () => ({
 }))
 
 const adjustCoinBalanceCache = vi.fn()
+const adjustPointBalanceCache = vi.fn()
 vi.mock('../../src/services/wallet.service', () => ({
   walletService: {
     adjustCoinBalanceCache: (...a: unknown[]) => adjustCoinBalanceCache(...a),
+    adjustPointBalanceCache: (...a: unknown[]) => adjustPointBalanceCache(...a),
+  },
+}))
+
+const creditInTransaction = vi.fn()
+vi.mock('../../src/services/point-wallet.service', () => ({
+  pointWalletService: {
+    creditInTransaction: (...a: unknown[]) => creditInTransaction(...a),
   },
 }))
 
@@ -129,6 +138,11 @@ describe('subscriptionService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     debitForCreatorSubscription.mockResolvedValue(undefined)
+    creditInTransaction.mockResolvedValue({
+      ledgerEntryId: 'pt-1',
+      balanceAfter: 2500n,
+      bustAgentUserId: null,
+    })
     findByIdUser.mockResolvedValue({ id: 'creator-1' })
     upsertActiveInTx.mockResolvedValue({
       id: 'sub-1',
@@ -150,7 +164,9 @@ describe('subscriptionService', () => {
     expect(debitForCreatorSubscription).toHaveBeenCalled()
     expect(upsertActiveInTx).toHaveBeenCalled()
     expect(upsertPairInTx).toHaveBeenCalled()
+    expect(creditInTransaction).toHaveBeenCalled()
     expect(adjustCoinBalanceCache).toHaveBeenCalledWith('fan-1', 5000n)
+    expect(adjustPointBalanceCache).toHaveBeenCalledWith('creator-1', 2500n)
     expect(redisSet).toHaveBeenCalled()
     expect(enqueueSubscriptionRenewal).toHaveBeenCalledWith(
       'sub-1',

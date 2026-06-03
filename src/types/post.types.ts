@@ -10,6 +10,7 @@ export type TaggedUser = {
 export type PostAuthor = TaggedUser & {
   gender: string | null
   age: number | null
+  country: string | null
 }
 
 export type PostResponse = {

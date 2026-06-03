@@ -534,10 +534,22 @@ export async function getUnreadCount(
   })
 }
 
+/** True if the conversation has at least one TEXT_COINS message (coin inquiry thread). */
+export async function conversationHasTextCoins(
+  conversationId: string,
+): Promise<boolean> {
+  const row = await prismaRead.message.findFirst({
+    where: { conversationId, type: 'TEXT_COINS', isDeleted: false },
+    select: { id: true },
+  })
+  return row != null
+}
+
 export const messageRepository = {
   sendMessageWithOutbox,
   listMessages,
   findMessageById,
+  conversationHasTextCoins,
   softDeleteMessage,
   upsertReaction,
   removeReaction,
