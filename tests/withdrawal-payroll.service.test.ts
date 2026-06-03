@@ -18,6 +18,7 @@ const defaultConfig: PayrollConfigSnapshot = {
   minWithdrawalUsd: 10,
   maxWithdrawalUsd: 10_000_000,
   slaHours: 2,
+  waitingHours: 2,
   maxAssignmentAttempts: 5,
   inrPerUsd: 88,
 };

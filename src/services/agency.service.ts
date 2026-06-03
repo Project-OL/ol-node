@@ -442,8 +442,11 @@ export const agencyService = {
 
     const config = await withdrawalService.getPayrollConfig();
 
+    const now = new Date();
     const isPendingAndActive =
-      assignment.status === "PENDING" && assignment.expiresAt > new Date();
+      assignment.status === "PENDING" && assignment.expiresAt > now;
+    const isWaiting = assignment.status === "WAITING";
+    const isDisputed = assignment.withdrawal.status === "DISPUTED";
 
     const hostPayoutUsd = Number(assignment.withdrawal.hostPayoutUsd ?? 0);
 
@@ -453,8 +456,19 @@ export const agencyService = {
       expiresAt: assignment.expiresAt.toISOString(),
       slaRemainingSeconds: Math.max(
         0,
-        Math.round((assignment.expiresAt.getTime() - Date.now()) / 1000),
+        Math.round((assignment.expiresAt.getTime() - now.getTime()) / 1000),
       ),
+      waitingExpiresAt: assignment.waitingExpiresAt?.toISOString() ?? null,
+      waitingSecondsRemaining:
+        isWaiting && assignment.waitingExpiresAt && !isDisputed
+          ? Math.max(
+              0,
+              Math.round(
+                (assignment.waitingExpiresAt.getTime() - now.getTime()) / 1000,
+              ),
+            )
+          : null,
+      isDisputed: isWaiting && isDisputed,
       assignmentNumber: assignment.assignmentNumber,
       proofS3Key: assignment.proofS3Key ?? null,
       completedAt: assignment.completedAt?.toISOString() ?? null,

@@ -29,7 +29,15 @@ import { walletService } from "./wallet.service";
 import { auditService } from "./audit.service";
 import { supportService } from "./support.service";
 import { storageService } from "./storage.service";
-import { enqueuePayrollSla, removePayrollSla } from "../queues/payroll.queue";
+import {
+  enqueuePayrollSla,
+  enqueuePayrollWaiting,
+  removePayrollSla,
+  removePayrollWaiting,
+} from "../queues/payroll.queue";
+import {
+  mapPaymentMethodMaskedForAgent,
+} from "../utils/payment-method-mask";
 import { s3Bucket } from "../config/s3";
 import {
   mapPaymentMethodForAgent,
@@ -39,9 +47,61 @@ import {
   formatDuration,
 } from "../utils/withdrawal-formatters";
 import type { DisputeWithdrawalInput } from "../models/withdrawal.schemas";
+import type { InboxAssignmentRow } from "../repositories/payrollAssignment.repository";
+import type { AssignmentListCursor } from "../repositories/payrollAssignment.repository";
 
 const INTERACTIVE_TX_MS = 25_000;
 const DISPUTE_EVIDENCE_PRESIGN_TTL = 600;
+
+type AssignmentCursorPayload = { updatedAt: string; id: string };
+
+function userDisplayName(user: {
+  username: string;
+  firstName: string | null;
+  lastName: string | null;
+}): string {
+  const full = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+  return full.length > 0 ? full : user.username;
+}
+
+function encodeAssignmentCursor(updatedAt: Date, id: string): string {
+  return Buffer.from(
+    JSON.stringify({
+      updatedAt: updatedAt.toISOString(),
+      id,
+    } satisfies AssignmentCursorPayload),
+  ).toString("base64url");
+}
+
+function decodeAssignmentCursor(cursor: string): AssignmentListCursor {
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as Partial<AssignmentCursorPayload>;
+    if (!parsed.updatedAt || !parsed.id) throw new Error("missing");
+    return { updatedAt: new Date(parsed.updatedAt), id: parsed.id };
+  } catch {
+    throw new AppError(400, "Invalid cursor", "INVALID_CURSOR");
+  }
+}
+
+async function closeDisputeTicketByPublicId(
+  ticketPublicId: string | null,
+  closedByUserId: string,
+): Promise<void> {
+  if (!ticketPublicId) return;
+  try {
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { publicId: ticketPublicId },
+      select: { id: true, status: true },
+    });
+    if (ticket && ticket.status !== "CLOSED") {
+      await supportService.closeTicket(ticket.id, closedByUserId);
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
 
 async function bustPayrollSummaryCache(agencyUserId: string) {
   await redisClient.del(RedisKeys.payrollSummary(agencyUserId));
@@ -64,6 +124,7 @@ export type PayrollConfigSnapshot = {
   minWithdrawalUsd: number;
   maxWithdrawalUsd: number;
   slaHours: number;
+  waitingHours: number;
   maxAssignmentAttempts: number;
   inrPerUsd: number;
 };
@@ -145,6 +206,7 @@ async function loadPayrollConfigRow(): Promise<PayrollConfigSnapshot> {
     minWithdrawalUsd: decNum(row.minWithdrawalUsd),
     maxWithdrawalUsd: decNum(row.maxWithdrawalUsd),
     slaHours: row.slaHours,
+    waitingHours: row.waitingHours,
     maxAssignmentAttempts: row.maxAssignmentAttempts,
     inrPerUsd: decNum(row.inrPerUsd),
   };
@@ -275,6 +337,8 @@ export const withdrawalService = {
       totalRewardPoints: (rewardSummary._sum.amount ?? 0n).toString(),
       tabCounts,
       pendingCount: tabCounts.pending,
+      waitingCount: tabCounts.waiting,
+      settledCount: tabCounts.settled,
       completedCount: tabCounts.completed,
       period: {
         from: utcDateString(start),
@@ -610,6 +674,13 @@ export const withdrawalService = {
         if (!a) {
           throw new AppError(404, "Assignment not found", "NOT_FOUND");
         }
+        if (a.status === "WAITING") {
+          throw new AppError(
+            400,
+            "Assignment is under host review",
+            "AGENT_LOCKED_OUT",
+          );
+        }
         if (a.status !== "PENDING" || a.expiresAt <= now) {
           throw new AppError(400, "Assignment cannot be rejected", "INVALID_STATE");
         }
@@ -665,6 +736,9 @@ export const withdrawalService = {
       where: { id: assignmentId, agencyUserId: agentUserId },
     });
     if (!a) throw new AppError(404, "Assignment not found", "NOT_FOUND");
+    if (a.status === "WAITING") {
+      throw new AppError(400, "Assignment is locked", "AGENT_LOCKED_OUT");
+    }
     if (a.status !== "PENDING" || a.expiresAt <= now) {
       throw new AppError(400, "Proof upload not allowed", "INVALID_STATE");
     }
@@ -689,10 +763,13 @@ export const withdrawalService = {
       throw new AppError(400, "Invalid proof key", "INVALID_PROOF_KEY");
     }
 
+    const config = await withdrawalService.getPayrollConfig();
+    const waitingExpiresAt = new Date(
+      Date.now() + config.waitingHours * 60 * 60 * 1000,
+    );
+
     let rewardOut = "0";
     let hostPayoutOut = "0";
-    let hostUserIdOut = "";
-    let settledEscrow = false;
 
     await prisma.$transaction(
       async (tx) => {
@@ -701,6 +778,13 @@ export const withdrawalService = {
           include: { withdrawal: true },
         });
         if (!a) throw new AppError(404, "Assignment not found", "NOT_FOUND");
+        if (a.status === "WAITING") {
+          throw new AppError(
+            400,
+            "Assignment is under host review",
+            "AGENT_LOCKED_OUT",
+          );
+        }
         if (a.status !== "PENDING") {
           throw new AppError(400, "Assignment not active", "INVALID_STATE");
         }
@@ -712,64 +796,22 @@ export const withdrawalService = {
         const platformFeePoints = a.withdrawal.platformFeePoints ?? 0n;
         const hostPayoutPoints = grossPoints - platformFeePoints;
         const reward = a.withdrawal.agentRewardPoints ?? 0n;
-        const isV2 = a.withdrawal.withdrawalVersion === 2;
         const hostUserId = a.withdrawal.userId;
 
         rewardOut = reward.toString();
         hostPayoutOut = hostPayoutPoints.toString();
-        hostUserIdOut = hostUserId;
-        settledEscrow = isV2;
 
         await payrollAssignmentRepository.updateStatus(
           {
             id: assignmentId,
-            status: "COMPLETED",
+            status: "WAITING",
             proofS3Key: params.proofS3Key,
             proofS3Bucket: params.proofS3Bucket,
-            completedAt: now,
+            waitingExpiresAt,
           },
           tx,
         );
 
-        await withdrawalRepository.updateStatus(
-          {
-            id: a.withdrawalId,
-            status: "PAID",
-            payoutRef: params.proofS3Key,
-            processedAt: now,
-          },
-          tx,
-        );
-
-        // Step 1 (v2 only): settle escrow — REAL debit consuming the escrowed
-        // points from the host wallet, then release the unconfirmed counter.
-        // v1 (legacy) withdrawals already debited the points at create time.
-        if (isV2) {
-          await pointWalletService.debit(
-            hostUserId,
-            grossPoints,
-            PointTxType.WITHDRAWAL_ESCROW_SETTLED,
-            tx,
-            {
-              idempotencyKey: `withdrawal-settled:${assignmentId}`,
-              refId: a.withdrawalId,
-              counterpartyId: agentUserId,
-              description: "Withdrawal escrow settled",
-              availabilityCheck: false,
-            },
-          );
-          await tx.wallet.update({
-            where: {
-              userId_currencyType: {
-                userId: hostUserId,
-                currencyType: WalletCurrencyType.POINT,
-              },
-            },
-            data: { unconfirmedPoints: { decrement: grossPoints } },
-          });
-        }
-
-        // Step 2: credit agent hostPayoutPoints (new in v2 flow).
         if (hostPayoutPoints > 0n) {
           await pointWalletService.creditInTransaction(
             agentUserId,
@@ -786,7 +828,6 @@ export const withdrawalService = {
           );
         }
 
-        // Step 3: credit agent processing reward (existing).
         if (reward > 0n) {
           await pointWalletService.creditInTransaction(
             agentUserId,
@@ -807,18 +848,95 @@ export const withdrawalService = {
     );
 
     await removePayrollSla(assignmentId);
+    await enqueuePayrollWaiting(assignmentId, waitingExpiresAt);
     await bustPayrollSummaryCache(agentUserId);
     await walletService.adjustPointBalanceCache(agentUserId, 0n);
-    if (settledEscrow && hostUserIdOut) {
-      await walletService.adjustPointBalanceCache(hostUserIdOut, 0n);
-      await walletService.bustUnconfirmedCache(hostUserIdOut);
-    }
 
     console.info(
-      `[withdrawal] Payroll complete assignment=${assignmentId} agent=${agentUserId} — host notify stub`,
+      `[withdrawal] Payroll proof → WAITING assignment=${assignmentId} agent=${agentUserId}`,
     );
 
     return { agentRewardPoints: rewardOut, hostPayoutPoints: hostPayoutOut };
+  },
+
+  /** WAITING → COMPLETED + withdrawal PAID; settles host escrow (v2). */
+  async autoCompleteWaiting(assignmentId: string): Promise<void> {
+    const pre = await prismaRead.withdrawalPayrollAssignment.findUnique({
+      where: { id: assignmentId },
+      include: { withdrawal: true },
+    });
+    if (!pre) return;
+
+    const hostUserId = pre.withdrawal.userId;
+    const agentUserId = pre.agencyUserId;
+    const withdrawalId = pre.withdrawalId;
+    const grossPoints = pre.withdrawal.amountPoints;
+    const isV2 = pre.withdrawal.withdrawalVersion === 2;
+    const proofKey = pre.proofS3Key;
+    const now = new Date();
+
+    await prisma.$transaction(
+      async (tx) => {
+        const a = await tx.withdrawalPayrollAssignment.findUnique({
+          where: { id: assignmentId },
+          include: { withdrawal: true },
+        });
+        if (!a || a.status !== "WAITING") return;
+        if (a.waitingExpiresAt && a.waitingExpiresAt > now) return;
+
+        await payrollAssignmentRepository.updateStatus(
+          {
+            id: assignmentId,
+            status: "COMPLETED",
+            completedAt: now,
+          },
+          tx,
+        );
+
+        await withdrawalRepository.updateStatus(
+          {
+            id: a.withdrawalId,
+            status: "PAID",
+            payoutRef: proofKey ?? undefined,
+            processedAt: now,
+          },
+          tx,
+        );
+
+        if (isV2) {
+          await pointWalletService.debit(
+            hostUserId,
+            grossPoints,
+            PointTxType.WITHDRAWAL_ESCROW_SETTLED,
+            tx,
+            {
+              idempotencyKey: `withdrawal-settled:${assignmentId}`,
+              refId: withdrawalId,
+              counterpartyId: agentUserId,
+              description: "Withdrawal escrow settled",
+              availabilityCheck: false,
+            },
+          );
+          await tx.wallet.update({
+            where: {
+              userId_currencyType: {
+                userId: hostUserId,
+                currencyType: WalletCurrencyType.POINT,
+              },
+            },
+            data: { unconfirmedPoints: { decrement: grossPoints } },
+          });
+        }
+      },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_MS },
+    );
+
+    await removePayrollWaiting(assignmentId);
+    await bustPayrollSummaryCache(agentUserId);
+    if (isV2) {
+      await walletService.adjustPointBalanceCache(hostUserId, 0n);
+      await walletService.bustUnconfirmedCache(hostUserId);
+    }
   },
 
   async createDisputeEvidenceUploadUrl(
@@ -831,10 +949,18 @@ export const withdrawalService = {
       select: { status: true },
     });
     if (!row) throw new AppError(404, "Withdrawal not found", "NOT_FOUND");
-    if (row.status !== "PAID" && row.status !== "DISPUTED") {
+    const waitingAssignment =
+      await payrollAssignmentRepository.findWaitingByWithdrawalId(withdrawalId);
+    const allowWaitingEvidence =
+      row.status === "PENDING" && !!waitingAssignment;
+    if (
+      row.status !== "PAID" &&
+      row.status !== "DISPUTED" &&
+      !allowWaitingEvidence
+    ) {
       throw new AppError(
         400,
-        "Evidence upload only allowed for PAID or DISPUTED withdrawals",
+        "Evidence upload only allowed for PAID, DISPUTED, or WAITING withdrawals",
         "INVALID_STATE",
       );
     }
@@ -860,26 +986,43 @@ export const withdrawalService = {
   ) {
     const w = await prismaRead.withdrawal.findFirst({
       where: { id: withdrawalId, userId: hostUserId },
+      include: {
+        payrollAssignments: {
+          where: { status: "WAITING" },
+          take: 1,
+        },
+      },
     });
     if (!w) throw new AppError(404, "Withdrawal not found", "NOT_FOUND");
-    if (w.status !== "PAID") {
-      throw new AppError(400, "Withdrawal is not paid", "INVALID_STATE");
-    }
     if (w.disputeTicketId) {
       throw new AppError(409, "Dispute already raised", "DISPUTE_ALREADY_RAISED");
     }
-    if (!w.processedAt) {
-      throw new AppError(400, "Missing processed timestamp", "INVALID_STATE");
-    }
 
-    const windowEnd = new Date(w.processedAt);
-    windowEnd.setDate(windowEnd.getDate() + 30);
-    if (new Date() > windowEnd) {
+    const waitingAssignment = w.payrollAssignments[0] ?? null;
+    const isWaitingPeriod =
+      w.status === "PENDING" && waitingAssignment != null;
+
+    if (w.status !== "PAID" && !isWaitingPeriod) {
       throw new AppError(
         400,
-        "Dispute window expired",
-        "DISPUTE_WINDOW_EXPIRED",
+        "Withdrawal cannot be disputed in its current state",
+        "INVALID_STATE",
       );
+    }
+
+    if (w.status === "PAID") {
+      if (!w.processedAt) {
+        throw new AppError(400, "Missing processed timestamp", "INVALID_STATE");
+      }
+      const windowEnd = new Date(w.processedAt);
+      windowEnd.setDate(windowEnd.getDate() + 30);
+      if (new Date() > windowEnd) {
+        throw new AppError(
+          400,
+          "Dispute window expired",
+          "DISPUTE_WINDOW_EXPIRED",
+        );
+      }
     }
 
     const completed =
@@ -904,6 +1047,15 @@ export const withdrawalService = {
       },
     });
 
+    if (waitingAssignment) {
+      try {
+        await removePayrollWaiting(waitingAssignment.id);
+      } catch {
+        /* non-fatal */
+      }
+      await bustPayrollSummaryCache(waitingAssignment.agencyUserId);
+    }
+
     auditService.log({
       userId: hostUserId,
       actionType: "WITHDRAWAL_DISPUTE_RAISED",
@@ -911,13 +1063,252 @@ export const withdrawalService = {
       actionDetails: {
         withdrawalId,
         ticketPublicId: ticket.publicId,
-        agencyUserId: completed?.agencyUserId,
-        proofS3Key: completed?.proofS3Key,
+        agencyUserId:
+          waitingAssignment?.agencyUserId ?? completed?.agencyUserId,
+        proofS3Key:
+          waitingAssignment?.proofS3Key ?? completed?.proofS3Key,
         evidenceS3Key: input.evidenceS3Key,
+        waitingPeriod: isWaitingPeriod,
       },
     });
 
     return { ticketId: ticket.publicId };
+  },
+
+  async adminResolveDisputeFavourAgent(
+    adminUserId: string,
+    withdrawalId: string,
+    reason: string,
+  ): Promise<void> {
+    const pre = await prismaRead.withdrawal.findUnique({
+      where: { id: withdrawalId },
+      include: {
+        payrollAssignments: {
+          where: { status: "WAITING" },
+          take: 1,
+        },
+      },
+    });
+    if (!pre) throw new AppError(404, "Withdrawal not found", "NOT_FOUND");
+    if (pre.status !== "DISPUTED") {
+      throw new AppError(400, "Withdrawal is not disputed", "INVALID_STATE");
+    }
+    const assignment = pre.payrollAssignments[0];
+    if (!assignment) {
+      throw new AppError(404, "Waiting assignment not found", "NOT_FOUND");
+    }
+
+    const hostUserId = pre.userId;
+    const agentUserId = assignment.agencyUserId;
+    const grossPoints = pre.amountPoints;
+    const isV2 = pre.withdrawalVersion === 2;
+    const proofKey = assignment.proofS3Key;
+    const ticketPublicId = pre.disputeTicketId;
+    const now = new Date();
+
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({
+          where: { id: withdrawalId },
+          include: {
+            payrollAssignments: {
+              where: { id: assignment.id, status: "WAITING" },
+              take: 1,
+            },
+          },
+        });
+        if (!w || w.status !== "DISPUTED") return;
+        const a = w.payrollAssignments[0];
+        if (!a) return;
+
+        await payrollAssignmentRepository.updateStatus(
+          { id: a.id, status: "COMPLETED", completedAt: now },
+          tx,
+        );
+
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: "PAID",
+            payoutRef: proofKey ?? undefined,
+            processedAt: now,
+          },
+          tx,
+        );
+
+        await tx.withdrawal.update({
+          where: { id: withdrawalId },
+          data: { disputeTicketId: null, failReason: null },
+        });
+
+        if (isV2) {
+          await pointWalletService.debit(
+            hostUserId,
+            grossPoints,
+            PointTxType.WITHDRAWAL_ESCROW_SETTLED,
+            tx,
+            {
+              idempotencyKey: `withdrawal-settled:${a.id}`,
+              refId: withdrawalId,
+              counterpartyId: agentUserId,
+              description: `Withdrawal escrow settled (admin: ${reason})`,
+              availabilityCheck: false,
+            },
+          );
+          await tx.wallet.update({
+            where: {
+              userId_currencyType: {
+                userId: hostUserId,
+                currencyType: WalletCurrencyType.POINT,
+              },
+            },
+            data: { unconfirmedPoints: { decrement: grossPoints } },
+          });
+        }
+      },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_MS },
+    );
+
+    await removePayrollWaiting(assignment.id);
+    await walletService.adjustPointBalanceCache(hostUserId, 0n);
+    if (isV2) await walletService.bustUnconfirmedCache(hostUserId);
+    await bustPayrollSummaryCache(agentUserId);
+    await closeDisputeTicketByPublicId(ticketPublicId, adminUserId);
+
+    auditService.log({
+      userId: adminUserId,
+      actionType: "WITHDRAWAL_DISPUTE_RESOLVED_AGENT",
+      actionStatus: "success",
+      actionDetails: { withdrawalId, reason },
+    });
+  },
+
+  async adminResolveDisputeFavourHost(
+    adminUserId: string,
+    withdrawalId: string,
+    reason: string,
+    overrideAgencyUserId?: string,
+  ): Promise<void> {
+    const pre = await prismaRead.withdrawal.findUnique({
+      where: { id: withdrawalId },
+      include: {
+        payrollAssignments: {
+          where: { status: "WAITING" },
+          take: 1,
+        },
+      },
+    });
+    if (!pre) throw new AppError(404, "Withdrawal not found", "NOT_FOUND");
+    if (pre.status !== "DISPUTED") {
+      throw new AppError(400, "Withdrawal is not disputed", "INVALID_STATE");
+    }
+    const assignment = pre.payrollAssignments[0];
+    if (!assignment) {
+      throw new AppError(404, "Waiting assignment not found", "NOT_FOUND");
+    }
+
+    const agentUserId = assignment.agencyUserId;
+    const hostPayoutPoints =
+      pre.amountPoints - (pre.platformFeePoints ?? 0n);
+    const agentReward = pre.agentRewardPoints ?? 0n;
+    const ticketPublicId = pre.disputeTicketId;
+    const now = new Date();
+
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({
+          where: { id: withdrawalId },
+          include: {
+            payrollAssignments: {
+              where: { id: assignment.id, status: "WAITING" },
+              take: 1,
+            },
+          },
+        });
+        if (!w || w.status !== "DISPUTED") return;
+        const a = w.payrollAssignments[0];
+        if (!a) return;
+
+        if (hostPayoutPoints > 0n) {
+          const payoutKey = `payroll-host-payout:${a.id}`;
+          const existingPayout =
+            await pointLedgerRepository.findByIdempotencyKey(tx, payoutKey);
+          if (existingPayout) {
+            await pointWalletService.debit(
+              agentUserId,
+              hostPayoutPoints,
+              PointTxType.ADJUSTMENT,
+              tx,
+              {
+                idempotencyKey: `payroll-host-payout-reversal:${a.id}`,
+                description: `Payroll host payout reversal: ${reason}`,
+                availabilityCheck: false,
+              },
+            );
+          }
+        }
+
+        if (agentReward > 0n) {
+          const rewardKey = `payroll-reward:${a.id}`;
+          const existingReward =
+            await pointLedgerRepository.findByIdempotencyKey(tx, rewardKey);
+          if (existingReward) {
+            await pointWalletService.debit(
+              agentUserId,
+              agentReward,
+              PointTxType.ADJUSTMENT,
+              tx,
+              {
+                idempotencyKey: `payroll-reward-reversal:${a.id}`,
+                description: `Payroll reward reversal: ${reason}`,
+                availabilityCheck: false,
+              },
+            );
+          }
+        }
+
+        await payrollAssignmentRepository.updateStatus(
+          {
+            id: a.id,
+            status: "REJECTED",
+            rejectedAt: now,
+            rejectionReason: reason,
+          },
+          tx,
+        );
+
+        await tx.withdrawal.update({
+          where: { id: withdrawalId },
+          data: {
+            status: "PENDING",
+            disputeTicketId: null,
+            assignmentCount: { increment: 1 },
+          },
+        });
+      },
+      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_MS },
+    );
+
+    await removePayrollWaiting(assignment.id);
+    await walletService.adjustPointBalanceCache(agentUserId, 0n);
+    await bustPayrollSummaryCache(agentUserId);
+    await closeDisputeTicketByPublicId(ticketPublicId, adminUserId);
+
+    await withdrawalService.assignToAgency(withdrawalId, {
+      overrideAgencyUserId: overrideAgencyUserId ?? agentUserId,
+      allowBeyondAssignmentCap: true,
+    });
+
+    auditService.log({
+      userId: adminUserId,
+      actionType: "WITHDRAWAL_DISPUTE_RESOLVED_HOST",
+      actionStatus: "success",
+      actionDetails: {
+        withdrawalId,
+        reason,
+        reassignedTo: overrideAgencyUserId ?? agentUserId,
+      },
+    });
   },
 
   /** @deprecated use disputeWithdrawal */
@@ -959,19 +1350,25 @@ export const withdrawalService = {
     // A real ledger debit reduced totalPoints when: v1 (debited at create) OR a
     // v2 escrow was settled (status reached PAID/DISPUTED). Only then must a
     // WITHDRAWAL_REFUND credit restore the balance.
-    const wasSettled = w.status === "PAID" || w.status === "DISPUTED";
+    const wasSettled = w.status === "PAID";
     const realDebitHappened = !isV2 || wasSettled;
 
     const completed =
       await payrollAssignmentRepository.findCompletedForWithdrawal(withdrawalId);
-    const agencyUserId = completed?.agencyUserId ?? null;
+    const waitingAssignment =
+      await payrollAssignmentRepository.findWaitingByWithdrawalId(withdrawalId);
+    const creditAssignment = waitingAssignment ?? completed;
+    const agencyUserId = creditAssignment?.agencyUserId ?? null;
     const hostPayoutPoints = w.amountPoints - (w.platformFeePoints ?? 0n);
     const agentReward = w.agentRewardPoints ?? 0n;
 
-    // Open (still-pending) assignment must be cancelled so an agent can't
-    // complete a reversed withdrawal.
     const openAssignment = await prismaRead.withdrawalPayrollAssignment.findFirst(
-      { where: { withdrawalId, status: "PENDING" } },
+      {
+        where: {
+          withdrawalId,
+          status: { in: ["PENDING", "WAITING"] },
+        },
+      },
     );
 
     await prisma.$transaction(
@@ -1006,9 +1403,8 @@ export const withdrawalService = {
           });
         }
 
-        // Claw back agent host-payout credit (v2 completion only).
-        if (agencyUserId && completed && hostPayoutPoints > 0n) {
-          const payoutKey = `payroll-host-payout:${completed.id}`;
+        if (agencyUserId && creditAssignment && hostPayoutPoints > 0n) {
+          const payoutKey = `payroll-host-payout:${creditAssignment.id}`;
           const existingPayout =
             await pointLedgerRepository.findByIdempotencyKey(tx, payoutKey);
           if (existingPayout) {
@@ -1018,7 +1414,7 @@ export const withdrawalService = {
               PointTxType.ADJUSTMENT,
               tx,
               {
-                idempotencyKey: `payroll-host-payout-reversal:${completed.id}`,
+                idempotencyKey: `payroll-host-payout-reversal:${creditAssignment.id}`,
                 description: `Payroll host payout reversal for withdrawal ${withdrawalId}`,
                 availabilityCheck: false,
               },
@@ -1026,9 +1422,8 @@ export const withdrawalService = {
           }
         }
 
-        // Claw back agent processing reward (existing).
-        if (agencyUserId && completed && agentReward > 0n) {
-          const rewardKey = `payroll-reward:${completed.id}`;
+        if (agencyUserId && creditAssignment && agentReward > 0n) {
+          const rewardKey = `payroll-reward:${creditAssignment.id}`;
           const existing = await pointLedgerRepository.findByIdempotencyKey(
             tx,
             rewardKey,
@@ -1040,7 +1435,7 @@ export const withdrawalService = {
               PointTxType.ADJUSTMENT,
               tx,
               {
-                idempotencyKey: `payroll-reward-reversal:${completed.id}`,
+                idempotencyKey: `payroll-reward-reversal:${creditAssignment.id}`,
                 description: `Payroll reward reversal for withdrawal ${withdrawalId}`,
                 availabilityCheck: false,
               },
@@ -1073,6 +1468,9 @@ export const withdrawalService = {
 
     if (openAssignment) {
       await removePayrollSla(openAssignment.id);
+      if (openAssignment.status === "WAITING") {
+        await removePayrollWaiting(openAssignment.id);
+      }
       await bustPayrollSummaryCache(openAssignment.agencyUserId);
     }
 
@@ -1268,5 +1666,229 @@ export const withdrawalService = {
       );
     if (!row) throw new AppError(404, "Assignment not found", "NOT_FOUND");
     return row;
+  },
+
+  mapPendingInboxItem(a: InboxAssignmentRow, config: PayrollConfigSnapshot) {
+    const hostPayoutUsd = Number(a.withdrawal.hostPayoutUsd ?? 0);
+    return {
+      id: a.id,
+      status: a.status,
+      withdrawalId: a.withdrawalId,
+      expiresAt: a.expiresAt.toISOString(),
+      slaRemainingSeconds: Math.max(
+        0,
+        Math.round((a.expiresAt.getTime() - Date.now()) / 1000),
+      ),
+      grossPoints: a.withdrawal.amountPoints.toString(),
+      hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
+      localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
+      localCurrencyCode: "INR" as const,
+      agentRewardPoints: a.withdrawal.agentRewardPoints?.toString() ?? "0",
+      paymentMethod: mapPaymentMethodForAgent(
+        a.withdrawal.paymentMethod,
+        a.status,
+        a.expiresAt,
+      ),
+    };
+  },
+
+  mapWaitingInboxItem(a: InboxAssignmentRow, config: PayrollConfigSnapshot) {
+    const hostPayoutUsd = Number(a.withdrawal.hostPayoutUsd ?? 0);
+    const isDisputed = a.withdrawal.status === "DISPUTED";
+    const waitingExpiresAt = a.waitingExpiresAt;
+    return {
+      id: a.id,
+      status: a.status,
+      withdrawalId: a.withdrawalId,
+      waitingExpiresAt: waitingExpiresAt?.toISOString() ?? null,
+      waitingSecondsRemaining:
+        isDisputed || !waitingExpiresAt
+          ? null
+          : Math.max(
+              0,
+              Math.round((waitingExpiresAt.getTime() - Date.now()) / 1000),
+            ),
+      isDisputed,
+      grossPoints: a.withdrawal.amountPoints.toString(),
+      hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
+      localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
+      localCurrencyCode: "INR" as const,
+      agentRewardPoints: a.withdrawal.agentRewardPoints?.toString() ?? "0",
+      paymentMethod: a.withdrawal.paymentMethod
+        ? mapPaymentMethodMaskedForAgent(a.withdrawal.paymentMethod)
+        : null,
+    };
+  },
+
+  mapSettledInboxItem(a: InboxAssignmentRow, config: PayrollConfigSnapshot) {
+    const hostPayoutUsd = Number(a.withdrawal.hostPayoutUsd ?? 0);
+    return {
+      id: a.id,
+      status: a.status as "COMPLETED" | "REJECTED",
+      withdrawalId: a.withdrawalId,
+      grossPoints: a.withdrawal.amountPoints.toString(),
+      hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
+      localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
+      localCurrencyCode: "INR" as const,
+      agentRewardPoints: a.withdrawal.agentRewardPoints?.toString() ?? "0",
+      rejectionReason: a.rejectionReason ?? null,
+      proofS3Key: a.proofS3Key ?? null,
+      completedAt: a.completedAt?.toISOString() ?? null,
+      rejectedAt: a.rejectedAt?.toISOString() ?? null,
+      assignmentNumber: a.assignmentNumber,
+      paymentMethod: a.withdrawal.paymentMethod
+        ? mapPaymentMethodMaskedForAgent(a.withdrawal.paymentMethod)
+        : null,
+    };
+  },
+
+  async getAgentPayrollInboxPending(
+    agencyUserId: string,
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    const rows = await payrollAssignmentRepository.findByAgentAndStatus(
+      agencyUserId,
+      ["PENDING"],
+      limit,
+      cursor,
+    );
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const config = await withdrawalService.getPayrollConfig();
+    const tabCounts =
+      await payrollAssignmentRepository.countInboxByStatus(agencyUserId);
+    return {
+      items: page.map((a) => withdrawalService.mapPendingInboxItem(a, config)),
+      nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
+      total: tabCounts.pending,
+    };
+  },
+
+  async getAgentPayrollInboxWaiting(
+    agencyUserId: string,
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    const rows = await payrollAssignmentRepository.findByAgentAndStatus(
+      agencyUserId,
+      ["WAITING"],
+      limit,
+      cursor,
+    );
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const config = await withdrawalService.getPayrollConfig();
+    const tabCounts =
+      await payrollAssignmentRepository.countInboxByStatus(agencyUserId);
+    return {
+      items: page.map((a) => withdrawalService.mapWaitingInboxItem(a, config)),
+      nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
+      total: tabCounts.waiting,
+    };
+  },
+
+  async getAgentPayrollInboxSettled(
+    agencyUserId: string,
+    cursor: string | undefined,
+    limit: number,
+  ) {
+    const listCursor = cursor ? decodeAssignmentCursor(cursor) : undefined;
+    const rows = await payrollAssignmentRepository.findSettledByAgent(
+      agencyUserId,
+      limit,
+      listCursor,
+    );
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const config = await withdrawalService.getPayrollConfig();
+    const tabCounts =
+      await payrollAssignmentRepository.countInboxByStatus(agencyUserId);
+    const last = page[page.length - 1];
+    return {
+      items: page.map((a) => withdrawalService.mapSettledInboxItem(a, config)),
+      nextCursor:
+        hasMore && last
+          ? encodeAssignmentCursor(last.updatedAt, last.id)
+          : null,
+      total: tabCounts.settled,
+    };
+  },
+
+  async getAdminDisputedPayrolls(opts: { limit: number; cursor?: string }) {
+    const take = opts.limit + 1;
+    const rows = await prismaRead.withdrawal.findMany({
+      where: {
+        status: "DISPUTED",
+        payrollAssignments: { some: { status: "WAITING" } },
+        ...(opts.cursor ? { id: { lt: opts.cursor } } : {}),
+      },
+      orderBy: { requestedAt: "desc" },
+      take,
+      include: {
+        paymentMethod: true,
+        payrollAssignments: {
+          where: { status: "WAITING" },
+          take: 1,
+          include: {
+            agencyUser: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                publicId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    const hasMore = rows.length > opts.limit;
+    const page = hasMore ? rows.slice(0, opts.limit) : rows;
+    const hostUsers = await prismaRead.user.findMany({
+      where: { id: { in: page.map((w) => w.userId) } },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        publicId: true,
+      },
+    });
+    const hostById = new Map(hostUsers.map((u) => [u.id, u]));
+    const config = await withdrawalService.getPayrollConfig();
+    return {
+      items: page.map((w) => {
+        const a = w.payrollAssignments[0]!;
+        const host = hostById.get(w.userId);
+        const hostPayoutUsd = Number(w.hostPayoutUsd ?? 0);
+        return {
+          withdrawalId: w.id,
+          hostUserId: w.userId,
+          hostDisplayName: host ? userDisplayName(host) : w.userId,
+          hostPublicId: host?.publicId.toString() ?? "",
+          grossPoints: w.amountPoints.toString(),
+          hostPayoutUsd: w.hostPayoutUsd?.toString() ?? null,
+          localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
+          localCurrencyCode: "INR" as const,
+          disputeTicketId: w.disputeTicketId,
+          requestedAt: w.requestedAt.toISOString(),
+          assignment: {
+            id: a.id,
+            agentUserId: a.agencyUserId,
+            agentDisplayName: userDisplayName(a.agencyUser),
+            agentPublicId: a.agencyUser.publicId.toString(),
+            proofS3Key: a.proofS3Key,
+            waitingExpiresAt: a.waitingExpiresAt?.toISOString() ?? null,
+          },
+          paymentMethod: w.paymentMethod
+            ? mapPaymentMethodMaskedForAgent(w.paymentMethod)
+            : null,
+        };
+      }),
+      nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
+      hasMore,
+    };
   },
 };

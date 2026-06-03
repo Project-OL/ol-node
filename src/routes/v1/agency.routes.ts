@@ -42,6 +42,11 @@ const PayrollInboxQuerySchema = z.object({
   cursor: z.string().optional(),
 });
 
+const PayrollInboxTabQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().optional(),
+});
+
 const PayrollSummaryQuerySchema = z.object({
   periodDays: z.coerce.number().int().min(1).max(365).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -489,6 +494,54 @@ export default async function agencyRoutes(app: FastifyInstance) {
         query.limit,
       );
       return reply.send(result);
+    },
+  );
+
+  app.get(
+    "/payroll/inbox/pending",
+    { preHandler: preAgent },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!;
+      const query = PayrollInboxTabQuerySchema.parse(request.query ?? {});
+      return reply.send(
+        await withdrawalService.getAgentPayrollInboxPending(
+          userId,
+          query.cursor,
+          query.limit,
+        ),
+      );
+    },
+  );
+
+  app.get(
+    "/payroll/inbox/waiting",
+    { preHandler: preAgent },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!;
+      const query = PayrollInboxTabQuerySchema.parse(request.query ?? {});
+      return reply.send(
+        await withdrawalService.getAgentPayrollInboxWaiting(
+          userId,
+          query.cursor,
+          query.limit,
+        ),
+      );
+    },
+  );
+
+  app.get(
+    "/payroll/inbox/settled",
+    { preHandler: preAgent },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!;
+      const query = PayrollInboxTabQuerySchema.parse(request.query ?? {});
+      return reply.send(
+        await withdrawalService.getAgentPayrollInboxSettled(
+          userId,
+          query.cursor,
+          query.limit,
+        ),
+      );
     },
   );
 

@@ -82,10 +82,12 @@ import {
   PAYROLL_SLA_JOB,
   PAYROLL_SLA_QUEUE,
   PAYROLL_SAFETY_NET_JOB,
+  PAYROLL_WAITING_JOB,
 } from "./queues/payroll.constants";
 import { payrollSlaQueue } from "./queues/payroll.queue";
 import {
   processPayrollSlaJob,
+  processWaitingAutoComplete,
   runPayrollSlaSafetyNet,
 } from "./jobs/payroll-sla.job";
 import {
@@ -337,6 +339,9 @@ async function main() {
       if (job.name === PAYROLL_SLA_JOB) {
         const id = job.data?.assignmentId;
         if (id) await processPayrollSlaJob({ assignmentId: id });
+      } else if (job.name === PAYROLL_WAITING_JOB) {
+        const id = job.data?.assignmentId;
+        if (id) await processWaitingAutoComplete(id);
       } else if (job.name === PAYROLL_SAFETY_NET_JOB) {
         await runPayrollSlaSafetyNet();
       }

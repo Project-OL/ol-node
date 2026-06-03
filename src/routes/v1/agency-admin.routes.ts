@@ -67,8 +67,14 @@ const PayrollConfigUpdateSchema = z.object({
   minWithdrawalUsd: z.number().optional(),
   maxWithdrawalUsd: z.number().optional(),
   slaHours: z.number().int().positive().optional(),
+  waitingHours: z.number().int().positive().optional(),
   maxAssignmentAttempts: z.number().int().positive().optional(),
   inrPerUsd: z.number().optional(),
+});
+
+const DisputeResolveSchema = z.object({
+  reason: z.string().min(3),
+  agencyUserId: z.string().uuid().optional(),
 });
 
 const WithdrawalAssignSchema = z.object({
@@ -355,6 +361,16 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     },
   );
 
+  app.get("/payroll/disputed", { preHandler: [requireAdmin] }, async (request, reply) => {
+    const q = request.query as { limit?: string; cursor?: string };
+    const limit = Math.min(100, Math.max(1, Number(q.limit ?? "20") || 20));
+    const result = await payrollAdminService.getDisputedPayrolls({
+      limit,
+      cursor: q.cursor,
+    });
+    return reply.send(result);
+  });
+
   app.get("/payroll/pending-platform", { preHandler: [requireAdmin] }, async (request, reply) => {
     const q = request.query as { limit?: string; cursor?: string };
     const limit = Math.min(50, Math.max(1, Number(q.limit ?? "20") || 20));
@@ -391,6 +407,39 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       await payrollAdminService.manuallyAssignWithdrawal(
         adminUserId,
         request.params.id,
+        body.agencyUserId,
+      );
+      return reply.send({ ok: true });
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/withdrawal/:id/resolve-dispute/favour-agent",
+    { preHandler: [requireAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.userId;
+      if (!adminUserId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const body = DisputeResolveSchema.parse(request.body ?? {});
+      await withdrawalService.adminResolveDisputeFavourAgent(
+        adminUserId,
+        request.params.id,
+        body.reason,
+      );
+      return reply.send({ ok: true });
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/withdrawal/:id/resolve-dispute/favour-host",
+    { preHandler: [requireAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.userId;
+      if (!adminUserId) throw new AppError(401, "Unauthorized", "UNAUTHORIZED");
+      const body = DisputeResolveSchema.parse(request.body ?? {});
+      await withdrawalService.adminResolveDisputeFavourHost(
+        adminUserId,
+        request.params.id,
+        body.reason,
         body.agencyUserId,
       );
       return reply.send({ ok: true });

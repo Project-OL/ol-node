@@ -980,7 +980,6 @@ enum PointTxType {
   COMMISSION
   TRANSFER_IN
   TRANSFER_OUT
-  MYSTERY_CHEST
   PLATFORM_REWARD
   WITHDRAWAL
   WITHDRAWAL_REFUND
@@ -1407,7 +1406,9 @@ model WithdrawalPayrollAssignment {
   rejectedAt       DateTime? @map("rejected_at")
   rejectionReason  String?   @map("rejection_reason") @db.Text
   assignmentNumber Int       @map("assignment_number")
+  waitingExpiresAt DateTime? @map("waiting_expires_at")
   createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
   agencyUser User       @relation("AgencyPayrollAssignments", fields: [agencyUserId], references: [id], onDelete: Cascade)
@@ -1415,6 +1416,7 @@ model WithdrawalPayrollAssignment {
   @@index([withdrawalId, assignmentNumber])
   @@index([agencyUserId, status, assignedAt(sort: Desc)])
   @@index([status, expiresAt])
+  @@index([agencyUserId, status, updatedAt(sort: Desc)])
   @@map("withdrawal_payroll_assignments")
 }
 
@@ -1426,6 +1428,7 @@ model PayrollConfig {
   minWithdrawalUsd      Decimal  @default(10.00) @map("min_withdrawal_usd") @db.Decimal(12, 2)
   maxWithdrawalUsd      Decimal  @default(10000000.00) @map("max_withdrawal_usd") @db.Decimal(18, 2)
   slaHours              Int      @default(2) @map("sla_hours")
+  waitingHours          Int      @default(2) @map("waiting_hours")
   maxAssignmentAttempts Int      @default(5) @map("max_assignment_attempts")
   inrPerUsd             Decimal  @default(88.00) @map("inr_per_usd") @db.Decimal(8, 2)
   updatedAt             DateTime @updatedAt @map("updated_at")

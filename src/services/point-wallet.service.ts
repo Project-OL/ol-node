@@ -19,6 +19,7 @@ import {
 } from "@prisma/client";
 import { walletLevelService } from "./user-level.service";
 import { utcDayFromTimestamp } from "../utils/datetime";
+import { formatPointsAsUsd } from "../utils/points-currency";
 import { withdrawalService } from "./withdrawal.service";
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
@@ -54,7 +55,6 @@ export const pointWalletService = {
         transferPoints: earningsMap.TRANSFER_IN ?? "0",
         platformRewards: earningsMap.PLATFORM_REWARD ?? "0",
         subscription: earningsMap.SUBSCRIPTION ?? "0",
-        mysteryChest: earningsMap.MYSTERY_CHEST ?? "0",
       },
     };
   },
@@ -542,10 +542,34 @@ export const pointWalletService = {
 
   /** Spendable points = ledger sum (totalPoints) − unconfirmedPoints. */
   async getAvailablePoints(userId: string): Promise<bigint> {
+    const { available } = await pointWalletService.getBalanceBreakdown(userId);
+    return available;
+  },
+
+  async getBalanceBreakdown(userId: string): Promise<{
+    total: bigint;
+    available: bigint;
+    unconfirmed: bigint;
+  }> {
     const [total, unconfirmed] = await Promise.all([
       walletService.getPointBalance(userId),
       pointWalletService.getUnconfirmedPoints(userId),
     ]);
-    return total - unconfirmed;
+    return { total, unconfirmed, available: total - unconfirmed };
+  },
+
+  /** Point balances plus USD equivalents (10_000 points = 1 USD). */
+  async getBalanceWithUsd(userId: string) {
+    const { total, available, unconfirmed } =
+      await pointWalletService.getBalanceBreakdown(userId);
+    return {
+      totalPoints: total.toString(),
+      availablePoints: available.toString(),
+      unconfirmedPoints: unconfirmed.toString(),
+      totalUsd: formatPointsAsUsd(total),
+      availableUsd: formatPointsAsUsd(available),
+      unconfirmedUsd: formatPointsAsUsd(unconfirmed),
+      pointsPerUsd: 10_000,
+    };
   },
 };

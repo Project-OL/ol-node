@@ -7,6 +7,7 @@
  */
 import "dotenv/config";
 import { prisma } from "../src/config/database";
+import { enqueuePayrollSla, removePayrollSla } from "../src/queues/payroll.queue";
 
 async function main() {
   const assignmentId = process.argv[2]?.trim();
@@ -31,6 +32,12 @@ async function main() {
     data: { expiresAt: newExpiry },
     select: { id: true, status: true, agencyUserId: true, expiresAt: true },
   });
+
+  if (updated.status === "PENDING") {
+    await removePayrollSla(assignmentId);
+    await enqueuePayrollSla(assignmentId, newExpiry);
+    console.log("Rescheduled payroll SLA job for new expiresAt");
+  }
 
   console.log("Before:", JSON.stringify({ ...before, expiresAt: before.expiresAt.toISOString() }, null, 2));
   console.log("After: ", JSON.stringify({ ...updated, expiresAt: updated.expiresAt.toISOString() }, null, 2));

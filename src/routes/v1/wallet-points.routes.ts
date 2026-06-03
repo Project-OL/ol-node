@@ -2,7 +2,6 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { authenticate } from "../../middlewares/auth.middleware";
 import { rateLimitWithdrawalCreate } from "../../middlewares/rateLimitAuth";
 import { pointWalletService } from "../../services/point-wallet.service";
-import { walletService } from "../../services/wallet.service";
 import {
   WithdrawInitiateSchema,
   PointHistoryQuerySchema,
@@ -22,12 +21,8 @@ export async function walletPointsRoutes(app: FastifyInstance) {
     "/balance",
     { preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const userId = request.userId!;
-      const [total, unconfirmed] = await Promise.all([
-        walletService.getPointBalance(userId),
-        pointWalletService.getUnconfirmedPoints(userId),
-      ]);
-      const available = total - unconfirmed;
+      const { total, available, unconfirmed } =
+        await pointWalletService.getBalanceBreakdown(request.userId!);
       return reply.send({
         // `balance` retained for backward compatibility (== totalPoints).
         balance: total.toString(),
@@ -35,6 +30,15 @@ export async function walletPointsRoutes(app: FastifyInstance) {
         availablePoints: available.toString(),
         unconfirmedPoints: unconfirmed.toString(),
       });
+    },
+  );
+
+  app.get(
+    "/balance/usd",
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const result = await pointWalletService.getBalanceWithUsd(request.userId!);
+      return reply.send(result);
     },
   );
 

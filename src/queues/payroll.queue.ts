@@ -4,6 +4,8 @@ import {
   PAYROLL_SLA_JOB,
   PAYROLL_SLA_JOB_ID,
   PAYROLL_SLA_QUEUE,
+  PAYROLL_WAITING_JOB,
+  PAYROLL_WAITING_JOB_ID,
 } from "./payroll.constants";
 
 export const payrollSlaQueue = new Queue(PAYROLL_SLA_QUEUE, {
@@ -35,6 +37,36 @@ export async function enqueuePayrollSla(
 export async function removePayrollSla(assignmentId: string): Promise<void> {
   try {
     const job = await payrollSlaQueue.getJob(PAYROLL_SLA_JOB_ID(assignmentId));
+    if (job) await job.remove();
+  } catch {
+    /* job may already be consumed */
+  }
+}
+
+export async function enqueuePayrollWaiting(
+  assignmentId: string,
+  waitingExpiresAt: Date,
+): Promise<void> {
+  const delay = msUntil(waitingExpiresAt);
+  await payrollSlaQueue.add(
+    PAYROLL_WAITING_JOB,
+    { assignmentId, jobType: "waiting-auto-complete" },
+    {
+      jobId: PAYROLL_WAITING_JOB_ID(assignmentId),
+      delay,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: true,
+      removeOnFail: false,
+    },
+  );
+}
+
+export async function removePayrollWaiting(assignmentId: string): Promise<void> {
+  try {
+    const job = await payrollSlaQueue.getJob(
+      PAYROLL_WAITING_JOB_ID(assignmentId),
+    );
     if (job) await job.remove();
   } catch {
     /* job may already be consumed */

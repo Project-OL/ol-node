@@ -19,6 +19,7 @@ export const payrollAdminService = {
       minWithdrawalUsd?: number;
       maxWithdrawalUsd?: number;
       slaHours?: number;
+      waitingHours?: number;
       maxAssignmentAttempts?: number;
       inrPerUsd?: number;
     },
@@ -50,6 +51,7 @@ export const payrollAdminService = {
     if (updates.maxWithdrawalUsd != null)
       data.maxWithdrawalUsd = new Prisma.Decimal(updates.maxWithdrawalUsd);
     if (updates.slaHours != null) data.slaHours = updates.slaHours;
+    if (updates.waitingHours != null) data.waitingHours = updates.waitingHours;
     if (updates.maxAssignmentAttempts != null)
       data.maxAssignmentAttempts = updates.maxAssignmentAttempts;
     if (updates.inrPerUsd != null)
@@ -94,5 +96,9 @@ export const payrollAdminService = {
       actionStatus: "success",
       actionDetails: { withdrawalId, agencyUserId: agencyUserId ?? null },
     });
+  },
+
+  getDisputedPayrolls(opts: { limit: number; cursor?: string }) {
+    return withdrawalService.getAdminDisputedPayrolls(opts);
   },
 };

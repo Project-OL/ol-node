@@ -63,7 +63,6 @@ export const PointTxTypeEnum = z.enum([
   "COMMISSION",
   "TRANSFER_IN",
   "TRANSFER_OUT",
-  "MYSTERY_CHEST",
   "PLATFORM_REWARD",
   "WITHDRAWAL",
   "WITHDRAWAL_REFUND",
