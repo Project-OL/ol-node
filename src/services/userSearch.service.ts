@@ -153,6 +153,7 @@ export const userSearchService = {
       name: displayName,
       displayName,
       avatarUrl: user.avatarUrl,
+      bio: user.bio ?? null,
       country: user.country ?? null,
       gender: user.gender,
       age,

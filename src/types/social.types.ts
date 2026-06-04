@@ -15,6 +15,8 @@ export type UserCard = {
   name?: string
   displayName: string
   avatarUrl: string | null
+  /** Profile bio (`users.bio`); included on `GET /users/search`. */
+  bio?: string | null
   country?: string | null
   gender: string | null
   age: number | null
