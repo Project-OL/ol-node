@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import crypto, { randomUUID } from "crypto";
 import { prisma } from "../config/database";
 import { hostGiftPointsFromCoinSpend } from "../config/host-revenue-shares";
 import { redisClient, RedisKeys } from "../config/redis";
@@ -130,8 +130,9 @@ export const giftTransactionService = {
 
         let wealthResult: WealthRet | null = null;
         let bustAgentUserId: string | null = null;
+        const giftTxRefId = pointsAwarded > 0 ? randomUUID() : null;
 
-        if (pointsAwarded > 0) {
+        if (pointsAwarded > 0 && giftTxRefId) {
           const pt = BigInt(pointsAwarded);
           const lastPt = await tx.pointLedgerEntry.findFirst({
             where: { walletId: receiverPointWallet.id },
@@ -153,6 +154,7 @@ export const giftTransactionService = {
             txType: PointTxType.GIFT_RECEIVE,
             amount: pt,
             balanceAfter: ptBal + pt,
+            refId: giftTxRefId,
             counterpartyId: params.senderUserId,
             description: `Gift received: ${gift.name}`,
             metadata: { giftId: params.giftId, context: params.context },
@@ -177,6 +179,7 @@ export const giftTransactionService = {
         }
 
         const gt = await giftTransactionRepository.create(tx, {
+          id: giftTxRefId ?? undefined,
           senderUserId: params.senderUserId,
           receiverUserId: params.receiverUserId,
           giftId: params.giftId,

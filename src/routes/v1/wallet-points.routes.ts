@@ -6,6 +6,7 @@ import {
   WithdrawInitiateSchema,
   PointHistoryQuerySchema,
   PointLedgerEntryParamsSchema,
+  PointLedgerRefParamsSchema,
 } from "../../models/wallet.schemas";
 
 export async function walletPointsRoutes(app: FastifyInstance) {
@@ -71,6 +72,19 @@ export async function walletPointsRoutes(app: FastifyInstance) {
         cursor: query.cursor,
         limit: query.limit,
       });
+      return reply.send(result);
+    },
+  );
+
+  app.get(
+    "/history/by-ref/:refId",
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { refId } = PointLedgerRefParamsSchema.parse(request.params);
+      const result = await pointWalletService.getTransactionsByRefId(
+        request.userId!,
+        refId,
+      );
       return reply.send(result);
     },
   );

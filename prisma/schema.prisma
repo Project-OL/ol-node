@@ -1173,6 +1173,7 @@ model PointLedgerEntry {
   // Serves agency dashboard agent-own-earnings / payroll sums: filter by wallet +
   // tx type + direction within a time window.
   @@index([walletId, txType, direction, createdAt])
+  @@index([walletId, refId])
   @@index([idempotencyKey])
   @@map("point_ledger_entries")
 }

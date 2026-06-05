@@ -28,3 +28,12 @@ TODO/
 # package-lock.json
 k6-auth-tests/
 CLAUDE.md
+
+# Performance lab (track scaffolding; ignore generated output & secrets)
+/lab/reports/
+/lab/config/test.env
+/lab/fixtures/tokens.json
+/lab/.clinic/
+/lab/0x-*/
+/lab/**/*.html
+lab/

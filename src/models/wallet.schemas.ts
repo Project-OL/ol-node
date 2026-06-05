@@ -95,6 +95,11 @@ export const PointLedgerEntryParamsSchema = z.object({
   entryId: z.string().uuid(),
 });
 
+/** Business refId (gift tx, withdrawal, subscription, transfer, …). */
+export const PointLedgerRefParamsSchema = z.object({
+  refId: z.string().min(1).max(255),
+});
+
 export const WithdrawInitiateSchema = z.object({
   amountPoints: z.coerce.bigint().positive(),
   paymentMethodId: z.string().uuid(),

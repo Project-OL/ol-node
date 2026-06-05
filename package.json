@@ -35,7 +35,17 @@
         "grant:trading-coins": "tsx scripts/grant-trading-coins.ts",
         "seed:agency-agent-dev": "tsx scripts/seed-agency-agent-dev.ts",
         "seed:coin-trading-rates": "tsx scripts/seed-coin-trading-rates.ts",
-        "seed:coin-trading-topup-packages": "tsx scripts/seed-coin-trading-topup-packages.ts"
+        "seed:coin-trading-topup-packages": "tsx scripts/seed-coin-trading-topup-packages.ts",
+        "lab:seed": "tsx lab/fixtures/seed.ts",
+        "lab:concurrency": "vitest run lab/concurrency",
+        "lab:auth": "k6 run lab/modules/02-auth/k6-scenario.js",
+        "lab:users": "k6 run lab/modules/03-users-social/k6-scenario.js",
+        "lab:messaging": "k6 run lab/modules/04-messaging/k6-scenario.js",
+        "lab:wallet": "k6 run lab/modules/05-wallet/k6-scenario.js",
+        "lab:gifts": "k6 run lab/modules/06-gifts-calls/k6-scenario.js",
+        "lab:soak": "k6 run lab/k6/scenarios/12_full_soak.js",
+        "lab:all": "bash lab/scripts/run_all.sh",
+        "lab:report": "tsx lab/scripts/analyze_report.ts"
     },
     "dependencies": {
         "@aws-sdk/client-rekognition": "^3.1046.0",

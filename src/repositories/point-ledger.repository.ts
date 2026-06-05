@@ -44,6 +44,28 @@ export const pointLedgerRepository = {
     });
   },
 
+  /** All ledger rows for this wallet matching canonical business refId. */
+  async findByRefForWallet(walletId: string, refId: string) {
+    const byColumn = await prismaRead.pointLedgerEntry.findMany({
+      where: { walletId, refId },
+      orderBy: { createdAt: "desc" },
+    });
+    if (byColumn.length > 0) return byColumn;
+
+    return prismaRead.pointLedgerEntry.findMany({
+      where: {
+        walletId,
+        OR: [
+          { metadata: { path: ["transferId"], equals: refId } },
+          { metadata: { path: ["withdrawalId"], equals: refId } },
+          { metadata: { path: ["subscriptionId"], equals: refId } },
+          { metadata: { path: ["exchangeRefId"], equals: refId } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+    });
+  },
+
   async list(filter: PointLedgerFilter) {
     const createdAt: Prisma.DateTimeFilter = {};
     if (filter.from) createdAt.gte = filter.from;

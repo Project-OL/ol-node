@@ -13,18 +13,28 @@ vi.mock("../../src/repositories/wallet.repository", () => ({
 }));
 
 const findByIdForWallet = vi.fn();
+const findByRefForWallet = vi.fn();
 vi.mock("../../src/repositories/point-ledger.repository", () => ({
   pointLedgerRepository: {
     findByIdForWallet: (...a: unknown[]) => findByIdForWallet(...a),
+    findByRefForWallet: (...a: unknown[]) => findByRefForWallet(...a),
   },
 }));
 
 const userFindMany = vi.fn();
+const payrollConfigFindUnique = vi.fn();
+const withdrawalFindUnique = vi.fn();
 vi.mock("../../src/config/database", () => ({
   prisma: {},
   prismaRead: {
     user: {
       findMany: (...a: unknown[]) => userFindMany(...a),
+    },
+    payrollConfig: {
+      findUnique: (...a: unknown[]) => payrollConfigFindUnique(...a),
+    },
+    withdrawal: {
+      findUnique: (...a: unknown[]) => withdrawalFindUnique(...a),
     },
   },
 }));
@@ -52,6 +62,8 @@ const ENTRY_ID = "entry-1";
 beforeEach(() => {
   vi.clearAllMocks();
   getOrCreate.mockResolvedValue({ id: WALLET_ID, userId: USER_ID });
+  payrollConfigFindUnique.mockResolvedValue({ inrPerUsd: { toString: () => "86" } });
+  withdrawalFindUnique.mockResolvedValue(null);
 });
 
 describe("pointWalletService.getTransactionDetail", () => {
@@ -101,6 +113,15 @@ describe("pointWalletService.getTransactionDetail", () => {
     expect(out.id).toBe(ENTRY_ID);
     expect(out.amount).toBe("60000");
     expect(out.refId).toBe("gift-tx-1");
+    expect(out.refIdEntityType).toBe("gift_transaction");
+    expect(out.amountDetails).toMatchObject({
+      points: "60000",
+      usdAmount: "6.00",
+      pointsPerUsd: 10_000,
+      conversionLabel: "$6.00 = 60,000 points",
+      actualAmountReceivedUsd: "6.00",
+      localCurrency: { code: "INR", amount: "516.00", usdBasis: "6.00" },
+    });
     expect(out.transactionDateTime).toBe("2026-06-01T12:00:00.000Z");
     expect(out.createdAt).toBe(out.transactionDateTime);
     expect(out.earningsCategory).toBe("livestream");
@@ -146,5 +167,92 @@ describe("pointWalletService.getTransactionDetail", () => {
     const out = await pointWalletService.getTransactionDetail(USER_ID, ENTRY_ID);
     expect(out.counterparty).toBeNull();
     expect(out.earningsCategory).toBeNull();
+  });
+
+  it("resolves refId from metadata.transferId when column is null", async () => {
+    findByIdForWallet.mockResolvedValue({
+      id: ENTRY_ID,
+      walletId: WALLET_ID,
+      direction: LedgerDirection.CREDIT,
+      txType: PointTxType.AGENT_POINT_TRANSFER,
+      amount: 100_000n,
+      balanceAfter: 200_000n,
+      refId: null,
+      counterpartyId: OTHER_ID,
+      description: null,
+      metadata: { transferId: "transfer-abc" },
+      idempotencyKey: "idem-3",
+      createdAt: new Date("2026-06-01T12:00:00.000Z"),
+    });
+    userFindMany.mockResolvedValue([
+      {
+        id: USER_ID,
+        username: "agent1",
+        firstName: null,
+        lastName: null,
+        avatarUrl: null,
+      },
+      {
+        id: OTHER_ID,
+        username: "agent2",
+        firstName: null,
+        lastName: null,
+        avatarUrl: null,
+      },
+    ]);
+
+    const out = await pointWalletService.getTransactionDetail(USER_ID, ENTRY_ID);
+    expect(out.refId).toBe("transfer-abc");
+    expect(out.amountDetails.usdAmount).toBe("10.00");
+  });
+});
+
+describe("pointWalletService.getTransactionsByRefId", () => {
+  it("returns all wallet rows for a business refId", async () => {
+    findByRefForWallet.mockResolvedValue([
+      {
+        id: "entry-escrow",
+        walletId: WALLET_ID,
+        direction: LedgerDirection.DEBIT,
+        txType: PointTxType.WITHDRAWAL_ESCROW,
+        amount: 100_000n,
+        balanceAfter: 0n,
+        refId: "wd-1",
+        counterpartyId: null,
+        description: null,
+        metadata: null,
+        idempotencyKey: "idem-wd",
+        createdAt: new Date("2026-06-01T10:00:00.000Z"),
+      },
+    ]);
+    userFindMany.mockResolvedValue([
+      {
+        id: USER_ID,
+        username: "host1",
+        firstName: null,
+        lastName: null,
+        avatarUrl: null,
+      },
+    ]);
+    withdrawalFindUnique.mockResolvedValue({
+      amountPoints: 100_000n,
+      hostPayoutUsd: { toString: () => "9.40" },
+      platformFeePoints: 6_000n,
+    });
+
+    const out = await pointWalletService.getTransactionsByRefId(USER_ID, "wd-1");
+
+    expect(findByRefForWallet).toHaveBeenCalledWith(WALLET_ID, "wd-1");
+    expect(out.refId).toBe("wd-1");
+    expect(out.refIdEntityType).toBe("withdrawal");
+    expect(out.entries).toHaveLength(1);
+    expect(out.entries[0]!.txType).toBe(PointTxType.WITHDRAWAL_ESCROW);
+  });
+
+  it("returns 404 when no rows match refId", async () => {
+    findByRefForWallet.mockResolvedValue([]);
+    await expect(
+      pointWalletService.getTransactionsByRefId(USER_ID, "missing"),
+    ).rejects.toMatchObject({ statusCode: 404 });
   });
 });

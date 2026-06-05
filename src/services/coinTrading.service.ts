@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { CoinTxType, LedgerDirection, PointTxType, Prisma, WalletCurrencyType } from "@prisma/client";
 import {
   redisClient,
@@ -209,10 +210,13 @@ export const coinTradingService = {
     if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
     await agencyService.enforcePauseGate(agentUserId);
     const rate = await this.lookupExchangeRate(pointsToExchange);
+    const exchangeRefId = randomUUID();
     await prisma.$transaction(async (tx) => {
       await pointWalletService.debit(agentUserId, pointsToExchange, PointTxType.TRANSFER_OUT, tx, {
-        idempotencyKey: `exchange-pts:${agentUserId}:${Date.now()}`,
+        idempotencyKey: `exchange-pts:${exchangeRefId}`,
+        refId: exchangeRefId,
         description: "Points exchanged for trading coins",
+        metadata: { exchangeRefId },
       });
       await coinWalletService.credit(agentUserId, rate.tradingCoinsAwarded, CoinTxType.TRADING_EXCHANGE_FROM_POINTS, tx, {
         idempotencyKey: `exchange-ct:${agentUserId}:${Date.now()}`,

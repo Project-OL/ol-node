@@ -149,6 +149,17 @@ export const agencyCommissionService = {
     );
 
     if (commissionPoints > 0n) {
+      const hostEntry = await tx.pointLedgerEntry.findUnique({
+        where: { id: params.hostLedgerEntryId },
+        select: { refId: true, metadata: true },
+      });
+      const { resolvePointLedgerRefId } = await import(
+        "../utils/point-transaction-amounts"
+      );
+      const businessRefId =
+        resolvePointLedgerRefId(hostEntry?.refId, hostEntry?.metadata) ??
+        params.hostLedgerEntryId;
+
       await pointWalletService.creditInTransaction(
         agencyUserId,
         commissionPoints,
@@ -156,12 +167,13 @@ export const agencyCommissionService = {
         tx,
         {
           idempotencyKey: commissionKey,
-          refId: params.hostLedgerEntryId,
+          refId: businessRefId,
           counterpartyId: params.hostUserId,
           metadata: {
             category: cat,
             rateBp,
             hostTxType: params.hostTxType,
+            hostLedgerEntryId: params.hostLedgerEntryId,
           },
           applyLivestreamLevel: false,
         },
@@ -638,6 +650,7 @@ export const agencyCommissionService = {
           {
             idempotencyKey: `${idempotencyKey}:debit`,
             counterpartyId: recipientAgentUserId,
+            refId: transferId,
             metadata: { transferId },
           },
         );
@@ -650,6 +663,7 @@ export const agencyCommissionService = {
           {
             idempotencyKey: `${idempotencyKey}:credit`,
             counterpartyId: senderAgentUserId,
+            refId: transferId,
             metadata: { transferId },
             applyLivestreamLevel: false,
           },

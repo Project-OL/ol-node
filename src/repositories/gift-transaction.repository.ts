@@ -4,6 +4,7 @@ export const giftTransactionRepository = {
   async create(
     tx: Prisma.TransactionClient,
     data: {
+      id?: string;
       senderUserId: string;
       receiverUserId: string;
       giftId: string;
@@ -12,6 +13,9 @@ export const giftTransactionRepository = {
       context: string;
     },
   ) {
-    return tx.giftTransaction.create({ data });
+    const { id, ...rest } = data;
+    return tx.giftTransaction.create({
+      data: id ? { id, ...rest } : rest,
+    });
   },
 };

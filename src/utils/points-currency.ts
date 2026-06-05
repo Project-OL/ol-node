@@ -11,3 +11,10 @@ export function formatPointsAsUsd(points: bigint): string {
     .div(POINTS_PER_USD_DECIMAL)
     .toFixed(2);
 }
+
+/** Human-readable conversion line for UI (e.g. `"$10.00 = 100,000 points"`). */
+export function formatPointsUsdConversionLabel(points: bigint): string {
+  const usd = formatPointsAsUsd(points);
+  const formatted = points.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `$${usd} = ${formatted} points`;
+}

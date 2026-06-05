@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma, prismaRead } from "../config/database";
 import {
   redisClient,
@@ -20,6 +20,13 @@ import {
 import { walletLevelService } from "./user-level.service";
 import { utcDayFromTimestamp } from "../utils/datetime";
 import { formatPointsAsUsd } from "../utils/points-currency";
+import {
+  buildPointAmountBreakdown,
+  loadWithdrawalAmountContext,
+  resolvePointLedgerRefId,
+} from "../utils/point-transaction-amounts";
+import { inferRefIdEntityType } from "../config/point-ledger-ref-id";
+import type { PointLedgerEntry } from "@prisma/client";
 import {
   earningsCategoryForTxType,
   resolvePointHistoryTxTypes,
@@ -60,6 +67,62 @@ function mapLedgerParticipant(user: LedgerUserRow) {
     username: user.username,
     displayName: ledgerUserDisplayName(user),
     avatarUrl: user.avatarUrl,
+  };
+}
+
+type PointLedgerDetailRow = PointLedgerEntry;
+
+async function buildPointTransactionDetail(
+  userId: string,
+  entry: PointLedgerDetailRow,
+  selfRow: LedgerUserRow,
+  counterpartyRow: LedgerUserRow | null,
+) {
+  const transactionDateTime = entry.createdAt.toISOString();
+  const refId = resolvePointLedgerRefId(entry.refId, entry.metadata);
+
+  const payrollConfig = await prismaRead.payrollConfig.findUnique({
+    where: { id: 1 },
+    select: { inrPerUsd: true },
+  });
+  const inrPerUsd = payrollConfig
+    ? new Prisma.Decimal(payrollConfig.inrPerUsd.toString()).toNumber()
+    : 86;
+
+  const withdrawal = refId
+    ? await loadWithdrawalAmountContext(refId, entry.txType)
+    : null;
+
+  const amountDetails = buildPointAmountBreakdown(
+    {
+      txType: entry.txType,
+      amount: entry.amount,
+      refId,
+      metadata: entry.metadata,
+      withdrawal,
+    },
+    inrPerUsd,
+  );
+
+  return {
+    id: entry.id,
+    direction: entry.direction,
+    txType: entry.txType,
+    amount: entry.amount.toString(),
+    balanceAfter: entry.balanceAfter.toString(),
+    refId,
+    refIdEntityType: inferRefIdEntityType(entry.txType),
+    amountDetails,
+    transactionDateTime,
+    description: entry.description,
+    metadata: entry.metadata,
+    idempotencyKey: entry.idempotencyKey,
+    createdAt: transactionDateTime,
+    earningsCategory: earningsCategoryForTxType(entry.txType),
+    self: mapLedgerParticipant(selfRow),
+    counterparty: counterpartyRow
+      ? mapLedgerParticipant(counterpartyRow)
+      : null,
   };
 }
 
@@ -292,18 +355,22 @@ export const pointWalletService = {
     const nextCursor = hasMore ? page[page.length - 1]?.id : undefined;
 
     return {
-      entries: page.map((e) => ({
-        id: e.id,
-        direction: e.direction,
-        txType: e.txType,
-        amount: e.amount.toString(),
-        balanceAfter: e.balanceAfter.toString(),
-        refId: e.refId,
-        counterpartyId: e.counterpartyId,
-        description: e.description,
-        metadata: e.metadata,
-        createdAt: e.createdAt,
-      })),
+      entries: page.map((e) => {
+        const refId = resolvePointLedgerRefId(e.refId, e.metadata);
+        return {
+          id: e.id,
+          direction: e.direction,
+          txType: e.txType,
+          amount: e.amount.toString(),
+          balanceAfter: e.balanceAfter.toString(),
+          refId,
+          usdAmount: formatPointsAsUsd(e.amount),
+          counterpartyId: e.counterpartyId,
+          description: e.description,
+          metadata: e.metadata,
+          createdAt: e.createdAt,
+        };
+      }),
       nextCursor,
       hasMore,
     };
@@ -347,25 +414,70 @@ export const pointWalletService = {
       ? byId.get(entry.counterpartyId) ?? null
       : null;
 
-    const transactionDateTime = entry.createdAt.toISOString();
+    return buildPointTransactionDetail(
+      userId,
+      entry,
+      selfRow,
+      counterpartyRow,
+    );
+  },
+
+  /**
+   * Fetch all point ledger rows for the caller's wallet that share a business refId
+   * (e.g. withdrawal id, gift_transaction id, subscription id).
+   */
+  async getTransactionsByRefId(userId: string, refId: string) {
+    const wallet = await walletRepository.getOrCreate(
+      userId,
+      WalletCurrencyType.POINT,
+    );
+
+    const entries = await pointLedgerRepository.findByRefForWallet(
+      wallet.id,
+      refId,
+    );
+    if (entries.length === 0) {
+      throw new AppError(404, "Point transaction not found", "NOT_FOUND");
+    }
+
+    const counterpartyIds = [
+      ...new Set(
+        entries
+          .map((e) => e.counterpartyId)
+          .filter((id): id is string => !!id && id !== userId),
+      ),
+    ];
+    const users = await prismaRead.user.findMany({
+      where: { id: { in: [userId, ...counterpartyIds] } },
+      select: LEDGER_USER_SELECT,
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    const selfRow = byId.get(userId);
+    if (!selfRow) {
+      throw new AppError(404, "User not found", "NOT_FOUND");
+    }
+
+    const resolvedRefId =
+      resolvePointLedgerRefId(entries[0]!.refId, entries[0]!.metadata) ?? refId;
+
+    const detailEntries = await Promise.all(
+      entries.map((entry) => {
+        const counterpartyRow = entry.counterpartyId
+          ? byId.get(entry.counterpartyId) ?? null
+          : null;
+        return buildPointTransactionDetail(
+          userId,
+          entry,
+          selfRow,
+          counterpartyRow,
+        );
+      }),
+    );
 
     return {
-      id: entry.id,
-      direction: entry.direction,
-      txType: entry.txType,
-      amount: entry.amount.toString(),
-      balanceAfter: entry.balanceAfter.toString(),
-      refId: entry.refId,
-      transactionDateTime,
-      description: entry.description,
-      metadata: entry.metadata,
-      idempotencyKey: entry.idempotencyKey,
-      createdAt: transactionDateTime,
-      earningsCategory: earningsCategoryForTxType(entry.txType),
-      self: mapLedgerParticipant(selfRow),
-      counterparty: counterpartyRow
-        ? mapLedgerParticipant(counterpartyRow)
-        : null,
+      refId: resolvedRefId,
+      refIdEntityType: inferRefIdEntityType(entries[0]!.txType),
+      entries: detailEntries,
     };
   },
 

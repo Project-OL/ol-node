@@ -1241,6 +1241,7 @@ export const withdrawalService = {
               tx,
               {
                 idempotencyKey: `payroll-host-payout-reversal:${a.id}`,
+                refId: withdrawalId,
                 description: `Payroll host payout reversal: ${reason}`,
                 availabilityCheck: false,
               },
@@ -1260,6 +1261,7 @@ export const withdrawalService = {
               tx,
               {
                 idempotencyKey: `payroll-reward-reversal:${a.id}`,
+                refId: withdrawalId,
                 description: `Payroll reward reversal: ${reason}`,
                 availabilityCheck: false,
               },
@@ -1415,6 +1417,7 @@ export const withdrawalService = {
               tx,
               {
                 idempotencyKey: `payroll-host-payout-reversal:${creditAssignment.id}`,
+                refId: withdrawalId,
                 description: `Payroll host payout reversal for withdrawal ${withdrawalId}`,
                 availabilityCheck: false,
               },
@@ -1436,6 +1439,7 @@ export const withdrawalService = {
               tx,
               {
                 idempotencyKey: `payroll-reward-reversal:${creditAssignment.id}`,
+                refId: withdrawalId,
                 description: `Payroll reward reversal for withdrawal ${withdrawalId}`,
                 availabilityCheck: false,
               },
