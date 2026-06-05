@@ -73,7 +73,6 @@ function mapLedgerParticipant(user: LedgerUserRow) {
 type PointLedgerDetailRow = PointLedgerEntry;
 
 async function buildPointTransactionDetail(
-  userId: string,
   entry: PointLedgerDetailRow,
   selfRow: LedgerUserRow,
   counterpartyRow: LedgerUserRow | null,
@@ -414,12 +413,7 @@ export const pointWalletService = {
       ? byId.get(entry.counterpartyId) ?? null
       : null;
 
-    return buildPointTransactionDetail(
-      userId,
-      entry,
-      selfRow,
-      counterpartyRow,
-    );
+    return buildPointTransactionDetail(entry, selfRow, counterpartyRow);
   },
 
   /**
@@ -465,12 +459,7 @@ export const pointWalletService = {
         const counterpartyRow = entry.counterpartyId
           ? byId.get(entry.counterpartyId) ?? null
           : null;
-        return buildPointTransactionDetail(
-          userId,
-          entry,
-          selfRow,
-          counterpartyRow,
-        );
+        return buildPointTransactionDetail(entry, selfRow, counterpartyRow);
       }),
     );
 
