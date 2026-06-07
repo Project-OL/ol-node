@@ -1,16 +1,13 @@
-import type {
-  AgencyApplicationStatus,
-  Prisma,
-} from "@prisma/client";
-import { prismaRead } from "../config/database";
+import type { AgencyApplicationStatus, Prisma } from '@prisma/client'
+import { prismaRead } from '../config/database'
 
 export const agencyApplicationRepository = {
   /** @deprecated Instant join uses {@link createAcceptedApplication}. Retained for scripts / legacy tooling. */
   async createApplication(
     data: {
-      agencyUserId: string;
-      hostUserId: string;
-      message?: string | null;
+      agencyUserId: string
+      hostUserId: string
+      message?: string | null
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -18,19 +15,19 @@ export const agencyApplicationRepository = {
       data: {
         agencyUserId: data.agencyUserId,
         hostUserId: data.hostUserId,
-        status: "PENDING",
+        status: 'PENDING',
         message: data.message ?? undefined,
       },
-    });
+    })
   },
 
   /** Audit row for instant join (`resolved_by` null = system auto-accept). */
   async createAcceptedApplication(
     data: {
-      agencyUserId: string;
-      hostUserId: string;
-      message?: string | null;
-      resolvedAt: Date;
+      agencyUserId: string
+      hostUserId: string
+      message?: string | null
+      resolvedAt: Date
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -38,40 +35,40 @@ export const agencyApplicationRepository = {
       data: {
         agencyUserId: data.agencyUserId,
         hostUserId: data.hostUserId,
-        status: "ACCEPTED",
+        status: 'ACCEPTED',
         message: data.message ?? undefined,
         resolvedAt: data.resolvedAt,
         resolvedByUserId: null,
       },
-    });
+    })
   },
 
   async getApplicationById(id: string) {
     return prismaRead.agencyHostApplication.findUnique({
       where: { id },
-    });
+    })
   },
 
   async getPendingForHost(hostUserId: string) {
     return prismaRead.agencyHostApplication.findFirst({
-      where: { hostUserId, status: "PENDING" },
-    });
+      where: { hostUserId, status: 'PENDING' },
+    })
   },
 
   /** @deprecated Agent join inbox removed — instant auto-join. */
   async listInbox(
     agencyUserId: string,
     params: {
-      status?: AgencyApplicationStatus;
-      limit: number;
-      cursor?: string | null;
+      status?: AgencyApplicationStatus
+      limit: number
+      cursor?: string | null
     },
   ) {
-    let cursor: { createdAt: Date; id: string } | null = null;
+    let cursor: { createdAt: Date; id: string } | null = null
     if (params.cursor) {
-      const parts = params.cursor.split("|");
+      const parts = params.cursor.split('|')
       if (parts.length === 2 && parts[0] && parts[1]) {
-        cursor = { createdAt: new Date(parts[0]), id: parts[1] };
+        cursor = { createdAt: new Date(parts[0]), id: parts[1] }
       }
     }
 
@@ -89,22 +86,22 @@ export const agencyApplicationRepository = {
             ],
           }
         : {}),
-    };
+    }
 
     return prismaRead.agencyHostApplication.findMany({
       where,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: params.limit + 1,
-    });
+    })
   },
 
   /** @deprecated Agent accept/reject removed — instant auto-join. */
   async updateStatus(
     params: {
-      id: string;
-      status: AgencyApplicationStatus;
-      resolvedByUserId?: string | null;
-      resolvedAt?: Date | null;
+      id: string
+      status: AgencyApplicationStatus
+      resolvedByUserId?: string | null
+      resolvedAt?: Date | null
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -115,12 +112,12 @@ export const agencyApplicationRepository = {
         resolvedAt: params.resolvedAt ?? new Date(),
         resolvedByUserId: params.resolvedByUserId ?? undefined,
       },
-    });
+    })
   },
 
   async deletePending(id: string, hostUserId: string, tx: Prisma.TransactionClient) {
     return tx.agencyHostApplication.deleteMany({
-      where: { id, hostUserId, status: "PENDING" },
-    });
+      where: { id, hostUserId, status: 'PENDING' },
+    })
   },
-};
+}

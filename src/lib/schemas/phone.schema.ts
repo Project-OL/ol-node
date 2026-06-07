@@ -9,4 +9,3 @@ export const phoneSchema = z
     message: 'Invalid phone number. Use E.164 format e.g. +919876543210',
   })
   .transform((val) => parsePhoneNumber(val).number as string)
-

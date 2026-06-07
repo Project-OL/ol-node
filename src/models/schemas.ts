@@ -15,7 +15,9 @@ export const providerEmailPhoneSchema = z.enum(['email', 'phone'])
 export const providerWithPublicIdSchema = z.enum(['email', 'phone', 'publicId'])
 
 export const emailSchema = z.string().email('Invalid email format')
-export const publicIdSchema = z.union([z.string().regex(/^\d+$/).transform(Number), z.number()]).pipe(z.number().int().positive())
+export const publicIdSchema = z
+  .union([z.string().regex(/^\d+$/).transform(Number), z.number()])
+  .pipe(z.number().int().positive())
 
 export const passwordSchema = z
   .string()
@@ -61,7 +63,10 @@ export const completeProfileBodySchema = z
   .object({
     firstName: z.string().min(1).max(255),
     lastName: z.string().min(1).max(255),
-    dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    dateOfBirth: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
     country: z.string().min(1).max(100),
     gender: z.enum(['male', 'female', 'other']),
     avatarUrl: z.string().url().optional().or(z.literal('')),
@@ -105,9 +110,11 @@ export const refreshBodySchema = z.object({
 })
 
 // Logout
-export const logoutBodySchema = z.object({
-  sessionId: z.string().uuid().optional(),
-}).optional()
+export const logoutBodySchema = z
+  .object({
+    sessionId: z.string().uuid().optional(),
+  })
+  .optional()
 
 // Password reset send OTP
 export const passwordResetSendOtpBodySchema = z.object({
@@ -327,7 +334,10 @@ export const socialSummaryQuerySchema = z.object({
     .optional()
     .transform((s) =>
       s
-        ? (s.split(',').map((x) => x.trim()).filter(Boolean) as SocialSection[])
+        ? (s
+            .split(',')
+            .map((x) => x.trim())
+            .filter(Boolean) as SocialSection[])
         : ([...SOCIAL_SECTIONS] as SocialSection[]),
     )
     .pipe(

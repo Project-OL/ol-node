@@ -1,13 +1,13 @@
-import { prisma, prismaRead } from "../config/database";
+import { prisma, prismaRead } from '../config/database'
 
 export const liveSessionRepository = {
   async createSession(data: {
-    hostUserId: string;
-    agencyUserId: string;
-    roomId: string;
-    startedAt: Date;
+    hostUserId: string
+    agencyUserId: string
+    roomId: string
+    startedAt: Date
   }) {
-    return prisma.hostLiveSession.create({ data: { ...data, status: "ACTIVE" } });
+    return prisma.hostLiveSession.create({ data: { ...data, status: 'ACTIVE' } })
   },
 
   async endSession(
@@ -15,22 +15,22 @@ export const liveSessionRepository = {
     roomId: string,
     endedAt: Date,
     durationSeconds: bigint,
-    status: "ENDED" | "INTERRUPTED" = "ENDED",
+    status: 'ENDED' | 'INTERRUPTED' = 'ENDED',
   ) {
     const session = await prisma.hostLiveSession.findFirst({
-      where: { hostUserId, roomId, status: "ACTIVE" },
-    });
-    if (!session) return null;
+      where: { hostUserId, roomId, status: 'ACTIVE' },
+    })
+    if (!session) return null
 
     return prisma.hostLiveSession.update({
       where: { id: session.id },
       data: { endedAt, durationSeconds, status },
-    });
+    })
   },
 
   async findStaleActiveSessions(cutoffDate: Date) {
     return prismaRead.hostLiveSession.findMany({
-      where: { status: "ACTIVE", startedAt: { lt: cutoffDate } },
+      where: { status: 'ACTIVE', startedAt: { lt: cutoffDate } },
       select: {
         id: true,
         hostUserId: true,
@@ -38,13 +38,13 @@ export const liveSessionRepository = {
         startedAt: true,
         roomId: true,
       },
-    });
+    })
   },
 
   async interruptSession(id: string, endedAt: Date, durationSeconds: bigint) {
     return prisma.hostLiveSession.update({
       where: { id },
-      data: { endedAt, durationSeconds, status: "INTERRUPTED" },
-    });
+      data: { endedAt, durationSeconds, status: 'INTERRUPTED' },
+    })
   },
-};
+}

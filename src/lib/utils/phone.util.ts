@@ -27,4 +27,3 @@ export function isSamePhone(a: string, b: string): boolean {
   const normB = normalizePhone(b)
   return !!normA && !!normB && normA === normB
 }
-

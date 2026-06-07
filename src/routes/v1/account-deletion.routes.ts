@@ -1,10 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { accountDeletionRateLimits } from '../../middlewares/rateLimitAuth'
-import {
-  scheduleDeletionSchema,
-  cancelDeletionSchema,
-} from '../../models/account-deletion.schemas'
+import { scheduleDeletionSchema, cancelDeletionSchema } from '../../models/account-deletion.schemas'
 import { accountDeletionService } from '../../services/account-deletion.service'
 import { AppError } from '../../middlewares/errorHandler'
 
@@ -65,10 +62,7 @@ export default async function accountDeletionRoutes(app: FastifyInstance) {
           { fieldErrors: body.error.flatten().fieldErrors },
         )
       }
-      const result = await accountDeletionService.cancelDeletion(
-        userId,
-        body.data.securityPassword,
-      )
+      const result = await accountDeletionService.cancelDeletion(userId, body.data.securityPassword)
       return reply.status(200).send({ data: result })
     },
   )

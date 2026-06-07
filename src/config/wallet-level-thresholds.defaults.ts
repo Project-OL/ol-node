@@ -3,7 +3,7 @@
  * Level N applies when cumulativeTotal >= threshold for level N (highest matching wins).
  */
 
-export type WalletLevelThreshold = { level: number; threshold: bigint };
+export type WalletLevelThreshold = { level: number; threshold: bigint }
 
 /** WEALTH — coin ledger credits (200 levels, max Lv200). */
 export const DEFAULT_WEALTH_LEVEL_THRESHOLDS: WalletLevelThreshold[] = [
@@ -207,9 +207,9 @@ export const DEFAULT_WEALTH_LEVEL_THRESHOLDS: WalletLevelThreshold[] = [
   { level: 198, threshold: 161_920_000_000n },
   { level: 199, threshold: 166_120_000_000n },
   { level: 200, threshold: 169_980_000_000n },
-];
+]
 
-export const WEALTH_MAX_LEVEL = 200;
+export const WEALTH_MAX_LEVEL = 200
 
 /** LIVESTREAM — point ledger credits (35 levels, max Lv35). */
 export const DEFAULT_LIVESTREAM_LEVEL_THRESHOLDS: WalletLevelThreshold[] = [
@@ -248,6 +248,6 @@ export const DEFAULT_LIVESTREAM_LEVEL_THRESHOLDS: WalletLevelThreshold[] = [
   { level: 33, threshold: 128_800_000_000n },
   { level: 34, threshold: 158_500_000_000n },
   { level: 35, threshold: 198_000_000_000n },
-];
+]
 
-export const LIVESTREAM_MAX_LEVEL = 35;
+export const LIVESTREAM_MAX_LEVEL = 35

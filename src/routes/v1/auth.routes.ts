@@ -46,22 +46,19 @@ export default async function authRoutes(app: FastifyInstance) {
    * with the same deviceId/deviceName the app uses after signup (see complete-profile). No OTP on login.
    * Device id: stable UUID v4 per app install, stored in Keychain (iOS) / EncryptedSharedPreferences or Keystore (Android).
    */
-  app.post(
-    '/check-availability',
-    async (request, reply) => {
-      const parsed = checkAvailabilityBodySchema.safeParse(request.body)
-      if (!parsed.success) {
-        return reply.status(400).send({
-          code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
-          details: parsed.error.flatten().fieldErrors,
-        })
-      }
-      const { provider, identifier } = parsed.data
-      const result = await authV2Service.checkAvailability(provider, identifier)
-      return reply.send(result)
-    },
-  )
+  app.post('/check-availability', async (request, reply) => {
+    const parsed = checkAvailabilityBodySchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      })
+    }
+    const { provider, identifier } = parsed.data
+    const result = await authV2Service.checkAvailability(provider, identifier)
+    return reply.send(result)
+  })
 
   app.post(
     '/signup/send-otp',
@@ -101,45 +98,38 @@ export default async function authRoutes(app: FastifyInstance) {
     },
   )
 
-  app.post(
-    '/signup/create-password',
-    async (request, reply) => {
-      const parsed = signupCreatePasswordBodySchema.safeParse(request.body)
-      if (!parsed.success) {
-        return reply.status(400).send({
-          code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
-          details: parsed.error.flatten().fieldErrors,
-        })
-      }
-      const result = await authV2Service.signupCreatePassword(
-        parsed.data.provider,
-        parsed.data.identifier,
-        parsed.data.password,
-        request,
-      )
-      return reply.status(201).send(result)
-    },
-  )
+  app.post('/signup/create-password', async (request, reply) => {
+    const parsed = signupCreatePasswordBodySchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      })
+    }
+    const result = await authV2Service.signupCreatePassword(
+      parsed.data.provider,
+      parsed.data.identifier,
+      parsed.data.password,
+      request,
+    )
+    return reply.status(201).send(result)
+  })
 
-  app.post(
-    '/signup/complete-profile',
-    { preHandler: [authenticate] },
-    async (request, reply) => {
-      const parsed = completeProfileBodySchema.safeParse(request.body)
-      if (!parsed.success) {
-        return reply.status(400).send({
-          code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
-          details: parsed.error.flatten().fieldErrors,
-        })
-      }
-      const userId = (request as { userId?: string }).userId
-      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-      const result = await authV2Service.completeProfile(userId, parsed.data, request)
-      return reply.send(result)
-    },
-  )
+  app.post('/signup/complete-profile', { preHandler: [authenticate] }, async (request, reply) => {
+    const parsed = completeProfileBodySchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        details: parsed.error.flatten().fieldErrors,
+      })
+    }
+    const userId = (request as { userId?: string }).userId
+    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    const result = await authV2Service.completeProfile(userId, parsed.data, request)
+    return reply.send(result)
+  })
 
   /** @deprecated Use /login/password instead (no OTP on login). */
   app.post(
@@ -208,106 +198,131 @@ export default async function authRoutes(app: FastifyInstance) {
     },
   )
 
-  app.post(
-    '/refresh',
-    async (request, reply) => {
-      const parsed = refreshBodySchema.safeParse(request.body)
-      if (!parsed.success) {
-        return reply.status(400).send({
-          code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
-        })
-      }
-      const result = await authV2Service.refresh(parsed.data.refreshToken, request)
-      return reply.send(result)
-    },
-  )
-
-  /** Mint single-use ticket for `GET /ws?ticket=` (15m TTL). */
-  app.post(
-    '/ws-ticket',
-    { preHandler: [authenticate] },
-    async (request, reply) => {
-      const userId = (request as { userId?: string }).userId
-      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-      const { token, expiresInSec } = await mintWsTicket(userId)
-      return reply.send({ token, expiresInSec })
-    },
-  )
-
-  app.post(
-    '/logout',
-    { preHandler: [authenticate] },
-    async (request, reply) => {
-      const userId = (request as { userId?: string }).userId
-      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-      const payload = request.user as JwtAccessPayload
-      const result = await authV2Service.logout(userId, payload, request)
-      return reply.send(result)
-    },
-  )
-
-  app.post(
-    '/session/revoke',
-    { preHandler: [authenticate] },
-    async (request, reply) => {
-      const userId = (request as { userId?: string }).userId
-      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-      const parsed = sessionRevokeBodySchema.safeParse(request.body ?? {})
-      if (!parsed.success) {
-        return reply.status(400).send({
-          code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
-        })
-      }
-      // Prefer explicit sessionId so a stray revokeAllSessions flag does not invalidate every JWT (token_version bump).
-      let revokedAll = false
-      if (parsed.data.sessionId) {
-        await sessionService.revokeSession(parsed.data.sessionId, userId)
-      } else if (parsed.data.revokeAllSessions) {
-        await sessionService.revokeAllSessions(userId)
-        revokedAll = true
-      } else {
-        return reply.status(400).send({ code: 'INVALID_REQUEST', message: 'sessionId or revokeAllSessions required' })
-      }
-      const ip = (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || request.ip
-      await auditService.log({
-        userId,
-        actionType: 'logout',
-        actionStatus: 'success',
-        actionDetails: revokedAll ? { revokeAll: true } : { sessionId: parsed.data.sessionId },
-        ipAddress: ip,
-        userAgent: (request.headers['user-agent'] as string) ?? undefined,
+  app.post('/refresh', async (request, reply) => {
+    const parsed = refreshBodySchema.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message ?? 'Validation failed',
       })
-      return reply.send({ message: 'Session revoked successfully' })
-    },
-  )
-
-  // ----- Phase 3: Password reset -----
-  app.post('/password/reset/send-otp', { preHandler: [authRateLimits.passwordResetSendOtp] }, async (request, reply) => {
-    const parsed = passwordResetSendOtpBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message, details: parsed.error.flatten().fieldErrors })
-    const result = await authV2Service.passwordResetSendOtp(parsed.data.identifier)
+    }
+    const result = await authV2Service.refresh(parsed.data.refreshToken, request)
     return reply.send(result)
   })
+
+  /** Mint single-use ticket for `GET /ws?ticket=` (15m TTL). */
+  app.post('/ws-ticket', { preHandler: [authenticate] }, async (request, reply) => {
+    const userId = (request as { userId?: string }).userId
+    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    const { token, expiresInSec } = await mintWsTicket(userId)
+    return reply.send({ token, expiresInSec })
+  })
+
+  app.post('/logout', { preHandler: [authenticate] }, async (request, reply) => {
+    const userId = (request as { userId?: string }).userId
+    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    const payload = request.user as JwtAccessPayload
+    const result = await authV2Service.logout(userId, payload, request)
+    return reply.send(result)
+  })
+
+  app.post('/session/revoke', { preHandler: [authenticate] }, async (request, reply) => {
+    const userId = (request as { userId?: string }).userId
+    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    const parsed = sessionRevokeBodySchema.safeParse(request.body ?? {})
+    if (!parsed.success) {
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+      })
+    }
+    // Prefer explicit sessionId so a stray revokeAllSessions flag does not invalidate every JWT (token_version bump).
+    let revokedAll = false
+    if (parsed.data.sessionId) {
+      await sessionService.revokeSession(parsed.data.sessionId, userId)
+    } else if (parsed.data.revokeAllSessions) {
+      await sessionService.revokeAllSessions(userId)
+      revokedAll = true
+    } else {
+      return reply
+        .status(400)
+        .send({ code: 'INVALID_REQUEST', message: 'sessionId or revokeAllSessions required' })
+    }
+    const ip = (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || request.ip
+    await auditService.log({
+      userId,
+      actionType: 'logout',
+      actionStatus: 'success',
+      actionDetails: revokedAll ? { revokeAll: true } : { sessionId: parsed.data.sessionId },
+      ipAddress: ip,
+      userAgent: (request.headers['user-agent'] as string) ?? undefined,
+    })
+    return reply.send({ message: 'Session revoked successfully' })
+  })
+
+  // ----- Phase 3: Password reset -----
+  app.post(
+    '/password/reset/send-otp',
+    { preHandler: [authRateLimits.passwordResetSendOtp] },
+    async (request, reply) => {
+      const parsed = passwordResetSendOtpBodySchema.safeParse(request.body)
+      if (!parsed.success)
+        return reply.status(400).send({
+          code: 'INVALID_REQUEST',
+          message: parsed.error.errors[0]?.message,
+          details: parsed.error.flatten().fieldErrors,
+        })
+      const result = await authV2Service.passwordResetSendOtp(parsed.data.identifier)
+      return reply.send(result)
+    },
+  )
   app.post('/password/reset/send-otp-to-provider', async (request, reply) => {
     const parsed = passwordResetSendOtpToProviderBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message, details: parsed.error.flatten().fieldErrors })
-    const result = await authV2Service.passwordResetSendOtpToProvider(parsed.data.identifier, parsed.data.provider)
+    if (!parsed.success)
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message,
+        details: parsed.error.flatten().fieldErrors,
+      })
+    const result = await authV2Service.passwordResetSendOtpToProvider(
+      parsed.data.identifier,
+      parsed.data.provider,
+    )
     return reply.send(result)
   })
   app.post('/password/reset/verify-otp', async (request, reply) => {
     const parsed = passwordResetVerifyOtpBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message, details: parsed.error.flatten().fieldErrors })
-    const result = await authV2Service.passwordResetVerifyOtp(parsed.data.identifier, parsed.data.provider, parsed.data.otp)
+    if (!parsed.success)
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message,
+        details: parsed.error.flatten().fieldErrors,
+      })
+    const result = await authV2Service.passwordResetVerifyOtp(
+      parsed.data.identifier,
+      parsed.data.provider,
+      parsed.data.otp,
+    )
     return reply.send(result)
   })
-  app.post('/password/reset/confirm', { preHandler: [authRateLimits.passwordResetConfirm] }, async (request, reply) => {
-    const parsed = passwordResetConfirmBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message, details: parsed.error.flatten().fieldErrors })
-    const result = await authV2Service.passwordResetConfirm(parsed.data.resetToken, parsed.data.newPassword)
-    return reply.send(result)
-  })
+  app.post(
+    '/password/reset/confirm',
+    { preHandler: [authRateLimits.passwordResetConfirm] },
+    async (request, reply) => {
+      const parsed = passwordResetConfirmBodySchema.safeParse(request.body)
+      if (!parsed.success)
+        return reply.status(400).send({
+          code: 'INVALID_REQUEST',
+          message: parsed.error.errors[0]?.message,
+          details: parsed.error.flatten().fieldErrors,
+        })
+      const result = await authV2Service.passwordResetConfirm(
+        parsed.data.resetToken,
+        parsed.data.newPassword,
+      )
+      return reply.send(result)
+    },
+  )
 
   // ----- Phase 4: Settings, password set/change, devices, email/phone bind & modify -----
   app.get('/settings', { preHandler: [authenticate] }, async (request, reply) => {
@@ -328,7 +343,12 @@ export default async function authRoutes(app: FastifyInstance) {
     const userId = (request as { userId?: string }).userId
     if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
     const parsed = passwordSetBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message, details: parsed.error.flatten().fieldErrors })
+    if (!parsed.success)
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message,
+        details: parsed.error.flatten().fieldErrors,
+      })
     const result = await authV2Service.passwordSet(userId, parsed.data.password)
     return reply.send(result)
   })
@@ -336,152 +356,297 @@ export default async function authRoutes(app: FastifyInstance) {
     const userId = (request as { userId?: string }).userId
     if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
     const parsed = passwordChangeBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message, details: parsed.error.flatten().fieldErrors })
-    const result = await authV2Service.passwordChange(userId, parsed.data.currentPassword, parsed.data.newPassword, request)
+    if (!parsed.success)
+      return reply.status(400).send({
+        code: 'INVALID_REQUEST',
+        message: parsed.error.errors[0]?.message,
+        details: parsed.error.flatten().fieldErrors,
+      })
+    const result = await authV2Service.passwordChange(
+      userId,
+      parsed.data.currentPassword,
+      parsed.data.newPassword,
+      request,
+    )
     return reply.send(result)
   })
 
-  app.post('/email/bind/send-otp', { preHandler: [authenticate, authRateLimits.providerBind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = emailBindSendOtpBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message, details: parsed.error.flatten().fieldErrors })
-    const result = await authV2Service.emailBindSendOtp(userId, parsed.data.newEmail)
-    return reply.send(result)
-  })
-  app.post('/email/bind/verify-otp', { preHandler: [authenticate, authRateLimits.providerBind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = emailBindVerifyOtpBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message, details: parsed.error.flatten().fieldErrors })
-    const result = await authV2Service.emailBindVerifyOtp(userId, parsed.data.newEmail, parsed.data.otp)
-    return reply.send(result)
-  })
+  app.post(
+    '/email/bind/send-otp',
+    { preHandler: [authenticate, authRateLimits.providerBind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = emailBindSendOtpBodySchema.safeParse(request.body)
+      if (!parsed.success)
+        return reply.status(400).send({
+          code: 'INVALID_REQUEST',
+          message: parsed.error.errors[0]?.message,
+          details: parsed.error.flatten().fieldErrors,
+        })
+      const result = await authV2Service.emailBindSendOtp(userId, parsed.data.newEmail)
+      return reply.send(result)
+    },
+  )
+  app.post(
+    '/email/bind/verify-otp',
+    { preHandler: [authenticate, authRateLimits.providerBind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = emailBindVerifyOtpBodySchema.safeParse(request.body)
+      if (!parsed.success)
+        return reply.status(400).send({
+          code: 'INVALID_REQUEST',
+          message: parsed.error.errors[0]?.message,
+          details: parsed.error.flatten().fieldErrors,
+        })
+      const result = await authV2Service.emailBindVerifyOtp(
+        userId,
+        parsed.data.newEmail,
+        parsed.data.otp,
+      )
+      return reply.send(result)
+    },
+  )
   app.post('/email/modify/verify-old', { preHandler: [authenticate] }, async (request, reply) => {
     const userId = (request as { userId?: string }).userId
     if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
     const parsed = emailModifyVerifyOldBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+    if (!parsed.success)
+      return reply
+        .status(400)
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
     const result = await authV2Service.emailModifyVerifyOld(userId, parsed.data.currentEmail)
     return reply.send(result)
   })
-  app.post('/email/modify/verify-old-otp', { preHandler: [authenticate] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = emailModifyVerifyOldOtpBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.emailModifyVerifyOldOtp(userId, parsed.data.currentEmail, parsed.data.otp)
-    return reply.send(result)
-  })
+  app.post(
+    '/email/modify/verify-old-otp',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = emailModifyVerifyOldOtpBodySchema.safeParse(request.body)
+      if (!parsed.success)
+        return reply
+          .status(400)
+          .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+      const result = await authV2Service.emailModifyVerifyOldOtp(
+        userId,
+        parsed.data.currentEmail,
+        parsed.data.otp,
+      )
+      return reply.send(result)
+    },
+  )
   app.post('/email/modify/verify-new', { preHandler: [authenticate] }, async (request, reply) => {
     const userId = (request as { userId?: string }).userId
     if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
     const parsed = emailModifyVerifyNewBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.emailModifyVerifyNew(userId, parsed.data.newEmail, parsed.data.otp)
+    if (!parsed.success)
+      return reply
+        .status(400)
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+    const result = await authV2Service.emailModifyVerifyNew(
+      userId,
+      parsed.data.newEmail,
+      parsed.data.otp,
+    )
     return reply.send(result)
   })
 
-  app.post('/phone/bind/send-otp', { preHandler: [authenticate, authRateLimits.providerBind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = phoneBindSendOtpBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.phoneBindSendOtp(userId, parsed.data.newPhone)
-    return reply.send(result)
-  })
-  app.post('/phone/bind/verify-otp', { preHandler: [authenticate, authRateLimits.providerBind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = phoneBindVerifyOtpBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.phoneBindVerifyOtp(userId, parsed.data.newPhone, parsed.data.otp)
-    return reply.send(result)
-  })
+  app.post(
+    '/phone/bind/send-otp',
+    { preHandler: [authenticate, authRateLimits.providerBind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = phoneBindSendOtpBodySchema.safeParse(request.body)
+      if (!parsed.success)
+        return reply
+          .status(400)
+          .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+      const result = await authV2Service.phoneBindSendOtp(userId, parsed.data.newPhone)
+      return reply.send(result)
+    },
+  )
+  app.post(
+    '/phone/bind/verify-otp',
+    { preHandler: [authenticate, authRateLimits.providerBind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = phoneBindVerifyOtpBodySchema.safeParse(request.body)
+      if (!parsed.success)
+        return reply
+          .status(400)
+          .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+      const result = await authV2Service.phoneBindVerifyOtp(
+        userId,
+        parsed.data.newPhone,
+        parsed.data.otp,
+      )
+      return reply.send(result)
+    },
+  )
   app.post('/phone/modify/verify-old', { preHandler: [authenticate] }, async (request, reply) => {
     const userId = (request as { userId?: string }).userId
     if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
     const parsed = phoneModifyVerifyOldBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+    if (!parsed.success)
+      return reply
+        .status(400)
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
     const result = await authV2Service.phoneModifyVerifyOld(userId, parsed.data.currentPhone)
     return reply.send(result)
   })
-  app.post('/phone/modify/verify-old-otp', { preHandler: [authenticate] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = phoneModifyVerifyOldOtpBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.phoneModifyVerifyOldOtp(userId, parsed.data.currentPhone, parsed.data.otp)
-    return reply.send(result)
-  })
+  app.post(
+    '/phone/modify/verify-old-otp',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = phoneModifyVerifyOldOtpBodySchema.safeParse(request.body)
+      if (!parsed.success)
+        return reply
+          .status(400)
+          .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+      const result = await authV2Service.phoneModifyVerifyOldOtp(
+        userId,
+        parsed.data.currentPhone,
+        parsed.data.otp,
+      )
+      return reply.send(result)
+    },
+  )
   app.post('/phone/modify/verify-new', { preHandler: [authenticate] }, async (request, reply) => {
     const userId = (request as { userId?: string }).userId
     if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
     const parsed = phoneModifyVerifyNewBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.phoneModifyVerifyNew(userId, parsed.data.newPhone, parsed.data.otp)
+    if (!parsed.success)
+      return reply
+        .status(400)
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+    const result = await authV2Service.phoneModifyVerifyNew(
+      userId,
+      parsed.data.newPhone,
+      parsed.data.otp,
+    )
     return reply.send(result)
   })
 
   // ----- Phase 2 & 5: OAuth login + bind/unbind -----
   app.post('/oauth/google', async (request, reply) => {
     const parsed = oauthGoogleBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.oauthGoogle(parsed.data.idToken, parsed.data.deviceName, parsed.data.deviceId, request)
+    if (!parsed.success)
+      return reply
+        .status(400)
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+    const result = await authV2Service.oauthGoogle(
+      parsed.data.idToken,
+      parsed.data.deviceName,
+      parsed.data.deviceId,
+      request,
+    )
     return reply.send(result)
   })
   app.post('/oauth/facebook', async (request, reply) => {
     const parsed = oauthFacebookBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.oauthFacebook(parsed.data.accessToken, parsed.data.deviceName, parsed.data.deviceId, request)
+    if (!parsed.success)
+      return reply
+        .status(400)
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+    const result = await authV2Service.oauthFacebook(
+      parsed.data.accessToken,
+      parsed.data.deviceName,
+      parsed.data.deviceId,
+      request,
+    )
     return reply.send(result)
   })
   app.post('/oauth/apple', async (request, reply) => {
     const parsed = oauthAppleBodySchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
-    const result = await authV2Service.oauthApple(parsed.data.identityToken, parsed.data.deviceName, parsed.data.deviceId, request)
+    if (!parsed.success)
+      return reply
+        .status(400)
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+    const result = await authV2Service.oauthApple(
+      parsed.data.identityToken,
+      parsed.data.deviceName,
+      parsed.data.deviceId,
+      request,
+    )
     return reply.send(result)
   })
-  app.post('/google/bind', { preHandler: [authenticate, authRateLimits.providerBind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = z.object({ idToken: z.string().min(1) }).safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: 'idToken required' })
-    const result = await authV2Service.googleBind(userId, parsed.data.idToken)
-    return reply.send(result)
-  })
-  app.post('/google/unbind', { preHandler: [authenticate, authRateLimits.providerUnbind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const result = await authV2Service.googleUnbind(userId)
-    return reply.send(result)
-  })
-  app.post('/facebook/bind', { preHandler: [authenticate, authRateLimits.providerBind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = z.object({ accessToken: z.string().min(1) }).safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: 'accessToken required' })
-    const result = await authV2Service.facebookBind(userId, parsed.data.accessToken)
-    return reply.send(result)
-  })
-  app.post('/facebook/unbind', { preHandler: [authenticate, authRateLimits.providerUnbind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const result = await authV2Service.facebookUnbind(userId)
-    return reply.send(result)
-  })
-  app.post('/apple/bind', { preHandler: [authenticate, authRateLimits.providerBind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const parsed = z.object({ identityToken: z.string().min(1) }).safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ code: 'INVALID_REQUEST', message: 'identityToken required' })
-    const result = await authV2Service.appleBind(userId, parsed.data.identityToken)
-    return reply.send(result)
-  })
-  app.post('/apple/unbind', { preHandler: [authenticate, authRateLimits.providerUnbind] }, async (request, reply) => {
-    const userId = (request as { userId?: string }).userId
-    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
-    const result = await authV2Service.appleUnbind(userId)
-    return reply.send(result)
-  })
+  app.post(
+    '/google/bind',
+    { preHandler: [authenticate, authRateLimits.providerBind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = z.object({ idToken: z.string().min(1) }).safeParse(request.body)
+      if (!parsed.success)
+        return reply.status(400).send({ code: 'INVALID_REQUEST', message: 'idToken required' })
+      const result = await authV2Service.googleBind(userId, parsed.data.idToken)
+      return reply.send(result)
+    },
+  )
+  app.post(
+    '/google/unbind',
+    { preHandler: [authenticate, authRateLimits.providerUnbind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const result = await authV2Service.googleUnbind(userId)
+      return reply.send(result)
+    },
+  )
+  app.post(
+    '/facebook/bind',
+    { preHandler: [authenticate, authRateLimits.providerBind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = z.object({ accessToken: z.string().min(1) }).safeParse(request.body)
+      if (!parsed.success)
+        return reply.status(400).send({ code: 'INVALID_REQUEST', message: 'accessToken required' })
+      const result = await authV2Service.facebookBind(userId, parsed.data.accessToken)
+      return reply.send(result)
+    },
+  )
+  app.post(
+    '/facebook/unbind',
+    { preHandler: [authenticate, authRateLimits.providerUnbind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const result = await authV2Service.facebookUnbind(userId)
+      return reply.send(result)
+    },
+  )
+  app.post(
+    '/apple/bind',
+    { preHandler: [authenticate, authRateLimits.providerBind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const parsed = z.object({ identityToken: z.string().min(1) }).safeParse(request.body)
+      if (!parsed.success)
+        return reply
+          .status(400)
+          .send({ code: 'INVALID_REQUEST', message: 'identityToken required' })
+      const result = await authV2Service.appleBind(userId, parsed.data.identityToken)
+      return reply.send(result)
+    },
+  )
+  app.post(
+    '/apple/unbind',
+    { preHandler: [authenticate, authRateLimits.providerUnbind] },
+    async (request, reply) => {
+      const userId = (request as { userId?: string }).userId
+      if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+      const result = await authV2Service.appleUnbind(userId)
+      return reply.send(result)
+    },
+  )
 }

@@ -41,7 +41,10 @@ function resolveQualityFilter(value: string): QualityFilter {
   }
 }
 
-async function withTimeout<T>(timeoutMs: number, run: (abortSignal: AbortSignal) => Promise<T>): Promise<T> {
+async function withTimeout<T>(
+  timeoutMs: number,
+  run: (abortSignal: AbortSignal) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -88,10 +91,7 @@ export async function detectFacesQuality(imageBytes: Uint8Array) {
   )
 }
 
-export async function indexUserFace(params: {
-  userId: string
-  imageBytes: Uint8Array
-}) {
+export async function indexUserFace(params: { userId: string; imageBytes: Uint8Array }) {
   // Rekognition rejects some characters in ExternalImageId (e.g. ':').
   // Keep it stable but sanitize to a safe subset.
   const externalImageId = params.userId.replace(/[^A-Za-z0-9_.-]/g, '_')
@@ -134,17 +134,19 @@ export async function searchFaceInCollection(params: {
   timeoutMs?: number
 }) {
   try {
-    const result = await withTimeout(params.timeoutMs ?? env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
-      rekognitionClient.send(
-        new SearchFacesByImageCommand({
-          CollectionId: params.collectionId,
-          Image: { Bytes: params.imageBytes },
-          MaxFaces: params.maxFaces ?? 1,
-          FaceMatchThreshold: params.threshold,
-          QualityFilter: QualityFilter.AUTO,
-        }),
-        { abortSignal },
-      ),
+    const result = await withTimeout(
+      params.timeoutMs ?? env.FACE_VERIFY_TIMEOUT_MS,
+      async (abortSignal) =>
+        rekognitionClient.send(
+          new SearchFacesByImageCommand({
+            CollectionId: params.collectionId,
+            Image: { Bytes: params.imageBytes },
+            MaxFaces: params.maxFaces ?? 1,
+            FaceMatchThreshold: params.threshold,
+            QualityFilter: QualityFilter.AUTO,
+          }),
+          { abortSignal },
+        ),
     )
     const top = result.FaceMatches?.[0]
     if (!top?.Face?.FaceId || top.Similarity == null) {
@@ -224,10 +226,8 @@ export async function createFaceLivenessSession(params: {
 export async function getFaceLivenessSessionResults(sessionId: string) {
   const timeoutMs = Math.max(env.FACE_VERIFY_TIMEOUT_MS, 15_000)
   return withTimeout(timeoutMs, async (abortSignal) =>
-    rekognitionClient.send(
-      new GetFaceLivenessSessionResultsCommand({ SessionId: sessionId }),
-      { abortSignal },
-    ),
+    rekognitionClient.send(new GetFaceLivenessSessionResultsCommand({ SessionId: sessionId }), {
+      abortSignal,
+    }),
   )
 }
-

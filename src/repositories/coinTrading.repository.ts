@@ -1,42 +1,45 @@
-import { Prisma } from "@prisma/client";
-import { prismaRead } from "../config/database";
-import { walletRepository } from "./wallet.repository";
-import { WalletCurrencyType } from "@prisma/client";
-import { coinLedgerRepository } from "./coin-ledger.repository";
+import { Prisma } from '@prisma/client'
+import { prismaRead } from '../config/database'
+import { walletRepository } from './wallet.repository'
+import { WalletCurrencyType } from '@prisma/client'
+import { coinLedgerRepository } from './coin-ledger.repository'
 
 const transferUserSelect = {
   id: true,
   username: true,
   avatarUrl: true,
   publicId: true,
-} as const;
+} as const
 
 export const coinTradingRepository = {
   getTopupRates() {
     return prismaRead.coinTradingTopupRate.findMany({
       where: { isActive: true },
-      orderBy: { sortOrder: "asc" },
-    });
+      orderBy: { sortOrder: 'asc' },
+    })
   },
   getTopupPackages() {
     return prismaRead.coinTradingTopupPackage.findMany({
       where: { isActive: true },
-      orderBy: { sortOrder: "asc" },
-    });
+      orderBy: { sortOrder: 'asc' },
+    })
   },
   getTopupPackageById(id: string) {
     return prismaRead.coinTradingTopupPackage.findFirst({
       where: { id, isActive: true },
-    });
+    })
   },
   getExchangeRates() {
     return prismaRead.agentExchangeRate.findMany({
       where: { isActive: true },
-      orderBy: { sortOrder: "asc" },
-    });
+      orderBy: { sortOrder: 'asc' },
+    })
   },
-  createTopupOrder(data: Prisma.CoinTradingTopupOrderUncheckedCreateInput, tx: Prisma.TransactionClient) {
-    return tx.coinTradingTopupOrder.create({ data });
+  createTopupOrder(
+    data: Prisma.CoinTradingTopupOrderUncheckedCreateInput,
+    tx: Prisma.TransactionClient,
+  ) {
+    return tx.coinTradingTopupOrder.create({ data })
   },
   updateTopupOrder(
     data: { id: string; epayRef?: string; status?: string; ledgerEntryId?: string },
@@ -45,87 +48,94 @@ export const coinTradingRepository = {
     return tx.coinTradingTopupOrder.update({
       where: { id: data.id },
       data: { epayRef: data.epayRef, status: data.status, ledgerEntryId: data.ledgerEntryId },
-    });
+    })
   },
   getTopupOrderById(id: string) {
-    return prismaRead.coinTradingTopupOrder.findUnique({ where: { id } });
+    return prismaRead.coinTradingTopupOrder.findUnique({ where: { id } })
   },
   getTopupOrderByEpayRef(ref: string) {
-    return prismaRead.coinTradingTopupOrder.findUnique({ where: { epayRef: ref } });
+    return prismaRead.coinTradingTopupOrder.findUnique({ where: { epayRef: ref } })
   },
-  createTransfer(data: Prisma.CoinTradingTransferUncheckedCreateInput, tx: Prisma.TransactionClient) {
-    return tx.coinTradingTransfer.create({ data });
+  createTransfer(
+    data: Prisma.CoinTradingTransferUncheckedCreateInput,
+    tx: Prisma.TransactionClient,
+  ) {
+    return tx.coinTradingTransfer.create({ data })
   },
-  async reverseTransfer(params: { id: string; reversedByUserId: string; reason: string }, tx: Prisma.TransactionClient) {
+  async reverseTransfer(
+    params: { id: string; reversedByUserId: string; reason: string },
+    tx: Prisma.TransactionClient,
+  ) {
     return tx.coinTradingTransfer.update({
       where: { id: params.id },
-      data: { reversedAt: new Date(), reversedByUserId: params.reversedByUserId, reverseReason: params.reason },
-    });
+      data: {
+        reversedAt: new Date(),
+        reversedByUserId: params.reversedByUserId,
+        reverseReason: params.reason,
+      },
+    })
   },
   getTransferById(id: string) {
-    return prismaRead.coinTradingTransfer.findUnique({ where: { id } });
+    return prismaRead.coinTradingTransfer.findUnique({ where: { id } })
   },
   listTopupOrders(agentUserId: string, opts: { limit: number; cursor?: string }) {
     return prismaRead.coinTradingTopupOrder.findMany({
       where: { agentUserId, ...(opts.cursor ? { id: { lt: opts.cursor } } : {}) },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
       take: opts.limit + 1,
-    });
+    })
   },
   listTransfers(params: {
-    userId: string;
-    role: "sender" | "recipient" | "all";
-    direction?: "credit" | "debit";
-    fromDate?: Date;
-    toDate?: Date;
-    limit: number;
-    cursor?: string;
+    userId: string
+    role: 'sender' | 'recipient' | 'all'
+    direction?: 'credit' | 'debit'
+    fromDate?: Date
+    toDate?: Date
+    limit: number
+    cursor?: string
   }) {
     const roleFilter: Prisma.CoinTradingTransferWhereInput =
-      params.role === "sender"
+      params.role === 'sender'
         ? { senderAgentUserId: params.userId }
-        : params.role === "recipient"
+        : params.role === 'recipient'
           ? { recipientUserId: params.userId }
           : {
-              OR: [
-                { senderAgentUserId: params.userId },
-                { recipientUserId: params.userId },
-              ],
-            };
+              OR: [{ senderAgentUserId: params.userId }, { recipientUserId: params.userId }],
+            }
 
-    const and: Prisma.CoinTradingTransferWhereInput[] = [roleFilter];
-    if (params.direction === "debit") {
-      and.push({ senderAgentUserId: params.userId });
+    const and: Prisma.CoinTradingTransferWhereInput[] = [roleFilter]
+    if (params.direction === 'debit') {
+      and.push({ senderAgentUserId: params.userId })
     }
-    if (params.direction === "credit") {
-      and.push({ recipientUserId: params.userId });
+    if (params.direction === 'credit') {
+      and.push({ recipientUserId: params.userId })
     }
     if (params.fromDate) {
-      and.push({ createdAt: { gte: params.fromDate } });
+      and.push({ createdAt: { gte: params.fromDate } })
     }
     if (params.toDate) {
-      and.push({ createdAt: { lte: params.toDate } });
+      and.push({ createdAt: { lte: params.toDate } })
     }
     if (params.cursor) {
-      and.push({ id: { lt: params.cursor } });
+      and.push({ id: { lt: params.cursor } })
     }
 
     return prismaRead.coinTradingTransfer.findMany({
       where: { AND: and },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
       take: params.limit + 1,
       include: {
         senderAgent: { select: transferUserSelect },
         recipient: { select: transferUserSelect },
       },
-    });
+    })
   },
   async getRecentTransactionUsers(agencyUserId: string, limit = 10) {
     const rows = await prismaRead.$queryRaw<
       Array<{
-        counterpartyId: string;
-        lastTransactionAt: Date;
-        direction: "sent" | "received";
+        counterpartyId: string
+        lastTransactionAt: Date
+        direction: 'sent' | 'received'
       }>
     >`
       SELECT
@@ -149,21 +159,21 @@ export const coinTradingRepository = {
       GROUP BY counterparty_id
       ORDER BY "lastTransactionAt" DESC
       LIMIT ${limit}
-    `;
+    `
 
-    if (rows.length === 0) return [];
+    if (rows.length === 0) return []
 
-    const userIds = rows.map((r) => r.counterpartyId);
+    const userIds = rows.map((r) => r.counterpartyId)
     const users = await prismaRead.user.findMany({
       where: { id: { in: userIds } },
       select: transferUserSelect,
-    });
-    const userMap = new Map(users.map((u) => [u.id, u]));
+    })
+    const userMap = new Map(users.map((u) => [u.id, u]))
 
     return rows
       .map((row) => {
-        const user = userMap.get(row.counterpartyId);
-        if (!user) return null;
+        const user = userMap.get(row.counterpartyId)
+        if (!user) return null
         return {
           id: user.id,
           name: user.username,
@@ -171,12 +181,12 @@ export const coinTradingRepository = {
           publicId: user.publicId.toString(),
           lastTransactionAt: row.lastTransactionAt,
           lastDirection: row.direction,
-        };
+        }
       })
-      .filter((r): r is NonNullable<typeof r> => r != null);
+      .filter((r): r is NonNullable<typeof r> => r != null)
   },
   async getTradingBalance(userId: string) {
-    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN);
-    return coinLedgerRepository.computeBalance(wallet.id);
+    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN)
+    return coinLedgerRepository.computeBalance(wallet.id)
   },
-};
+}

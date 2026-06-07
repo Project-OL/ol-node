@@ -262,9 +262,7 @@ export const sessionRepository = {
       select: { id: true },
     })
     if (sessions.length <= MAX_SESSIONS_PER_USER) return
-    const toRevokeIds = sessions
-      .slice(0, sessions.length - MAX_SESSIONS_PER_USER)
-      .map((s) => s.id)
+    const toRevokeIds = sessions.slice(0, sessions.length - MAX_SESSIONS_PER_USER).map((s) => s.id)
     await prisma.session.updateMany({
       where: { id: { in: toRevokeIds } },
       data: { isActive: false, isRevoked: true, revokedAt: new Date() },

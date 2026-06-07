@@ -93,10 +93,7 @@ function isPairedSequence(s: string): boolean {
     if (s[2 * i] !== s[2 * i + 1]) return false
   }
   const digits = Array.from({ length: pairCount }, (_, i) => s[2 * i]!).join('')
-  return (
-    isAscendingRun(digits, pairCount) ||
-    isDescendingRun(digits, pairCount)
-  )
+  return isAscendingRun(digits, pairCount) || isDescendingRun(digits, pairCount)
 }
 
 function endsWithNSame(s: string, n: number): boolean {
@@ -178,8 +175,7 @@ const VIP_RULES: ReadonlyArray<{
   {
     name: 'run-of-4',
     tier: VipTier.BRONZE,
-    check: (d) =>
-      hasRunOfN(d, 4) && !endsWithNSame(d, 4) && !startsWithNSame(d, 4),
+    check: (d) => hasRunOfN(d, 4) && !endsWithNSame(d, 4) && !startsWithNSame(d, 4),
   },
   {
     name: 'ends-with-3-same',

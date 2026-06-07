@@ -1,10 +1,10 @@
-import { Queue } from "bullmq";
-import { redisClient } from "../config/redis";
-import { LIVE_SESSION_JOBS, LIVE_SESSION_QUEUE } from "./live-session.constants";
+import { Queue } from 'bullmq'
+import { redisClient } from '../config/redis'
+import { LIVE_SESSION_JOBS, LIVE_SESSION_QUEUE } from './live-session.constants'
 
 export const liveSessionQueue = new Queue(LIVE_SESSION_QUEUE, {
   connection: redisClient,
-});
+})
 
 /**
  * Enqueues a delayed safety-net job for a session that just started.
@@ -24,5 +24,5 @@ export async function enqueueLiveSessionSafetyNet(
       removeOnComplete: true,
       removeOnFail: 50,
     },
-  );
+  )
 }

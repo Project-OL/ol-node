@@ -4,12 +4,12 @@
  */
 
 export type TradingTopupPackageDef = {
-  tradingCoins: bigint;
-  priceCents: number;
-  coinsPerUsd: number;
-  sortOrder: number;
-  label?: string;
-};
+  tradingCoins: bigint
+  priceCents: number
+  coinsPerUsd: number
+  sortOrder: number
+  label?: string
+}
 
 export const DEFAULT_COIN_TRADING_TOPUP_PACKAGES: TradingTopupPackageDef[] = [
   { tradingCoins: 920_000n, priceCents: 10_000, coinsPerUsd: 9200, sortOrder: 1 },
@@ -18,4 +18,4 @@ export const DEFAULT_COIN_TRADING_TOPUP_PACKAGES: TradingTopupPackageDef[] = [
   { tradingCoins: 19_800_000n, priceCents: 200_000, coinsPerUsd: 9900, sortOrder: 4 },
   { tradingCoins: 29_700_000n, priceCents: 300_000, coinsPerUsd: 9900, sortOrder: 5 },
   { tradingCoins: 44_550_000n, priceCents: 450_000, coinsPerUsd: 9900, sortOrder: 6 },
-];
+]

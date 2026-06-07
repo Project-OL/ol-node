@@ -45,9 +45,14 @@ function extractIp(ctx: RequestCtx): string | undefined {
 async function applyRateLimit(key: string, max: number, windowSec: number) {
   const count = Number(await redisClient.eval(RATE_LIMIT_LUA, 1, key, String(windowSec)))
   if (count > max) {
-    throw new AppError(429, `Too many attempts. Try again in ${windowSec} seconds.`, 'RATE_LIMITED', {
-      retryAfter: windowSec,
-    })
+    throw new AppError(
+      429,
+      `Too many attempts. Try again in ${windowSec} seconds.`,
+      'RATE_LIMITED',
+      {
+        retryAfter: windowSec,
+      },
+    )
   }
 }
 
@@ -58,7 +63,9 @@ function validateUserOwnedS3Key(type: 'register' | 'verify', userId: string, s3K
   }
 }
 
-function parseQuality(face: NonNullable<Awaited<ReturnType<typeof detectFacesQuality>>['FaceDetails']>[number]) {
+function parseQuality(
+  face: NonNullable<Awaited<ReturnType<typeof detectFacesQuality>>['FaceDetails']>[number],
+) {
   const brightness = face.Quality?.Brightness ?? 0
   const sharpness = face.Quality?.Sharpness ?? 0
   const confidence = face.Confidence ?? 0
@@ -435,4 +442,3 @@ export const faceVerificationService = {
     }
   },
 }
-

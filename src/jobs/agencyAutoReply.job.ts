@@ -1,14 +1,14 @@
-import type { Job } from "bullmq";
-import { prismaRead } from "../config/database";
-import { messagingService } from "../services/messaging.service";
-import type { AutoReplyJobData } from "../queues/agencyAutoReply.queue";
-import { rootLogger } from "../utils/rootLogger";
-import { randomUUID } from "crypto";
+import type { Job } from 'bullmq'
+import { prismaRead } from '../config/database'
+import { messagingService } from '../services/messaging.service'
+import type { AutoReplyJobData } from '../queues/agencyAutoReply.queue'
+import { rootLogger } from '../utils/rootLogger'
+import { randomUUID } from 'crypto'
 
-const log = rootLogger.child({ module: "agency-auto-reply" });
+const log = rootLogger.child({ module: 'agency-auto-reply' })
 
 export async function processAgencyAutoReplyJob(job: Job<AutoReplyJobData>): Promise<void> {
-  const { conversationId, agencyUserId, autoReplyText, triggerMessageSeq } = job.data;
+  const { conversationId, agencyUserId, autoReplyText, triggerMessageSeq } = job.data
 
   const existing = await prismaRead.message.findFirst({
     where: {
@@ -18,10 +18,10 @@ export async function processAgencyAutoReplyJob(job: Job<AutoReplyJobData>): Pro
       seq: { gte: BigInt(triggerMessageSeq) },
     },
     select: { id: true },
-  });
+  })
   if (existing) {
-    log.info({ jobId: job.id }, "auto-reply already sent, skipping");
-    return;
+    log.info({ jobId: job.id }, 'auto-reply already sent, skipping')
+    return
   }
 
   await messagingService.sendAutoReply({
@@ -29,7 +29,7 @@ export async function processAgencyAutoReplyJob(job: Job<AutoReplyJobData>): Pro
     senderUserId: agencyUserId,
     content: autoReplyText,
     clientMessageId: randomUUID(),
-  });
+  })
 
-  log.info({ conversationId, agencyUserId, seq: triggerMessageSeq }, "auto-reply sent");
+  log.info({ conversationId, agencyUserId, seq: triggerMessageSeq }, 'auto-reply sent')
 }

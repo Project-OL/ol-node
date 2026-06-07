@@ -56,11 +56,6 @@ export const presenceService = {
 
   /** PING: refresh `online:{userId}` so DM / presence stay warm. */
   async refreshOnlineHeartbeat(userId: string): Promise<void> {
-    await redisClient.set(
-      RedisKeys.userOnlineStatus(userId),
-      '1',
-      'EX',
-      PRESENCE_HEARTBEAT_TTL_SEC,
-    )
+    await redisClient.set(RedisKeys.userOnlineStatus(userId), '1', 'EX', PRESENCE_HEARTBEAT_TTL_SEC)
   },
 }

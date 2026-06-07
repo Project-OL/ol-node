@@ -44,7 +44,12 @@ async function writeSessionRedis(sessionId: string, blob: SessionRedisBlob): Pro
 }
 
 async function cacheUserTokenVersion(userId: string, version: number): Promise<void> {
-  await redisClient.set(RedisKeys.userTokenVersion(userId), String(version), 'EX', USER_TV_CACHE_SEC)
+  await redisClient.set(
+    RedisKeys.userTokenVersion(userId),
+    String(version),
+    'EX',
+    USER_TV_CACHE_SEC,
+  )
 }
 
 export async function invalidateUserTokenVersionCache(userId: string): Promise<void> {
@@ -129,10 +134,7 @@ export const sessionService = {
     const fpHash = computeDeviceBindingHash(params.deviceId, params.userAgent, params.ipAddress)
 
     const prior = await deviceRegistryRepository.findByUserAndDevice(params.userId, params.deviceId)
-    if (
-      prior?.deviceFingerprintHash != null &&
-      prior.deviceFingerprintHash !== fpHash
-    ) {
+    if (prior?.deviceFingerprintHash != null && prior.deviceFingerprintHash !== fpHash) {
       await auditService.log({
         userId: params.userId,
         actionType: 'SUSPICIOUS_DEVICE_BINDING',
@@ -147,7 +149,9 @@ export const sessionService = {
 
     const expiresAt = new Date(Date.now() + REFRESH_DAYS * 24 * 60 * 60 * 1000)
 
-    let loginOutcome: Awaited<ReturnType<typeof sessionRepository.loginCreateOrReuseSession>> | undefined
+    let loginOutcome:
+      | Awaited<ReturnType<typeof sessionRepository.loginCreateOrReuseSession>>
+      | undefined
 
     for (let attempt = 0; attempt < LOGIN_TX_MAX_ATTEMPTS; attempt++) {
       const newSessionId = crypto.randomUUID()
@@ -365,7 +369,8 @@ export const sessionService = {
   async revokeSession(sessionId: string, userId: string) {
     const session = await sessionRepository.findById(sessionId)
     if (!session) throw new AppError(404, 'Session not found', 'SESSION_NOT_FOUND')
-    if (session.userId !== userId) throw new AppError(403, 'Cannot revoke another user session', 'FORBIDDEN')
+    if (session.userId !== userId)
+      throw new AppError(403, 'Cannot revoke another user session', 'FORBIDDEN')
     await sessionRepository.revokeById(sessionId)
     await redisClient.del(RedisKeys.session(sessionId))
     authSessionMetrics.bumpRevoke()

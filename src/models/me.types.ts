@@ -68,7 +68,7 @@ export interface MeResponseDto extends MeProfileCache {
   richTier: RichTierMeDto
   /** Agency (agent/host) overlay; Phase 1 — commission logic not yet wired. */
   agency: {
-    role: 'AGENT' | 'HOST' | 'NONE',
+    role: 'AGENT' | 'HOST' | 'NONE'
     asAgent?: {
       agencyPublicId: string
       displayName: string
@@ -77,14 +77,14 @@ export interface MeResponseDto extends MeProfileCache {
       currentLevel: string
       payrollEnabled: boolean
       paused: boolean
-    },
+    }
     asHost?: {
       agencyPublicId: string
       agencyDisplayName: string
       avatarUrl: string | null
       joinedAt: string
       pendingLeaveApplication?: { id: string; autoApproveAt: string }
-    },
+    }
   }
   /** Paid Diamond/SVIP membership (separate from VIP public ID / `isVipActive`). */
   vipMembership: {

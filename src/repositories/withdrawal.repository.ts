@@ -1,43 +1,39 @@
-import type { Prisma, WithdrawalStatus } from "@prisma/client";
-import { prisma, prismaRead } from "../config/database";
+import type { Prisma, WithdrawalStatus } from '@prisma/client'
+import { prisma, prismaRead } from '../config/database'
 
-const PENDING_STATUSES: WithdrawalStatus[] = [
-  "PENDING",
-  "PROCESSING",
-  "PENDING_PLATFORM",
-];
+const PENDING_STATUSES: WithdrawalStatus[] = ['PENDING', 'PROCESSING', 'PENDING_PLATFORM']
 
 /** Open (escrow-locked) statuses for v2 escrow accounting. */
-const ESCROWED_STATUSES: WithdrawalStatus[] = ["PENDING", "PENDING_PLATFORM"];
+const ESCROWED_STATUSES: WithdrawalStatus[] = ['PENDING', 'PENDING_PLATFORM']
 
 export type WithdrawalDetailRow = Prisma.WithdrawalGetPayload<{
   include: {
-    paymentMethod: true;
+    paymentMethod: true
     payrollAssignments: {
       include: {
-        agencyUser: { select: { username: true; firstName: true; lastName: true } };
-      };
-    };
-  };
-}>;
+        agencyUser: { select: { username: true; firstName: true; lastName: true } }
+      }
+    }
+  }
+}>
 
 export const withdrawalRepository = {
   async create(
     data: {
-      id: string;
-      walletId: string;
-      userId: string;
-      amountPoints: bigint;
-      amountFiatCents?: bigint | null;
-      currency?: string;
-      status: WithdrawalStatus;
-      paymentMethodId: string;
-      hostPayoutUsd: Prisma.Decimal;
-      platformFeePoints: bigint;
-      agentRewardPoints: bigint;
-      idempotencyKey: string;
-      notes?: string | null;
-      withdrawalVersion?: number;
+      id: string
+      walletId: string
+      userId: string
+      amountPoints: bigint
+      amountFiatCents?: bigint | null
+      currency?: string
+      status: WithdrawalStatus
+      paymentMethodId: string
+      hostPayoutUsd: Prisma.Decimal
+      platformFeePoints: bigint
+      agentRewardPoints: bigint
+      idempotencyKey: string
+      notes?: string | null
+      withdrawalVersion?: number
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -48,7 +44,7 @@ export const withdrawalRepository = {
         userId: data.userId,
         amountPoints: data.amountPoints,
         amountFiatCents: data.amountFiatCents ?? undefined,
-        currency: data.currency ?? "USD",
+        currency: data.currency ?? 'USD',
         status: data.status,
         paymentMethodId: data.paymentMethodId,
         hostPayoutUsd: data.hostPayoutUsd,
@@ -58,17 +54,17 @@ export const withdrawalRepository = {
         notes: data.notes ?? null,
         withdrawalVersion: data.withdrawalVersion ?? 2,
       },
-    });
+    })
   },
 
   getById(id: string) {
-    return prismaRead.withdrawal.findUnique({ where: { id } });
+    return prismaRead.withdrawal.findUnique({ where: { id } })
   },
 
   getByIdForUser(id: string, userId: string) {
     return prismaRead.withdrawal.findFirst({
       where: { id, userId },
-    });
+    })
   },
 
   findWithdrawalDetailForHost(
@@ -80,7 +76,7 @@ export const withdrawalRepository = {
       include: {
         paymentMethod: true,
         payrollAssignments: {
-          orderBy: { createdAt: "desc" },
+          orderBy: { createdAt: 'desc' },
           take: 1,
           include: {
             agencyUser: {
@@ -89,7 +85,7 @@ export const withdrawalRepository = {
           },
         },
       },
-    });
+    })
   },
 
   countActiveWithdrawalsForUser(userId: string): Promise<number> {
@@ -98,17 +94,14 @@ export const withdrawalRepository = {
         userId,
         status: { in: PENDING_STATUSES },
       },
-    });
+    })
   },
 
-  async listForUser(
-    userId: string,
-    opts: { limit: number; cursor?: string },
-  ) {
-    const take = opts.limit + 1;
+  async listForUser(userId: string, opts: { limit: number; cursor?: string }) {
+    const take = opts.limit + 1
     const rows = await prismaRead.withdrawal.findMany({
       where: { userId },
-      orderBy: { requestedAt: "desc" },
+      orderBy: { requestedAt: 'desc' },
       take,
       ...(opts.cursor
         ? {
@@ -116,18 +109,18 @@ export const withdrawalRepository = {
             skip: 1,
           }
         : {}),
-    });
-    return rows;
+    })
+    return rows
   },
 
   async updateStatus(
     data: {
-      id: string;
-      status: WithdrawalStatus;
-      payoutRef?: string | null;
-      processedAt?: Date | null;
-      failReason?: string | null;
-      disputeTicketId?: string | null;
+      id: string
+      status: WithdrawalStatus
+      payoutRef?: string | null
+      processedAt?: Date | null
+      failReason?: string | null
+      disputeTicketId?: string | null
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -138,18 +131,16 @@ export const withdrawalRepository = {
         ...(data.payoutRef !== undefined ? { payoutRef: data.payoutRef } : {}),
         ...(data.processedAt !== undefined ? { processedAt: data.processedAt } : {}),
         ...(data.failReason !== undefined ? { failReason: data.failReason } : {}),
-        ...(data.disputeTicketId !== undefined
-          ? { disputeTicketId: data.disputeTicketId }
-          : {}),
+        ...(data.disputeTicketId !== undefined ? { disputeTicketId: data.disputeTicketId } : {}),
       },
-    });
+    })
   },
 
   async incrementAssignmentCount(id: string, tx: Prisma.TransactionClient) {
     return tx.withdrawal.update({
       where: { id },
       data: { assignmentCount: { increment: 1 } },
-    });
+    })
   },
 
   /**
@@ -160,11 +151,8 @@ export const withdrawalRepository = {
    * Note: `wallets.unconfirmedPoints` is the authoritative source for the
    * availability check; this helper is a reconciliation/observability aid.
    */
-  async getTotalEscrowedPoints(
-    userId: string,
-    tx?: Prisma.TransactionClient,
-  ): Promise<bigint> {
-    const db = tx ?? prisma;
+  async getTotalEscrowedPoints(userId: string, tx?: Prisma.TransactionClient): Promise<bigint> {
+    const db = tx ?? prisma
     const agg = await db.withdrawal.aggregate({
       where: {
         userId,
@@ -172,72 +160,64 @@ export const withdrawalRepository = {
         status: { in: ESCROWED_STATUSES },
       },
       _sum: { amountPoints: true },
-    });
-    return agg._sum.amountPoints ?? 0n;
+    })
+    return agg._sum.amountPoints ?? 0n
   },
 
-  async hasPendingWithdrawalUsingMethod(
-    userId: string,
-    paymentMethodId: string,
-  ): Promise<boolean> {
+  async hasPendingWithdrawalUsingMethod(userId: string, paymentMethodId: string): Promise<boolean> {
     const n = await prismaRead.withdrawal.count({
       where: {
         userId,
         paymentMethodId,
         status: { in: PENDING_STATUSES },
       },
-    });
-    return n > 0;
+    })
+    return n > 0
   },
 
   /**
    * Round-robin pick (FOR UPDATE SKIP LOCKED). Updates last_payroll_assigned_at in same tx.
    */
-  async getNextEligibleAgency(
-    tx: Prisma.TransactionClient,
-  ): Promise<string | null> {
+  async getNextEligibleAgency(tx: Prisma.TransactionClient): Promise<string | null> {
     const rows = await tx.$queryRaw<Array<{ user_id: string }>>`
       SELECT user_id FROM agencies
       WHERE payroll_enabled = true AND paused_at IS NULL
       ORDER BY last_payroll_assigned_at ASC NULLS FIRST, user_id ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
-    `;
-    if (!rows.length) return null;
-    const uid = rows[0].user_id;
+    `
+    if (!rows.length) return null
+    const uid = rows[0].user_id
     await tx.agency.update({
       where: { userId: uid },
       data: { lastPayrollAssignedAt: new Date() },
-    });
-    return uid;
+    })
+    return uid
   },
 
-  async touchAgencyPayrollTimestamp(
-    agencyUserId: string,
-    tx: Prisma.TransactionClient,
-  ) {
+  async touchAgencyPayrollTimestamp(agencyUserId: string, tx: Prisma.TransactionClient) {
     await tx.agency.update({
       where: { userId: agencyUserId },
       data: { lastPayrollAssignedAt: new Date() },
-    });
+    })
   },
 
   listOverdueSlaAssignments(now: Date, limit: number) {
     return prismaRead.withdrawalPayrollAssignment.findMany({
       where: {
-        status: "PENDING",
+        status: 'PENDING',
         expiresAt: { lt: now },
       },
       take: limit,
-      orderBy: { expiresAt: "asc" },
-    });
+      orderBy: { expiresAt: 'asc' },
+    })
   },
 
   listPendingPlatform(opts: { limit: number; cursor?: string }) {
-    const take = opts.limit + 1;
+    const take = opts.limit + 1
     return prismaRead.withdrawal.findMany({
-      where: { status: "PENDING_PLATFORM" },
-      orderBy: { requestedAt: "asc" },
+      where: { status: 'PENDING_PLATFORM' },
+      orderBy: { requestedAt: 'asc' },
       take,
       ...(opts.cursor
         ? {
@@ -245,6 +225,6 @@ export const withdrawalRepository = {
             skip: 1,
           }
         : {}),
-    });
+    })
   },
-};
+}

@@ -37,12 +37,7 @@ export default async function postRoutes(app: FastifyInstance) {
         )
       }
 
-      const {
-        fileName,
-        mimeType,
-        durationSeconds,
-        sizeBytes,
-      } = parsed.data
+      const { fileName, mimeType, durationSeconds, sizeBytes } = parsed.data
       const result = await postService.generateUploadUrl(
         userId,
         fileName,
@@ -134,7 +129,12 @@ export default async function postRoutes(app: FastifyInstance) {
 
       const { cursor, limit } = parsedQuery.data
 
-      const result = await postService.getPostsByUser(params.userId, requesterId, cursor ?? null, limit)
+      const result = await postService.getPostsByUser(
+        params.userId,
+        requesterId,
+        cursor ?? null,
+        limit,
+      )
       return reply.status(200).send(result)
     },
   )
@@ -323,4 +323,3 @@ export default async function postRoutes(app: FastifyInstance) {
     },
   )
 }
-

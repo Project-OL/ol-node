@@ -59,10 +59,20 @@ export const authIdentifierRepository = {
     })
   },
 
-  async updateIdentifier(userId: string, provider: AuthProvider, newIdentifier: string, version: number) {
+  async updateIdentifier(
+    userId: string,
+    provider: AuthProvider,
+    newIdentifier: string,
+    version: number,
+  ) {
     const updated = await prisma.authIdentifier.updateMany({
       where: { userId, provider, version },
-      data: { identifier: newIdentifier, version: { increment: 1 }, isVerified: true, verifiedAt: new Date() },
+      data: {
+        identifier: newIdentifier,
+        version: { increment: 1 },
+        isVerified: true,
+        verifiedAt: new Date(),
+      },
     })
     return updated.count > 0
   },

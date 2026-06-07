@@ -22,7 +22,7 @@ function buildDisplayName(user: {
   const fullName =
     user.firstName && user.lastName
       ? `${user.firstName} ${user.lastName}`
-      : user.firstName ?? user.lastName
+      : (user.firstName ?? user.lastName)
   const trimmed = fullName?.trim()
   return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
@@ -39,11 +39,7 @@ function computeAge(dob: Date | null): number | null {
 }
 
 export const visitorService = {
-  async recordVisit(
-    profileId: string,
-    visitorId: string,
-    meta: AuditMeta,
-  ): Promise<void> {
+  async recordVisit(profileId: string, visitorId: string, meta: AuditMeta): Promise<void> {
     if (profileId === visitorId) {
       return
     }
@@ -98,45 +94,45 @@ export const visitorService = {
 
     const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
 
-    const cards: UserCardWithVisit[] = await Promise.all(items.map(async (row) => {
-      const user = row.user
-      const [isSuperHost, activeGuardian] = await Promise.all([
-        superHostService.isSuperHost(user.id),
-        guardianService.getActiveGuardianSummary(user.id),
-      ])
-      const level = levels.get(user.id)
-      const livestreamLevel = level?.livestreamLevel ?? 0
-      const wealthLevel = level?.wealthLevel ?? 0
-      const subscriberCount = subscriberCounts.get(user.id) ?? 0
-      const displayName = buildDisplayName(user)
-      const age = computeAge(user.dateOfBirth)
+    const cards: UserCardWithVisit[] = await Promise.all(
+      items.map(async (row) => {
+        const user = row.user
+        const [isSuperHost, activeGuardian] = await Promise.all([
+          superHostService.isSuperHost(user.id),
+          guardianService.getActiveGuardianSummary(user.id),
+        ])
+        const level = levels.get(user.id)
+        const livestreamLevel = level?.livestreamLevel ?? 0
+        const wealthLevel = level?.wealthLevel ?? 0
+        const subscriberCount = subscriberCounts.get(user.id) ?? 0
+        const displayName = buildDisplayName(user)
+        const age = computeAge(user.dateOfBirth)
 
-      return {
-        id: user.id,
-        userId: user.id,
-        username: user.username,
-        publicId: String(user.publicId),
-        displayPublicId: String(
-          user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
-        ),
-        isAgency: Boolean(user.isAgent),
-        name: displayName,
-        displayName,
-        avatarUrl: user.avatarUrl,
-        country: user.country ?? null,
-        gender: user.gender,
-        age,
-        livestreamLevel,
-        wealthLevel,
-        subscriberCount,
-        isFollowing: false,
-        isFollowedBy: false,
-        isFriend: false,
-        isSuperHost,
-        activeGuardian,
-        visitedAt: row.visit.visitedAt,
-      }
-    }))
+        return {
+          id: user.id,
+          userId: user.id,
+          username: user.username,
+          publicId: String(user.publicId),
+          displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
+          isAgency: Boolean(user.isAgent),
+          name: displayName,
+          displayName,
+          avatarUrl: user.avatarUrl,
+          country: user.country ?? null,
+          gender: user.gender,
+          age,
+          livestreamLevel,
+          wealthLevel,
+          subscriberCount,
+          isFollowing: false,
+          isFollowedBy: false,
+          isFriend: false,
+          isSuperHost,
+          activeGuardian,
+          visitedAt: row.visit.visitedAt,
+        }
+      }),
+    )
 
     return {
       items: cards,
@@ -163,45 +159,45 @@ export const visitorService = {
 
     const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
 
-    const cards: UserCardWithVisit[] = await Promise.all(items.map(async (row) => {
-      const user = row.user
-      const [isSuperHost, activeGuardian] = await Promise.all([
-        superHostService.isSuperHost(user.id),
-        guardianService.getActiveGuardianSummary(user.id),
-      ])
-      const level = levels.get(user.id)
-      const livestreamLevel = level?.livestreamLevel ?? 0
-      const wealthLevel = level?.wealthLevel ?? 0
-      const subscriberCount = subscriberCounts.get(user.id) ?? 0
-      const displayName = buildDisplayName(user)
-      const age = computeAge(user.dateOfBirth)
+    const cards: UserCardWithVisit[] = await Promise.all(
+      items.map(async (row) => {
+        const user = row.user
+        const [isSuperHost, activeGuardian] = await Promise.all([
+          superHostService.isSuperHost(user.id),
+          guardianService.getActiveGuardianSummary(user.id),
+        ])
+        const level = levels.get(user.id)
+        const livestreamLevel = level?.livestreamLevel ?? 0
+        const wealthLevel = level?.wealthLevel ?? 0
+        const subscriberCount = subscriberCounts.get(user.id) ?? 0
+        const displayName = buildDisplayName(user)
+        const age = computeAge(user.dateOfBirth)
 
-      return {
-        id: user.id,
-        userId: user.id,
-        username: user.username,
-        publicId: String(user.publicId),
-        displayPublicId: String(
-          user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
-        ),
-        isAgency: Boolean(user.isAgent),
-        name: displayName,
-        displayName,
-        avatarUrl: user.avatarUrl,
-        country: user.country ?? null,
-        gender: user.gender,
-        age,
-        livestreamLevel,
-        wealthLevel,
-        subscriberCount,
-        isFollowing: false,
-        isFollowedBy: false,
-        isFriend: false,
-        isSuperHost,
-        activeGuardian,
-        visitedAt: row.visit.visitedAt,
-      }
-    }))
+        return {
+          id: user.id,
+          userId: user.id,
+          username: user.username,
+          publicId: String(user.publicId),
+          displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
+          isAgency: Boolean(user.isAgent),
+          name: displayName,
+          displayName,
+          avatarUrl: user.avatarUrl,
+          country: user.country ?? null,
+          gender: user.gender,
+          age,
+          livestreamLevel,
+          wealthLevel,
+          subscriberCount,
+          isFollowing: false,
+          isFollowedBy: false,
+          isFriend: false,
+          isSuperHost,
+          activeGuardian,
+          visitedAt: row.visit.visitedAt,
+        }
+      }),
+    )
 
     return {
       items: cards,
@@ -210,4 +206,3 @@ export const visitorService = {
     }
   },
 }
-

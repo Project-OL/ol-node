@@ -1,47 +1,43 @@
-import { prisma } from "../config/database";
-import { env } from "../config/env";
-import {
-  LIVE_ACTIVE_SESSION_TTL,
-  RedisKeys,
-  redisClient,
-} from "../config/redis";
-import { AppError } from "../middlewares/errorHandler";
-import { enqueueLiveSessionSafetyNet } from "../queues/live-session.queue";
-import { liveSessionRepository } from "../repositories/liveSession.repository";
-import { utcStartOfDay } from "../utils/datetime";
+import { prisma } from '../config/database'
+import { env } from '../config/env'
+import { LIVE_ACTIVE_SESSION_TTL, RedisKeys, redisClient } from '../config/redis'
+import { AppError } from '../middlewares/errorHandler'
+import { enqueueLiveSessionSafetyNet } from '../queues/live-session.queue'
+import { liveSessionRepository } from '../repositories/liveSession.repository'
+import { utcStartOfDay } from '../utils/datetime'
 
 export const liveSessionService = {
   async handleSessionStart(data: {
-    hostUserId: string;
-    agencyUserId: string;
-    roomId: string;
-    startedAt?: Date;
+    hostUserId: string
+    agencyUserId: string
+    roomId: string
+    startedAt?: Date
   }) {
-    const startedAt = data.startedAt ?? new Date();
+    const startedAt = data.startedAt ?? new Date()
 
-    const existingKey = await redisClient.get(RedisKeys.liveActiveSession(data.hostUserId));
+    const existingKey = await redisClient.get(RedisKeys.liveActiveSession(data.hostUserId))
     if (existingKey) {
-      return { alreadyActive: true, session: JSON.parse(existingKey) };
+      return { alreadyActive: true, session: JSON.parse(existingKey) }
     }
 
-    let session;
+    let session
     try {
       session = await liveSessionRepository.createSession({
         hostUserId: data.hostUserId,
         agencyUserId: data.agencyUserId,
         roomId: data.roomId,
         startedAt,
-      });
+      })
     } catch (err: unknown) {
       if (
         err &&
-        typeof err === "object" &&
-        "code" in err &&
-        (err as { code: string }).code === "P2002"
+        typeof err === 'object' &&
+        'code' in err &&
+        (err as { code: string }).code === 'P2002'
       ) {
-        throw new AppError(409, "Session already active for this host", "LIVE_SESSION_CONFLICT");
+        throw new AppError(409, 'Session already active for this host', 'LIVE_SESSION_CONFLICT')
       }
-      throw err;
+      throw err
     }
 
     await redisClient.setex(
@@ -53,71 +49,65 @@ export const liveSessionService = {
         startedAt: startedAt.toISOString(),
         roomId: data.roomId,
       }),
-    );
+    )
 
-    await enqueueLiveSessionSafetyNet(
-      session.id,
-      data.hostUserId,
-      env.LIVE_SESSION_TIMEOUT_HOURS,
-    );
+    await enqueueLiveSessionSafetyNet(session.id, data.hostUserId, env.LIVE_SESSION_TIMEOUT_HOURS)
 
-    return { alreadyActive: false, session };
+    return { alreadyActive: false, session }
   },
 
   async handleSessionEnd(data: {
-    hostUserId: string;
-    roomId: string;
-    endedAt?: Date;
-    durationSeconds: number;
+    hostUserId: string
+    roomId: string
+    endedAt?: Date
+    durationSeconds: number
   }) {
-    const endedAt = data.endedAt ?? new Date();
-    const durationSeconds = BigInt(Math.max(0, Math.floor(data.durationSeconds)));
+    const endedAt = data.endedAt ?? new Date()
+    const durationSeconds = BigInt(Math.max(0, Math.floor(data.durationSeconds)))
 
     const session = await liveSessionRepository.endSession(
       data.hostUserId,
       data.roomId,
       endedAt,
       durationSeconds,
-      "ENDED",
-    );
+      'ENDED',
+    )
 
     if (!session) {
-      return { alreadyEnded: true };
+      return { alreadyEnded: true }
     }
 
     if (durationSeconds > 0n) {
-      const day = utcStartOfDay(session.startedAt);
-      await upsertLiveDuration(session.agencyUserId, data.hostUserId, day, durationSeconds);
+      const day = utcStartOfDay(session.startedAt)
+      await upsertLiveDuration(session.agencyUserId, data.hostUserId, day, durationSeconds)
     }
 
-    await redisClient.del(RedisKeys.liveActiveSession(data.hostUserId));
+    await redisClient.del(RedisKeys.liveActiveSession(data.hostUserId))
 
-    return { alreadyEnded: false, session };
+    return { alreadyEnded: false, session }
   },
 
   async interruptStaleSession(sessionId: string, hostUserId: string, startedAt: Date) {
-    const endedAt = new Date();
-    const durationSeconds = BigInt(
-      Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
-    );
+    const endedAt = new Date()
+    const durationSeconds = BigInt(Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000))
 
     const session = await prisma.hostLiveSession.findUnique({
       where: { id: sessionId },
       select: { agencyUserId: true, roomId: true, status: true },
-    });
+    })
 
-    if (!session || session.status !== "ACTIVE") return;
+    if (!session || session.status !== 'ACTIVE') return
 
-    await liveSessionRepository.interruptSession(sessionId, endedAt, durationSeconds);
+    await liveSessionRepository.interruptSession(sessionId, endedAt, durationSeconds)
 
     if (durationSeconds > 0n) {
-      const day = utcStartOfDay(startedAt);
-      await upsertLiveDuration(session.agencyUserId, hostUserId, day, durationSeconds);
+      const day = utcStartOfDay(startedAt)
+      await upsertLiveDuration(session.agencyUserId, hostUserId, day, durationSeconds)
     }
 
-    await redisClient.del(RedisKeys.liveActiveSession(hostUserId));
+    await redisClient.del(RedisKeys.liveActiveSession(hostUserId))
   },
-};
+}
 
 async function upsertLiveDuration(
   agencyUserId: string,
@@ -141,5 +131,5 @@ async function upsertLiveDuration(
     update: {
       liveDurationSeconds: { increment: durationSeconds },
     },
-  });
+  })
 }

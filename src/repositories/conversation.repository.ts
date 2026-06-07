@@ -185,9 +185,7 @@ export async function listConversationsForUser(
   const page = hasMore ? conversations.slice(0, limit) : conversations
   const lastItem = page[page.length - 1]
   const nextCursor =
-    hasMore && lastItem?.lastMessageAt
-      ? lastItem.lastMessageAt.toISOString()
-      : null
+    hasMore && lastItem?.lastMessageAt ? lastItem.lastMessageAt.toISOString() : null
   const previews: ConversationPreview[] = page.map((c) => ({
     id: c.id,
     type: c.type,
@@ -219,10 +217,7 @@ export async function listConversationsForUser(
   }
 }
 
-export async function updateLastMessageAt(
-  conversationId: string,
-  at: Date,
-): Promise<void> {
+export async function updateLastMessageAt(conversationId: string, at: Date): Promise<void> {
   await prisma.conversation.update({
     where: { id: conversationId },
     data: { lastMessageAt: at },

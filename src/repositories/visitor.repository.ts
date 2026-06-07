@@ -120,7 +120,7 @@ export const visitorRepository = {
       user: row.visitor,
       level: row.visitor.userLevel ?? null,
     }))
-    const nextCursor = rows.length === limit ? rows[rows.length - 1]?.id ?? null : null
+    const nextCursor = rows.length === limit ? (rows[rows.length - 1]?.id ?? null) : null
     return { items, nextCursor, total }
   },
 
@@ -168,8 +168,7 @@ export const visitorRepository = {
       user: row.profile,
       level: row.profile.userLevel ?? null,
     }))
-    const nextCursor = rows.length === limit ? rows[rows.length - 1]?.id ?? null : null
+    const nextCursor = rows.length === limit ? (rows[rows.length - 1]?.id ?? null) : null
     return { items, nextCursor, total }
   },
 }
-

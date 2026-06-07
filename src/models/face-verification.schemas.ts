@@ -19,4 +19,3 @@ export const uploadUrlResponseSchema = z.object({
 })
 
 export type FaceActionBody = z.infer<typeof faceActionBodySchema>
-

@@ -38,7 +38,11 @@ export const passwordService = {
   },
 
   /** Verify current password and update to new one; returns false if current is wrong. */
-  async verifyAndUpdate(userId: string, currentPassword: string, newPassword: string): Promise<boolean> {
+  async verifyAndUpdate(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<boolean> {
     const existing = await authPasswordRepository.findByUserId(userId)
     if (!existing) return false
     const match = await compareAsync(currentPassword, existing.passwordHash)

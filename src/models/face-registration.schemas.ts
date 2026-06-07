@@ -1,14 +1,14 @@
-import { z } from "zod";
+import { z } from 'zod'
 
 export const faceRegistrationUploadUrlBodySchema = z.object({
   sessionId: z.string().uuid(),
-  mimeType: z.enum(["video/mp4", "video/quicktime"]),
-});
+  mimeType: z.enum(['video/mp4', 'video/quicktime']),
+})
 
 export const faceRegistrationVerifyBodySchema = z.object({
   sessionId: z.string().uuid(),
   idempotencyKey: z.string().uuid(),
-});
+})
 
 export const faceRegistrationSessionCreateBodySchema = z
   .object({
@@ -21,4 +21,4 @@ export const faceRegistrationSessionCreateBodySchema = z
       })
       .optional(),
   })
-  .strip();
+  .strip()

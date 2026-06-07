@@ -1,6 +1,6 @@
-import { randomUUID } from "crypto";
-import { PointTxType, Prisma } from "@prisma/client";
-import { prisma, prismaRead } from "../config/database";
+import { randomUUID } from 'crypto'
+import { PointTxType, Prisma } from '@prisma/client'
+import { prisma, prismaRead } from '../config/database'
 import {
   getRedisForRead,
   redisClient,
@@ -8,12 +8,12 @@ import {
   AGENCY_COMMISSION_ME_CACHE_TTL,
   AGENCY_LEVEL_CONFIG_CACHE_TTL,
   AGENCY_RATE_CACHE_TTL,
-} from "../config/redis";
-import { agencyCommissionRepository } from "../repositories/agencyCommission.repository";
-import { agencyPointTransferRepository } from "../repositories/agencyPointTransfer.repository";
-import { pointWalletService } from "./point-wallet.service";
-import { cacheRedisService } from "./cacheRedis.service";
-import { AppError } from "../middlewares/errorHandler";
+} from '../config/redis'
+import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
+import { agencyPointTransferRepository } from '../repositories/agencyPointTransfer.repository'
+import { pointWalletService } from './point-wallet.service'
+import { cacheRedisService } from './cacheRedis.service'
+import { AppError } from '../middlewares/errorHandler'
 import {
   addUtcDays,
   agencyCommissionRollingWindowDays,
@@ -22,54 +22,54 @@ import {
   utcDateString,
   utcNow,
   utcStartOfDay,
-} from "../utils/datetime";
-import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from "../queues/agency-commission.queue";
-import { walletService } from "./wallet.service";
+} from '../utils/datetime'
+import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from '../queues/agency-commission.queue'
+import { walletService } from './wallet.service'
 
-const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
-export const MIN_AGENT_POINT_TRANSFER = 100_000n;
+const INTERACTIVE_TX_TIMEOUT_MS = 20_000
+export const MIN_AGENT_POINT_TRANSFER = 100_000n
 
 export const LIVE_COMMISSION_TX_TYPES = new Set<PointTxType>([
   PointTxType.LIVESTREAM_GIFT,
   PointTxType.GIFT_RECEIVE,
-]);
+])
 
 export const MATCH_CHAT_COMMISSION_TX_TYPES = new Set<PointTxType>([
   PointTxType.VIDEO_CALL,
   PointTxType.SUBSCRIPTION,
   PointTxType.GUARDIAN_PURCHASE,
-]);
+])
 
 export const COMMISSION_ELIGIBLE_TX_TYPES = new Set<PointTxType>([
   ...LIVE_COMMISSION_TX_TYPES,
   ...MATCH_CHAT_COMMISSION_TX_TYPES,
-]);
+])
 
-export type CommissionCategory = "LIVE" | "MATCH_CHAT";
+export type CommissionCategory = 'LIVE' | 'MATCH_CHAT'
 
 export type CommissionPeriodParams = {
-  periodDays?: number;
-  from?: string;
-  to?: string;
-};
+  periodDays?: number
+  from?: string
+  to?: string
+}
 
 function formatDuration(seconds: bigint): string {
-  const s = Number(seconds);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  const s = Number(seconds)
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
 }
 
 function commissionCacheKey(params: CommissionPeriodParams): string {
-  if (params.from && params.to) return `${params.from}_${params.to}`;
-  return String(params.periodDays ?? 30);
+  if (params.from && params.to) return `${params.from}_${params.to}`
+  return String(params.periodDays ?? 30)
 }
 
 function categoryForTx(txType: PointTxType): CommissionCategory | null {
-  if (LIVE_COMMISSION_TX_TYPES.has(txType)) return "LIVE";
-  if (MATCH_CHAT_COMMISSION_TX_TYPES.has(txType)) return "MATCH_CHAT";
-  return null;
+  if (LIVE_COMMISSION_TX_TYPES.has(txType)) return 'LIVE'
+  if (MATCH_CHAT_COMMISSION_TX_TYPES.has(txType)) return 'MATCH_CHAT'
+  return null
 }
 
 export const agencyCommissionService = {
@@ -78,63 +78,58 @@ export const agencyCommissionService = {
    */
   async applyCommission(
     params: {
-      hostUserId: string;
-      hostLedgerEntryId: string;
-      hostPointsCredited: bigint;
-      hostTxType: PointTxType;
-      day: Date;
+      hostUserId: string
+      hostLedgerEntryId: string
+      hostPointsCredited: bigint
+      hostTxType: PointTxType
+      day: Date
     },
     tx: Prisma.TransactionClient,
   ): Promise<{ bustAgentUserId: string | null }> {
     const host = await tx.user.findUnique({
       where: { id: params.hostUserId },
       select: { currentAgencyId: true },
-    });
-    const agencyUserId = host?.currentAgencyId ?? null;
+    })
+    const agencyUserId = host?.currentAgencyId ?? null
     if (!agencyUserId) {
-      return { bustAgentUserId: null };
+      return { bustAgentUserId: null }
     }
 
     if (!COMMISSION_ELIGIBLE_TX_TYPES.has(params.hostTxType)) {
-      return { bustAgentUserId: null };
+      return { bustAgentUserId: null }
     }
 
-    const commissionKey = `agency-commission:${params.hostLedgerEntryId}`;
+    const commissionKey = `agency-commission:${params.hostLedgerEntryId}`
 
     const agencyRow = await tx.agency.findUnique({
       where: { userId: agencyUserId },
       select: { currentLevel: true },
-    });
-    const levelKey = agencyRow?.currentLevel ?? "D";
+    })
+    const levelKey = agencyRow?.currentLevel ?? 'D'
     const levelCfg = await tx.agencyCommissionLevel.findUnique({
       where: { level: levelKey },
-    });
+    })
     if (!levelCfg) {
-      throw new AppError(500, "Missing agency commission level row", "CONFIG_ERROR");
+      throw new AppError(500, 'Missing agency commission level row', 'CONFIG_ERROR')
     }
 
-    const cat = categoryForTx(params.hostTxType);
+    const cat = categoryForTx(params.hostTxType)
     if (!cat) {
-      return { bustAgentUserId: null };
+      return { bustAgentUserId: null }
     }
-    const rateBp =
-      cat === "LIVE" ? levelCfg.liveRateBp : levelCfg.matchChatRateBp;
+    const rateBp = cat === 'LIVE' ? levelCfg.liveRateBp : levelCfg.matchChatRateBp
 
-    const commissionPoints =
-      (params.hostPointsCredited * BigInt(rateBp)) / 10_000n;
+    const commissionPoints = (params.hostPointsCredited * BigInt(rateBp)) / 10_000n
 
     try {
       await tx.agencyCommissionProcessed.create({
         data: { hostLedgerEntryId: params.hostLedgerEntryId },
-      });
+      })
     } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === "P2002"
-      ) {
-        return { bustAgentUserId: null };
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        return { bustAgentUserId: null }
       }
-      throw e;
+      throw e
     }
 
     await agencyCommissionRepository.upsertDailyEarning(
@@ -146,19 +141,16 @@ export const agencyCommissionService = {
         hostCommissionDelta: commissionPoints,
       },
       tx,
-    );
+    )
 
     if (commissionPoints > 0n) {
       const hostEntry = await tx.pointLedgerEntry.findUnique({
         where: { id: params.hostLedgerEntryId },
         select: { refId: true, metadata: true },
-      });
-      const { resolvePointLedgerRefId } = await import(
-        "../utils/point-transaction-amounts"
-      );
+      })
+      const { resolvePointLedgerRefId } = await import('../utils/point-transaction-amounts')
       const businessRefId =
-        resolvePointLedgerRefId(hostEntry?.refId, hostEntry?.metadata) ??
-        params.hostLedgerEntryId;
+        resolvePointLedgerRefId(hostEntry?.refId, hostEntry?.metadata) ?? params.hostLedgerEntryId
 
       await pointWalletService.creditInTransaction(
         agencyUserId,
@@ -177,17 +169,17 @@ export const agencyCommissionService = {
           },
           applyLivestreamLevel: false,
         },
-      );
+      )
     }
 
-    return { bustAgentUserId: agencyUserId };
+    return { bustAgentUserId: agencyUserId }
   },
 
   async bustAgentCommissionCaches(agencyUserId: string): Promise<void> {
     try {
-      await redisClient.del(RedisKeys.agencyRate(agencyUserId));
-      await bustAgencyCommissionMeKeys(agencyUserId);
-      await cacheRedisService.del(RedisKeys.agencyMe(agencyUserId));
+      await redisClient.del(RedisKeys.agencyRate(agencyUserId))
+      await bustAgencyCommissionMeKeys(agencyUserId)
+      await cacheRedisService.del(RedisKeys.agencyMe(agencyUserId))
     } catch {
       /* ignore */
     }
@@ -196,15 +188,15 @@ export const agencyCommissionService = {
     // rather than waiting for the 30s TTL. Best-effort only.
     void Promise.all([
       redisClient.del(RedisKeys.agencyDashboardToday(agencyUserId)),
-      redisClient.del(RedisKeys.agencyDashboardEarnings(agencyUserId, "TODAY")),
-      redisClient.del(RedisKeys.agencyDashboardHostSummary(agencyUserId, "TODAY")),
+      redisClient.del(RedisKeys.agencyDashboardEarnings(agencyUserId, 'TODAY')),
+      redisClient.del(RedisKeys.agencyDashboardHostSummary(agencyUserId, 'TODAY')),
     ]).catch(() => {
       /* non-fatal */
-    });
+    })
   },
 
   async buildMeAgentCommissionSummary(agentUserId: string) {
-    const snap = await this.getCommissionMeSnapshot(agentUserId, { periodDays: 30 });
+    const snap = await this.getCommissionMeSnapshot(agentUserId, { periodDays: 30 })
     return {
       currentLevel: snap.currentLevel,
       currentLiveRatePercent: snap.currentLiveRateBp / 100,
@@ -212,74 +204,68 @@ export const agencyCommissionService = {
       currentWindowTotalPoints: snap.currentWindowTotalPoints,
       nextLevel: snap.nextLevel,
       nextLevelRequirementPoints: snap.lackingPointsToNextLevel,
-    };
+    }
   },
 
   async getLevelConfig(): Promise<
     Array<{
-      level: string;
-      minWindowPoints: string;
-      liveRateBp: number;
-      matchChatRateBp: number;
-      sortOrder: number;
+      level: string
+      minWindowPoints: string
+      liveRateBp: number
+      matchChatRateBp: number
+      sortOrder: number
     }>
   > {
-    const redis = getRedisForRead();
-    const key = RedisKeys.agencyLevelConfig();
+    const redis = getRedisForRead()
+    const key = RedisKeys.agencyLevelConfig()
     try {
-      const hit = await redis.get(key);
+      const hit = await redis.get(key)
       if (hit) {
         return JSON.parse(hit) as Array<{
-          level: string;
-          minWindowPoints: string;
-          liveRateBp: number;
-          matchChatRateBp: number;
-          sortOrder: number;
-        }>;
+          level: string
+          minWindowPoints: string
+          liveRateBp: number
+          matchChatRateBp: number
+          sortOrder: number
+        }>
       }
     } catch {
       /* cold */
     }
-    const rows = await agencyCommissionRepository.getLevelConfig();
+    const rows = await agencyCommissionRepository.getLevelConfig()
     const dto = rows.map((r) => ({
       level: r.level,
       minWindowPoints: r.minWindowPoints.toString(),
       liveRateBp: r.liveRateBp,
       matchChatRateBp: r.matchChatRateBp,
       sortOrder: r.sortOrder,
-    }));
+    }))
     try {
-      await redisClient.set(
-        key,
-        JSON.stringify(dto),
-        "EX",
-        AGENCY_LEVEL_CONFIG_CACHE_TTL,
-      );
+      await redisClient.set(key, JSON.stringify(dto), 'EX', AGENCY_LEVEL_CONFIG_CACHE_TTL)
     } catch {
       /* ignore */
     }
-    return dto;
+    return dto
   },
 
   async getRateForAgent(
     agencyUserId: string,
     category: CommissionCategory,
   ): Promise<{ level: string; rateBp: number }> {
-    const redis = getRedisForRead();
-    const key = RedisKeys.agencyRate(agencyUserId);
+    const redis = getRedisForRead()
+    const key = RedisKeys.agencyRate(agencyUserId)
     try {
-      const hit = await redis.get(key);
+      const hit = await redis.get(key)
       if (hit) {
         const parsed = JSON.parse(hit) as {
-          level: string;
-          liveRateBp: number;
-          matchChatRateBp: number;
-        };
+          level: string
+          liveRateBp: number
+          matchChatRateBp: number
+        }
         return {
           level: parsed.level,
-          rateBp:
-            category === "LIVE" ? parsed.liveRateBp : parsed.matchChatRateBp,
-        };
+          rateBp: category === 'LIVE' ? parsed.liveRateBp : parsed.matchChatRateBp,
+        }
       }
     } catch {
       /* cold */
@@ -288,51 +274,45 @@ export const agencyCommissionService = {
     const agencyRow = await prismaRead.agency.findUnique({
       where: { userId: agencyUserId },
       select: { currentLevel: true },
-    });
-    const levelKey = agencyRow?.currentLevel ?? "D";
-    const cfg = await agencyCommissionRepository.getLevelRow(levelKey);
+    })
+    const levelKey = agencyRow?.currentLevel ?? 'D'
+    const cfg = await agencyCommissionRepository.getLevelRow(levelKey)
     if (!cfg) {
-      throw new AppError(500, "Missing agency commission level row", "CONFIG_ERROR");
+      throw new AppError(500, 'Missing agency commission level row', 'CONFIG_ERROR')
     }
     const payload = {
       level: cfg.level,
       liveRateBp: cfg.liveRateBp,
       matchChatRateBp: cfg.matchChatRateBp,
-    };
+    }
     try {
-      await redisClient.set(
-        key,
-        JSON.stringify(payload),
-        "EX",
-        AGENCY_RATE_CACHE_TTL,
-      );
+      await redisClient.set(key, JSON.stringify(payload), 'EX', AGENCY_RATE_CACHE_TTL)
     } catch {
       /* ignore */
     }
     return {
       level: cfg.level,
-      rateBp:
-        category === "LIVE" ? cfg.liveRateBp : cfg.matchChatRateBp,
-    };
+      rateBp: category === 'LIVE' ? cfg.liveRateBp : cfg.matchChatRateBp,
+    }
   },
 
   async recomputeAgencyLevel(
     agencyUserId: string,
     opts?: { skipDailyDedupe?: boolean },
   ): Promise<void> {
-    const now = utcNow();
-    const { fromDay, toDay } = agencyCommissionRollingWindowDays(now);
+    const now = utcNow()
+    const { fromDay, toDay } = agencyCommissionRollingWindowDays(now)
 
     if (!opts?.skipDailyDedupe) {
       const cur = await prismaRead.agency.findUnique({
         where: { userId: agencyUserId },
         select: { lastLevelRecomputedAt: true },
-      });
+      })
       if (
         cur?.lastLevelRecomputedAt &&
         utcDateString(cur.lastLevelRecomputedAt) === utcDateString(now)
       ) {
-        return;
+        return
       }
     }
 
@@ -340,14 +320,14 @@ export const agencyCommissionService = {
       agencyUserId,
       fromDay,
       toDay,
-    );
-    const levels = await agencyCommissionRepository.getLevelConfig();
-    let newLevel = "D";
+    )
+    const levels = await agencyCommissionRepository.getLevelConfig()
+    let newLevel = 'D'
     for (let i = levels.length - 1; i >= 0; i--) {
-      const row = levels[i]!;
+      const row = levels[i]!
       if (total >= row.minWindowPoints) {
-        newLevel = row.level;
-        break;
+        newLevel = row.level
+        break
       }
     }
 
@@ -360,81 +340,78 @@ export const agencyCommissionService = {
             currentWindowTotalPoints: total,
             lastLevelRecomputedAt: now,
           },
-        });
+        })
       },
       {
-        isolationLevel: "Serializable",
+        isolationLevel: 'Serializable',
         timeout: INTERACTIVE_TX_TIMEOUT_MS,
       },
-    );
+    )
 
-    await redisClient.del(RedisKeys.agencyRate(agencyUserId));
-    await bustAgencyCommissionMeKeys(agencyUserId);
-    await cacheRedisService.del(RedisKeys.agencyMe(agencyUserId));
+    await redisClient.del(RedisKeys.agencyRate(agencyUserId))
+    await bustAgencyCommissionMeKeys(agencyUserId)
+    await cacheRedisService.del(RedisKeys.agencyMe(agencyUserId))
   },
 
-  async enqueueDailyRecomputeMaster(opts?: {
-    utcDate?: string;
-    force?: boolean;
-  }): Promise<void> {
-    const d = opts?.utcDate ?? utcDateString(utcNow());
-    await publishAgencyRecomputeMasterJob(d, opts?.force);
+  async enqueueDailyRecomputeMaster(opts?: { utcDate?: string; force?: boolean }): Promise<void> {
+    const d = opts?.utcDate ?? utcDateString(utcNow())
+    await publishAgencyRecomputeMasterJob(d, opts?.force)
   },
 
   /** Half-open window `[from, toExclusive)` in UTC for ledger timestamps. */
   resolvePeriodBounds(periodDays: number): { from: Date; toExclusive: Date } {
-    const dayStart = utcStartOfDay(utcNow());
-    const from = addUtcDays(dayStart, -periodDays);
-    const toExclusive = addUtcDays(dayStart, 1);
-    return { from, toExclusive };
+    const dayStart = utcStartOfDay(utcNow())
+    const from = addUtcDays(dayStart, -periodDays)
+    const toExclusive = addUtcDays(dayStart, 1)
+    return { from, toExclusive }
   },
 
   async getCommissionMeSnapshot(
     agencyUserId: string,
     periodParams: CommissionPeriodParams,
   ): Promise<{
-    currentLevel: string;
-    currentWindowTotalPoints: string;
-    currentLiveRateBp: number;
-    currentMatchChatRateBp: number;
-    nextLevel: string | null;
-    nextLevelMinWindowPoints: string | null;
-    lackingPointsToNextLevel: string | null;
-    periodDays: number | null;
-    from: string | null;
-    to: string | null;
-    liveDurationSeconds: string;
-    liveDurationFormatted: string;
-    byTxType: Array<{ txType: string; totalAmount: string }>;
+    currentLevel: string
+    currentWindowTotalPoints: string
+    currentLiveRateBp: number
+    currentMatchChatRateBp: number
+    nextLevel: string | null
+    nextLevelMinWindowPoints: string | null
+    lackingPointsToNextLevel: string | null
+    periodDays: number | null
+    from: string | null
+    to: string | null
+    liveDurationSeconds: string
+    liveDurationFormatted: string
+    byTxType: Array<{ txType: string; totalAmount: string }>
   }> {
-    const periodKey = commissionCacheKey(periodParams);
-    const key = RedisKeys.agencyCommissionMe(agencyUserId, periodKey);
+    const periodKey = commissionCacheKey(periodParams)
+    const key = RedisKeys.agencyCommissionMe(agencyUserId, periodKey)
     try {
-      const hit = await getRedisForRead().get(key);
-      if (hit) return JSON.parse(hit) as never;
+      const hit = await getRedisForRead().get(key)
+      if (hit) return JSON.parse(hit) as never
     } catch {
       /* miss */
     }
 
-    const period = resolveCommissionPeriod(periodParams);
-    const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end);
+    const period = resolveCommissionPeriod(periodParams)
+    const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end)
     const ag = await prismaRead.agency.findUnique({
       where: { userId: agencyUserId },
-    });
+    })
     if (!ag) {
-      throw new AppError(404, "Agency not found", "NOT_FOUND");
+      throw new AppError(404, 'Agency not found', 'NOT_FOUND')
     }
-    const cfg = await agencyCommissionRepository.getLevelRow(ag.currentLevel);
-    const levels = await agencyCommissionRepository.getLevelConfig();
-    const idx = levels.findIndex((l) => l.level === ag.currentLevel);
-    const nextRow = idx >= 0 && idx + 1 < levels.length ? levels[idx + 1]! : null;
+    const cfg = await agencyCommissionRepository.getLevelRow(ag.currentLevel)
+    const levels = await agencyCommissionRepository.getLevelConfig()
+    const idx = levels.findIndex((l) => l.level === ag.currentLevel)
+    const nextRow = idx >= 0 && idx + 1 < levels.length ? levels[idx + 1]! : null
 
-    const { fromDay, toDay } = agencyCommissionRollingWindowDays();
+    const { fromDay, toDay } = agencyCommissionRollingWindowDays()
     const windowTotal = await agencyCommissionRepository.getAgencyWindowTotal(
       agencyUserId,
       fromDay,
       toDay,
-    );
+    )
 
     const [agg, liveDurationSeconds] = await Promise.all([
       agencyCommissionRepository.aggregateLedgerByTxTypeForAgencyHosts({
@@ -442,17 +419,13 @@ export const agencyCommissionService = {
         from,
         toExclusive,
       }),
-      agencyCommissionRepository.sumLiveDurationForAgency(
-        agencyUserId,
-        period.start,
-        period.end,
-      ),
-    ]);
+      agencyCommissionRepository.sumLiveDurationForAgency(agencyUserId, period.start, period.end),
+    ])
 
-    let lacking: bigint | null = null;
+    let lacking: bigint | null = null
     if (nextRow) {
-      const gap = nextRow.minWindowPoints - windowTotal;
-      lacking = gap > 0n ? gap : 0n;
+      const gap = nextRow.minWindowPoints - windowTotal
+      lacking = gap > 0n ? gap : 0n
     }
 
     const snap = {
@@ -472,14 +445,14 @@ export const agencyCommissionService = {
         txType: r.txType,
         totalAmount: r.totalAmount.toString(),
       })),
-    };
+    }
 
     try {
-      await redisClient.set(key, JSON.stringify(snap), "EX", AGENCY_COMMISSION_ME_CACHE_TTL);
+      await redisClient.set(key, JSON.stringify(snap), 'EX', AGENCY_COMMISSION_ME_CACHE_TTL)
     } catch {
       /* ignore */
     }
-    return snap;
+    return snap
   },
 
   async listHostsByEarnings(
@@ -487,15 +460,15 @@ export const agencyCommissionService = {
     periodParams: CommissionPeriodParams,
     opts: { limit: number; offset: number },
   ) {
-    const period = resolveCommissionPeriod(periodParams);
+    const period = resolveCommissionPeriod(periodParams)
     const rows = await agencyCommissionRepository.sumHostEarningsByHost(
       agencyUserId,
       period.start,
       period.end,
       { limit: opts.limit, offset: opts.offset },
-    );
-    const hasMore = rows.length > opts.limit;
-    const page = hasMore ? rows.slice(0, opts.limit) : rows;
+    )
+    const hasMore = rows.length > opts.limit
+    const page = hasMore ? rows.slice(0, opts.limit) : rows
     return {
       items: page.map((r) => ({
         hostUserId: r.hostUserId,
@@ -508,7 +481,7 @@ export const agencyCommissionService = {
       periodDays: periodParams.from && periodParams.to ? null : (periodParams.periodDays ?? 30),
       from: periodParams.from ?? null,
       to: periodParams.to ?? null,
-    };
+    }
   },
 
   async getHostCommissionDetail(
@@ -519,13 +492,13 @@ export const agencyCommissionService = {
     const membership = await prismaRead.agencyHost.findUnique({
       where: { hostUserId },
       select: { agencyUserId: true },
-    });
+    })
     if (!membership || membership.agencyUserId !== agencyUserId) {
-      throw new AppError(403, "Host not in your agency", "FORBIDDEN");
+      throw new AppError(403, 'Host not in your agency', 'FORBIDDEN')
     }
 
-    const period = resolveCommissionPeriod(periodParams);
-    const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end);
+    const period = resolveCommissionPeriod(periodParams)
+    const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end)
     const [rows, liveDurationSeconds] = await Promise.all([
       agencyCommissionRepository.aggregateLedgerForSingleHost({
         hostUserId,
@@ -539,27 +512,24 @@ export const agencyCommissionService = {
         period.start,
         period.end,
       ),
-    ]);
+    ])
     const map = Object.fromEntries(rows.map((r) => [r.txType, r.totalAmount])) as Record<
       string,
       bigint
-    >;
+    >
 
-    let liveEarnings = 0n;
+    let liveEarnings = 0n
     for (const t of LIVE_COMMISSION_TX_TYPES) {
-      liveEarnings += map[t] ?? 0n;
+      liveEarnings += map[t] ?? 0n
     }
-    const privateChat = map.VIDEO_CALL ?? 0n;
-    const subscription = map.SUBSCRIPTION ?? 0n;
-    const platformRewards = map.PLATFORM_REWARD ?? 0n;
+    const privateChat = map.VIDEO_CALL ?? 0n
+    const subscription = map.SUBSCRIPTION ?? 0n
+    const platformRewards = map.PLATFORM_REWARD ?? 0n
 
-    let other = 0n;
+    let other = 0n
     for (const pt of COMMISSION_ELIGIBLE_TX_TYPES) {
-      if (
-        !LIVE_COMMISSION_TX_TYPES.has(pt) &&
-        !MATCH_CHAT_COMMISSION_TX_TYPES.has(pt)
-      ) {
-        other += map[pt] ?? 0n;
+      if (!LIVE_COMMISSION_TX_TYPES.has(pt) && !MATCH_CHAT_COMMISSION_TX_TYPES.has(pt)) {
+        other += map[pt] ?? 0n
       }
     }
 
@@ -571,7 +541,9 @@ export const agencyCommissionService = {
       liveDurationSeconds: liveDurationSeconds.toString(),
       liveDurationFormatted: formatDuration(liveDurationSeconds),
       totals: {
-        allCredits: Object.values(map).reduce((a, b) => a + b, 0n).toString(),
+        allCredits: Object.values(map)
+          .reduce((a, b) => a + b, 0n)
+          .toString(),
         liveEarnings: liveEarnings.toString(),
         privateChat: privateChat.toString(),
         subscription: subscription.toString(),
@@ -582,31 +554,26 @@ export const agencyCommissionService = {
         txType: r.txType,
         totalAmount: r.totalAmount.toString(),
       })),
-    };
+    }
   },
 
   async transferPointsToAgent(params: {
-    senderAgentUserId: string;
-    recipientAgentUserId: string;
-    points: bigint;
-    idempotencyKey: string;
+    senderAgentUserId: string
+    recipientAgentUserId: string
+    points: bigint
+    idempotencyKey: string
   }): Promise<{ transferId: string }> {
-    const {
-      senderAgentUserId,
-      recipientAgentUserId,
-      points,
-      idempotencyKey,
-    } = params;
+    const { senderAgentUserId, recipientAgentUserId, points, idempotencyKey } = params
 
     if (senderAgentUserId === recipientAgentUserId) {
-      throw new AppError(400, "Cannot transfer to yourself", "INVALID_RECIPIENT");
+      throw new AppError(400, 'Cannot transfer to yourself', 'INVALID_RECIPIENT')
     }
     if (points < MIN_AGENT_POINT_TRANSFER) {
       throw new AppError(
         400,
         `Minimum transfer is ${MIN_AGENT_POINT_TRANSFER.toString()} points`,
-        "MIN_TRANSFER_VIOLATION",
-      );
+        'MIN_TRANSFER_VIOLATION',
+      )
     }
 
     const [senderAg, recipientAg] = await Promise.all([
@@ -616,30 +583,30 @@ export const agencyCommissionService = {
       prismaRead.agency.findUnique({
         where: { userId: recipientAgentUserId },
       }),
-    ]);
+    ])
     if (!senderAg) {
-      throw new AppError(403, "Sender is not an agent", "NOT_AN_AGENT");
+      throw new AppError(403, 'Sender is not an agent', 'NOT_AN_AGENT')
     }
     if (!recipientAg) {
-      throw new AppError(400, "Recipient is not an agent", "INVALID_RECIPIENT");
+      throw new AppError(400, 'Recipient is not an agent', 'INVALID_RECIPIENT')
     }
 
     const existingBefore = await prismaRead.agentPointTransfer.findUnique({
       where: { idempotencyKey },
-    });
+    })
     if (existingBefore) {
-      return { transferId: existingBefore.id };
+      return { transferId: existingBefore.id }
     }
 
-    const transferId = randomUUID();
+    const transferId = randomUUID()
 
     await prisma.$transaction(
       async (tx) => {
         const existing = await tx.agentPointTransfer.findUnique({
           where: { idempotencyKey },
-        });
+        })
         if (existing) {
-          return;
+          return
         }
 
         const debit = await pointWalletService.debit(
@@ -653,7 +620,7 @@ export const agencyCommissionService = {
             refId: transferId,
             metadata: { transferId },
           },
-        );
+        )
 
         const credit = await pointWalletService.creditInTransaction(
           recipientAgentUserId,
@@ -667,7 +634,7 @@ export const agencyCommissionService = {
             metadata: { transferId },
             applyLivestreamLevel: false,
           },
-        );
+        )
 
         await agencyPointTransferRepository.insertTransfer(
           {
@@ -680,28 +647,28 @@ export const agencyCommissionService = {
             idempotencyKey,
           },
           tx,
-        );
+        )
       },
       {
-        isolationLevel: "Serializable",
+        isolationLevel: 'Serializable',
         timeout: INTERACTIVE_TX_TIMEOUT_MS,
       },
-    );
+    )
 
     await Promise.all([
       walletService.adjustPointBalanceCache(senderAgentUserId, -points),
       walletService.adjustPointBalanceCache(recipientAgentUserId, points),
-    ]);
+    ])
 
-    return { transferId };
+    return { transferId }
   },
-};
+}
 
 async function bustAgencyCommissionMeKeys(agencyUserId: string): Promise<void> {
   try {
-    const pattern = `agency:commission:me:${agencyUserId}*`;
-    const keys = await redisClient.keys(pattern);
-    if (keys.length > 0) await redisClient.del(...keys);
+    const pattern = `agency:commission:me:${agencyUserId}*`
+    const keys = await redisClient.keys(pattern)
+    if (keys.length > 0) await redisClient.del(...keys)
   } catch {
     /* ignore */
   }

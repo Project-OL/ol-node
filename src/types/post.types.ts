@@ -37,4 +37,3 @@ export type CreatePostDto = {
   taggedUserIds?: string[]
   subscriberOnly?: boolean
 }
-

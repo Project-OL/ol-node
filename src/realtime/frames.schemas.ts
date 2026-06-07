@@ -3,10 +3,7 @@ import { z } from 'zod'
 const cuid = z.string().cuid()
 const uuid = z.string().uuid()
 
-const userIdList = z
-  .array(uuid)
-  .min(1)
-  .max(50)
+const userIdList = z.array(uuid).min(1).max(50)
 
 export const clientFrameSchema = z.discriminatedUnion('t', [
   z.object({

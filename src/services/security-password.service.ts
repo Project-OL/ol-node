@@ -174,12 +174,9 @@ export const securityPasswordService = {
     }
     if (sec.lockedUntil && sec.lockedUntil > new Date()) {
       const retryAfter = Math.ceil((sec.lockedUntil.getTime() - Date.now()) / 1000)
-      throw new AppError(
-        429,
-        'Too many failed attempts. Try again later.',
-        'PASSWORD_LOCKED',
-        { retryAfter },
-      )
+      throw new AppError(429, 'Too many failed attempts. Try again later.', 'PASSWORD_LOCKED', {
+        retryAfter,
+      })
     }
 
     const match = await passwordService.compare(currentPassword, sec.passwordHash)
@@ -206,7 +203,11 @@ export const securityPasswordService = {
     await securityPasswordRepository.resetFailedAttempts(userId)
   },
 
-  async changePin(userId: string, currentPin: string, newPin: string): Promise<{ changedAt: Date }> {
+  async changePin(
+    userId: string,
+    currentPin: string,
+    newPin: string,
+  ): Promise<{ changedAt: Date }> {
     await this.verifyCurrentPassword(userId, currentPin)
 
     const passwordHash = await passwordService.hash(newPin)

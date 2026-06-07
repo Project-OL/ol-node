@@ -44,11 +44,10 @@ export default async function conversationRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const { conversation, isNew } =
-        await messagingService.getOrCreateDirectConversation(
-          userId,
-          parsed.data.recipientPublicId,
-        )
+      const { conversation, isNew } = await messagingService.getOrCreateDirectConversation(
+        userId,
+        parsed.data.recipientPublicId,
+      )
       return reply.code(isNew ? 201 : 200).send({ conversation })
     },
   )
@@ -125,10 +124,7 @@ export default async function conversationRoutes(app: FastifyInstance) {
           throw new AppError(403, 'Not a member', 'FORBIDDEN')
         }
       }
-      const urls = await uploadService.getMessageMediaUploadUrls(
-        userId,
-        parsed.data,
-      )
+      const urls = await uploadService.getMessageMediaUploadUrls(userId, parsed.data)
       return reply.send(urls)
     },
   )
@@ -241,10 +237,7 @@ export default async function conversationRoutes(app: FastifyInstance) {
       reply: FastifyReply,
     ) => {
       const userId = request.userId!
-      await messagingService.clearChatHistory(
-        userId,
-        request.params.conversationId,
-      )
+      await messagingService.clearChatHistory(userId, request.params.conversationId)
       return reply.code(204).send()
     },
   )

@@ -3,7 +3,10 @@ import { CreatorSubscriptionStatus } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { USER_STATUSES } from '../models/types'
 
-const BLOCKED_USER_STATUSES = ['suspended', 'deleted'] as const satisfies readonly (typeof USER_STATUSES)[number][]
+const BLOCKED_USER_STATUSES = [
+  'suspended',
+  'deleted',
+] as const satisfies readonly (typeof USER_STATUSES)[number][]
 
 const userListSelect = {
   id: true,
@@ -16,10 +19,7 @@ const userListSelect = {
 } as const
 
 export const subscriptionRepository = {
-  async findByPair(
-    subscriberId: string,
-    creatorId: string,
-  ): Promise<CreatorSubscription | null> {
+  async findByPair(subscriberId: string, creatorId: string): Promise<CreatorSubscription | null> {
     return prismaRead.creatorSubscription.findUnique({
       where: {
         subscriberId_creatorId: { subscriberId, creatorId },
@@ -37,9 +37,7 @@ export const subscriptionRepository = {
     })
   },
 
-  async getActiveSubscriptions(
-    subscriberId: string,
-  ): Promise<{ creatorId: string }[]> {
+  async getActiveSubscriptions(subscriberId: string): Promise<{ creatorId: string }[]> {
     return prismaRead.creatorSubscription.findMany({
       where: { subscriberId, status: CreatorSubscriptionStatus.ACTIVE },
       select: { creatorId: true },

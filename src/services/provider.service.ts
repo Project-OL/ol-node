@@ -18,10 +18,14 @@ export const providerService = {
   validateProvider(provider: AuthProvider, identifier: string): void {
     if (provider === 'email') {
       const r = emailSchema.safeParse(identifier)
-      if (!r.success) throw new AppError(400, 'Invalid email format', 'INVALID_EMAIL', { field: 'identifier' })
+      if (!r.success)
+        throw new AppError(400, 'Invalid email format', 'INVALID_EMAIL', { field: 'identifier' })
     } else if (provider === 'phone') {
       const r = phoneSchema.safeParse(identifier)
-      if (!r.success) throw new AppError(400, 'Invalid phone format (E.164)', 'INVALID_PHONE', { field: 'identifier' })
+      if (!r.success)
+        throw new AppError(400, 'Invalid phone format (E.164)', 'INVALID_PHONE', {
+          field: 'identifier',
+        })
     }
   },
 
@@ -35,16 +39,26 @@ export const providerService = {
     identifier: string,
     options?: { isVerified?: boolean; isPrimary?: boolean },
   ): Promise<void> {
-    const existing = await authIdentifierRepository.findByProviderAndIdentifier(provider, identifier)
+    const existing = await authIdentifierRepository.findByProviderAndIdentifier(
+      provider,
+      identifier,
+    )
     if (existing) {
       if (existing.userId === userId) {
-        if (provider === 'email') throw new AppError(400, 'Email already bound to current user', 'EMAIL_ALREADY_BOUND')
-        if (provider === 'phone') throw new AppError(400, 'Phone already bound to current user', 'PHONE_ALREADY_BOUND')
+        if (provider === 'email')
+          throw new AppError(400, 'Email already bound to current user', 'EMAIL_ALREADY_BOUND')
+        if (provider === 'phone')
+          throw new AppError(400, 'Phone already bound to current user', 'PHONE_ALREADY_BOUND')
         throw new AppError(400, `${provider} already linked to this account`, 'ALREADY_BOUND')
       }
-      if (provider === 'email') throw new AppError(400, 'Email already in use by another user', 'EMAIL_TAKEN')
+      if (provider === 'email')
+        throw new AppError(400, 'Email already in use by another user', 'EMAIL_TAKEN')
       if (provider === 'phone') throw new AppError(400, 'Phone already in use', 'PHONE_TAKEN')
-      throw new AppError(400, `${provider} account already linked to another user`, 'PROVIDER_LINKED')
+      throw new AppError(
+        400,
+        `${provider} account already linked to another user`,
+        'PROVIDER_LINKED',
+      )
     }
     const ids = await authIdentifierRepository.findByUserId(userId)
     if (ids.some((a) => a.provider === provider)) {
@@ -67,7 +81,11 @@ export const providerService = {
    */
   async unbindProvider(userId: string, provider: AuthProvider): Promise<void> {
     if (!SOCIAL_PROVIDERS.includes(provider)) {
-      throw new AppError(400, 'Email and phone cannot be unbound; use modify instead', 'INVALID_REQUEST')
+      throw new AppError(
+        400,
+        'Email and phone cannot be unbound; use modify instead',
+        'INVALID_REQUEST',
+      )
     }
     const ids = await authIdentifierRepository.findByUserId(userId)
     const toRemove = ids.find((a) => a.provider === provider)
@@ -75,7 +93,11 @@ export const providerService = {
     const remaining = ids.filter((a) => a.provider !== provider)
     const hasEmailOrPhone = remaining.some((a) => a.provider === 'email' || a.provider === 'phone')
     if (!hasEmailOrPhone && remaining.length === 0) {
-      throw new AppError(400, 'Cannot unbind - user must have at least one auth method', 'LAST_METHOD')
+      throw new AppError(
+        400,
+        'Cannot unbind - user must have at least one auth method',
+        'LAST_METHOD',
+      )
     }
     await authIdentifierRepository.deleteByUserIdAndProvider(userId, provider)
     await cacheService.invalidateUserAuthIdentifiers(userId)

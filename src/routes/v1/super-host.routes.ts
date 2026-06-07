@@ -21,10 +21,7 @@ export default async function superHostRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { targetUserId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { targetUserId: string } }>, reply: FastifyReply) => {
       const adminUserId = request.userId
       if (!adminUserId) {
         throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
@@ -58,10 +55,7 @@ export default async function superHostRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { targetUserId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { targetUserId: string } }>, reply: FastifyReply) => {
       const adminUserId = request.userId
       if (!adminUserId) {
         throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')

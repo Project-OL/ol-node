@@ -32,7 +32,8 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       preHandler: [authenticate],
       schema: {
         tags: ['Subscriptions'],
-        description: 'Check if subscriberId currently has an active paid subscription to creatorId.',
+        description:
+          'Check if subscriberId currently has an active paid subscription to creatorId.',
         querystring: {
           type: 'object',
           required: ['subscriberId', 'creatorId'],
@@ -85,8 +86,7 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       preHandler: [authenticate, perUserRateLimit],
       schema: {
         tags: ['Subscriptions'],
-        description:
-          'Whether the caller has any ACTIVE paid subscriptions and how many.',
+        description: 'Whether the caller has any ACTIVE paid subscriptions and how many.',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -125,8 +125,7 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       preHandler: [authenticate, subscriptionFeedRateLimit],
       schema: {
         tags: ['Subscriptions'],
-        description:
-          'Paginated post feed from all creators the caller actively subscribes to.',
+        description: 'Paginated post feed from all creators the caller actively subscribes to.',
         querystring: {
           type: 'object',
           properties: {
@@ -200,10 +199,7 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const row = await subscriptionService.createSubscription(
-        subscriberId,
-        parsed.data.creatorId,
-      )
+      const row = await subscriptionService.createSubscription(subscriberId, parsed.data.creatorId)
       return reply.status(201).send({
         subscription: {
           id: row.id,
@@ -229,10 +225,7 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { creatorId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { creatorId: string } }>, reply: FastifyReply) => {
       const subscriberId = request.userId
       if (!subscriberId) {
         throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')

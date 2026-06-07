@@ -1,9 +1,6 @@
 import { Queue } from 'bullmq'
 import { redisClient } from '../config/redis'
-import {
-  SUBSCRIPTION_GRACE_QUEUE,
-  SUBSCRIPTION_RENEWAL_QUEUE,
-} from './subscription.constants'
+import { SUBSCRIPTION_GRACE_QUEUE, SUBSCRIPTION_RENEWAL_QUEUE } from './subscription.constants'
 
 export const renewalQueue = new Queue(SUBSCRIPTION_RENEWAL_QUEUE, {
   connection: redisClient,

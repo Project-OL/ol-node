@@ -15,18 +15,7 @@ function runFfmpeg(inputPath: string, outputPath: string): Promise<void> {
 
     const child = spawn(
       ffmpegPath,
-      [
-        '-y',
-        '-i',
-        inputPath,
-        '-ss',
-        '00:00:01',
-        '-vframes',
-        '1',
-        '-q:v',
-        '2',
-        outputPath,
-      ],
+      ['-y', '-i', inputPath, '-ss', '00:00:01', '-vframes', '1', '-q:v', '2', outputPath],
       { windowsHide: true },
     )
 
@@ -36,7 +25,9 @@ function runFfmpeg(inputPath: string, outputPath: string): Promise<void> {
     })
 
     child.on('error', (err) => {
-      reject(new AppError(500, `FFmpeg spawn failed: ${err.message}`, 'THUMBNAIL_GENERATION_FAILED'))
+      reject(
+        new AppError(500, `FFmpeg spawn failed: ${err.message}`, 'THUMBNAIL_GENERATION_FAILED'),
+      )
     })
 
     child.on('close', (code) => {
@@ -66,10 +57,7 @@ export const videoThumbnailService = {
       await runFfmpeg(inputPath, outputPath)
       return await fs.readFile(outputPath)
     } finally {
-      await Promise.allSettled([
-        fs.unlink(inputPath),
-        fs.unlink(outputPath),
-      ])
+      await Promise.allSettled([fs.unlink(inputPath), fs.unlink(outputPath)])
     }
   },
 }

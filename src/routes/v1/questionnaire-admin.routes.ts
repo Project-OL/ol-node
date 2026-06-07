@@ -24,7 +24,12 @@ export default async function questionnaireAdminRoutes(app: FastifyInstance) {
     { preHandler: preAdmin },
     async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
       const parsed = createQuestionnaireBodySchema.safeParse(request.body)
-      if (!parsed.success) throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid payload', 'invalid_payload')
+      if (!parsed.success)
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid payload',
+          'invalid_payload',
+        )
       const created = await questionnaireService.adminCreate(request.userId!, parsed.data)
       return reply.status(201).send(created)
     },
@@ -33,20 +38,40 @@ export default async function questionnaireAdminRoutes(app: FastifyInstance) {
   app.patch<{ Params: { id: string }; Body: unknown }>(
     '/:id',
     { preHandler: preAdmin },
-    async (request: FastifyRequest<{ Params: { id: string }; Body: unknown }>, reply: FastifyReply) => {
+    async (
+      request: FastifyRequest<{ Params: { id: string }; Body: unknown }>,
+      reply: FastifyReply,
+    ) => {
       const parsed = patchQuestionnaireMetaBodySchema.safeParse(request.body)
-      if (!parsed.success) throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid payload', 'invalid_payload')
+      if (!parsed.success)
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid payload',
+          'invalid_payload',
+        )
       return reply.send(
         await questionnaireService.adminPatchMeta(request.userId!, request.params.id, parsed.data),
       )
     },
   )
 
-  app.post<{ Params: { id: string } }>('/:id/deactivate', { preHandler: preAdmin }, async (request, reply) => {
-    return reply.send(await questionnaireService.adminDeactivate(request.userId!, request.params.id))
-  })
+  app.post<{ Params: { id: string } }>(
+    '/:id/deactivate',
+    { preHandler: preAdmin },
+    async (request, reply) => {
+      return reply.send(
+        await questionnaireService.adminDeactivate(request.userId!, request.params.id),
+      )
+    },
+  )
 
-  app.post<{ Params: { id: string } }>('/:id/activate', { preHandler: preAdmin }, async (request, reply) => {
-    return reply.send(await questionnaireService.adminActivate(request.userId!, request.params.id))
-  })
+  app.post<{ Params: { id: string } }>(
+    '/:id/activate',
+    { preHandler: preAdmin },
+    async (request, reply) => {
+      return reply.send(
+        await questionnaireService.adminActivate(request.userId!, request.params.id),
+      )
+    },
+  )
 }

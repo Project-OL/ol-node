@@ -22,7 +22,10 @@ const sendMessageMediaItemSchema = z
     /** Normalized peak envelope 0..1; server stores compact u8 base64 in `waveform_json`. */
     waveformPeaksNormalized: z.array(z.number()).max(200).optional(),
     /** Lowercase hex SHA-256 of object bytes when client computed it (must match S3 checksum if present). */
-    checksumSha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
+    checksumSha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/i)
+      .optional(),
   })
   .superRefine((item, ctx) => {
     if (!item.waveformPeaksNormalized?.length) return
@@ -48,10 +51,9 @@ export const SendMessageSchema = z
     replyToId: z.preprocess((v) => (v === null ? undefined : v), z.string().cuid().optional()),
     mediaItems: z.array(sendMessageMediaItemSchema).max(10).optional(),
   })
-  .refine(
-    (d) => d.content?.trim() || (d.mediaItems && d.mediaItems.length > 0),
-    { message: 'Message must have text content or at least one media item' },
-  )
+  .refine((d) => d.content?.trim() || (d.mediaItems && d.mediaItems.length > 0), {
+    message: 'Message must have text content or at least one media item',
+  })
 
 export const ListMessagesSchema = z.object({
   cursor: z.string().optional(),

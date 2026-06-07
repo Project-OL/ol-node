@@ -1,12 +1,17 @@
 import { auditRepository } from '../repositories/audit.repository'
 
-function getIp(request: { ip?: string; headers?: Record<string, string | undefined> }): string | undefined {
+function getIp(request: {
+  ip?: string
+  headers?: Record<string, string | undefined>
+}): string | undefined {
   const forwarded = request.headers?.['x-forwarded-for']
   if (forwarded) return forwarded.split(',')[0]?.trim()
   return request.ip
 }
 
-function getUserAgent(request: { headers?: Record<string, string | undefined> }): string | undefined {
+function getUserAgent(request: {
+  headers?: Record<string, string | undefined>
+}): string | undefined {
   return request.headers?.['user-agent']
 }
 

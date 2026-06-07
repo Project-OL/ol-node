@@ -27,10 +27,7 @@ export default async function reminderRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const creator = await userSearchService.searchByPublicId(
-        parsed.data.creatorPublicId,
-        userId,
-      )
+      const creator = await userSearchService.searchByPublicId(parsed.data.creatorPublicId, userId)
       if (!creator) {
         throw new AppError(404, 'Creator not found', 'NOT_FOUND')
       }

@@ -51,17 +51,13 @@ export async function supportRoutes(app: FastifyInstance) {
     },
   )
 
-  app.get(
-    '/tickets',
-    { preHandler: preAuth },
-    async (req: FastifyRequest, reply: FastifyReply) => {
-      const query = GetTicketsQuerySchema.parse(req.query)
-      const userId = req.userId
-      if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
-      const result = await supportService.listMyTickets(userId, query)
-      return reply.send(result)
-    },
-  )
+  app.get('/tickets', { preHandler: preAuth }, async (req: FastifyRequest, reply: FastifyReply) => {
+    const query = GetTicketsQuerySchema.parse(req.query)
+    const userId = req.userId
+    if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+    const result = await supportService.listMyTickets(userId, query)
+    return reply.send(result)
+  })
 
   app.get(
     '/tickets/:ticketId',

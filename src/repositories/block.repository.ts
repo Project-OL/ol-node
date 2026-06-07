@@ -10,19 +10,13 @@ export type BlockWithUser = BlockList & {
   }
 }
 
-export async function blockUser(
-  blockerId: string,
-  blockedId: string,
-): Promise<BlockList> {
+export async function blockUser(blockerId: string, blockedId: string): Promise<BlockList> {
   return prisma.blockList.create({
     data: { blockerId, blockedId },
   })
 }
 
-export async function unblockUser(
-  blockerId: string,
-  blockedId: string,
-): Promise<void> {
+export async function unblockUser(blockerId: string, blockedId: string): Promise<void> {
   await prisma.blockList.deleteMany({
     where: { blockerId, blockedId },
   })
@@ -38,10 +32,7 @@ export async function bulkUnblock(
   return { count: result.count }
 }
 
-export async function isBlocked(
-  blockerId: string,
-  blockedId: string,
-): Promise<boolean> {
+export async function isBlocked(blockerId: string, blockedId: string): Promise<boolean> {
   const r = await prismaRead.blockList.findUnique({
     where: {
       blockerId_blockedId: { blockerId, blockedId },
@@ -50,10 +41,7 @@ export async function isBlocked(
   return r != null
 }
 
-export async function findBlock(
-  blockerId: string,
-  blockedId: string,
-): Promise<BlockList | null> {
+export async function findBlock(blockerId: string, blockedId: string): Promise<BlockList | null> {
   return prismaRead.blockList.findUnique({
     where: {
       blockerId_blockedId: { blockerId, blockedId },
@@ -98,7 +86,7 @@ export async function getBlockList(
   })
   const hasMore = blocks.length > limit
   const page = hasMore ? blocks.slice(0, limit) : blocks
-  const nextCursor = hasMore ? page[page.length - 1]?.id ?? null : null
+  const nextCursor = hasMore ? (page[page.length - 1]?.id ?? null) : null
   return {
     blocks: page.map((b) => ({
       ...b,

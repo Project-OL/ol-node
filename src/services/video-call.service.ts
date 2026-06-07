@@ -58,14 +58,14 @@ export const videoCallSettingsService = {
   /** Returns the full call-price cap table so the client can display it. */
   priceTable() {
     return [
-      { label: '≤Lv4',    maxLevel: 4,        maxPrice: 1800 },
-      { label: 'Lv5-9',   maxLevel: 9,        maxPrice: 2400 },
-      { label: 'Lv10-14', maxLevel: 14,       maxPrice: 3000 },
-      { label: 'Lv15-19', maxLevel: 19,       maxPrice: 3600 },
-      { label: 'Lv20-24', maxLevel: 24,       maxPrice: 4800 },
-      { label: 'Lv25-29', maxLevel: 29,       maxPrice: 6000 },
-      { label: 'Lv30-34', maxLevel: 34,       maxPrice: 7200 },
-      { label: 'Lv35+',   maxLevel: null,     maxPrice: 9600 },
+      { label: '≤Lv4', maxLevel: 4, maxPrice: 1800 },
+      { label: 'Lv5-9', maxLevel: 9, maxPrice: 2400 },
+      { label: 'Lv10-14', maxLevel: 14, maxPrice: 3000 },
+      { label: 'Lv15-19', maxLevel: 19, maxPrice: 3600 },
+      { label: 'Lv20-24', maxLevel: 24, maxPrice: 4800 },
+      { label: 'Lv25-29', maxLevel: 29, maxPrice: 6000 },
+      { label: 'Lv30-34', maxLevel: 34, maxPrice: 7200 },
+      { label: 'Lv35+', maxLevel: null, maxPrice: 9600 },
     ]
   },
 
@@ -119,10 +119,18 @@ export const videoCallSessionService = {
       const wealthLevel = callerLevel?.currentLevel ?? 1
 
       if (settings.blockLv10 && wealthLevel <= 10) {
-        throw new AppError(403, 'Your wealth level is too low to call this creator', 'LEVEL_RESTRICTED')
+        throw new AppError(
+          403,
+          'Your wealth level is too low to call this creator',
+          'LEVEL_RESTRICTED',
+        )
       }
       if (settings.blockLv5 && wealthLevel <= 5) {
-        throw new AppError(403, 'Your wealth level is too low to call this creator', 'LEVEL_RESTRICTED')
+        throw new AppError(
+          403,
+          'Your wealth level is too low to call this creator',
+          'LEVEL_RESTRICTED',
+        )
       }
     }
 
@@ -187,84 +195,93 @@ export const videoCallSessionService = {
     const idemBase = `videocall-${sessionId}-min-${minuteNum}`
 
     // Debit coins from caller
-    const callerCoinWallet = await walletRepository.getOrCreate(session.callerId, WalletCurrencyType.COIN)
-    const creatorPointWallet = await walletRepository.getOrCreate(session.creatorId, WalletCurrencyType.POINT)
+    const callerCoinWallet = await walletRepository.getOrCreate(
+      session.callerId,
+      WalletCurrencyType.COIN,
+    )
+    const creatorPointWallet = await walletRepository.getOrCreate(
+      session.creatorId,
+      WalletCurrencyType.POINT,
+    )
 
     let bustAgentUserId: string | null = null
 
-    await prisma.$transaction(async (tx) => {
-      // Lock caller wallet
-      await walletRepository.lockForUpdate(tx, callerCoinWallet.id)
+    await prisma.$transaction(
+      async (tx) => {
+        // Lock caller wallet
+        await walletRepository.lockForUpdate(tx, callerCoinWallet.id)
 
-      const lastCoin = await tx.coinLedgerEntry.findFirst({
-        where: { walletId: callerCoinWallet.id },
-        orderBy: { createdAt: 'desc' },
-        select: { balanceAfter: true },
-      })
-      const coinBalance = lastCoin?.balanceAfter ?? 0n
-      if (coinBalance < amount) {
-        throw new AppError(402, 'Insufficient coins', 'INSUFFICIENT_COINS')
-      }
+        const lastCoin = await tx.coinLedgerEntry.findFirst({
+          where: { walletId: callerCoinWallet.id },
+          orderBy: { createdAt: 'desc' },
+          select: { balanceAfter: true },
+        })
+        const coinBalance = lastCoin?.balanceAfter ?? 0n
+        if (coinBalance < amount) {
+          throw new AppError(402, 'Insufficient coins', 'INSUFFICIENT_COINS')
+        }
 
-      await coinLedgerRepository.insert(tx, {
-        walletId: callerCoinWallet.id,
-        direction: LedgerDirection.DEBIT,
-        txType: CoinTxType.VIDEO_CALL,
-        amount,
-        balanceAfter: coinBalance - amount,
-        refId: sessionId,
-        counterpartyId: session.creatorId,
-        description: `Video call min #${minuteNum}`,
-        idempotencyKey: `${idemBase}-coin`,
-      })
-      await walletRepository.bumpVersion(tx, callerCoinWallet.id)
+        await coinLedgerRepository.insert(tx, {
+          walletId: callerCoinWallet.id,
+          direction: LedgerDirection.DEBIT,
+          txType: CoinTxType.VIDEO_CALL,
+          amount,
+          balanceAfter: coinBalance - amount,
+          refId: sessionId,
+          counterpartyId: session.creatorId,
+          description: `Video call min #${minuteNum}`,
+          idempotencyKey: `${idemBase}-coin`,
+        })
+        await walletRepository.bumpVersion(tx, callerCoinWallet.id)
 
-      // Lock creator point wallet and credit
-      await walletRepository.lockForUpdate(tx, creatorPointWallet.id)
+        // Lock creator point wallet and credit
+        await walletRepository.lockForUpdate(tx, creatorPointWallet.id)
 
-      const lastPoint = await tx.pointLedgerEntry.findFirst({
-        where: { walletId: creatorPointWallet.id },
-        orderBy: { createdAt: 'desc' },
-        select: { balanceAfter: true },
-      })
-      const pointBalance = lastPoint?.balanceAfter ?? 0n
+        const lastPoint = await tx.pointLedgerEntry.findFirst({
+          where: { walletId: creatorPointWallet.id },
+          orderBy: { createdAt: 'desc' },
+          select: { balanceAfter: true },
+        })
+        const pointBalance = lastPoint?.balanceAfter ?? 0n
 
-      const ptEntry = await pointLedgerRepository.insert(tx, {
-        walletId: creatorPointWallet.id,
-        direction: LedgerDirection.CREDIT,
-        txType: PointTxType.VIDEO_CALL,
-        amount,
-        balanceAfter: pointBalance + amount,
-        refId: sessionId,
-        counterpartyId: session.callerId,
-        description: `Video call min #${minuteNum}`,
-        idempotencyKey: `${idemBase}-point`,
-      })
-      await walletRepository.bumpVersion(tx, creatorPointWallet.id)
+        const ptEntry = await pointLedgerRepository.insert(tx, {
+          walletId: creatorPointWallet.id,
+          direction: LedgerDirection.CREDIT,
+          txType: PointTxType.VIDEO_CALL,
+          amount,
+          balanceAfter: pointBalance + amount,
+          refId: sessionId,
+          counterpartyId: session.callerId,
+          description: `Video call min #${minuteNum}`,
+          idempotencyKey: `${idemBase}-point`,
+        })
+        await walletRepository.bumpVersion(tx, creatorPointWallet.id)
 
-      const { agencyCommissionService } = await import('./agencyCommission.service')
-      const ac = await agencyCommissionService.applyCommission(
-        {
-          hostUserId: session.creatorId,
-          hostLedgerEntryId: ptEntry.id,
-          hostPointsCredited: amount,
-          hostTxType: PointTxType.VIDEO_CALL,
-          day: utcDayFromTimestamp(new Date()),
-        },
-        tx,
-      )
-      bustAgentUserId = ac.bustAgentUserId
+        const { agencyCommissionService } = await import('./agencyCommission.service')
+        const ac = await agencyCommissionService.applyCommission(
+          {
+            hostUserId: session.creatorId,
+            hostLedgerEntryId: ptEntry.id,
+            hostPointsCredited: amount,
+            hostTxType: PointTxType.VIDEO_CALL,
+            day: utcDayFromTimestamp(new Date()),
+          },
+          tx,
+        )
+        bustAgentUserId = ac.bustAgentUserId
 
-      const levelResult = await walletLevelService.applyCredit(
-        tx,
-        session.creatorId,
-        LevelType.LIVESTREAM,
-        amount,
-      )
+        const levelResult = await walletLevelService.applyCredit(
+          tx,
+          session.creatorId,
+          LevelType.LIVESTREAM,
+          amount,
+        )
 
-      // Store levelResult on the outer scope for cache refresh after commit
-      ;(tx as unknown as { _lvl: typeof levelResult })._lvl = levelResult
-    }, { isolationLevel: 'Serializable' })
+        // Store levelResult on the outer scope for cache refresh after commit
+        ;(tx as unknown as { _lvl: typeof levelResult })._lvl = levelResult
+      },
+      { isolationLevel: 'Serializable' },
+    )
 
     if (bustAgentUserId) {
       const { agencyCommissionService } = await import('./agencyCommission.service')

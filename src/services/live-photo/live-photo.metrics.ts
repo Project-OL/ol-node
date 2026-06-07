@@ -7,4 +7,4 @@ export const livePhotoMetrics = {
   rekognitionCompareSamples: 0,
   purgeJobsCompleted: 0,
   purgeJobsFailed: 0,
-};
+}

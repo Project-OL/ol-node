@@ -61,10 +61,7 @@ export default async function blockRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const result = await blockService.checkBlock(
-        request.userId!,
-        parsed.data.publicId,
-      )
+      const result = await blockService.checkBlock(request.userId!, parsed.data.publicId)
       return reply.send(result)
     },
   )
@@ -75,8 +72,7 @@ export default async function blockRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Blocks'],
-        description:
-          'Get block list (searchable). Each item includes blocked user avatarUrl.',
+        description: 'Get block list (searchable). Each item includes blocked user avatarUrl.',
       },
     },
     async (request: FastifyRequest<{ Querystring: unknown }>, reply: FastifyReply) => {
@@ -133,14 +129,8 @@ export default async function blockRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
-      const result = await blockService.checkBlock(
-        request.userId!,
-        request.params.publicId,
-      )
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
+      const result = await blockService.checkBlock(request.userId!, request.params.publicId)
       return reply.send(result)
     },
   )
@@ -159,10 +149,7 @@ export default async function blockRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
       const blockerId = request.userId!
       await blockService.unblockUser(blockerId, request.params.publicId)
       return reply.code(204).send()

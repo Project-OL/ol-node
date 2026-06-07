@@ -44,26 +44,18 @@ export const videoCallRepository = {
     })
   },
 
-  async incrementMinute(
-    sessionId: string,
-    coinsDeducted: bigint,
-    pointsAwarded: bigint,
-  ) {
+  async incrementMinute(sessionId: string, coinsDeducted: bigint, pointsAwarded: bigint) {
     return prisma.videoCallSession.update({
       where: { id: sessionId },
       data: {
-        minsCharged:   { increment: 1 },
+        minsCharged: { increment: 1 },
         coinsDeducted: { increment: coinsDeducted },
         pointsAwarded: { increment: pointsAwarded },
       },
     })
   },
 
-  async endSession(
-    sessionId: string,
-    status: 'ENDED' | 'INSUFFICIENT_COINS',
-    reason?: string,
-  ) {
+  async endSession(sessionId: string, status: 'ENDED' | 'INSUFFICIENT_COINS', reason?: string) {
     return prisma.videoCallSession.update({
       where: { id: sessionId },
       data: { status, endedAt: new Date(), endReason: reason ?? null },

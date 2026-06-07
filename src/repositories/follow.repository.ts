@@ -142,7 +142,7 @@ export const followRepository = {
       }
     })
 
-    const nextCursor = follows.length === limit ? follows[follows.length - 1]?.id ?? null : null
+    const nextCursor = follows.length === limit ? (follows[follows.length - 1]?.id ?? null) : null
     return { items, nextCursor, total }
   },
 
@@ -214,7 +214,7 @@ export const followRepository = {
       }
     })
 
-    const nextCursor = follows.length === limit ? follows[follows.length - 1]?.id ?? null : null
+    const nextCursor = follows.length === limit ? (follows[follows.length - 1]?.id ?? null) : null
     return { items, nextCursor, total }
   },
 
@@ -299,7 +299,7 @@ export const followRepository = {
       }
     })
 
-    const nextCursor = follows.length === limit ? follows[follows.length - 1]?.id ?? null : null
+    const nextCursor = follows.length === limit ? (follows[follows.length - 1]?.id ?? null) : null
     return { items, nextCursor, total }
   },
 
@@ -392,7 +392,7 @@ export const followRepository = {
       const fullName =
         user.firstName && user.lastName
           ? `${user.firstName} ${user.lastName}`
-          : user.firstName ?? user.lastName
+          : (user.firstName ?? user.lastName)
       const trimmed = fullName?.trim()
       const displayName = trimmed && trimmed.length > 0 ? trimmed : user.username
 
@@ -405,4 +405,3 @@ export const followRepository = {
     })
   },
 }
-

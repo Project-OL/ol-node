@@ -364,30 +364,33 @@ export async function listMessages(
 
   const hasMore = messages.length > limit
   const page = hasMore ? messages.slice(0, limit) : messages
-  const nextCursor = hasMore && page[page.length - 1]
-    ? page[page.length - 1].createdAt.toISOString()
-    : null
+  const nextCursor =
+    hasMore && page[page.length - 1] ? page[page.length - 1].createdAt.toISOString() : null
 
   // Aggregate reactions in two DB-side queries instead of transferring every row to app memory.
   // 1) groupBy gives (messageId, emoji) → count.
   // 2) A second narrow query gets only the requesting user's reactions for the reactedByMe flag.
   const messageIds = page.map((m) => m.id)
-  const [reactionCounts, myReactions] = messageIds.length > 0
-    ? await Promise.all([
-        prismaRead.messageReaction.groupBy({
-          by: ['messageId', 'emoji'],
-          where: { messageId: { in: messageIds } },
-          _count: { _all: true },
-        }),
-        prismaRead.messageReaction.findMany({
-          where: { messageId: { in: messageIds }, userId },
-          select: { messageId: true, emoji: true },
-        }),
-      ])
-    : [[], []]
+  const [reactionCounts, myReactions] =
+    messageIds.length > 0
+      ? await Promise.all([
+          prismaRead.messageReaction.groupBy({
+            by: ['messageId', 'emoji'],
+            where: { messageId: { in: messageIds } },
+            _count: { _all: true },
+          }),
+          prismaRead.messageReaction.findMany({
+            where: { messageId: { in: messageIds }, userId },
+            select: { messageId: true, emoji: true },
+          }),
+        ])
+      : [[], []]
 
   const myReactionSet = new Set(myReactions.map((r) => `${r.messageId}:${r.emoji}`))
-  const reactionsByMessage = new Map<string, Array<{ emoji: string; count: number; reactedByMe: boolean }>>()
+  const reactionsByMessage = new Map<
+    string,
+    Array<{ emoji: string; count: number; reactedByMe: boolean }>
+  >()
   for (const rc of reactionCounts) {
     if (!reactionsByMessage.has(rc.messageId)) reactionsByMessage.set(rc.messageId, [])
     reactionsByMessage.get(rc.messageId)!.push({
@@ -398,10 +401,7 @@ export async function listMessages(
   }
 
   const withDetails = page.map((m) => {
-    const mapped = mapToMessageWithDetails(
-      { ...m, reactions: [] },
-      userId,
-    )
+    const mapped = mapToMessageWithDetails({ ...m, reactions: [] }, userId)
     // Overwrite reactions with the aggregated result
     mapped.reactions = reactionsByMessage.get(m.id) ?? []
     if (m.isDeleted) {
@@ -419,10 +419,7 @@ export async function findMessageById(id: string): Promise<Message | null> {
   })
 }
 
-export async function softDeleteMessage(
-  id: string,
-  requestingUserId: string,
-): Promise<Message> {
+export async function softDeleteMessage(id: string, requestingUserId: string): Promise<Message> {
   const msg = await prisma.message.findUnique({
     where: { id },
   })
@@ -461,10 +458,7 @@ export async function removeReaction(
   })
 }
 
-export async function markAsRead(
-  conversationId: string,
-  userId: string,
-): Promise<void> {
+export async function markAsRead(conversationId: string, userId: string): Promise<void> {
   const now = new Date()
   await prisma.conversationMember.updateMany({
     where: { conversationId, userId },
@@ -514,10 +508,7 @@ export async function updateReadCursor(
   return true
 }
 
-export async function getUnreadCount(
-  conversationId: string,
-  userId: string,
-): Promise<number> {
+export async function getUnreadCount(conversationId: string, userId: string): Promise<number> {
   const member = await prismaRead.conversationMember.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
     select: { lastReadAt: true },
@@ -535,9 +526,7 @@ export async function getUnreadCount(
 }
 
 /** True if the conversation has at least one TEXT_COINS message (coin inquiry thread). */
-export async function conversationHasTextCoins(
-  conversationId: string,
-): Promise<boolean> {
+export async function conversationHasTextCoins(conversationId: string): Promise<boolean> {
   const row = await prismaRead.message.findFirst({
     where: { conversationId, type: 'TEXT_COINS', isDeleted: false },
     select: { id: true },

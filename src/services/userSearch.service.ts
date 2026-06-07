@@ -28,9 +28,7 @@ export const userSearchService = {
    * Resolve a user by **any** externally visible numeric id: `public_id`, `default_public_id`,
    * or `current_vip_public_id` (`userRepository.findByPublicId`).
    */
-  async resolvePublicIdentity(
-    publicId: string,
-  ): Promise<ResolvedPublicIdentity | null> {
+  async resolvePublicIdentity(publicId: string): Promise<ResolvedPublicIdentity | null> {
     const numericId = Number(publicId)
     if (!Number.isInteger(numericId) || numericId <= 0) {
       throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
@@ -41,17 +39,12 @@ export const userSearchService = {
       userId: user.id,
       username: user.username,
       publicId: String(user.publicId),
-      displayPublicId: String(
-        user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
-      ),
+      displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
       isAgency: Boolean(user.isAgent),
     }
   },
 
-  async searchByPublicId(
-    publicId: string,
-    requesterId: string,
-  ): Promise<UserCard | null> {
+  async searchByPublicId(publicId: string, requesterId: string): Promise<UserCard | null> {
     const numericId = Number(publicId)
     if (!Number.isInteger(numericId) || numericId <= 0) {
       throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
@@ -63,9 +56,7 @@ export const userSearchService = {
 
     const levels = await walletLevelService.getDisplayLevelsForUsers([user.id])
     const level = levels.get(user.id)
-    const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators([
-      user.id,
-    ])
+    const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators([user.id])
     const subscriberCount = subscriberCounts.get(user.id) ?? 0
 
     const [
@@ -91,9 +82,7 @@ export const userSearchService = {
     ])
     const isFriend = isFollowing && isFollowedBy
 
-    let agencyTag:
-      | { isAgent: boolean; isHost: boolean; agencyPublicId?: string }
-      | undefined
+    let agencyTag: { isAgent: boolean; isHost: boolean; agencyPublicId?: string } | undefined
     const agentRow = await prismaRead.agency.findUnique({
       where: { userId: user.id },
       select: { defaultPublicId: true },
@@ -121,13 +110,10 @@ export const userSearchService = {
     const fullName =
       user.firstName && user.lastName
         ? `${user.firstName} ${user.lastName}`
-        : user.firstName ?? user.lastName
-    const displayName =
-      fullName && fullName.trim().length > 0 ? fullName : user.username
+        : (user.firstName ?? user.lastName)
+    const displayName = fullName && fullName.trim().length > 0 ? fullName : user.username
 
-    const displayPublicId = String(
-      user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
-    )
+    const displayPublicId = String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId)
 
     const age =
       user.dateOfBirth != null
@@ -174,4 +160,3 @@ export const userSearchService = {
     }
   },
 }
-

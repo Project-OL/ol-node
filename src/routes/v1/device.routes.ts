@@ -44,13 +44,17 @@ export default async function deviceRoutes(app: FastifyInstance) {
       const currentDeviceId = request.deviceId
       const parsed = getDevicesSchema.safeParse(request.query ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
       }
       const query = parsed.data
 
       const devices = await deviceService.getDevices(userId, currentDeviceId)
 
-      let sorted = [...devices]
+      const sorted = [...devices]
       if (query.sortBy === 'loginTime') {
         sorted.sort((a, b) => b.loginAt.getTime() - a.loginAt.getTime())
       } else if (query.sortBy === 'name') {
@@ -149,10 +153,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { targetUserId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { targetUserId: string } }>, reply: FastifyReply) => {
       const deviceId = request.deviceId
       const requestingUserId = request.userId
       if (!deviceId || !requestingUserId) {
@@ -214,7 +215,11 @@ export default async function deviceRoutes(app: FastifyInstance) {
       const params = renameDeviceParamsSchema.safeParse(mergedParams)
       const body = renameDeviceSchema.safeParse(request.body)
       if (!params.success) {
-        throw new AppError(400, params.error.errors[0]?.message ?? 'Invalid registry id', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          params.error.errors[0]?.message ?? 'Invalid registry id',
+          'INVALID_REQUEST',
+        )
       }
       if (!body.success) {
         throw new AppError(
@@ -261,7 +266,11 @@ export default async function deviceRoutes(app: FastifyInstance) {
       }
       const params = revokeDeviceParamsSchema.safeParse(mergedParams)
       if (!params.success) {
-        throw new AppError(400, params.error.errors[0]?.message ?? 'Invalid registry id', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          params.error.errors[0]?.message ?? 'Invalid registry id',
+          'INVALID_REQUEST',
+        )
       }
 
       const result = await deviceService.revokeDevice(

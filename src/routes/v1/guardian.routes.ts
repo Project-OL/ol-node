@@ -108,10 +108,7 @@ export default async function guardianRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { targetUserId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { targetUserId: string } }>, reply: FastifyReply) => {
       const active = await guardianService.getActiveGuardian(request.params.targetUserId)
       if (!active) {
         return reply.status(204).send()

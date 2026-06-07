@@ -83,12 +83,7 @@ async function setSubscriptionAccess(
   nextRenewalAt: Date,
 ): Promise<void> {
   const ttl = accessTtlSeconds(nextRenewalAt)
-  await redisClient.set(
-    RedisKeys.subscriptionAccess(subscriberId, creatorId),
-    '1',
-    'EX',
-    ttl,
-  )
+  await redisClient.set(RedisKeys.subscriptionAccess(subscriberId, creatorId), '1', 'EX', ttl)
 }
 
 async function invalidateSubscriberCountCache(creatorId: string): Promise<void> {
@@ -129,7 +124,7 @@ function buildDisplayName(user: {
   const fullName =
     user.firstName && user.lastName
       ? `${user.firstName} ${user.lastName}`
-      : user.firstName ?? user.lastName
+      : (user.firstName ?? user.lastName)
   const trimmed = fullName?.trim()
   return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
@@ -218,9 +213,7 @@ export const subscriptionService = {
       page.map((p) => p.id),
       userId,
     )
-    const posts = page.map((post) =>
-      assembleUnlockedPostResponse(post, likedSet.has(post.id)),
-    )
+    const posts = page.map((post) => assembleUnlockedPostResponse(post, likedSet.has(post.id)))
 
     return { posts, nextCursor, hasSubscriptions: true }
   },
@@ -443,10 +436,7 @@ export const subscriptionService = {
         { isolationLevel: 'Serializable' },
       )
 
-      await walletService.adjustCoinBalanceCache(
-        sub.subscriberId,
-        SUBSCRIPTION_COIN_COST,
-      )
+      await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
       const creatorPoints = hostRevenuePointsFromCoins(SUBSCRIPTION_COIN_COST)
       if (creatorPoints > 0n) {
         await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
@@ -474,9 +464,7 @@ export const subscriptionService = {
           status: CreatorSubscriptionStatus.GRACE,
           graceUntil,
         })
-        await redisClient.del(
-          RedisKeys.subscriptionAccess(sub.subscriberId, sub.creatorId),
-        )
+        await redisClient.del(RedisKeys.subscriptionAccess(sub.subscriberId, sub.creatorId))
         await cancelSubscriptionRenewalJob(sub.id)
         await enqueueSubscriptionGrace(sub.id, graceUntil)
 
@@ -530,10 +518,7 @@ export const subscriptionService = {
         { isolationLevel: 'Serializable' },
       )
 
-      await walletService.adjustCoinBalanceCache(
-        sub.subscriberId,
-        SUBSCRIPTION_COIN_COST,
-      )
+      await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
       const creatorPoints = hostRevenuePointsFromCoins(SUBSCRIPTION_COIN_COST)
       if (creatorPoints > 0n) {
         await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
@@ -560,9 +545,7 @@ export const subscriptionService = {
           status: CreatorSubscriptionStatus.EXPIRED,
           graceUntil: null,
         })
-        await redisClient.del(
-          RedisKeys.subscriptionAccess(sub.subscriberId, sub.creatorId),
-        )
+        await redisClient.del(RedisKeys.subscriptionAccess(sub.subscriberId, sub.creatorId))
         await userSubscriberRepository.deletePair(sub.subscriberId, sub.creatorId)
         await invalidateSubscriberCountCache(sub.creatorId)
         await cancelSubscriptionGraceJob(sub.id)

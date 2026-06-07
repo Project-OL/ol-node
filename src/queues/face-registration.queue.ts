@@ -1,27 +1,27 @@
-import { Queue } from "bullmq";
-import { redisClient } from "../config/redis";
+import { Queue } from 'bullmq'
+import { redisClient } from '../config/redis'
 import {
   FACE_REGISTRATION_QUEUE,
   FACE_REGISTRATION_VERIFY_JOB,
-} from "./face-registration.constants";
+} from './face-registration.constants'
 
 const verifyJobOpts = {
   attempts: 8,
-  backoff: { type: "exponential" as const, delay: 2000 },
+  backoff: { type: 'exponential' as const, delay: 2000 },
   removeOnComplete: 2000,
   removeOnFail: 5000,
-};
+}
 
 export const faceRegistrationQueue = new Queue(FACE_REGISTRATION_QUEUE, {
   connection: redisClient,
-});
+})
 
 export type FaceRegistrationVerifyJobData = {
-  sessionId: string;
-  userId: string;
-  idempotencyKey: string;
-  requestId?: string;
-};
+  sessionId: string
+  userId: string
+  idempotencyKey: string
+  requestId?: string
+}
 
 export async function enqueueFaceRegistrationVerification(
   data: FaceRegistrationVerifyJobData,
@@ -29,5 +29,5 @@ export async function enqueueFaceRegistrationVerification(
   await faceRegistrationQueue.add(FACE_REGISTRATION_VERIFY_JOB, data, {
     ...verifyJobOpts,
     jobId: `face-reg-${data.sessionId}-${data.idempotencyKey}`,
-  });
+  })
 }

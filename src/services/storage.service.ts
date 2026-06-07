@@ -163,4 +163,3 @@ export const storageService = {
     await s3Client.send(command)
   },
 }
-

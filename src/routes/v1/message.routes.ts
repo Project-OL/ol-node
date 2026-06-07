@@ -41,11 +41,7 @@ export default async function messageRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      await messagingService.addReaction(
-        userId,
-        request.params.messageId,
-        parsed.data.emoji,
-      )
+      await messagingService.addReaction(userId, request.params.messageId, parsed.data.emoji)
       return reply.code(201).send({ success: true })
     },
   )
@@ -72,11 +68,7 @@ export default async function messageRoutes(app: FastifyInstance) {
       reply: FastifyReply,
     ) => {
       const userId = request.userId!
-      await messagingService.removeReaction(
-        userId,
-        request.params.messageId,
-        request.params.emoji,
-      )
+      await messagingService.removeReaction(userId, request.params.messageId, request.params.emoji)
       return reply.code(204).send()
     },
   )
@@ -95,10 +87,7 @@ export default async function messageRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { messageId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { messageId: string } }>, reply: FastifyReply) => {
       const userId = request.userId!
       await messagingService.deleteMessage(userId, request.params.messageId)
       return reply.code(204).send()

@@ -63,7 +63,11 @@ export default async function storeRoutes(app: FastifyInstance) {
         )
       const parsed = bodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
       }
       const buyerId = request.userId
       if (!buyerId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
@@ -100,7 +104,11 @@ export default async function storeRoutes(app: FastifyInstance) {
       })
       const parsed = bodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
       }
       const buyerId = request.userId
       if (!buyerId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
@@ -153,10 +161,7 @@ export default async function storeRoutes(app: FastifyInstance) {
   app.post<{ Params: { assignmentId: string } }>(
     '/rare-ids/activate/:assignmentId',
     { preHandler: [authenticate] },
-    async (
-      request: FastifyRequest<{ Params: { assignmentId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { assignmentId: string } }>, reply: FastifyReply) => {
       const userId = request.userId
       if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       await storeService.activateOwnedRarePublicId(userId, request.params.assignmentId)
@@ -167,10 +172,7 @@ export default async function storeRoutes(app: FastifyInstance) {
   app.post<{ Params: { assignmentId: string } }>(
     '/rare-ids/deactivate/:assignmentId',
     { preHandler: [authenticate] },
-    async (
-      request: FastifyRequest<{ Params: { assignmentId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { assignmentId: string } }>, reply: FastifyReply) => {
       const userId = request.userId
       if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       await storeService.deactivateOwnedRarePublicId(userId, request.params.assignmentId)
@@ -178,7 +180,9 @@ export default async function storeRoutes(app: FastifyInstance) {
     },
   )
 
-  app.get<{ Querystring: { category?: string; isActive?: string; cursor?: string; limit?: string } }>(
+  app.get<{
+    Querystring: { category?: string; isActive?: string; cursor?: string; limit?: string }
+  }>(
     '/my-items',
     { preHandler: [authenticate] },
     async (

@@ -84,11 +84,7 @@ export default async function usersRoutes(app: FastifyInstance) {
             avatarBuf = Buffer.concat(chunks)
           } else {
             if (!PATCH_ME_ALLOWED_FIELDS.has(part.fieldname)) {
-              throw new AppError(
-                400,
-                `Unexpected field: ${part.fieldname}`,
-                'INVALID_REQUEST',
-              )
+              throw new AppError(400, `Unexpected field: ${part.fieldname}`, 'INVALID_REQUEST')
             }
             fields[part.fieldname] = String(part.value ?? '')
           }
@@ -155,13 +151,8 @@ export default async function usersRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
-      const resolved = await userSearchService.resolvePublicIdentity(
-        request.params.publicId,
-      )
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
+      const resolved = await userSearchService.resolvePublicIdentity(request.params.publicId)
       if (!resolved) {
         throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
       }
@@ -184,10 +175,7 @@ export default async function usersRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
       const numericId = Number(request.params.publicId)
       if (!Number.isInteger(numericId) || numericId <= 0) {
         throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
@@ -216,10 +204,7 @@ export default async function usersRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
       const numericId = Number(request.params.publicId)
       if (!Number.isInteger(numericId) || numericId <= 0) {
         throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
@@ -271,10 +256,7 @@ export default async function usersRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const user = await userSearchService.searchByPublicId(
-        parsed.data.publicId,
-        requesterId,
-      )
+      const user = await userSearchService.searchByPublicId(parsed.data.publicId, requesterId)
       if (!user) {
         throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
       }
@@ -282,4 +264,3 @@ export default async function usersRoutes(app: FastifyInstance) {
     },
   )
 }
-

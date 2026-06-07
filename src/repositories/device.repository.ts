@@ -22,10 +22,7 @@ export const deviceRepository = {
     })
   },
 
-  async findByUserIdAndDeviceId(
-    userId: string,
-    deviceId: string,
-  ): Promise<DeviceRegistry | null> {
+  async findByUserIdAndDeviceId(userId: string, deviceId: string): Promise<DeviceRegistry | null> {
     return prismaRead.deviceRegistry.findUnique({
       where: { userId_deviceId: { userId, deviceId } },
     })
@@ -76,12 +73,16 @@ export const deviceRepository = {
     })
 
     return rows.map(
-      (row: DeviceLinkedAccount & { user: Pick<User, 'id' | 'publicId' | 'username' | 'firstName' | 'lastName' | 'avatarUrl'> }) => {
+      (
+        row: DeviceLinkedAccount & {
+          user: Pick<User, 'id' | 'publicId' | 'username' | 'firstName' | 'lastName' | 'avatarUrl'>
+        },
+      ) => {
         const { user } = row
         const fullName =
           user.firstName && user.lastName
             ? `${user.firstName} ${user.lastName}`
-            : user.firstName ?? user.lastName
+            : (user.firstName ?? user.lastName)
         const displayName = fullName && fullName.trim().length > 0 ? fullName : user.username
 
         return {

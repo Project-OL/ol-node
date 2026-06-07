@@ -22,7 +22,7 @@ function buildDisplayName(user: {
   const fullName =
     user.firstName && user.lastName
       ? `${user.firstName} ${user.lastName}`
-      : user.firstName ?? user.lastName
+      : (user.firstName ?? user.lastName)
   const trimmed = fullName?.trim()
   return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
@@ -67,22 +67,20 @@ async function toUserCards(
         guardianService.getActiveGuardianSummary(user.id),
       ])
 
-    const level = levels.get(user.id)
-    const livestreamLevel = level?.livestreamLevel ?? 0
-    const wealthLevel = level?.wealthLevel ?? 0
-    const subscriberCount = subscriberCounts.get(user.id) ?? 0
-    const displayName = buildDisplayName(user)
-    const age = computeAge(user.dateOfBirth)
-    const isFriend = isFollowing && isFollowedBy
+      const level = levels.get(user.id)
+      const livestreamLevel = level?.livestreamLevel ?? 0
+      const wealthLevel = level?.wealthLevel ?? 0
+      const subscriberCount = subscriberCounts.get(user.id) ?? 0
+      const displayName = buildDisplayName(user)
+      const age = computeAge(user.dateOfBirth)
+      const isFriend = isFollowing && isFollowedBy
 
       return {
         id: user.id,
         userId: user.id,
         username: user.username,
         publicId: String(user.publicId),
-        displayPublicId: String(
-          user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId,
-        ),
+        displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
         isAgency: Boolean(user.isAgent),
         name: displayName,
         displayName,
@@ -137,11 +135,7 @@ export const followService = {
     return { following: true, isFriend }
   },
 
-  async unfollow(
-    followerId: string,
-    targetUserId: string,
-    meta: AuditMeta,
-  ): Promise<void> {
+  async unfollow(followerId: string, targetUserId: string, meta: AuditMeta): Promise<void> {
     await followRepository.deleteFollow(followerId, targetUserId)
 
     await cacheService.delete(RedisKeys.socialCounts(followerId))
@@ -291,4 +285,3 @@ export const followService = {
     return payload
   },
 }
-

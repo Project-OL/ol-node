@@ -43,28 +43,13 @@ export default async function reportRoutes(app: FastifyInstance) {
         description: 'Get evidence image upload URLs',
       },
     },
-    async (
-      request: FastifyRequest<{ Querystring: { count?: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Querystring: { count?: string } }>, reply: FastifyReply) => {
       const userId = request.userId!
-      const countParsed = z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(5)
-        .safeParse(request.query.count)
+      const countParsed = z.coerce.number().int().min(1).max(5).safeParse(request.query.count)
       if (!countParsed.success) {
-        throw new AppError(
-          400,
-          'count must be between 1 and 5',
-          'INVALID_REQUEST',
-        )
+        throw new AppError(400, 'count must be between 1 and 5', 'INVALID_REQUEST')
       }
-      const urls = await uploadService.getReportEvidenceUploadUrls(
-        userId,
-        countParsed.data,
-      )
+      const urls = await uploadService.getReportEvidenceUploadUrls(userId, countParsed.data)
       return reply.send({ urls })
     },
   )

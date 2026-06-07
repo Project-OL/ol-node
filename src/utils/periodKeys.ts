@@ -6,13 +6,13 @@ export function getPeriodKeys(now = new Date()) {
   const m = now.getUTCMonth()
   const d = now.getUTCDate()
 
-  const dayKey = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`
+  const dayKey = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 
   const dow = now.getUTCDay() || 7
   const monday = new Date(Date.UTC(y, m, d - (dow - 1)))
   const weekKey = monday.toISOString().slice(0, 10)
 
-  const monthKey = `${y}-${String(m + 1).padStart(2, "0")}-01`
+  const monthKey = `${y}-${String(m + 1).padStart(2, '0')}-01`
 
   return { dayKey, weekKey, monthKey, year: y, month: m + 1 }
 }

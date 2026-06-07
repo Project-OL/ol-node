@@ -3,9 +3,9 @@ import { AppError } from '../middlewares/errorHandler'
 export type FeedCursor = { createdAt: string; postId: string }
 
 export function encodeCursor(createdAt: Date, postId: string): string {
-  return Buffer.from(
-    JSON.stringify({ createdAt: createdAt.toISOString(), postId }),
-  ).toString('base64url')
+  return Buffer.from(JSON.stringify({ createdAt: createdAt.toISOString(), postId })).toString(
+    'base64url',
+  )
 }
 
 export function decodeCursor(cursor: string): FeedCursor {

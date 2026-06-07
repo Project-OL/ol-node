@@ -101,20 +101,10 @@ export const uploadService = {
       if (file.mediaType === 'IMAGE') {
         byType.IMAGE += 1
         if (byType.IMAGE > 5) {
-          throw new AppError(
-            400,
-            'Max 5 image items',
-            'INVALID_REQUEST',
-            { field: 'files' },
-          )
+          throw new AppError(400, 'Max 5 image items', 'INVALID_REQUEST', { field: 'files' })
         }
         if (file.sizeBytes > IMAGE_MAX_BYTES) {
-          throw new AppError(
-            400,
-            'Image max 10MB each',
-            'INVALID_REQUEST',
-            { field: 'files' },
-          )
+          throw new AppError(400, 'Image max 10MB each', 'INVALID_REQUEST', { field: 'files' })
         }
         if (!IMAGE_MIME.includes(file.mimeType)) {
           throw new AppError(
@@ -127,20 +117,10 @@ export const uploadService = {
       } else if (file.mediaType === 'VIDEO') {
         byType.VIDEO += 1
         if (byType.VIDEO > 5) {
-          throw new AppError(
-            400,
-            'Max 5 video items',
-            'INVALID_REQUEST',
-            { field: 'files' },
-          )
+          throw new AppError(400, 'Max 5 video items', 'INVALID_REQUEST', { field: 'files' })
         }
         if (file.sizeBytes > VIDEO_MAX_BYTES) {
-          throw new AppError(
-            400,
-            'Video max 100MB each',
-            'INVALID_REQUEST',
-            { field: 'files' },
-          )
+          throw new AppError(400, 'Video max 100MB each', 'INVALID_REQUEST', { field: 'files' })
         }
         if (!VIDEO_MIME.includes(file.mimeType)) {
           throw new AppError(
@@ -153,12 +133,7 @@ export const uploadService = {
       } else if (file.mediaType === 'AUDIO') {
         byType.AUDIO += 1
         if (byType.AUDIO > 1) {
-          throw new AppError(
-            400,
-            'Max 1 audio item',
-            'INVALID_REQUEST',
-            { field: 'files' },
-          )
+          throw new AppError(400, 'Max 1 audio item', 'INVALID_REQUEST', { field: 'files' })
         }
         const nm = normalizeAudioMime(file.mimeType)
         if (!isMimeAllowedForAudio(nm)) {
@@ -203,20 +178,10 @@ export const uploadService = {
       } else {
         byType.FILE += 1
         if (byType.FILE > 5) {
-          throw new AppError(
-            400,
-            'Max 5 file items',
-            'INVALID_REQUEST',
-            { field: 'files' },
-          )
+          throw new AppError(400, 'Max 5 file items', 'INVALID_REQUEST', { field: 'files' })
         }
         if (file.sizeBytes > FILE_MAX_BYTES) {
-          throw new AppError(
-            400,
-            'File max 50MB each',
-            'INVALID_REQUEST',
-            { field: 'files' },
-          )
+          throw new AppError(400, 'File max 50MB each', 'INVALID_REQUEST', { field: 'files' })
         }
       }
       let s3Key: string
@@ -261,21 +226,13 @@ export const uploadService = {
     count: number,
   ): Promise<Array<{ s3Key: string; uploadUrl: string }>> {
     if (count < 1 || count > 5) {
-      throw new AppError(
-        400,
-        'Count must be between 1 and 5',
-        'INVALID_REQUEST',
-      )
+      throw new AppError(400, 'Count must be between 1 and 5', 'INVALID_REQUEST')
     }
     const result: Array<{ s3Key: string; uploadUrl: string }> = []
     const ts = Date.now()
     for (let i = 0; i < count; i++) {
       const s3Key = `reports/${userId}/${ts}-${i}.jpg`
-      const uploadUrl = await storageService.getPresignedPutUrl(
-        s3Key,
-        'image/jpeg',
-        300,
-      )
+      const uploadUrl = await storageService.getPresignedPutUrl(s3Key, 'image/jpeg', 300)
       result.push({ s3Key, uploadUrl })
     }
     return result

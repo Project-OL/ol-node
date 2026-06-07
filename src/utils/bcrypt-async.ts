@@ -40,9 +40,15 @@ function runInWorker<T>(type: 'hash' | 'compare', plain: string, hash?: string):
     const w = getWorker()
     if (!w) {
       if (type === 'hash') {
-        bcrypt.hash(plain, BCRYPT_ROUNDS).then(resolve as (v: string) => void).catch(reject)
+        bcrypt
+          .hash(plain, BCRYPT_ROUNDS)
+          .then(resolve as (v: string) => void)
+          .catch(reject)
       } else {
-        bcrypt.compare(plain, hash!).then(resolve as (v: boolean) => void).catch(reject)
+        bcrypt
+          .compare(plain, hash!)
+          .then(resolve as (v: boolean) => void)
+          .catch(reject)
       }
       return
     }

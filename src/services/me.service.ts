@@ -6,17 +6,18 @@ import { userRepository } from '../repositories/user.repository'
 import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
 import { vipAssignmentRepository } from '../repositories/vip-assignment.repository'
 import { walletService } from './wallet.service'
-import {
-  coinWalletService,
-  USERNAME_CHANGE_COIN_COST,
-} from './coin-wallet.service'
+import { coinWalletService, USERNAME_CHANGE_COIN_COST } from './coin-wallet.service'
 import { cacheRedisService } from './cacheRedis.service'
 import { redisClient, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { signAccess } from '../utils/jwt'
 import { AppError } from '../middlewares/errorHandler'
 import { storageService } from './storage.service'
-import { displayNameFromUser, normalizeGenderStored, splitDisplayName } from '../utils/profileDisplay'
+import {
+  displayNameFromUser,
+  normalizeGenderStored,
+  splitDisplayName,
+} from '../utils/profileDisplay'
 import { detectImageMimeFromBuffer, extensionForImageMime } from '../utils/imageMagic'
 import type {
   GalleryCompletionDto,
@@ -51,9 +52,7 @@ const dobSchema = z
   }, 'Invalid date of birth')
 
 function sanitizePlain(input: string, maxLen: number): string {
-  return sanitizeHtml(input, { allowedTags: [], allowedAttributes: {} })
-    .trim()
-    .slice(0, maxLen)
+  return sanitizeHtml(input, { allowedTags: [], allowedAttributes: {} }).trim().slice(0, maxLen)
 }
 
 function primaryEmailFromIdentifiers(
@@ -104,9 +103,7 @@ function buildMeResponse(
     activeGuardian: Awaited<ReturnType<typeof guardianService.getActiveGuardianSummary>>
     activeStoreItems: Awaited<ReturnType<typeof storeService.getActiveItemsForUser>>
     richTier: RichTierMeDto
-    vipMembership: Awaited<
-      ReturnType<typeof vipMembershipService.buildMeVipMembershipBlock>
-    >
+    vipMembership: Awaited<ReturnType<typeof vipMembershipService.buildMeVipMembershipBlock>>
     agency: Awaited<ReturnType<typeof agencyService.buildMeAgencyBlock>>
     livePhoto: Awaited<ReturnType<typeof livePhotoService.buildMeLivePhotoBlock>>
   },
@@ -272,15 +269,18 @@ export const meService = {
       const trimmed = sanitizePlain(fields.name, 80)
       const parsed = displayNameSchema.safeParse(trimmed)
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid name', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid name',
+          'INVALID_REQUEST',
+        )
       }
 
       const { firstName, lastName } = splitDisplayName(parsed.data)
       const prevFirst = row.firstName?.trim() ?? ''
       const prevLast = row.lastName?.trim() ?? ''
       const nextLast = lastName?.trim() ?? ''
-      const sameAsCurrent =
-        prevFirst === firstName.trim() && prevLast === nextLast
+      const sameAsCurrent = prevFirst === firstName.trim() && prevLast === nextLast
       if (sameAsCurrent) {
         noopDuplicateDisplayName = true
       } else {
@@ -414,8 +414,7 @@ export const meService = {
     })
 
     const displayName = displayNameFromUser(fresh)
-    const userTv =
-      jwtCtx.tokenVersion ?? (await userRepository.getTokenVersion(userId)) ?? 0
+    const userTv = jwtCtx.tokenVersion ?? (await userRepository.getTokenVersion(userId)) ?? 0
     const accessPayload: Parameters<typeof signAccess>[0] = {
       sub: userId,
       userId,

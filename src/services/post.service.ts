@@ -8,10 +8,7 @@ import { storageService } from './storage.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { AuditMeta } from './follow.service'
 import type { CreatePostDto, PostResponse, TaggedUser } from '../types/post.types'
-import {
-  assembleLockedPostResponse,
-  assemblePostResponse,
-} from './post-response.builder'
+import { assembleLockedPostResponse, assemblePostResponse } from './post-response.builder'
 import { subscriptionService } from './subscription.service'
 import { videoThumbnailService } from './video-thumbnail.service'
 import { rootLogger } from '../utils/rootLogger'
@@ -33,9 +30,7 @@ function buildThumbnailKey(mediaKey: string): string {
 function buildMediaKeyRegex(userId: string): RegExp {
   const escapedUserId = userId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   // posts/{userId}/{uuid}.{ext}
-  return new RegExp(
-    `^posts\\/${escapedUserId}\\/[a-z0-9-]+\\.(jpg|jpeg|png|webp|mp4|mov|webm)$`,
-  )
+  return new RegExp(`^posts\\/${escapedUserId}\\/[a-z0-9-]+\\.(jpg|jpeg|png|webp|mp4|mov|webm)$`)
 }
 
 async function canViewSubscriberOnlyPost(
@@ -59,12 +54,7 @@ export const postService = {
     durationSeconds?: number,
     sizeBytes?: number,
   ): Promise<{ uploadUrl: string; mediaKey: string }> {
-    const allowed = [
-      'image/jpeg',
-      'image/png',
-      'image/webp',
-      ...VIDEO_MIME_TYPES,
-    ] as const
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', ...VIDEO_MIME_TYPES] as const
     if (!allowed.includes(mimeType as (typeof allowed)[number])) {
       throw new AppError(400, 'Invalid mime type', 'INVALID_MIME_TYPE')
     }
@@ -120,11 +110,7 @@ export const postService = {
     return { uploadUrl, mediaKey: key }
   },
 
-  async createPost(
-    userId: string,
-    dto: CreatePostDto,
-    meta: AuditMeta,
-  ): Promise<PostResponse> {
+  async createPost(userId: string, dto: CreatePostDto, meta: AuditMeta): Promise<PostResponse> {
     const {
       mediaKey,
       caption,
@@ -283,7 +269,7 @@ export const postService = {
         responses.push(assemblePostResponse(post, { isLiked }))
       }
     }
-    const nextCursorValue = posts.length === limit ? posts[posts.length - 1]?.id ?? null : null
+    const nextCursorValue = posts.length === limit ? (posts[posts.length - 1]?.id ?? null) : null
 
     return { posts: responses, nextCursor: nextCursorValue }
   },
@@ -382,4 +368,3 @@ export const postService = {
     return results
   },
 }
-

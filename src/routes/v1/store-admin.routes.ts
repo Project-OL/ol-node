@@ -88,7 +88,11 @@ async function readStoreAdminMultipart(request: FastifyRequest): Promise<{
           }
           const filename = part.filename?.trim() || ''
           if (!filename) {
-            throw new AppError(400, 'displayImage upload must include a filename with extension', 'INVALID_REQUEST')
+            throw new AppError(
+              400,
+              'displayImage upload must include a filename with extension',
+              'INVALID_REQUEST',
+            )
           }
           displayImage = { buffer: Buffer.concat(chunks), filename }
         } else if (part.fieldname === 'effect' || part.fieldname === 'effectFile') {
@@ -98,7 +102,11 @@ async function readStoreAdminMultipart(request: FastifyRequest): Promise<{
           }
           const filename = part.filename?.trim() || ''
           if (!filename) {
-            throw new AppError(400, 'effect upload must include a filename with extension', 'INVALID_REQUEST')
+            throw new AppError(
+              400,
+              'effect upload must include a filename with extension',
+              'INVALID_REQUEST',
+            )
           }
           effect = { buffer: Buffer.concat(chunks), filename }
         } else {
@@ -131,64 +139,76 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
     limits: { fileSize: env.MAX_UPLOAD_SIZE_BYTES },
   })
 
-  app.post('/store/items', { preHandler: [requireAdmin] }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const ct = String(request.headers['content-type'] ?? '')
+  app.post(
+    '/store/items',
+    { preHandler: [requireAdmin] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const ct = String(request.headers['content-type'] ?? '')
 
-    if (ct.includes('multipart/form-data')) {
-      const { fields, displayImage, effect } = await readStoreAdminMultipart(request)
-      const parsed = CreateStoreItemMultipartFieldsSchema.safeParse(fields)
-      if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid multipart fields', 'INVALID_REQUEST')
-      }
-      const f = parsed.data
+      if (ct.includes('multipart/form-data')) {
+        const { fields, displayImage, effect } = await readStoreAdminMultipart(request)
+        const parsed = CreateStoreItemMultipartFieldsSchema.safeParse(fields)
+        if (!parsed.success) {
+          throw new AppError(
+            400,
+            parsed.error.errors[0]?.message ?? 'Invalid multipart fields',
+            'INVALID_REQUEST',
+          )
+        }
+        const f = parsed.data
 
-      let displayImageUrl = f.displayImageUrl
-      if (displayImage) {
-        displayImageUrl = await uploadStoreAdminAsset({
-          buffer: displayImage.buffer,
-          filename: displayImage.filename,
-          role: 'display',
+        let displayImageUrl = f.displayImageUrl
+        if (displayImage) {
+          displayImageUrl = await uploadStoreAdminAsset({
+            buffer: displayImage.buffer,
+            filename: displayImage.filename,
+            role: 'display',
+          })
+        }
+        if (!displayImageUrl) {
+          throw new AppError(
+            400,
+            'Provide displayImage file or displayImageUrl field',
+            'INVALID_REQUEST',
+          )
+        }
+
+        let effectUrl: string | null = null
+        if (effect) {
+          effectUrl = await uploadStoreAdminAsset({
+            buffer: effect.buffer,
+            filename: effect.filename,
+            role: 'effect',
+          })
+        } else if (f.effectUrl !== undefined) {
+          effectUrl = f.effectUrl === '' ? null : f.effectUrl
+        }
+
+        const created = await storeService.createStoreItem({
+          name: f.name,
+          description: f.description,
+          category: f.category,
+          coinCost: f.coinCost,
+          validityDays: f.validityDays,
+          displayImageUrl,
+          effectUrl,
+          sortOrder: f.sortOrder,
         })
+        return reply.status(201).send(created)
       }
-      if (!displayImageUrl) {
+
+      const parsed = CreateStoreItemSchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
         throw new AppError(
           400,
-          'Provide displayImage file or displayImageUrl field',
+          parsed.error.errors[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
-
-      let effectUrl: string | null = null
-      if (effect) {
-        effectUrl = await uploadStoreAdminAsset({
-          buffer: effect.buffer,
-          filename: effect.filename,
-          role: 'effect',
-        })
-      } else if (f.effectUrl !== undefined) {
-        effectUrl = f.effectUrl === '' ? null : f.effectUrl
-      }
-
-      const created = await storeService.createStoreItem({
-        name: f.name,
-        description: f.description,
-        category: f.category,
-        coinCost: f.coinCost,
-        validityDays: f.validityDays,
-        displayImageUrl,
-        effectUrl,
-        sortOrder: f.sortOrder,
-      })
+      const created = await storeService.createStoreItem(parsed.data)
       return reply.status(201).send(created)
-    }
-
-    const parsed = CreateStoreItemSchema.safeParse(request.body ?? {})
-    if (!parsed.success) {
-      throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
-    }
-    const created = await storeService.createStoreItem(parsed.data)
-    return reply.status(201).send(created)
-  })
+    },
+  )
 
   app.patch<{ Params: { id: string } }>(
     '/store/items/:id',
@@ -200,7 +220,11 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
         const { fields, displayImage, effect } = await readStoreAdminMultipart(request)
         const parsed = UpdateStoreItemMultipartFieldsSchema.safeParse(fields)
         if (!parsed.success) {
-          throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid multipart fields', 'INVALID_REQUEST')
+          throw new AppError(
+            400,
+            parsed.error.errors[0]?.message ?? 'Invalid multipart fields',
+            'INVALID_REQUEST',
+          )
         }
         const f = parsed.data
 
@@ -254,7 +278,11 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
 
       const parsed = UpdateStoreItemSchema.safeParse(request.body ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
       }
       const updated = await storeService.updateStoreItem(request.params.id, parsed.data)
       return reply.send(updated)

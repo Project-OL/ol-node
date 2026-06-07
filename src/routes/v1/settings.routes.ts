@@ -99,17 +99,13 @@ export default async function settingsRoutes(app: FastifyInstance) {
         )
       }
 
-      const result = await userSettingsService.updateMessagePrivacy(
-        userId,
-        parsed.data,
-        {
-          request: {
-            ip: request.ip,
-            headers: request.headers as Record<string, string | undefined>,
-          },
-          deviceId: request.deviceId ?? null,
+      const result = await userSettingsService.updateMessagePrivacy(userId, parsed.data, {
+        request: {
+          ip: request.ip,
+          headers: request.headers as Record<string, string | undefined>,
         },
-      )
+        deviceId: request.deviceId ?? null,
+      })
 
       return reply.status(200).send({
         allowMsgFromMutual: result.allowMsgFromMutual,
@@ -139,17 +135,12 @@ export default async function settingsRoutes(app: FastifyInstance) {
         )
       }
 
-      const result = await privacyService.updateLiveMicStatus(
-        userId,
-        parsed.data.hideMicStatus,
-        {
-          ip: request.ip,
-          headers: request.headers as Record<string, string | undefined>,
-        },
-      )
+      const result = await privacyService.updateLiveMicStatus(userId, parsed.data.hideMicStatus, {
+        ip: request.ip,
+        headers: request.headers as Record<string, string | undefined>,
+      })
 
       return reply.status(200).send({ hideMicStatus: result.hideMicStatus ?? false })
     },
   )
 }
-

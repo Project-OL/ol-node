@@ -115,7 +115,11 @@ export async function verifyFacebookToken(accessToken: string): Promise<OAuthUse
 export async function verifyAppleToken(identityToken: string): Promise<OAuthUserInfo> {
   try {
     const auth = getFirebaseAuth()
-    const decoded = await auth.verifyIdToken(identityToken) as { uid: string; sub?: string; email?: string }
+    const decoded = (await auth.verifyIdToken(identityToken)) as {
+      uid: string
+      sub?: string
+      email?: string
+    }
     const email = decoded.email ?? null
     return { email, providerId: decoded.sub ?? decoded.uid, provider: 'apple' }
   } catch {
@@ -127,7 +131,10 @@ async function findExistingOAuthAccount(
   provider: 'google' | 'facebook' | 'apple',
   userInfo: OAuthUserInfo,
 ) {
-  let row = await authIdentifierRepository.findByProviderAndIdentifier(provider, userInfo.providerId)
+  let row = await authIdentifierRepository.findByProviderAndIdentifier(
+    provider,
+    userInfo.providerId,
+  )
   if (row) return row
   if (userInfo.email) {
     row = await authIdentifierRepository.findByProviderAndIdentifier(provider, userInfo.email)
@@ -151,7 +158,7 @@ export const oauthService = {
     ipAddress: string,
     userAgent?: string | null,
   ) {
-    let existing = await findExistingOAuthAccount(provider, userInfo)
+    const existing = await findExistingOAuthAccount(provider, userInfo)
     if (existing && existing.identifier !== userInfo.providerId) {
       await prisma.authIdentifier.update({
         where: { id: existing.id },
@@ -172,7 +179,8 @@ export const oauthService = {
       if (user.status === 'deleted') {
         throw new AppError(403, 'Account has been permanently deleted.', 'ACCOUNT_DELETED')
       }
-      if (user.status === 'suspended') throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
+      if (user.status === 'suspended')
+        throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
       await deviceService.linkAccountToDevice(deviceId, user.id)
       const tokens = await sessionService.createSession({
         userId: user.id,
@@ -208,11 +216,17 @@ export const oauthService = {
       }
     }
     if (userInfo.email) {
-      const emailTaken = await authIdentifierRepository.findByProviderAndIdentifier('email', userInfo.email)
-      if (emailTaken && emailTaken.userId) throw new AppError(409, 'Email already linked to another account', 'EMAIL_LINKED')
+      const emailTaken = await authIdentifierRepository.findByProviderAndIdentifier(
+        'email',
+        userInfo.email,
+      )
+      if (emailTaken && emailTaken.userId)
+        throw new AppError(409, 'Email already linked to another account', 'EMAIL_LINKED')
     }
     const { publicId } = await publicIdService.getNextPublicId('')
-    const username = userInfo.email ? userInfo.email.split('@')[0]! : `user_${userInfo.providerId.slice(0, 8)}`
+    const username = userInfo.email
+      ? userInfo.email.split('@')[0]!
+      : `user_${userInfo.providerId.slice(0, 8)}`
     const user = await prisma.user.create({
       data: {
         username,
@@ -273,7 +287,10 @@ export const oauthService = {
   /** Link OAuth provider to user; invalidates user auth identifiers cache. */
   async bindProvider(userId: string, provider: AuthProvider, userInfo: OAuthUserInfo) {
     const identifier = userInfo.providerId
-    await providerService.bindProvider(userId, provider, identifier, { isVerified: true, isPrimary: false })
+    await providerService.bindProvider(userId, provider, identifier, {
+      isVerified: true,
+      isPrimary: false,
+    })
     await auditService.log({
       userId,
       actionType: 'provider_bind',

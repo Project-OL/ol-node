@@ -37,10 +37,7 @@ export interface PrivacyFeatureInfo {
 
 type PrivacyToggleKey = 'invisibleVisitor' | 'mysteryLive' | 'mysteryRank' | 'invisibleOnline'
 
-const FEATURE_DESCRIPTIONS: Record<
-  PrivacyToggleKey,
-  { description: string; effect: string }
-> = {
+const FEATURE_DESCRIPTIONS: Record<PrivacyToggleKey, { description: string; effect: string }> = {
   invisibleVisitor: {
     description: 'Visit profiles without leaving a trace',
     effect: "Your visits won't appear in profile visitor counts or lists",
@@ -301,9 +298,7 @@ export const privacyService = {
     }
   },
 
-  async getEffectiveFlagsBulk(
-    userIds: string[],
-  ): Promise<Map<string, EffectivePrivacyFlags>> {
+  async getEffectiveFlagsBulk(userIds: string[]): Promise<Map<string, EffectivePrivacyFlags>> {
     const m = new Map<string, EffectivePrivacyFlags>()
     if (userIds.length === 0) return m
     const [rawRows, activeMap] = await Promise.all([

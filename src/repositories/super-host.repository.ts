@@ -9,7 +9,10 @@ function isMissingSuperHostsTable(err: unknown): boolean {
     return false
   }
   const meta = err.meta as { code?: string; message?: string } | undefined
-  return meta?.code === '42P01' || (meta?.message ?? '').includes('relation "super_hosts" does not exist')
+  return (
+    meta?.code === '42P01' ||
+    (meta?.message ?? '').includes('relation "super_hosts" does not exist')
+  )
 }
 
 export const superHostRepository = {

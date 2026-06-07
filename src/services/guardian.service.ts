@@ -4,11 +4,7 @@ import { PointTxType } from '@prisma/client'
 import { prisma } from '../config/database'
 import { hostRevenuePointsFromCoins } from '../config/host-revenue-shares'
 import { AppError } from '../middlewares/errorHandler'
-import {
-  RedisKeys,
-  GUARDIAN_ACTIVE_TTL,
-  GUARDIAN_LIST_TTL,
-} from '../config/redis'
+import { RedisKeys, GUARDIAN_ACTIVE_TTL, GUARDIAN_LIST_TTL } from '../config/redis'
 import { cacheService } from './cache.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
@@ -54,9 +50,7 @@ function addMonths(from: Date, months: number): Date {
   return d
 }
 
-function sortGuardiansForRank<T extends { tier: GuardianTier; expiresAt: Date }>(
-  rows: T[],
-): T[] {
+function sortGuardiansForRank<T extends { tier: GuardianTier; expiresAt: Date }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => {
     const tr = TIER_RANK[b.tier] - TIER_RANK[a.tier]
     if (tr !== 0) return tr
@@ -88,7 +82,7 @@ function buildDisplayName(user: {
   const fullName =
     user.firstName && user.lastName
       ? `${user.firstName} ${user.lastName}`
-      : user.firstName ?? user.lastName
+      : (user.firstName ?? user.lastName)
   const trimmed = fullName?.trim()
   return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
@@ -134,18 +128,16 @@ export type ActiveGuardianResponse = {
 
 export type ActiveGuardianSummary = ActiveGuardianProfileDto
 
-type CachedActiveGuardianSummary =
-  | {
-      guardianId: string
-      guardianUserId: string
-      guardianPublicId: string
-      displayName: string
-      avatarUrl: string | null
-      tier: string
-      purchasedAt: string
-      expiresAt: string
-    }
-  | null
+type CachedActiveGuardianSummary = {
+  guardianId: string
+  guardianUserId: string
+  guardianPublicId: string
+  displayName: string
+  avatarUrl: string | null
+  tier: string
+  purchasedAt: string
+  expiresAt: string
+} | null
 
 function parseCachedActiveGuardianSummary(raw: string): ActiveGuardianSummary | null {
   try {
@@ -367,9 +359,7 @@ export const guardianService = {
     }
     await enqueueGuardianExpiry(guardian.id, expiresAt)
 
-    const activeRows = await guardianRepository.findActiveGuardiansForTarget(
-      input.targetUserId,
-    )
+    const activeRows = await guardianRepository.findActiveGuardiansForTarget(input.targetUserId)
     const guardianUserIds = [...new Set(activeRows.map((g) => g.guardianUserId))]
     await invalidatePurchaseCaches({
       targetUserId: input.targetUserId,

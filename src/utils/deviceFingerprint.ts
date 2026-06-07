@@ -27,5 +27,8 @@ export function hashIp(ipAddress: string): string {
 }
 
 export function hashUserAgent(userAgent: string | null | undefined): string {
-  return crypto.createHash('sha256').update(userAgent ?? '').digest('hex')
+  return crypto
+    .createHash('sha256')
+    .update(userAgent ?? '')
+    .digest('hex')
 }

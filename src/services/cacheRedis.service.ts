@@ -10,17 +10,16 @@ function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
     const t = setTimeout(() => {
       reject(new Error(`Redis command timeout: ${label}`))
     }, timeoutMs)
-    promise
-      .then(
-        (v) => {
-          clearTimeout(t)
-          resolve(v)
-        },
-        (e) => {
-          clearTimeout(t)
-          reject(e)
-        },
-      )
+    promise.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(t)
+        reject(e)
+      },
+    )
   })
 }
 
@@ -85,9 +84,15 @@ export const cacheRedisService = {
           totalDeleted += keys.length
         }
       } while (cursor !== '0')
-      log.debug({ prefix, pattern, totalDeleted, latencyMs: Date.now() - started }, 'cache delByKeyPrefix')
+      log.debug(
+        { prefix, pattern, totalDeleted, latencyMs: Date.now() - started },
+        'cache delByKeyPrefix',
+      )
     } catch (err) {
-      log.warn({ err, prefix, pattern, latencyMs: Date.now() - started }, 'cache delByKeyPrefix failed')
+      log.warn(
+        { err, prefix, pattern, latencyMs: Date.now() - started },
+        'cache delByKeyPrefix failed',
+      )
     }
   },
 

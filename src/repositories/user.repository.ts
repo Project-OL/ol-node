@@ -58,11 +58,7 @@ export const userRepository = {
     const pid = BigInt(publicId)
     return prismaRead.user.findFirst({
       where: {
-        OR: [
-          { publicId: pid },
-          { defaultPublicId: pid },
-          { currentVipPublicId: pid },
-        ],
+        OR: [{ publicId: pid }, { defaultPublicId: pid }, { currentVipPublicId: pid }],
       },
       include: { authIdentifiers: true, authPassword: true },
     })
@@ -313,6 +309,6 @@ export const userRepository = {
       where: { id: userId },
       data: { isTagged },
       select: { id: true, isTagged: true },
-    });
+    })
   },
 }

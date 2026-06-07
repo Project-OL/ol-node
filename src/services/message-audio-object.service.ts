@@ -47,9 +47,7 @@ function resolveEffectiveAudioMime(params: {
   const declaredNorm = params.declaredMimeType?.trim()
     ? normalizeAudioMime(params.declaredMimeType)
     : ''
-  const headNorm = params.headContentType?.trim()
-    ? normalizeAudioMime(params.headContentType)
-    : ''
+  const headNorm = params.headContentType?.trim() ? normalizeAudioMime(params.headContentType) : ''
   const fromKey = guessAudioMimeFromKey(params.s3Key)
 
   if (declaredNorm && isAllowedAudioMime(declaredNorm)) {
@@ -57,7 +55,11 @@ function resolveEffectiveAudioMime(params: {
       rootLogger
         .child({ module: 'message-audio-object' })
         .warn({ s3Key: params.s3Key, declaredNorm, headNorm }, 'audio MIME client vs S3 mismatch')
-      throw new AppError(400, 'Audio MIME does not match object Content-Type', 'INVALID_MEDIA_OBJECT')
+      throw new AppError(
+        400,
+        'Audio MIME does not match object Content-Type',
+        'INVALID_MEDIA_OBJECT',
+      )
     }
     return declaredNorm
   }
@@ -123,7 +125,11 @@ export async function verifyUploadedAudioObject(
 
 export function assertAudioDurationAllowed(durationSec: number | undefined): void {
   if (durationSec === undefined) return
-  if (!Number.isFinite(durationSec) || durationSec < 1 || durationSec > MESSAGING_AUDIO_MAX_DURATION_SEC) {
+  if (
+    !Number.isFinite(durationSec) ||
+    durationSec < 1 ||
+    durationSec > MESSAGING_AUDIO_MAX_DURATION_SEC
+  ) {
     throw new AppError(
       400,
       `durationSec must be between 1 and ${MESSAGING_AUDIO_MAX_DURATION_SEC}`,

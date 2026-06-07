@@ -82,11 +82,7 @@ export const userSettingsService = {
     }
   },
 
-  async updateMessagePrivacy(
-    userId: string,
-    flags: MessagePrivacyFlags,
-    meta: AuditMeta,
-  ) {
+  async updateMessagePrivacy(userId: string, flags: MessagePrivacyFlags, meta: AuditMeta) {
     const hasAnyField =
       typeof flags.allowMsgFromMutual === 'boolean' ||
       typeof flags.allowMsgFromFollowing === 'boolean' ||
@@ -143,4 +139,3 @@ export const userSettingsService = {
     }
   },
 }
-

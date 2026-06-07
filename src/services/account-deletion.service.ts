@@ -108,7 +108,9 @@ export const accountDeletionService = {
         return {
           ...parsed,
           scheduledAt: parsed.scheduledAt ? new Date(parsed.scheduledAt) : undefined,
-          deactivationUntil: parsed.deactivationUntil ? new Date(parsed.deactivationUntil) : undefined,
+          deactivationUntil: parsed.deactivationUntil
+            ? new Date(parsed.deactivationUntil)
+            : undefined,
           deletionAt: parsed.deletionAt ? new Date(parsed.deletionAt) : undefined,
         }
       } catch {

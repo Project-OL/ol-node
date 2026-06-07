@@ -1,5 +1,5 @@
-import type { Prisma } from "@prisma/client";
-import { prisma, prismaRead } from "../config/database";
+import type { Prisma } from '@prisma/client'
+import { prisma, prismaRead } from '../config/database'
 
 export const agencyRepository = {
   async createAgency(
@@ -12,13 +12,13 @@ export const agencyRepository = {
         defaultPublicId: data.defaultPublicId,
         displayName: data.displayName,
       },
-    });
+    })
   },
 
   async getAgencyByUserId(userId: string) {
     return prismaRead.agency.findUnique({
       where: { userId },
-    });
+    })
   },
 
   /**
@@ -29,25 +29,21 @@ export const agencyRepository = {
   async getAgencyByPublicId(publicId: bigint) {
     const byDefault = await prismaRead.agency.findUnique({
       where: { defaultPublicId: publicId },
-    });
-    if (byDefault) return byDefault;
+    })
+    if (byDefault) return byDefault
 
     const owner = await prismaRead.user.findFirst({
       where: {
         isAgent: true,
-        OR: [
-          { publicId },
-          { defaultPublicId: publicId },
-          { currentVipPublicId: publicId },
-        ],
+        OR: [{ publicId }, { defaultPublicId: publicId }, { currentVipPublicId: publicId }],
       },
       select: { id: true },
-    });
-    if (!owner) return null;
+    })
+    if (!owner) return null
 
     return prismaRead.agency.findUnique({
       where: { userId: owner.id },
-    });
+    })
   },
 
   async setPause(
@@ -61,50 +57,42 @@ export const agencyRepository = {
         pausedAt: data.pausedAt,
         pausedUntil: data.pausedUntil,
       },
-    });
+    })
   },
 
-  async setPayrollEnabled(
-    userId: string,
-    payrollEnabled: boolean,
-    tx?: Prisma.TransactionClient,
-  ) {
-    const client = tx ?? prisma;
+  async setPayrollEnabled(userId: string, payrollEnabled: boolean, tx?: Prisma.TransactionClient) {
+    const client = tx ?? prisma
     return client.agency.update({
       where: { userId },
       data: { payrollEnabled },
-    });
+    })
   },
 
-  async incrementHostCount(
-    userId: string,
-    delta: number,
-    tx: Prisma.TransactionClient,
-  ) {
+  async incrementHostCount(userId: string, delta: number, tx: Prisma.TransactionClient) {
     return tx.agency.update({
       where: { userId },
       data: {
         totalHostsCount: { increment: delta },
       },
-    });
+    })
   },
 
   async updateDisplayAndLevels(
     userId: string,
     data: {
-      displayName?: string;
-      currentLevel?: string;
-      lifetimeHostEarningsPoints?: bigint;
-      currentWindowTotalPoints?: bigint;
-      lastLevelRecomputedAt?: Date | null;
+      displayName?: string
+      currentLevel?: string
+      lifetimeHostEarningsPoints?: bigint
+      currentWindowTotalPoints?: bigint
+      lastLevelRecomputedAt?: Date | null
     },
     tx?: Prisma.TransactionClient,
   ) {
-    const client = tx ?? prisma;
+    const client = tx ?? prisma
     return client.agency.update({
       where: { userId },
       data,
-    });
+    })
   },
 
   /**
@@ -113,10 +101,7 @@ export const agencyRepository = {
    */
   async listForRanking(params: { limit: number; skip: number }) {
     return prismaRead.agency.findMany({
-      orderBy: [
-        { totalHostsCount: "desc" },
-        { defaultPublicId: "desc" },
-      ],
+      orderBy: [{ totalHostsCount: 'desc' }, { defaultPublicId: 'desc' }],
       skip: params.skip,
       take: params.limit + 1,
       select: {
@@ -129,6 +114,6 @@ export const agencyRepository = {
         pausedAt: true,
         pausedUntil: true,
       },
-    });
+    })
   },
-};
+}

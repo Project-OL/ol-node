@@ -115,9 +115,7 @@ export const supportRepository = {
 
   async updateReadPointer(ticketId: bigint, actor: 'USER' | 'SUPPORT', messageId: bigint) {
     const data =
-      actor === 'USER'
-        ? { userLastReadMessageId: messageId }
-        : { csLastReadMessageId: messageId }
+      actor === 'USER' ? { userLastReadMessageId: messageId } : { csLastReadMessageId: messageId }
     return prisma.supportTicket.update({
       where: { id: ticketId },
       data,

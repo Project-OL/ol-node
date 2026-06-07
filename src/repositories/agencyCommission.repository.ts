@@ -1,42 +1,42 @@
-import { Prisma } from "@prisma/client";
-import { prismaRead } from "../config/database";
+import { Prisma } from '@prisma/client'
+import { prismaRead } from '../config/database'
 
-const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
 export type AgencyCommissionLevelRow = {
-  level: string;
-  minWindowPoints: bigint;
-  liveRateBp: number;
-  matchChatRateBp: number;
-  sortOrder: number;
-};
+  level: string
+  minWindowPoints: bigint
+  liveRateBp: number
+  matchChatRateBp: number
+  sortOrder: number
+}
 
 export const agencyCommissionRepository = {
   async getLevelConfig(): Promise<AgencyCommissionLevelRow[]> {
     const rows = await prismaRead.agencyCommissionLevel.findMany({
-      orderBy: { sortOrder: "asc" },
-    });
+      orderBy: { sortOrder: 'asc' },
+    })
     return rows.map((r) => ({
       level: r.level,
       minWindowPoints: r.minWindowPoints,
       liveRateBp: r.liveRateBp,
       matchChatRateBp: r.matchChatRateBp,
       sortOrder: r.sortOrder,
-    }));
+    }))
   },
 
   async getLevelRow(level: string): Promise<AgencyCommissionLevelRow | null> {
     const r = await prismaRead.agencyCommissionLevel.findUnique({
       where: { level },
-    });
-    if (!r) return null;
+    })
+    if (!r) return null
     return {
       level: r.level,
       minWindowPoints: r.minWindowPoints,
       liveRateBp: r.liveRateBp,
       matchChatRateBp: r.matchChatRateBp,
       sortOrder: r.sortOrder,
-    };
+    }
   },
 
   async upsertDailyEarning(
@@ -47,11 +47,11 @@ export const agencyCommissionRepository = {
       hostEarningsDelta,
       hostCommissionDelta,
     }: {
-      agencyUserId: string;
-      hostUserId: string;
-      day: Date;
-      hostEarningsDelta: bigint;
-      hostCommissionDelta: bigint;
+      agencyUserId: string
+      hostUserId: string
+      day: Date
+      hostEarningsDelta: bigint
+      hostCommissionDelta: bigint
     },
     tx: Prisma.TransactionClient,
   ): Promise<void> {
@@ -74,14 +74,10 @@ export const agencyCommissionRepository = {
         host_commission_points = agency_daily_earnings.host_commission_points + EXCLUDED.host_commission_points,
         host_was_active = true,
         last_credit_at = NOW()
-    `;
+    `
   },
 
-  async getAgencyWindowTotal(
-    agencyUserId: string,
-    fromDay: Date,
-    toDay: Date,
-  ): Promise<bigint> {
+  async getAgencyWindowTotal(agencyUserId: string, fromDay: Date, toDay: Date): Promise<bigint> {
     const rows = await prismaRead.$queryRaw<{ s: bigint }[]>`
       SELECT COALESCE(SUM(e.host_earnings_points), 0)::bigint AS s
       FROM agency_daily_earnings e
@@ -91,8 +87,8 @@ export const agencyCommissionRepository = {
         AND e.day <= ${toDay}::date
         AND e.host_was_active = true
         AND u.status NOT IN ('suspended', 'deleted')
-    `;
-    return rows[0]?.s ?? 0n;
+    `
+    return rows[0]?.s ?? 0n
   },
 
   async listAgenciesForRecompute({
@@ -101,12 +97,12 @@ export const agencyCommissionRepository = {
     cursor,
     limit,
   }: {
-    fromDay: Date;
-    toDay: Date;
-    cursor: string | null;
-    limit: number;
+    fromDay: Date
+    toDay: Date
+    cursor: string | null
+    limit: number
   }): Promise<string[]> {
-    const cur = cursor && cursor.length > 0 ? cursor : ZERO_UUID;
+    const cur = cursor && cursor.length > 0 ? cursor : ZERO_UUID
     const rows = await prismaRead.$queryRaw<{ agency_user_id: string }[]>`
       SELECT DISTINCT e.agency_user_id
       FROM agency_daily_earnings e
@@ -115,8 +111,8 @@ export const agencyCommissionRepository = {
         AND e.agency_user_id > ${cur}::uuid
       ORDER BY e.agency_user_id ASC
       LIMIT ${limit}
-    `;
-    return rows.map((r) => r.agency_user_id);
+    `
+    return rows.map((r) => r.agency_user_id)
   },
 
   /** Per-host totals from daily earnings (commission panel). */
@@ -127,20 +123,20 @@ export const agencyCommissionRepository = {
     opts?: { limit: number; offset: number },
   ): Promise<
     Array<{
-      hostUserId: string;
-      hostEarningsPoints: bigint;
-      hostCommissionPoints: bigint;
-      liveDurationSeconds: bigint;
+      hostUserId: string
+      hostEarningsPoints: bigint
+      hostCommissionPoints: bigint
+      liveDurationSeconds: bigint
     }>
   > {
-    const limit = opts?.limit ?? 50;
-    const offset = opts?.offset ?? 0;
+    const limit = opts?.limit ?? 50
+    const offset = opts?.offset ?? 0
     const rows = await prismaRead.$queryRaw<
       {
-        host_user_id: string;
-        earnings: bigint;
-        commission: bigint;
-        live_duration: bigint;
+        host_user_id: string
+        earnings: bigint
+        commission: bigint
+        live_duration: bigint
       }[]
     >`
       SELECT * FROM (
@@ -161,13 +157,13 @@ export const agencyCommissionRepository = {
       ORDER BY t.earnings DESC, t.host_user_id ASC
       LIMIT ${limit + 1}
       OFFSET ${offset}
-    `;
+    `
     return rows.map((r) => ({
       hostUserId: r.host_user_id,
       hostEarningsPoints: r.earnings,
       hostCommissionPoints: r.commission,
       liveDurationSeconds: r.live_duration,
-    }));
+    }))
   },
 
   async sumLiveDurationForAgency(
@@ -183,8 +179,8 @@ export const agencyCommissionRepository = {
         AND e.day >= ${fromDay}::date
         AND e.day <= ${toDay}::date
         AND u.status NOT IN ('suspended', 'deleted')
-    `;
-    return rows[0]?.s ?? 0n;
+    `
+    return rows[0]?.s ?? 0n
   },
 
   async sumLiveDurationForHost(
@@ -200,8 +196,8 @@ export const agencyCommissionRepository = {
         AND e.host_user_id = ${hostUserId}::uuid
         AND e.day >= ${fromDay}::date
         AND e.day <= ${toDay}::date
-    `;
-    return rows[0]?.s ?? 0n;
+    `
+    return rows[0]?.s ?? 0n
   },
 
   /** Point ledger aggregation for hosts currently under this agency (recompute-time filter uses daily table; this uses live membership). */
@@ -210,9 +206,9 @@ export const agencyCommissionRepository = {
     from,
     toExclusive,
   }: {
-    agencyUserId: string;
-    from: Date;
-    toExclusive: Date;
+    agencyUserId: string
+    from: Date
+    toExclusive: Date
   }): Promise<Array<{ txType: string; totalAmount: bigint }>> {
     const rows = await prismaRead.$queryRaw<{ tx_type: string; s: bigint }[]>`
       SELECT ple.tx_type::text AS tx_type, COALESCE(SUM(ple.amount), 0)::bigint AS s
@@ -225,8 +221,8 @@ export const agencyCommissionRepository = {
         AND ple.created_at >= ${from}
         AND ple.created_at < ${toExclusive}
       GROUP BY ple.tx_type
-    `;
-    return rows.map((r) => ({ txType: r.tx_type, totalAmount: r.s }));
+    `
+    return rows.map((r) => ({ txType: r.tx_type, totalAmount: r.s }))
   },
 
   async aggregateLedgerForSingleHost({
@@ -235,10 +231,10 @@ export const agencyCommissionRepository = {
     from,
     toExclusive,
   }: {
-    hostUserId: string;
-    agencyUserId: string;
-    from: Date;
-    toExclusive: Date;
+    hostUserId: string
+    agencyUserId: string
+    from: Date
+    toExclusive: Date
   }): Promise<Array<{ txType: string; totalAmount: bigint }>> {
     const rows = await prismaRead.$queryRaw<{ tx_type: string; s: bigint }[]>`
       SELECT ple.tx_type::text AS tx_type, COALESCE(SUM(ple.amount), 0)::bigint AS s
@@ -252,7 +248,7 @@ export const agencyCommissionRepository = {
         AND ple.created_at >= ${from}
         AND ple.created_at < ${toExclusive}
       GROUP BY ple.tx_type
-    `;
-    return rows.map((r) => ({ txType: r.tx_type, totalAmount: r.s }));
+    `
+    return rows.map((r) => ({ txType: r.tx_type, totalAmount: r.s }))
   },
-};
+}

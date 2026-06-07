@@ -1,8 +1,8 @@
-import { z } from "zod";
+import { z } from 'zod'
 
 export const BindEpaySchema = z.object({
   epayEmail: z.string().email().max(255),
-});
+})
 
 export const BindBankSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -14,6 +14,6 @@ export const BindBankSchema = z.object({
   upiId: z.string().max(100).optional(),
   email: z.string().email().max(255).optional(),
   phone: z.string().max(30).optional(),
-});
+})
 
-export type BindBankInput = z.infer<typeof BindBankSchema>;
+export type BindBankInput = z.infer<typeof BindBankSchema>

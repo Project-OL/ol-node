@@ -59,7 +59,12 @@ export function scoreSubmission(
   correctCount: number
   totalQuestions: number
   allCorrect: boolean
-  perQuestion: Array<{ questionId: string; selectedOptionId: string; selectedValue: string; isCorrect: boolean }>
+  perQuestion: Array<{
+    questionId: string
+    selectedOptionId: string
+    selectedValue: string
+    isCorrect: boolean
+  }>
 } {
   const byQuestion = new Map(active.questions.map((q) => [q.id, q]))
   const submittedQuestionIds = new Set(answers.map((a) => a.questionId))
@@ -100,7 +105,12 @@ async function getActiveFromCacheOrDb(key: string) {
   const publicPayload = toPublicDto(active)
   const internalPayload = toInternalDto(active)
   await redisClient.set(publicKey, JSON.stringify(publicPayload), 'EX', QUESTIONNAIRE_ACTIVE_TTL)
-  await redisClient.set(internalKey, JSON.stringify(internalPayload), 'EX', QUESTIONNAIRE_ACTIVE_TTL)
+  await redisClient.set(
+    internalKey,
+    JSON.stringify(internalPayload),
+    'EX',
+    QUESTIONNAIRE_ACTIVE_TTL,
+  )
   return { publicPayload, internalPayload }
 }
 
@@ -172,7 +182,9 @@ export const questionnaireService = {
         passed: row.allCorrect,
         completedAt: row.completedAt.toISOString(),
       })),
-      nextCursor: hasMore ? `${page[page.length - 1]!.completedAt.toISOString()}|${page[page.length - 1]!.id}` : null,
+      nextCursor: hasMore
+        ? `${page[page.length - 1]!.completedAt.toISOString()}|${page[page.length - 1]!.id}`
+        : null,
     }
   },
 
@@ -233,59 +245,82 @@ export const questionnaireService = {
     return toInternalDto(row)
   },
 
-  async adminCreate(actorId: string, input: {
-    key: string
-    title: string
-    description?: string | null
-    questions: Array<{ order: number; text: string; options: Array<{ label: string; value: string; order: number; isCorrect: boolean }> }>
-  }) {
-    const created = await prisma.$transaction(async (tx) => {
-      await questionnaireRepository.deactivateActiveByKey(tx, input.key, actorId)
-      const maxVersion = await questionnaireRepository.getMaxVersionByKey(tx, input.key)
-      return questionnaireRepository.createWithQuestionsAndOptions(tx, {
-        ...input,
-        version: maxVersion + 1,
-        isActive: true,
-        actorId,
-      })
-    }, { isolationLevel: 'Serializable' })
+  async adminCreate(
+    actorId: string,
+    input: {
+      key: string
+      title: string
+      description?: string | null
+      questions: Array<{
+        order: number
+        text: string
+        options: Array<{ label: string; value: string; order: number; isCorrect: boolean }>
+      }>
+    },
+  ) {
+    const created = await prisma.$transaction(
+      async (tx) => {
+        await questionnaireRepository.deactivateActiveByKey(tx, input.key, actorId)
+        const maxVersion = await questionnaireRepository.getMaxVersionByKey(tx, input.key)
+        return questionnaireRepository.createWithQuestionsAndOptions(tx, {
+          ...input,
+          version: maxVersion + 1,
+          isActive: true,
+          actorId,
+        })
+      },
+      { isolationLevel: 'Serializable' },
+    )
     await invalidateByKey(input.key)
     return toInternalDto(created)
   },
 
-  async adminPatchMeta(actorId: string, id: string, patch: { title?: string; description?: string | null; requireAllCorrect?: boolean }) {
-    const updated = await prisma.$transaction(async (tx) => {
-      const existing = await questionnaireRepository.findByIdForUpdate(tx, id)
-      if (!existing) throw new AppError(404, 'Questionnaire not found', 'questionnaire_not_found')
-      await tx.questionnaire.update({
-        where: { id },
-        data: { ...patch, updatedById: actorId },
-      })
-      return questionnaireRepository.findById(id)
-    }, { isolationLevel: 'Serializable' })
+  async adminPatchMeta(
+    actorId: string,
+    id: string,
+    patch: { title?: string; description?: string | null; requireAllCorrect?: boolean },
+  ) {
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        const existing = await questionnaireRepository.findByIdForUpdate(tx, id)
+        if (!existing) throw new AppError(404, 'Questionnaire not found', 'questionnaire_not_found')
+        await tx.questionnaire.update({
+          where: { id },
+          data: { ...patch, updatedById: actorId },
+        })
+        return questionnaireRepository.findById(id)
+      },
+      { isolationLevel: 'Serializable' },
+    )
     await invalidateByKey(updated!.key)
     return toInternalDto(updated!)
   },
 
   async adminActivate(actorId: string, id: string) {
-    const updated = await prisma.$transaction(async (tx) => {
-      const existing = await questionnaireRepository.findByIdForUpdate(tx, id)
-      if (!existing) throw new AppError(404, 'Questionnaire not found', 'questionnaire_not_found')
-      await questionnaireRepository.deactivateActiveByKey(tx, existing.key, actorId)
-      await questionnaireRepository.setActive(tx, id, true, actorId)
-      return questionnaireRepository.findById(id)
-    }, { isolationLevel: 'Serializable' })
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        const existing = await questionnaireRepository.findByIdForUpdate(tx, id)
+        if (!existing) throw new AppError(404, 'Questionnaire not found', 'questionnaire_not_found')
+        await questionnaireRepository.deactivateActiveByKey(tx, existing.key, actorId)
+        await questionnaireRepository.setActive(tx, id, true, actorId)
+        return questionnaireRepository.findById(id)
+      },
+      { isolationLevel: 'Serializable' },
+    )
     await invalidateByKey(updated!.key)
     return toInternalDto(updated!)
   },
 
   async adminDeactivate(actorId: string, id: string) {
-    const updated = await prisma.$transaction(async (tx) => {
-      const existing = await questionnaireRepository.findByIdForUpdate(tx, id)
-      if (!existing) throw new AppError(404, 'Questionnaire not found', 'questionnaire_not_found')
-      await questionnaireRepository.setActive(tx, id, false, actorId)
-      return questionnaireRepository.findById(id)
-    }, { isolationLevel: 'Serializable' })
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        const existing = await questionnaireRepository.findByIdForUpdate(tx, id)
+        if (!existing) throw new AppError(404, 'Questionnaire not found', 'questionnaire_not_found')
+        await questionnaireRepository.setActive(tx, id, false, actorId)
+        return questionnaireRepository.findById(id)
+      },
+      { isolationLevel: 'Serializable' },
+    )
     await invalidateByKey(updated!.key)
     return toInternalDto(updated!)
   },

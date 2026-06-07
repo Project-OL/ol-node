@@ -1,12 +1,7 @@
-import { prismaRead } from "../config/database";
-import { redisClient, RedisKeys } from "../config/redis";
-import { bigIntToStr, formatDuration } from "../utils/bigint";
-import {
-  endOfUTCDay,
-  startOfUTCDay,
-  toUTCDateOnly,
-  utcNow,
-} from "../utils/datetime";
+import { prismaRead } from '../config/database'
+import { redisClient, RedisKeys } from '../config/redis'
+import { bigIntToStr, formatDuration } from '../utils/bigint'
+import { endOfUTCDay, startOfUTCDay, toUTCDateOnly, utcNow } from '../utils/datetime'
 
 /**
  * Read-only aggregation repository for the agency agent dashboard.
@@ -21,98 +16,92 @@ import {
  * commission eligibility is computed.
  */
 const COMMISSION_ELIGIBLE_TX_TYPES = [
-  "LIVESTREAM_GIFT",
-  "GIFT_RECEIVE",
-  "VIDEO_CALL",
-  "SUBSCRIPTION",
-] as const;
+  'LIVESTREAM_GIFT',
+  'GIFT_RECEIVE',
+  'VIDEO_CALL',
+  'SUBSCRIPTION',
+] as const
 
 export interface EarningsOverview {
-  totalEarnings: string;
-  totalHostEarnings: string;
-  agentOwnEarnings: string;
-  totalHostCommission: string;
-  agentOwnCommission: string;
-  totalCommission: string;
-  payrollCommission: string;
-  currentLevel: string;
-  currentRateBp: number;
+  totalEarnings: string
+  totalHostEarnings: string
+  agentOwnEarnings: string
+  totalHostCommission: string
+  agentOwnCommission: string
+  totalCommission: string
+  payrollCommission: string
+  currentLevel: string
+  currentRateBp: number
 }
 
 export interface HostDataSummary {
-  totalHosts: number;
-  newHosts: number;
-  validHosts: number;
-  hostsWithIncome: number;
-  totalLiveDurationSeconds: string;
-  totalLiveDurationFormatted: string;
+  totalHosts: number
+  newHosts: number
+  validHosts: number
+  hostsWithIncome: number
+  totalLiveDurationSeconds: string
+  totalLiveDurationFormatted: string
 }
 
 export interface HostCommissionItem {
-  hostUserId: string;
-  displayName: string | null;
-  avatarUrl: string | null;
-  publicId: string;
-  displayPublicId: string;
-  isTagged: boolean;
-  isVerified: boolean;
-  wealthLevel: number;
-  livestreamLevel: number;
-  hostEarnings: string;
-  commissionEarned: string;
-  liveDurationSeconds: string;
-  liveDurationFormatted: string;
-  isAgentSelf?: boolean;
+  hostUserId: string
+  displayName: string | null
+  avatarUrl: string | null
+  publicId: string
+  displayPublicId: string
+  isTagged: boolean
+  isVerified: boolean
+  wealthLevel: number
+  livestreamLevel: number
+  hostEarnings: string
+  commissionEarned: string
+  liveDurationSeconds: string
+  liveDurationFormatted: string
+  isAgentSelf?: boolean
 }
 
 export interface HostDrilldown {
-  hostUserId: string;
-  displayName: string | null;
-  avatarUrl: string | null;
-  publicId: string;
-  displayPublicId: string;
-  age: number | null;
-  gender: string | null;
-  isTagged: boolean;
-  isVerified: boolean;
-  wealthLevel: number;
-  livestreamLevel: number;
-  remainingPoints: string;
-  hostEarnings: string;
-  commissionEarned: string;
-  liveDurationSeconds: string;
-  liveDurationFormatted: string;
-  platformHourlySalary: string;
-  rankReward: string;
+  hostUserId: string
+  displayName: string | null
+  avatarUrl: string | null
+  publicId: string
+  displayPublicId: string
+  age: number | null
+  gender: string | null
+  isTagged: boolean
+  isVerified: boolean
+  wealthLevel: number
+  livestreamLevel: number
+  remainingPoints: string
+  hostEarnings: string
+  commissionEarned: string
+  liveDurationSeconds: string
+  liveDurationFormatted: string
+  platformHourlySalary: string
+  rankReward: string
 }
 
 export interface AgentEarnedToday {
-  earnedToday: string;
-  accumulatedEarnings: string;
-  pointsBalance: string;
+  earnedToday: string
+  accumulatedEarnings: string
+  pointsBalance: string
 }
 
-async function getAgencyRateBp(
-  agencyUserId: string,
-): Promise<{ level: string; rateBp: number }> {
+async function getAgencyRateBp(agencyUserId: string): Promise<{ level: string; rateBp: number }> {
   const agency = await prismaRead.agency.findUnique({
     where: { userId: agencyUserId },
     select: { currentLevel: true },
-  });
-  const level = agency?.currentLevel ?? "D";
+  })
+  const level = agency?.currentLevel ?? 'D'
   const levelConfig = await prismaRead.agencyCommissionLevel.findUnique({
     where: { level },
     select: { liveRateBp: true },
-  });
-  return { level, rateBp: levelConfig?.liveRateBp ?? 400 };
+  })
+  return { level, rateBp: levelConfig?.liveRateBp ?? 400 }
 }
 
 /** Sum the agent's own eligible point credits in `[start, end]` (inclusive instants). */
-async function sumAgentOwnEarnings(
-  agencyUserId: string,
-  start: Date,
-  end: Date,
-): Promise<bigint> {
+async function sumAgentOwnEarnings(agencyUserId: string, start: Date, end: Date): Promise<bigint> {
   const [row] = await prismaRead.$queryRaw<Array<{ earned: bigint }>>`
     SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS earned
     FROM point_ledger_entries ple
@@ -123,15 +112,15 @@ async function sumAgentOwnEarnings(
       AND ple.tx_type::text = ANY(${[...COMMISSION_ELIGIBLE_TX_TYPES]}::text[])
       AND ple.created_at >= ${start}
       AND ple.created_at <= ${end}
-  `;
-  return row?.earned ?? 0n;
+  `
+  return row?.earned ?? 0n
 }
 
 /** Current POINT wallet balance — Redis cache first, ledger fallback. */
 async function getPointsBalance(userId: string): Promise<bigint> {
   try {
-    const cached = await redisClient.get(RedisKeys.walletPointBalance(userId));
-    if (cached != null) return BigInt(cached);
+    const cached = await redisClient.get(RedisKeys.walletPointBalance(userId))
+    if (cached != null) return BigInt(cached)
   } catch {
     /* cache miss / parse error → fall through to DB */
   }
@@ -143,21 +132,18 @@ async function getPointsBalance(userId: string): Promise<bigint> {
     FROM point_ledger_entries ple
     INNER JOIN wallets w ON w.id = ple.wallet_id
     WHERE w.user_id = ${userId}::uuid AND w.currency_type = 'POINT'
-  `;
-  return row?.bal ?? 0n;
+  `
+  return row?.bal ?? 0n
 }
 
 export const agencyDashboardRepository = {
   /** Confirm a host currently belongs to this agency (drilldown security guard). */
-  async verifyHostMembership(
-    agencyUserId: string,
-    hostUserId: string,
-  ): Promise<boolean> {
+  async verifyHostMembership(agencyUserId: string, hostUserId: string): Promise<boolean> {
     const membership = await prismaRead.agencyHost.findUnique({
       where: { hostUserId },
       select: { agencyUserId: true },
-    });
-    return membership?.agencyUserId === agencyUserId;
+    })
+    return membership?.agencyUserId === agencyUserId
   },
 
   async getEarningsOverview(
@@ -165,8 +151,8 @@ export const agencyDashboardRepository = {
     start: Date,
     end: Date,
   ): Promise<EarningsOverview> {
-    const startDay = toUTCDateOnly(start);
-    const endDay = toUTCDateOnly(end);
+    const startDay = toUTCDateOnly(start)
+    const endDay = toUTCDateOnly(end)
 
     // A: per-host aggregate from agency_daily_earnings.
     const [dailyAgg] = await prismaRead.$queryRaw<
@@ -178,12 +164,10 @@ export const agencyDashboardRepository = {
       FROM agency_daily_earnings
       WHERE agency_user_id = ${agencyUserId}::uuid
         AND day BETWEEN ${startDay}::date AND ${endDay}::date
-    `;
+    `
 
     // C: agent payroll-processing reward credits in the period.
-    const [payrollAgg] = await prismaRead.$queryRaw<
-      Array<{ payrollCommission: bigint }>
-    >`
+    const [payrollAgg] = await prismaRead.$queryRaw<Array<{ payrollCommission: bigint }>>`
       SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS "payrollCommission"
       FROM point_ledger_entries ple
       INNER JOIN wallets w ON w.id = ple.wallet_id
@@ -193,18 +177,18 @@ export const agencyDashboardRepository = {
         AND ple.tx_type     = 'PAYROLL_PROCESSING_REWARD'
         AND ple.created_at >= ${start}
         AND ple.created_at <= ${end}
-    `;
+    `
 
     const [agentOwnEarnings, { level, rateBp }] = await Promise.all([
       sumAgentOwnEarnings(agencyUserId, start, end),
       getAgencyRateBp(agencyUserId),
-    ]);
+    ])
 
-    const agentOwnCommission = (agentOwnEarnings * BigInt(rateBp)) / 10_000n;
-    const totalHostEarnings = dailyAgg?.totalHostEarnings ?? 0n;
-    const totalHostCommission = dailyAgg?.totalHostCommission ?? 0n;
-    const totalEarnings = totalHostEarnings + agentOwnEarnings;
-    const totalCommission = totalHostCommission + agentOwnCommission;
+    const agentOwnCommission = (agentOwnEarnings * BigInt(rateBp)) / 10_000n
+    const totalHostEarnings = dailyAgg?.totalHostEarnings ?? 0n
+    const totalHostCommission = dailyAgg?.totalHostCommission ?? 0n
+    const totalEarnings = totalHostEarnings + agentOwnEarnings
+    const totalCommission = totalHostCommission + agentOwnCommission
 
     return {
       totalEarnings: bigIntToStr(totalEarnings),
@@ -216,18 +200,14 @@ export const agencyDashboardRepository = {
       payrollCommission: bigIntToStr(payrollAgg?.payrollCommission ?? 0n),
       currentLevel: level,
       currentRateBp: rateBp,
-    };
+    }
   },
 
-  async getHostDataSummary(
-    agencyUserId: string,
-    start: Date,
-    end: Date,
-  ): Promise<HostDataSummary> {
+  async getHostDataSummary(agencyUserId: string, start: Date, end: Date): Promise<HostDataSummary> {
     // "new" hosts are always relative to NOW (current roster stat), not the period.
-    const threeDaysAgo = new Date(utcNow().getTime() - 3 * 24 * 60 * 60 * 1000);
-    const startDay = toUTCDateOnly(start);
-    const endDay = toUTCDateOnly(end);
+    const threeDaysAgo = new Date(utcNow().getTime() - 3 * 24 * 60 * 60 * 1000)
+    const startDay = toUTCDateOnly(start)
+    const endDay = toUTCDateOnly(end)
 
     const [counts] = await prismaRead.$queryRaw<
       Array<{ totalHosts: bigint; newHosts: bigint; validHosts: bigint }>
@@ -248,7 +228,7 @@ export const agencyDashboardRepository = {
         )::BIGINT AS "validHosts"
       FROM agency_hosts ah
       WHERE ah.agency_user_id = ${agencyUserId}::uuid
-    `;
+    `
 
     const [incomeAndDuration] = await prismaRead.$queryRaw<
       Array<{ hostsWithIncome: bigint; totalLiveDuration: bigint }>
@@ -260,9 +240,9 @@ export const agencyDashboardRepository = {
       FROM agency_daily_earnings ade
       WHERE ade.agency_user_id = ${agencyUserId}::uuid
         AND ade.day BETWEEN ${startDay}::date AND ${endDay}::date
-    `;
+    `
 
-    const totalLiveSecs = incomeAndDuration?.totalLiveDuration ?? 0n;
+    const totalLiveSecs = incomeAndDuration?.totalLiveDuration ?? 0n
     return {
       totalHosts: Number(counts?.totalHosts ?? 0n),
       newHosts: Number(counts?.newHosts ?? 0n),
@@ -270,7 +250,7 @@ export const agencyDashboardRepository = {
       hostsWithIncome: Number(incomeAndDuration?.hostsWithIncome ?? 0n),
       totalLiveDurationSeconds: bigIntToStr(totalLiveSecs),
       totalLiveDurationFormatted: formatDuration(totalLiveSecs),
-    };
+    }
   },
 
   async getHostCommissionList(
@@ -280,23 +260,23 @@ export const agencyDashboardRepository = {
     limit: number,
     offset: number,
   ): Promise<{ items: HostCommissionItem[]; nextCursor: number | null; total: number }> {
-    const startDay = toUTCDateOnly(start);
-    const endDay = toUTCDateOnly(end);
+    const startDay = toUTCDateOnly(start)
+    const endDay = toUTCDateOnly(end)
 
     const rows = await prismaRead.$queryRaw<
       Array<{
-        hostUserId: string;
-        hostEarnings: bigint;
-        commissionEarned: bigint;
-        liveDurationSeconds: bigint;
-        displayName: string | null;
-        avatarUrl: string | null;
-        publicId: bigint;
-        currentVipPublicId: bigint | null;
-        isTagged: boolean | null;
-        livestreamLevel: number | null;
-        wealthLevel: number | null;
-        faceVerified: boolean | null;
+        hostUserId: string
+        hostEarnings: bigint
+        commissionEarned: bigint
+        liveDurationSeconds: bigint
+        displayName: string | null
+        avatarUrl: string | null
+        publicId: bigint
+        currentVipPublicId: bigint | null
+        isTagged: boolean | null
+        livestreamLevel: number | null
+        wealthLevel: number | null
+        faceVerified: boolean | null
       }>
     >`
       SELECT
@@ -328,14 +308,14 @@ export const agencyDashboardRepository = {
         u.current_vip_public_id, u.is_tagged, wl_stream.current_level, wl_wealth.current_level
       ORDER BY SUM(ade.host_earnings_points) DESC, ade.host_user_id ASC
       LIMIT ${limit} OFFSET ${offset}
-    `;
+    `
 
     const [countRow] = await prismaRead.$queryRaw<Array<{ total: bigint }>>`
       SELECT COUNT(DISTINCT host_user_id)::BIGINT AS total
       FROM agency_daily_earnings
       WHERE agency_user_id = ${agencyUserId}::uuid
         AND day BETWEEN ${startDay}::date AND ${endDay}::date
-    `;
+    `
 
     const items: HostCommissionItem[] = rows.map((r) => ({
       hostUserId: r.hostUserId,
@@ -351,11 +331,11 @@ export const agencyDashboardRepository = {
       commissionEarned: bigIntToStr(r.commissionEarned),
       liveDurationSeconds: bigIntToStr(r.liveDurationSeconds),
       liveDurationFormatted: formatDuration(r.liveDurationSeconds ?? 0n),
-    }));
+    }))
 
-    const total = Number(countRow?.total ?? 0n);
-    const nextCursor = offset + limit < total ? offset + limit : null;
-    return { items, nextCursor, total };
+    const total = Number(countRow?.total ?? 0n)
+    const nextCursor = offset + limit < total ? offset + limit : null
+    return { items, nextCursor, total }
   },
 
   async getHostDrilldown(
@@ -364,14 +344,14 @@ export const agencyDashboardRepository = {
     start: Date,
     end: Date,
   ): Promise<HostDrilldown> {
-    const startDay = toUTCDateOnly(start);
-    const endDay = toUTCDateOnly(end);
+    const startDay = toUTCDateOnly(start)
+    const endDay = toUTCDateOnly(end)
 
     const [agg] = await prismaRead.$queryRaw<
       Array<{
-        hostEarnings: bigint;
-        commissionEarned: bigint;
-        liveDurationSeconds: bigint;
+        hostEarnings: bigint
+        commissionEarned: bigint
+        liveDurationSeconds: bigint
       }>
     >`
       SELECT
@@ -382,7 +362,7 @@ export const agencyDashboardRepository = {
       WHERE agency_user_id = ${agencyUserId}::uuid
         AND host_user_id   = ${hostUserId}::uuid
         AND day BETWEEN ${startDay}::date AND ${endDay}::date
-    `;
+    `
 
     const [user, levels, faceProfile, kycRow, pointsBalance] = await Promise.all([
       prismaRead.user.findUnique({
@@ -398,7 +378,7 @@ export const agencyDashboardRepository = {
         },
       }),
       prismaRead.walletUserLevel.findMany({
-        where: { userId: hostUserId, levelType: { in: ["LIVESTREAM", "WEALTH"] } },
+        where: { userId: hostUserId, levelType: { in: ['LIVESTREAM', 'WEALTH'] } },
         select: { levelType: true, currentLevel: true },
       }),
       prismaRead.userFaceProfile.findUnique({
@@ -410,21 +390,17 @@ export const agencyDashboardRepository = {
         select: { faceVerified: true },
       }),
       getPointsBalance(hostUserId),
-    ]);
+    ])
 
-    const wealthLevel =
-      levels.find((l) => l.levelType === "WEALTH")?.currentLevel ?? 0;
-    const livestreamLevel =
-      levels.find((l) => l.levelType === "LIVESTREAM")?.currentLevel ?? 0;
-    const isVerified =
-      faceProfile?.status === "INDEXED" || kycRow?.faceVerified === true;
+    const wealthLevel = levels.find((l) => l.levelType === 'WEALTH')?.currentLevel ?? 0
+    const livestreamLevel = levels.find((l) => l.levelType === 'LIVESTREAM')?.currentLevel ?? 0
+    const isVerified = faceProfile?.status === 'INDEXED' || kycRow?.faceVerified === true
 
     const age = user?.dateOfBirth
       ? Math.floor(
-          (Date.now() - new Date(user.dateOfBirth).getTime()) /
-            (365.25 * 24 * 3600 * 1000),
+          (Date.now() - new Date(user.dateOfBirth).getTime()) / (365.25 * 24 * 3600 * 1000),
         )
-      : null;
+      : null
 
     return {
       hostUserId,
@@ -443,34 +419,33 @@ export const agencyDashboardRepository = {
       commissionEarned: bigIntToStr(agg?.commissionEarned ?? 0n),
       liveDurationSeconds: bigIntToStr(agg?.liveDurationSeconds ?? 0n),
       liveDurationFormatted: formatDuration(agg?.liveDurationSeconds ?? 0n),
-      platformHourlySalary: "0",
-      rankReward: "0",
-    };
+      platformHourlySalary: '0',
+      rankReward: '0',
+    }
   },
 
   async getAgentEarnedToday(agencyUserId: string): Promise<AgentEarnedToday> {
-    const now = utcNow();
-    const todayStart = startOfUTCDay(now);
-    const todayEnd = endOfUTCDay(now);
-    const todayDay = toUTCDateOnly(now);
+    const now = utcNow()
+    const todayStart = startOfUTCDay(now)
+    const todayEnd = endOfUTCDay(now)
+    const todayDay = toUTCDateOnly(now)
 
     const [todayAgg] = await prismaRead.$queryRaw<Array<{ earned: bigint }>>`
       SELECT COALESCE(SUM(host_earnings_points + host_commission_points), 0)::BIGINT AS earned
       FROM agency_daily_earnings
       WHERE agency_user_id = ${agencyUserId}::uuid AND day = ${todayDay}::date
-    `;
+    `
 
     const [allTimeAgg] = await prismaRead.$queryRaw<Array<{ earned: bigint }>>`
       SELECT COALESCE(SUM(host_earnings_points + host_commission_points), 0)::BIGINT AS earned
       FROM agency_daily_earnings
       WHERE agency_user_id = ${agencyUserId}::uuid
-    `;
+    `
 
     const [ownToday, ownAllTime, pointsBalance] = await Promise.all([
       sumAgentOwnEarnings(agencyUserId, todayStart, todayEnd),
       // All-time agent own eligible credits (no lower bound).
-      prismaRead
-        .$queryRaw<Array<{ earned: bigint }>>`
+      prismaRead.$queryRaw<Array<{ earned: bigint }>>`
           SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS earned
           FROM point_ledger_entries ple
           INNER JOIN wallets w ON w.id = ple.wallet_id
@@ -478,18 +453,17 @@ export const agencyDashboardRepository = {
             AND w.currency_type = 'POINT'
             AND ple.direction   = 'CREDIT'
             AND ple.tx_type::text = ANY(${[...COMMISSION_ELIGIBLE_TX_TYPES]}::text[])
-        `
-        .then((rows) => rows[0]?.earned ?? 0n),
+        `.then((rows) => rows[0]?.earned ?? 0n),
       getPointsBalance(agencyUserId),
-    ]);
+    ])
 
-    const earnedToday = (todayAgg?.earned ?? 0n) + ownToday;
-    const accumulatedEarnings = (allTimeAgg?.earned ?? 0n) + ownAllTime;
+    const earnedToday = (todayAgg?.earned ?? 0n) + ownToday
+    const accumulatedEarnings = (allTimeAgg?.earned ?? 0n) + ownAllTime
 
     return {
       earnedToday: bigIntToStr(earnedToday),
       accumulatedEarnings: bigIntToStr(accumulatedEarnings),
       pointsBalance: bigIntToStr(pointsBalance),
-    };
+    }
   },
-};
+}

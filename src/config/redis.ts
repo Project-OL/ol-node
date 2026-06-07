@@ -45,14 +45,15 @@ export const RedisKeys = {
   userOriginalId: (userId: string) => `user:original_id:${userId}`,
   /** Active VIP publicId. TTL = remaining subscription seconds. When Redis drops this key the subscription has ended — fallback is automatic. */
   userActiveVipId: (userId: string) => `user:active_vip:${userId}`,
-  session:        (sessionId: string) => `session:${sessionId}`,
+  session: (sessionId: string) => `session:${sessionId}`,
   /** Cached user.tokenVersion for O(1) access checks (invalidated on bump). */
   userTokenVersion: (userId: string) => `user:${userId}:token_version`,
   /** Single-flight lock for refresh rotation per session. */
   refreshLock: (sessionId: string) => `lock:refresh:${sessionId}`,
   deviceLastActive: (deviceId: string) => `device:${deviceId}:lastActive`,
   rateLimitLogin: (identifier: string, ip: string) => `ratelimit:login:${identifier}:${ip}`,
-  signupVerified: (provider: string, identifier: string) => `signup:verified:${provider}:${identifier}`,
+  signupVerified: (provider: string, identifier: string) =>
+    `signup:verified:${provider}:${identifier}`,
   passwordResetToken: (resetToken: string) => `password_reset:${resetToken}`,
   emailModifyInProgress: (userId: string) => `email_modify:${userId}`,
   phoneModifyInProgress: (userId: string) => `phone_modify:${userId}`,
@@ -89,8 +90,7 @@ export const RedisKeys = {
   visitorCooldown: (profileId: string, visitorId: string) =>
     `visitor:cooldown:${profileId}:${visitorId}`,
   /** Per-user social endpoint rate limit. */
-  socialRateLimit: (endpoint: string, userId: string) =>
-    `ratelimit:social:${endpoint}:${userId}`,
+  socialRateLimit: (endpoint: string, userId: string) => `ratelimit:social:${endpoint}:${userId}`,
   /** User level cache. */
   userLevel: (userId: string) => `user:${userId}:level`,
   /** User settings cache (language + messaging privacy). */
@@ -108,8 +108,7 @@ export const RedisKeys = {
   /** Messaging: user online status. */
   userOnlineStatus: (userId: string) => `online:${userId}`,
   /** Messaging: cached conversation membership for WS typing path (60s). */
-  convMember: (conversationId: string, userId: string) =>
-    `conv:member:${conversationId}:${userId}`,
+  convMember: (conversationId: string, userId: string) => `conv:member:${conversationId}:${userId}`,
   /** Messaging: typing publish throttle (SET NX, 2s). */
   typingThrottle: (conversationId: string, userId: string) =>
     `typing:throttle:${conversationId}:${userId}`,
@@ -155,13 +154,12 @@ export const RedisKeys = {
   walletCoinBalance: (userId: string) => `wallet:coins:${userId}`,
   walletPointBalance: (userId: string) => `wallet:points:${userId}`,
   /** Cached unconfirmed (in-flight escrow) points for a POINT wallet. */
-  walletPointsUnconfirmed: (userId: string) =>
-    `wallet:points:unconfirmed:${userId}`,
+  walletPointsUnconfirmed: (userId: string) => `wallet:points:unconfirmed:${userId}`,
   ctBalance: (userId: string) => `ct:balance:${userId}`,
   ctRecentUsers: (userId: string) => `ct:recent-users:${userId}`,
-  ctTopupRates: () => "ct:topup-rates",
-  ctTopupPackages: () => "ct:topup-packages",
-  ctExchangeRates: () => "ct:exchange-rates",
+  ctTopupRates: () => 'ct:topup-rates',
+  ctTopupPackages: () => 'ct:topup-packages',
+  ctExchangeRates: () => 'ct:exchange-rates',
   coinsellerSettings: (agencyUserId: string) => `agency:coinseller:${agencyUserId}`,
   walletIdem: (key: string) => `wallet:idem:${key}`,
   walletRateLimit: (userId: string, action: string) => `wallet:rl:${userId}:${action}`,
@@ -173,8 +171,7 @@ export const RedisKeys = {
   giftList: () => `gifts:list`,
   giftByTag: (tag: string) => `gifts:tag:${tag}`,
   /** Global gallery structure for a UTC month (admin-defined template). */
-  giftGalleryTemplate: (year: number, month: number) =>
-    `gallery:template:${year}:${month}`,
+  giftGalleryTemplate: (year: number, month: number) => `gallery:template:${year}:${month}`,
   /** Per-host merged payload (template + that host's progress). */
   giftGalleryHost: (hostUserId: string, year: number, month: number) =>
     `gallery:${hostUserId}:${year}:${month}`,
@@ -227,10 +224,8 @@ export const RedisKeys = {
   vipmActive: (userId: string) => `vipm:active:${userId}`,
   /** Static VIP membership pricing/config cache (optional; service may inline). */
   vipmConfig: () => `vipm:config`,
-  ratelimitVipmPurchase: (userId: string) =>
-    `ratelimit:vip-membership:purchase:${userId}`,
-  ratelimitVipmClaim: (userId: string) =>
-    `ratelimit:vip-membership:claim:${userId}`,
+  ratelimitVipmPurchase: (userId: string) => `ratelimit:vip-membership:purchase:${userId}`,
+  ratelimitVipmClaim: (userId: string) => `ratelimit:vip-membership:claim:${userId}`,
   /** Agency: GET /users/me agency block cache bust target */
   agencyMe: (userId: string) => `agency:me:${userId}`,
   agencyByPublicId: (publicId: string) => `agency:pub:${publicId}`,
@@ -239,10 +234,8 @@ export const RedisKeys = {
     `agency:ranking:v4:${period}:${limit}:${cursor}`,
   /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
   userLastActive: (userId: string) => `user:lastActive:${userId}`,
-  ratelimitAgencyApply: (userId: string) =>
-    `ratelimit:agency:apply:${userId}`,
-  ratelimitAgencyLeaveApply: (userId: string) =>
-    `ratelimit:agency:leave:apply:${userId}`,
+  ratelimitAgencyApply: (userId: string) => `ratelimit:agency:apply:${userId}`,
+  ratelimitAgencyLeaveApply: (userId: string) => `ratelimit:agency:leave:apply:${userId}`,
   /** Agency Phase 2: level ladder + derived rates (60s) */
   agencyRate: (agencyUserId: string) => `agency:rate:${agencyUserId}`,
   /** Commission GET /me / panel fragments */
@@ -253,8 +246,7 @@ export const RedisKeys = {
   agencyHostBreakdown: (agencyUserId: string, period: string) =>
     `agency:host:breakdown:${agencyUserId}:${period}`,
   agencyLevelConfig: () => `agency:level:config`,
-  ratelimitAgencyPointTransfer: (userId: string) =>
-    `ratelimit:agency:point-transfer:${userId}`,
+  ratelimitAgencyPointTransfer: (userId: string) => `ratelimit:agency:point-transfer:${userId}`,
   /** Agency dashboard: earnings & commission overview per period label (30s TODAY / 60s others). */
   agencyDashboardEarnings: (agencyUserId: string, periodLabel: string) =>
     `agency:dashboard:earnings:${agencyUserId}:${periodLabel}`,
@@ -262,11 +254,9 @@ export const RedisKeys = {
   agencyDashboardHostSummary: (agencyUserId: string, periodLabel: string) =>
     `agency:dashboard:hosts:${agencyUserId}:${periodLabel}`,
   /** Agency dashboard: "earned today" + accumulated + points balance (30s). */
-  agencyDashboardToday: (agencyUserId: string) =>
-    `agency:dashboard:today:${agencyUserId}`,
+  agencyDashboardToday: (agencyUserId: string) => `agency:dashboard:today:${agencyUserId}`,
   /** Agency dashboard: shared read rate-limit bucket across all dashboard endpoints. */
-  ratelimitAgencyDashboard: (userId: string) =>
-    `ratelimit:agency:dashboard:${userId}`,
+  ratelimitAgencyDashboard: (userId: string) => `ratelimit:agency:dashboard:${userId}`,
   ratelimitCtTopup: (userId: string) => `ratelimit:ct:topup:${userId}`,
   ratelimitCtExchange: (userId: string) => `ratelimit:ct:exchange:${userId}`,
   ratelimitCtTransfer: (userId: string) => `ratelimit:ct:transfer:${userId}`,
@@ -276,8 +266,7 @@ export const RedisKeys = {
     `questionnaire:user-status:${userId}:${key}`,
   questionnaireSubmitRateLimit: (userId: string, key: string) =>
     `ratelimit:questionnaire:submit:${userId}:${key}`,
-  questionnaireAdminRateLimit: (userId: string) =>
-    `ratelimit:questionnaire:admin:${userId}`,
+  questionnaireAdminRateLimit: (userId: string) => `ratelimit:questionnaire:admin:${userId}`,
   faceRegisterLock: (userId: string) => `face:register:lock:${userId}`,
   faceRegisterRateLimit: (userId: string) => `ratelimit:face:register:${userId}`,
   faceVerifyRateLimitUser: (userId: string) => `ratelimit:face:verify:${userId}`,
@@ -295,27 +284,21 @@ export const RedisKeys = {
   livePhotoVerifyStatus: (userId: string) => `live-photo:verify-status:${userId}`,
   ratelimitLivePhotoUploadUrl: (userId: string) => `ratelimit:live-photo:upload-url:${userId}`,
   ratelimitLivePhotoVerify: (userId: string) => `ratelimit:live-photo:verify:${userId}`,
-  faceRegistrationSessionRate: (userId: string) =>
-    `ratelimit:face-registration:session:${userId}`,
-  faceRegistrationVerifyRate: (userId: string) =>
-    `ratelimit:face-registration:verify:${userId}`,
+  faceRegistrationSessionRate: (userId: string) => `ratelimit:face-registration:session:${userId}`,
+  faceRegistrationVerifyRate: (userId: string) => `ratelimit:face-registration:verify:${userId}`,
   faceRegistrationLock: (userId: string) => `face-registration:lock:${userId}`,
   faceRegistrationVerifyIdem: (sessionId: string, idempotencyKey: string) =>
     `face-registration:verify:idem:${sessionId}:${idempotencyKey}`,
   /** Short TTL replay guard: first N bytes hash of supplemental video. */
   faceRegistrationReplayGuard: (hash: string) => `face-registration:replay:${hash}`,
   /** Phase 3b payroll / withdrawal */
-  payrollConfig: () => "payroll:config",
-  payoutRailConfig: () => "withdrawal:payout-rail-config",
+  payrollConfig: () => 'payroll:config',
+  payoutRailConfig: () => 'withdrawal:payout-rail-config',
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
-  ratelimitWithdrawalCreate: (userId: string) =>
-    `ratelimit:withdrawal:create:${userId}`,
-  ratelimitWithdrawalDispute: (userId: string) =>
-    `ratelimit:withdrawal:dispute:${userId}`,
-  ratelimitPayrollComplete: (userId: string) =>
-    `ratelimit:payroll:complete:${userId}`,
-  ratelimitPayrollReject: (userId: string) =>
-    `ratelimit:payroll:reject:${userId}`,
+  ratelimitWithdrawalCreate: (userId: string) => `ratelimit:withdrawal:create:${userId}`,
+  ratelimitWithdrawalDispute: (userId: string) => `ratelimit:withdrawal:dispute:${userId}`,
+  ratelimitPayrollComplete: (userId: string) => `ratelimit:payroll:complete:${userId}`,
+  ratelimitPayrollReject: (userId: string) => `ratelimit:payroll:reject:${userId}`,
   ratelimitPmBind: (userId: string) => `ratelimit:pm:bind:${userId}`,
   payrollSummary: (agencyUserId: string) => `payroll:summary:${agencyUserId}`,
   /** Agent payroll summary with period earnings; periodKey = `30` or `2026-01-01_2026-01-31`. */
@@ -459,12 +442,10 @@ export const FACE_REGISTER_IDEM_TTL = 24 * 60 * 60
 export const FACE_VERIFY_IDEM_TTL = 60
 export const FACE_VERIFY_LAST_PASS_TTL = 60
 
-export async function redisPipeline(
-  commands: [string, ...unknown[]][],
-): Promise<unknown[]> {
+export async function redisPipeline(commands: [string, ...unknown[]][]): Promise<unknown[]> {
   const pipe = redisClient.pipeline()
   for (const [cmd, ...args] of commands) {
-    (pipe as unknown as Record<string, (...a: unknown[]) => unknown>)[cmd.toLowerCase()](...args)
+    ;(pipe as unknown as Record<string, (...a: unknown[]) => unknown>)[cmd.toLowerCase()](...args)
   }
   const results = await pipe.exec()
   if (!results) {

@@ -1,27 +1,24 @@
-import crypto from "crypto";
-import { prisma } from "../config/database";
-import { AppError } from "../middlewares/errorHandler";
-import { walletRepository } from "../repositories/wallet.repository";
-import { coinLedgerRepository } from "../repositories/coin-ledger.repository";
-import { walletService } from "./wallet.service";
-import { auditService } from "./audit.service";
+import crypto from 'crypto'
+import { prisma } from '../config/database'
+import { AppError } from '../middlewares/errorHandler'
+import { walletRepository } from '../repositories/wallet.repository'
+import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
+import { walletService } from './wallet.service'
+import { auditService } from './audit.service'
 import {
   WalletCurrencyType,
   CoinTxType,
   LedgerDirection,
   LevelType,
   type Prisma,
-} from "@prisma/client";
-import { walletLevelService } from "./user-level.service";
-import {
-  RECHARGE_TX_TYPES,
-  richTierService,
-} from "./rich-tier.service";
-import { epayClient } from "../lib/epay.client";
+} from '@prisma/client'
+import { walletLevelService } from './user-level.service'
+import { RECHARGE_TX_TYPES, richTierService } from './rich-tier.service'
+import { epayClient } from '../lib/epay.client'
 
 /** Coins debited when changing display name via PATCH /users/me (`name` field). */
-export const USERNAME_CHANGE_COIN_COST = 10_000n;
-const INTERACTIVE_TX_TIMEOUT_MS = 20_000;
+export const USERNAME_CHANGE_COIN_COST = 10_000n
+const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
 export const coinWalletService = {
   /**
@@ -33,26 +30,21 @@ export const coinWalletService = {
   async listPackages() {
     return prisma.coinPackage.findMany({
       where: { isActive: true },
-      orderBy: { sortOrder: "asc" },
-    });
+      orderBy: { sortOrder: 'asc' },
+    })
   },
 
-  async initiateTopup(
-    userId: string,
-    packageId: string,
-    idempotencyKey: string,
-  ) {
-    const cached = await walletService.getCachedIdemResponse(idempotencyKey);
-    if (cached) return cached;
+  async initiateTopup(userId: string, packageId: string, idempotencyKey: string) {
+    const cached = await walletService.getCachedIdemResponse(idempotencyKey)
+    if (cached) return cached
 
-    const acquired = await walletService.acquireIdemKey(idempotencyKey);
-    if (!acquired)
-      throw new AppError(409, "Request is already processing", "IDEM_CONFLICT");
+    const acquired = await walletService.acquireIdemKey(idempotencyKey)
+    if (!acquired) throw new AppError(409, 'Request is already processing', 'IDEM_CONFLICT')
 
     const pkg = await prisma.coinPackage.findFirst({
       where: { id: packageId, isActive: true },
-    });
-    if (!pkg) throw new AppError(404, "Package not found", "PACKAGE_NOT_FOUND");
+    })
+    if (!pkg) throw new AppError(404, 'Package not found', 'PACKAGE_NOT_FOUND')
 
     const order = await prisma.coinTopupOrder.create({
       data: {
@@ -62,122 +54,103 @@ export const coinWalletService = {
         priceCents: pkg.priceCents,
         currency: pkg.currency,
         idempotencyKey,
-        status: "PENDING",
+        status: 'PENDING',
       },
-    });
+    })
 
     const epay = await epayClient.createOrder({
       amountUsd: Number((pkg.priceCents / 100).toFixed(2)),
       currency: pkg.currency,
       orderId: order.id,
-      orderType: "PERSONAL_TOPUP",
+      orderType: 'PERSONAL_TOPUP',
       description: `Personal top-up ${pkg.coins} coins`,
-      callbackUrl: "/api/v1/webhooks/epay",
-      returnUrl: "/",
-    });
+      callbackUrl: '/api/v1/webhooks/epay',
+      returnUrl: '/',
+    })
 
     await prisma.coinTopupOrder.update({
       where: { id: order.id },
       data: { gatewayRef: epay.gatewayRef },
-    });
+    })
 
     const response = {
       orderId: order.id,
       coins: pkg.coins,
       priceCents: pkg.priceCents,
       paymentUrl: epay.paymentUrl,
-    };
-    await walletService.resolveIdemKey(idempotencyKey, response);
-    return response;
+    }
+    await walletService.resolveIdemKey(idempotencyKey, response)
+    return response
   },
 
-  async confirmTopup(
-    userId: string,
-    orderId: string,
-    gatewayRef: string,
-    idempotencyKey: string,
-  ) {
-    const cached = await walletService.getCachedIdemResponse(idempotencyKey);
-    if (cached) return cached;
+  async confirmTopup(userId: string, orderId: string, gatewayRef: string, idempotencyKey: string) {
+    const cached = await walletService.getCachedIdemResponse(idempotencyKey)
+    if (cached) return cached
 
-    const acquired = await walletService.acquireIdemKey(idempotencyKey);
-    if (!acquired)
-      throw new AppError(409, "Request is already processing", "IDEM_CONFLICT");
+    const acquired = await walletService.acquireIdemKey(idempotencyKey)
+    if (!acquired) throw new AppError(409, 'Request is already processing', 'IDEM_CONFLICT')
 
     const order = await prisma.coinTopupOrder.findFirst({
-      where: { id: orderId, userId, status: "PENDING" },
-    });
-    if (!order)
-      throw new AppError(
-        404,
-        "Order not found or already processed",
-        "ORDER_NOT_FOUND",
-      );
+      where: { id: orderId, userId, status: 'PENDING' },
+    })
+    if (!order) throw new AppError(404, 'Order not found or already processed', 'ORDER_NOT_FOUND')
 
-    const wallet = await walletRepository.getOrCreate(
-      userId,
-      WalletCurrencyType.COIN,
-    );
+    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
 
-    const txType = CoinTxType.TOPUP;
+    const txType = CoinTxType.TOPUP
 
-    const { ledgerEntry, levelResult, richTierMonth } =
-      await prisma.$transaction(
-        async (tx) => {
-          await walletRepository.lockForUpdate(tx, wallet.id);
+    const { ledgerEntry, levelResult, richTierMonth } = await prisma.$transaction(
+      async (tx) => {
+        await walletRepository.lockForUpdate(tx, wallet.id)
 
-          const last = await tx.coinLedgerEntry.findFirst({
-            where: { walletId: wallet.id },
-            orderBy: { createdAt: "desc" },
-            select: { balanceAfter: true },
-          });
-          const currentBalance = last?.balanceAfter ?? 0n;
-          const newBalance = currentBalance + BigInt(order.coins);
+        const last = await tx.coinLedgerEntry.findFirst({
+          where: { walletId: wallet.id },
+          orderBy: { createdAt: 'desc' },
+          select: { balanceAfter: true },
+        })
+        const currentBalance = last?.balanceAfter ?? 0n
+        const newBalance = currentBalance + BigInt(order.coins)
 
-          const entry = await coinLedgerRepository.insert(tx, {
-            walletId: wallet.id,
-            direction: LedgerDirection.CREDIT,
-            txType,
-            amount: BigInt(order.coins),
-            balanceAfter: newBalance,
-            refId: gatewayRef,
-            description: `Top-up: ${order.coins} coins`,
-            metadata: { packageId: order.packageId, orderId, gatewayRef },
-            idempotencyKey,
-          });
+        const entry = await coinLedgerRepository.insert(tx, {
+          walletId: wallet.id,
+          direction: LedgerDirection.CREDIT,
+          txType,
+          amount: BigInt(order.coins),
+          balanceAfter: newBalance,
+          refId: gatewayRef,
+          description: `Top-up: ${order.coins} coins`,
+          metadata: { packageId: order.packageId, orderId, gatewayRef },
+          idempotencyKey,
+        })
 
-          await walletRepository.bumpVersion(tx, wallet.id);
+        await walletRepository.bumpVersion(tx, wallet.id)
 
-          await tx.coinTopupOrder.update({
-            where: { id: orderId },
-            data: { status: "PAID", gatewayRef, ledgerEntryId: entry.id },
-          });
+        await tx.coinTopupOrder.update({
+          where: { id: orderId },
+          data: { status: 'PAID', gatewayRef, ledgerEntryId: entry.id },
+        })
 
-          const lr = await walletLevelService.applyCredit(
-            tx,
-            userId,
-            LevelType.WEALTH,
-            BigInt(order.coins),
-          );
+        const lr = await walletLevelService.applyCredit(
+          tx,
+          userId,
+          LevelType.WEALTH,
+          BigInt(order.coins),
+        )
 
-          const richMonth = RECHARGE_TX_TYPES.has(txType)
-            ? await richTierService.applyRecharge(
-                userId,
-                BigInt(order.coins),
-                tx,
-              )
-            : null;
+        const richMonth = RECHARGE_TX_TYPES.has(txType)
+          ? await richTierService.applyRecharge(userId, BigInt(order.coins), tx)
+          : null
 
-          return {
-            ledgerEntry: entry,
-            levelResult: lr,
-            richTierMonth: richMonth,
-          };
-        },
-        { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
-      );
+        return {
+          ledgerEntry: entry,
+          levelResult: lr,
+          richTierMonth: richMonth,
+        }
+      },
+      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+    )
 
-    await walletService.adjustCoinBalanceCache(userId, BigInt(order.coins));
+    await walletService.adjustCoinBalanceCache(userId, BigInt(order.coins))
 
     const wealthSnapshot = await walletLevelService.refreshCache(
       userId,
@@ -185,22 +158,22 @@ export const coinWalletService = {
       levelResult.newCumulative,
       levelResult.newLevel,
       levelResult.previousLevel,
-    );
+    )
 
     if (richTierMonth) {
       await richTierService.refreshCacheAfterRecharge(
         userId,
         richTierMonth.year,
         richTierMonth.month,
-      );
+      )
     }
 
     auditService.log({
       userId,
-      actionType: "COIN_TOPUP_CONFIRMED",
-      actionStatus: "success",
+      actionType: 'COIN_TOPUP_CONFIRMED',
+      actionStatus: 'success',
       actionDetails: { orderId, gatewayRef, coins: order.coins },
-    });
+    })
 
     const response = {
       ledgerEntryId: ledgerEntry.id,
@@ -213,9 +186,9 @@ export const coinWalletService = {
         leveledUp: wealthSnapshot.leveledUp,
         previousLevel: wealthSnapshot.previousLevel,
       },
-    };
-    await walletService.resolveIdemKey(idempotencyKey, response);
-    return response;
+    }
+    await walletService.resolveIdemKey(idempotencyKey, response)
+    return response
   },
 
   /**
@@ -227,46 +200,38 @@ export const coinWalletService = {
     firstName: string,
     lastName: string | null,
   ): Promise<void> {
-    const wallet = await walletRepository.getOrCreate(
-      userId,
-      WalletCurrencyType.COIN,
-    );
-    const idempotencyKey = `username-change:${userId}:${crypto.randomUUID()}`;
+    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
+    const idempotencyKey = `username-change:${userId}:${crypto.randomUUID()}`
 
     await prisma.$transaction(
       async (tx) => {
-        await walletRepository.lockForUpdate(tx, wallet.id);
+        await walletRepository.lockForUpdate(tx, wallet.id)
 
         const last = await tx.coinLedgerEntry.findFirst({
           where: { walletId: wallet.id },
-          orderBy: { createdAt: "desc" },
+          orderBy: { createdAt: 'desc' },
           select: { balanceAfter: true },
-        });
-        const balance = last?.balanceAfter ?? 0n;
+        })
+        const balance = last?.balanceAfter ?? 0n
         if (balance < USERNAME_CHANGE_COIN_COST) {
-          throw new AppError(
-            402,
-            "Not enough coins to change display name",
-            "INSUFFICIENT_COINS",
-            {
-              required: USERNAME_CHANGE_COIN_COST.toString(),
-              balance: balance.toString(),
-            },
-          );
+          throw new AppError(402, 'Not enough coins to change display name', 'INSUFFICIENT_COINS', {
+            required: USERNAME_CHANGE_COIN_COST.toString(),
+            balance: balance.toString(),
+          })
         }
 
         // Use string literal so a stale Prisma Client (missing enum member) cannot pass `undefined`.
         await coinLedgerRepository.insert(tx, {
           walletId: wallet.id,
           direction: LedgerDirection.DEBIT,
-          txType: "USERNAME_CHANGE" as CoinTxType,
+          txType: 'USERNAME_CHANGE' as CoinTxType,
           amount: USERNAME_CHANGE_COIN_COST,
           balanceAfter: balance - USERNAME_CHANGE_COIN_COST,
-          description: "Display name change",
+          description: 'Display name change',
           metadata: { firstName, lastName },
           idempotencyKey,
-        });
-        await walletRepository.bumpVersion(tx, wallet.id);
+        })
+        await walletRepository.bumpVersion(tx, wallet.id)
 
         await tx.user.update({
           where: { id: userId },
@@ -275,12 +240,12 @@ export const coinWalletService = {
             lastName,
             usernameUpdatedAt: new Date(),
           },
-        });
+        })
       },
-      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
-    );
+      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+    )
 
-    await walletService.adjustCoinBalanceCache(userId, USERNAME_CHANGE_COIN_COST);
+    await walletService.adjustCoinBalanceCache(userId, USERNAME_CHANGE_COIN_COST)
   },
 
   /**
@@ -309,53 +274,48 @@ export const coinWalletService = {
         },
         create: { userId, currencyType: WalletCurrencyType.COIN },
         update: {},
-      });
-      await walletRepository.lockForUpdate(inner, wallet.id);
+      })
+      await walletRepository.lockForUpdate(inner, wallet.id)
       const last = await inner.coinLedgerEntry.findFirst({
         where: { walletId: wallet.id },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         select: { balanceAfter: true },
-      });
-      const balance = last?.balanceAfter ?? 0n;
+      })
+      const balance = last?.balanceAfter ?? 0n
       if (balance < amount) {
-        throw new AppError(
-          402,
-          "Insufficient coins",
-          "INSUFFICIENT_COINS",
-          {
-            required: amount.toString(),
-            balance: balance.toString(),
-          },
-        );
+        throw new AppError(402, 'Insufficient coins', 'INSUFFICIENT_COINS', {
+          required: amount.toString(),
+          balance: balance.toString(),
+        })
       }
       await coinLedgerRepository.insert(inner, {
         walletId: wallet.id,
         direction: LedgerDirection.DEBIT,
-        txType: "CREATOR_SUBSCRIPTION" as CoinTxType,
+        txType: 'CREATOR_SUBSCRIPTION' as CoinTxType,
         amount,
         balanceAfter: balance - amount,
         counterpartyId: options.creatorId,
-        description: options.description ?? "Creator subscription",
+        description: options.description ?? 'Creator subscription',
         metadata: {
           creatorId: options.creatorId,
           subscriptionId: options.subscriptionId,
         },
         idempotencyKey: options.idempotencyKey,
-      });
-      await walletRepository.bumpVersion(inner, wallet.id);
-    };
+      })
+      await walletRepository.bumpVersion(inner, wallet.id)
+    }
 
     if (tx) {
-      await run(tx);
-      return;
+      await run(tx)
+      return
     }
     await prisma.$transaction(
       async (inner) => {
-        await run(inner);
+        await run(inner)
       },
-      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
-    );
-    await walletService.adjustCoinBalanceCache(userId, amount);
+      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+    )
+    await walletService.adjustCoinBalanceCache(userId, amount)
   },
 
   /**
@@ -386,29 +346,24 @@ export const coinWalletService = {
       await walletRepository.lockForUpdate(inner, wallet.id)
       const last = await inner.coinLedgerEntry.findFirst({
         where: { walletId: wallet.id },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         select: { balanceAfter: true },
       })
       const balance = last?.balanceAfter ?? 0n
       if (balance < amount) {
-        throw new AppError(
-          402,
-          "Insufficient coins",
-          "INSUFFICIENT_COINS",
-          {
-            required: amount.toString(),
-            balance: balance.toString(),
-          },
-        )
+        throw new AppError(402, 'Insufficient coins', 'INSUFFICIENT_COINS', {
+          required: amount.toString(),
+          balance: balance.toString(),
+        })
       }
       await coinLedgerRepository.insert(inner, {
         walletId: wallet.id,
         direction: LedgerDirection.DEBIT,
-        txType: "GUARDIAN_PURCHASE" as CoinTxType,
+        txType: 'GUARDIAN_PURCHASE' as CoinTxType,
         amount,
         balanceAfter: balance - amount,
         counterpartyId: options.targetUserId,
-        description: options.description ?? "Guardian purchase",
+        description: options.description ?? 'Guardian purchase',
         metadata: { targetUserId: options.targetUserId },
         idempotencyKey: options.idempotencyKey,
       })
@@ -423,7 +378,7 @@ export const coinWalletService = {
       async (inner) => {
         await run(inner)
       },
-      { isolationLevel: "Serializable", timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
     await walletService.adjustCoinBalanceCache(userId, amount)
   },
@@ -480,10 +435,10 @@ export const coinWalletService = {
       await walletRepository.bumpVersion(inner, wallet.id)
     }
     if (tx) return run(tx)
-    await prisma.$transaction(
-      async (inner) => run(inner),
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
-    )
+    await prisma.$transaction(async (inner) => run(inner), {
+      isolationLevel: 'Serializable',
+      timeout: INTERACTIVE_TX_TIMEOUT_MS,
+    })
     await walletService.adjustCoinBalanceCache(userId, amount)
   },
 
@@ -539,10 +494,10 @@ export const coinWalletService = {
       await walletRepository.bumpVersion(inner, wallet.id)
     }
     if (tx) return run(tx)
-    await prisma.$transaction(
-      async (inner) => run(inner),
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
-    )
+    await prisma.$transaction(async (inner) => run(inner), {
+      isolationLevel: 'Serializable',
+      timeout: INTERACTIVE_TX_TIMEOUT_MS,
+    })
     await walletService.adjustCoinBalanceCache(userId, amount)
   },
 
@@ -556,26 +511,23 @@ export const coinWalletService = {
     txType: CoinTxType,
     tx: Prisma.TransactionClient,
     options: {
-      idempotencyKey: string;
-      description?: string;
-      metadata?: Prisma.JsonValue;
-      counterpartyId?: string;
+      idempotencyKey: string
+      description?: string
+      metadata?: Prisma.JsonValue
+      counterpartyId?: string
       /** Defaults to personal COIN; pass TRADING_COIN for agent trading flows. */
-      currencyType?: WalletCurrencyType;
+      currencyType?: WalletCurrencyType
     },
   ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
-    const existing = await coinLedgerRepository.findByIdempotencyKey(
-      tx,
-      options.idempotencyKey,
-    );
+    const existing = await coinLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
       return {
         ledgerEntryId: existing.id,
         balanceAfter: existing.balanceAfter,
-      };
+      }
     }
 
-    const currencyType = options.currencyType ?? WalletCurrencyType.COIN;
+    const currencyType = options.currencyType ?? WalletCurrencyType.COIN
     const wallet = await tx.wallet.upsert({
       where: {
         userId_currencyType: {
@@ -585,29 +537,29 @@ export const coinWalletService = {
       },
       create: { userId, currencyType },
       update: {},
-    });
+    })
     if (
       currencyType === WalletCurrencyType.COIN &&
       wallet.currencyType === WalletCurrencyType.TRADING_COIN
     ) {
       throw new AppError(
         403,
-        "Trading coins cannot be used for in-app purchases",
-        "TRADING_COIN_NOT_SPENDABLE",
-      );
+        'Trading coins cannot be used for in-app purchases',
+        'TRADING_COIN_NOT_SPENDABLE',
+      )
     }
-    await walletRepository.lockForUpdate(tx, wallet.id);
+    await walletRepository.lockForUpdate(tx, wallet.id)
     const last = await tx.coinLedgerEntry.findFirst({
       where: { walletId: wallet.id },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
       select: { balanceAfter: true },
-    });
-    const balance = last?.balanceAfter ?? 0n;
+    })
+    const balance = last?.balanceAfter ?? 0n
     if (balance < amount) {
-      throw new AppError(402, "Insufficient coins", "INSUFFICIENT_COINS", {
+      throw new AppError(402, 'Insufficient coins', 'INSUFFICIENT_COINS', {
         required: amount.toString(),
         balance: balance.toString(),
-      });
+      })
     }
 
     const entry = await coinLedgerRepository.insert(tx, {
@@ -620,9 +572,9 @@ export const coinWalletService = {
       description: options.description,
       metadata: options.metadata as object | undefined,
       idempotencyKey: options.idempotencyKey,
-    });
-    await walletRepository.bumpVersion(tx, wallet.id);
-    return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter };
+    })
+    await walletRepository.bumpVersion(tx, wallet.id)
+    return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter }
   },
 
   /**
@@ -636,34 +588,29 @@ export const coinWalletService = {
     txType: CoinTxType,
     tx: Prisma.TransactionClient,
     options: {
-      idempotencyKey: string;
-      description?: string;
-      metadata?: Prisma.JsonValue;
-      counterpartyId?: string;
-      applyWealthCredit: boolean;
+      idempotencyKey: string
+      description?: string
+      metadata?: Prisma.JsonValue
+      counterpartyId?: string
+      applyWealthCredit: boolean
       /** Defaults to personal COIN; pass TRADING_COIN for agent trading flows. */
-      currencyType?: WalletCurrencyType;
+      currencyType?: WalletCurrencyType
     },
   ): Promise<{
-    ledgerEntryId: string;
-    balanceAfter: bigint;
-    levelResult: Awaited<
-      ReturnType<typeof walletLevelService.applyCredit>
-    > | null;
+    ledgerEntryId: string
+    balanceAfter: bigint
+    levelResult: Awaited<ReturnType<typeof walletLevelService.applyCredit>> | null
   }> {
-    const existing = await coinLedgerRepository.findByIdempotencyKey(
-      tx,
-      options.idempotencyKey,
-    );
+    const existing = await coinLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
       return {
         ledgerEntryId: existing.id,
         balanceAfter: existing.balanceAfter,
         levelResult: null,
-      };
+      }
     }
 
-    const currencyType = options.currencyType ?? WalletCurrencyType.COIN;
+    const currencyType = options.currencyType ?? WalletCurrencyType.COIN
     const wallet = await tx.wallet.upsert({
       where: {
         userId_currencyType: {
@@ -673,27 +620,20 @@ export const coinWalletService = {
       },
       create: { userId, currencyType },
       update: {},
-    });
-    await walletRepository.lockForUpdate(tx, wallet.id);
+    })
+    await walletRepository.lockForUpdate(tx, wallet.id)
     const last = await tx.coinLedgerEntry.findFirst({
       where: { walletId: wallet.id },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
       select: { balanceAfter: true },
-    });
-    const balance = last?.balanceAfter ?? 0n;
-    const newBalance = balance + amount;
+    })
+    const balance = last?.balanceAfter ?? 0n
+    const newBalance = balance + amount
 
-    const applyWealth =
-      options.applyWealthCredit &&
-      currencyType === WalletCurrencyType.COIN;
+    const applyWealth = options.applyWealthCredit && currencyType === WalletCurrencyType.COIN
     const levelResult = applyWealth
-      ? await walletLevelService.applyCredit(
-          tx,
-          userId,
-          LevelType.WEALTH,
-          amount,
-        )
-      : null;
+      ? await walletLevelService.applyCredit(tx, userId, LevelType.WEALTH, amount)
+      : null
 
     const entry = await coinLedgerRepository.insert(tx, {
       walletId: wallet.id,
@@ -705,29 +645,26 @@ export const coinWalletService = {
       description: options.description,
       metadata: options.metadata as object | undefined,
       idempotencyKey: options.idempotencyKey,
-    });
-    await walletRepository.bumpVersion(tx, wallet.id);
+    })
+    await walletRepository.bumpVersion(tx, wallet.id)
     return {
       ledgerEntryId: entry.id,
       balanceAfter: entry.balanceAfter,
       levelResult,
-    };
+    }
   },
 
   async getHistory(
     userId: string,
     filter: {
-      types?: CoinTxType[];
-      from?: string;
-      to?: string;
-      cursor?: string;
-      limit: number;
+      types?: CoinTxType[]
+      from?: string
+      to?: string
+      cursor?: string
+      limit: number
     },
   ) {
-    const wallet = await walletRepository.getOrCreate(
-      userId,
-      WalletCurrencyType.COIN,
-    );
+    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
 
     const entries = await coinLedgerRepository.list({
       walletId: wallet.id,
@@ -736,11 +673,11 @@ export const coinWalletService = {
       to: filter.to ? new Date(filter.to) : undefined,
       cursor: filter.cursor,
       limit: filter.limit,
-    });
+    })
 
-    const hasMore = entries.length > filter.limit;
-    const page = hasMore ? entries.slice(0, filter.limit) : entries;
-    const nextCursor = hasMore ? page[page.length - 1]?.id : undefined;
+    const hasMore = entries.length > filter.limit
+    const page = hasMore ? entries.slice(0, filter.limit) : entries
+    const nextCursor = hasMore ? page[page.length - 1]?.id : undefined
 
     return {
       entries: page.map((e) => ({
@@ -757,6 +694,6 @@ export const coinWalletService = {
       })),
       nextCursor,
       hasMore,
-    };
+    }
   },
-};
+}

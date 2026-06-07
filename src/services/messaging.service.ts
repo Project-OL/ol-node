@@ -20,10 +20,7 @@ import {
 } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { MediaProcessingStatus } from '@prisma/client'
-import {
-  publishServerFrameToConversation,
-  publishToConversation,
-} from '../utils/ws-publisher'
+import { publishServerFrameToConversation, publishToConversation } from '../utils/ws-publisher'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
 import { enqueueMessageMediaAudioProcessing } from '../queues/message-media-audio.queue'
 import { enqueueAutoReply } from '../queues/agencyAutoReply.queue'
@@ -146,9 +143,7 @@ export const messagingService = {
 
     const settings = await userSettingsService.getOrCreateSettings(recipientId)
     const allowAny =
-      settings.allowMsgFromMutual ||
-      settings.allowMsgFromFollowing ||
-      settings.allowMsgFromStranger
+      settings.allowMsgFromMutual || settings.allowMsgFromFollowing || settings.allowMsgFromStranger
     if (!allowAny) {
       throw new AppError(403, 'Messaging not allowed', 'MESSAGING_NOT_ALLOWED')
     }
@@ -185,10 +180,7 @@ export const messagingService = {
     conversation: Awaited<ReturnType<typeof conversationRepository.createConversation>>
     isNew: boolean
   }> {
-    const recipient = await userSearchService.searchByPublicId(
-      recipientPublicId,
-      initiatorId,
-    )
+    const recipient = await userSearchService.searchByPublicId(recipientPublicId, initiatorId)
     if (!recipient) {
       throw new AppError(404, 'User not found', 'NOT_FOUND')
     }
@@ -197,10 +189,7 @@ export const messagingService = {
       bypassDmPrivacy: recipient.isAgency,
     })
 
-    const existing = await conversationRepository.findDirectConversation(
-      initiatorId,
-      recipientId,
-    )
+    const existing = await conversationRepository.findDirectConversation(initiatorId, recipientId)
     if (existing) {
       const withMembers = await conversationRepository.findConversationById(
         existing.id,
@@ -224,16 +213,11 @@ export const messagingService = {
     conversationId: string,
     input: SendMessageInput,
   ): Promise<MessageWithDetails> {
-    const conv = await conversationRepository.findConversationById(
-      conversationId,
-      senderId,
-    )
+    const conv = await conversationRepository.findConversationById(conversationId, senderId)
     if (!conv) {
       throw new AppError(403, 'Not a member', 'FORBIDDEN')
     }
-    const otherMemberIds = conv.members
-      .filter((m) => m.userId !== senderId)
-      .map((m) => m.userId)
+    const otherMemberIds = conv.members.filter((m) => m.userId !== senderId).map((m) => m.userId)
     const bypassDmPrivacy = await shouldBypassDmPrivacyForSend({
       messageType: input.type,
       senderId,
@@ -244,10 +228,7 @@ export const messagingService = {
     }
     if (input.replyToId) {
       const replyTo = await messageRepository.findMessageById(input.replyToId)
-      if (
-        !replyTo ||
-        replyTo.conversationId !== conversationId
-      ) {
+      if (!replyTo || replyTo.conversationId !== conversationId) {
         throw new AppError(400, 'Invalid reply target', 'INVALID_REPLY')
       }
     }
@@ -331,10 +312,7 @@ export const messagingService = {
       return
     }
 
-    const conv = await conversationRepository.findConversationById(
-      conversationId,
-      senderUserId,
-    )
+    const conv = await conversationRepository.findConversationById(conversationId, senderUserId)
     if (!conv) return
 
     const otherMemberIds = conv.members
@@ -385,10 +363,7 @@ export const messagingService = {
     cursor?: string,
     limit = 30,
   ): Promise<PaginatedMessages> {
-    const conv = await conversationRepository.findConversationById(
-      conversationId,
-      userId,
-    )
+    const conv = await conversationRepository.findConversationById(conversationId, userId)
     if (!conv) {
       throw new AppError(403, 'Not a member', 'FORBIDDEN')
     }
@@ -410,31 +385,16 @@ export const messagingService = {
         }
         const nextCursor =
           messages.length > 0
-            ? (messages[messages.length - 1]?.createdAt as Date)?.toISOString() ?? null
+            ? ((messages[messages.length - 1]?.createdAt as Date)?.toISOString() ?? null)
             : null
         await messageRepository.markAsRead(conversationId, userId)
-        await redisClient.set(
-          RedisKeys.unreadCount(userId, conversationId),
-          '0',
-          'EX',
-          86400,
-        )
+        await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
         return { messages, nextCursor }
       }
     }
-    const result = await messageRepository.listMessages(
-      conversationId,
-      userId,
-      cursor,
-      limit,
-    )
+    const result = await messageRepository.listMessages(conversationId, userId, cursor, limit)
     await messageRepository.markAsRead(conversationId, userId)
-    await redisClient.set(
-      RedisKeys.unreadCount(userId, conversationId),
-      '0',
-      'EX',
-      86400,
-    )
+    await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
     return result
   },
 
@@ -444,24 +404,14 @@ export const messagingService = {
     limit = 20,
   ): Promise<PaginatedConversations> {
     if (!cursor) {
-      const cached = await redisClient.get(
-        RedisKeys.userConversations(userId),
-      )
+      const cached = await redisClient.get(RedisKeys.userConversations(userId))
       if (cached) {
         return JSON.parse(cached) as PaginatedConversations
       }
     }
-    const result = await conversationRepository.listConversationsForUser(
-      userId,
-      cursor,
-      limit,
-    )
-    const unreadKeys = result.conversations.map((c) =>
-      RedisKeys.unreadCount(userId, c.id),
-    )
-    const unreadValues = unreadKeys.length
-      ? await redisClient.mget(...unreadKeys)
-      : []
+    const result = await conversationRepository.listConversationsForUser(userId, cursor, limit)
+    const unreadKeys = result.conversations.map((c) => RedisKeys.unreadCount(userId, c.id))
+    const unreadValues = unreadKeys.length ? await redisClient.mget(...unreadKeys) : []
     type ConvPreview = (typeof result.conversations)[number]
     const unreadCounts = new Map(
       result.conversations.map((c: ConvPreview, i: number) => [
@@ -472,17 +422,9 @@ export const messagingService = {
     for (const conv of result.conversations) {
       const cached = unreadCounts.get(conv.id)
       if (cached === null || cached === undefined) {
-        const count = await messageRepository.getUnreadCount(
-          conv.id,
-          userId,
-        )
+        const count = await messageRepository.getUnreadCount(conv.id, userId)
         unreadCounts.set(conv.id, count)
-        await redisClient.set(
-          RedisKeys.unreadCount(userId, conv.id),
-          String(count),
-          'EX',
-          86400,
-        )
+        await redisClient.set(RedisKeys.unreadCount(userId, conv.id), String(count), 'EX', 86400)
       }
     }
     const withUnread = result.conversations.map((c: ConvPreview) => ({
@@ -504,21 +446,12 @@ export const messagingService = {
     return payload
   },
 
-  async clearChatHistory(
-    userId: string,
-    conversationId: string,
-  ): Promise<void> {
-    const conv = await conversationRepository.findConversationById(
-      conversationId,
-      userId,
-    )
+  async clearChatHistory(userId: string, conversationId: string): Promise<void> {
+    const conv = await conversationRepository.findConversationById(conversationId, userId)
     if (!conv) {
       throw new AppError(403, 'Not a member', 'FORBIDDEN')
     }
-    await conversationRepository.markConversationDeleted(
-      conversationId,
-      userId,
-    )
+    await conversationRepository.markConversationDeleted(conversationId, userId)
     await cacheService.delete(RedisKeys.userConversations(userId))
     await auditService.log({
       actionType: 'CLEAR_CHAT',
@@ -533,10 +466,7 @@ export const messagingService = {
     conversationId: string,
     mutedUntil?: string | null,
   ): Promise<void> {
-    const conv = await conversationRepository.findConversationById(
-      conversationId,
-      userId,
-    )
+    const conv = await conversationRepository.findConversationById(conversationId, userId)
     if (!conv) {
       throw new AppError(403, 'Not a member', 'FORBIDDEN')
     }
@@ -555,11 +485,7 @@ export const messagingService = {
     })
   },
 
-  async addReaction(
-    userId: string,
-    messageId: string,
-    emoji: string,
-  ): Promise<void> {
+  async addReaction(userId: string, messageId: string, emoji: string): Promise<void> {
     const msg = await messageRepository.findMessageById(messageId)
     if (!msg) {
       throw new AppError(404, 'Message not found', 'NOT_FOUND')
@@ -575,11 +501,7 @@ export const messagingService = {
     })
   },
 
-  async removeReaction(
-    userId: string,
-    messageId: string,
-    emoji: string,
-  ): Promise<void> {
+  async removeReaction(userId: string, messageId: string, emoji: string): Promise<void> {
     const msg = await messageRepository.findMessageById(messageId)
     if (!msg) {
       throw new AppError(404, 'Message not found', 'NOT_FOUND')
@@ -595,10 +517,7 @@ export const messagingService = {
   },
 
   async deleteMessage(userId: string, messageId: string): Promise<void> {
-    const msg = await messageRepository.softDeleteMessage(
-      messageId,
-      userId,
-    )
+    const msg = await messageRepository.softDeleteMessage(messageId, userId)
     await cacheService.delete(RedisKeys.convMessages(msg.conversationId))
     await redisClient.del(RedisKeys.convMessages(msg.conversationId))
     await publishToConversation(msg.conversationId, {
@@ -614,27 +533,29 @@ export const messagingService = {
     if (cached) {
       return JSON.parse(cached) as DmContact[]
     }
-    const { items: friends } = await followService.getFriends(
-      userId,
-      userId,
-      null,
-      40,
-    )
+    const { items: friends } = await followService.getFriends(userId, userId, null, 40)
     let contactIds = friends.map((c: { userId: string }) => c.userId)
-    let following: { userId: string; displayName: string; publicId: string; avatarUrl: string | null }[] = []
+    let following: {
+      userId: string
+      displayName: string
+      publicId: string
+      avatarUrl: string | null
+    }[] = []
     if (contactIds.length < 40) {
-      const res = await followService.getFollowing(
-        userId,
-        userId,
-        null,
-        40,
+      const res = await followService.getFollowing(userId, userId, null, 40)
+      following = res.items.map(
+        (c: {
+          userId: string
+          displayName: string
+          publicId: string
+          avatarUrl: string | null
+        }) => ({
+          userId: c.userId,
+          displayName: c.displayName,
+          publicId: c.publicId,
+          avatarUrl: c.avatarUrl,
+        }),
       )
-      following = res.items.map((c: { userId: string; displayName: string; publicId: string; avatarUrl: string | null }) => ({
-        userId: c.userId,
-        displayName: c.displayName,
-        publicId: c.publicId,
-        avatarUrl: c.avatarUrl,
-      }))
       const set = new Set(contactIds)
       for (const c of following as Array<{ userId: string }>) {
         if (set.size >= 40) break
@@ -643,14 +564,10 @@ export const messagingService = {
       contactIds = Array.from(set).slice(0, 40)
     }
     const existingConvs = await Promise.all(
-      contactIds.map((id: string) =>
-        conversationRepository.findDirectConversation(userId, id),
-      ),
+      contactIds.map((id: string) => conversationRepository.findDirectConversation(userId, id)),
     )
     const onlineKeys = contactIds.map((id: string) => RedisKeys.userOnlineStatus(id))
-    const onlineValues = onlineKeys.length
-      ? await redisClient.mget(...onlineKeys)
-      : []
+    const onlineValues = onlineKeys.length ? await redisClient.mget(...onlineKeys) : []
     const effOnline = await privacyService.getEffectiveFlagsBulk(contactIds)
     const result: DmContact[] = contactIds.map((id: string, i: number) => {
       const friendCard = friends.find((f: { userId: string }) => f.userId === id)
@@ -661,8 +578,7 @@ export const messagingService = {
         username: card?.displayName ?? '',
         publicId: card?.publicId ?? '',
         avatar: card?.avatarUrl ?? null,
-        isOnline:
-          !!onlineValues[i] && !(effOnline.get(id)?.invisibleOnline ?? false),
+        isOnline: !!onlineValues[i] && !(effOnline.get(id)?.invisibleOnline ?? false),
         isMutual: !!friendCard,
         existingConversationId: existingConvs[i]?.id ?? null,
       }
@@ -681,17 +597,11 @@ export const messagingService = {
     )
   },
 
-  async ensureConvMemberForTyping(
-    userId: string,
-    conversationId: string,
-  ): Promise<boolean> {
+  async ensureConvMemberForTyping(userId: string, conversationId: string): Promise<boolean> {
     const key = RedisKeys.convMember(conversationId, userId)
     const hit = await redisClient.get(key)
     if (hit === '1') return true
-    const conv = await conversationRepository.findConversationById(
-      conversationId,
-      userId,
-    )
+    const conv = await conversationRepository.findConversationById(conversationId, userId)
     if (!conv) return false
     await redisClient.set(key, '1', 'EX', CONV_MEMBER_CACHE_TTL_SEC)
     return true
@@ -734,11 +644,7 @@ export const messagingService = {
     })
   },
 
-  scheduleReadReceipt(
-    userId: string,
-    conversationId: string,
-    lastReadMessageId: string,
-  ): void {
+  scheduleReadReceipt(userId: string, conversationId: string, lastReadMessageId: string): void {
     const key = readReceiptDebounceKey(userId, conversationId)
     const existing = readReceiptDebounce.get(key)
     if (existing) {
@@ -748,11 +654,7 @@ export const messagingService = {
       const pending = readReceiptDebounce.get(key)
       readReceiptDebounce.delete(key)
       if (!pending) return
-      void messagingService.flushReadReceipt(
-        userId,
-        conversationId,
-        pending.lastReadMessageId,
-      )
+      void messagingService.flushReadReceipt(userId, conversationId, pending.lastReadMessageId)
     }, READ_RECEIPT_DEBOUNCE_MS)
     readReceiptDebounce.set(key, { timer, lastReadMessageId })
   },
@@ -769,12 +671,7 @@ export const messagingService = {
         lastReadMessageId,
       )
       if (!updated) return
-      await redisClient.set(
-        RedisKeys.unreadCount(userId, conversationId),
-        '0',
-        'EX',
-        86400,
-      )
+      await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
       await publishServerFrameToConversation(conversationId, {
         t: 'READ',
         conversationId,

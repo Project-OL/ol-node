@@ -4,18 +4,18 @@
  * target DetectFaces, before Rekognition CompareFaces. Empty array = no extra gates (production default).
  */
 export type LivePhotoPreCompareContext = {
-  userId: string;
-  livePhotoS3Key: string;
-  sourceFaceS3Key: string;
-  requestId?: string;
-  targetContentLength: number;
-  targetContentType?: string;
-};
+  userId: string
+  livePhotoS3Key: string
+  sourceFaceS3Key: string
+  requestId?: string
+  targetContentLength: number
+  targetContentType?: string
+}
 
 export type LivePhotoPreCompareResult =
   | { pass: true }
-  | { pass: false; reason: string; code?: string };
+  | { pass: false; reason: string; code?: string }
 
 export const livePhotoPreCompareHooks: Array<
   (ctx: LivePhotoPreCompareContext) => Promise<LivePhotoPreCompareResult>
-> = [];
+> = []

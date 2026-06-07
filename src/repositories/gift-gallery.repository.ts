@@ -1,32 +1,29 @@
-import { prisma, prismaRead } from "../config/database";
-import type { GiftGallery, Prisma } from "@prisma/client";
+import { prisma, prismaRead } from '../config/database'
+import type { GiftGallery, Prisma } from '@prisma/client'
 
 const globalGalleryInclude = {
   sections: {
-    orderBy: { sortOrder: "asc" as const },
+    orderBy: { sortOrder: 'asc' as const },
     include: {
       gifts: {
-        orderBy: { sortOrder: "asc" as const },
+        orderBy: { sortOrder: 'asc' as const },
         where: { gift: { isActive: true } },
         include: { gift: true },
       },
     },
   },
-} as const;
+} as const
 
 export type GlobalGalleryWithSections = Prisma.GiftGalleryGetPayload<{
-  include: typeof globalGalleryInclude;
-}>;
+  include: typeof globalGalleryInclude
+}>
 
 export const giftGalleryRepository = {
-  async findGlobalGallery(
-    year: number,
-    month: number,
-  ): Promise<GlobalGalleryWithSections | null> {
+  async findGlobalGallery(year: number, month: number): Promise<GlobalGalleryWithSections | null> {
     return prismaRead.giftGallery.findUnique({
       where: { year_month: { year, month } },
       include: globalGalleryInclude,
-    });
+    })
   },
 
   async findHostProgress(galleryId: string, hostUserId: string) {
@@ -44,7 +41,7 @@ export const giftGalleryRepository = {
           },
         },
       },
-    });
+    })
   },
 
   async findSectionItemForGalleryGift(
@@ -57,8 +54,8 @@ export const giftGalleryRepository = {
         section: { galleryId },
       },
       select: { id: true },
-    });
-    return row;
+    })
+    return row
   },
 
   async getHostCompletionSummary(
@@ -72,20 +69,20 @@ export const giftGalleryRepository = {
       prismaRead.giftGalleryProgress.count({
         where: { galleryId, hostUserId },
       }),
-    ]);
-    const isFullGallery = totalItems > 0 && receivedItems >= totalItems;
-    return { totalItems, receivedItems, isFullGallery };
+    ])
+    const isFullGallery = totalItems > 0 && receivedItems >= totalItems
+    return { totalItems, receivedItems, isFullGallery }
   },
 
   /**
    * Insert progress if missing. First gifter wins; returns whether a new row was inserted.
    */
   async upsertProgress(params: {
-    galleryId: string;
-    hostUserId: string;
-    giftId: string;
-    giftGallerySectionItemId: string;
-    firstGifterId: string;
+    galleryId: string
+    hostUserId: string
+    giftId: string
+    giftGallerySectionItemId: string
+    firstGifterId: string
   }): Promise<{ created: boolean }> {
     return prisma.$transaction(
       async (tx) => {
@@ -96,9 +93,9 @@ export const giftGalleryRepository = {
               giftGallerySectionItemId: params.giftGallerySectionItemId,
             },
           },
-        });
+        })
         if (existing) {
-          return { created: false };
+          return { created: false }
         }
         await tx.giftGalleryProgress.create({
           data: {
@@ -108,17 +105,17 @@ export const giftGalleryRepository = {
             giftGallerySectionItemId: params.giftGallerySectionItemId,
             firstGifterId: params.firstGifterId,
           },
-        });
-        return { created: true };
+        })
+        return { created: true }
       },
-      { isolationLevel: "Serializable" },
-    );
+      { isolationLevel: 'Serializable' },
+    )
   },
 
   async upsertGlobalGallery(params: {
-    year: number;
-    month: number;
-    sections: Array<{ title: string; sortOrder: number; giftIds: string[] }>;
+    year: number
+    month: number
+    sections: Array<{ title: string; sortOrder: number; giftIds: string[] }>
   }): Promise<GiftGallery> {
     return prisma.$transaction(
       async (tx) => {
@@ -126,11 +123,11 @@ export const giftGalleryRepository = {
           where: { year_month: { year: params.year, month: params.month } },
           create: { year: params.year, month: params.month },
           update: {},
-        });
+        })
 
         await tx.giftGallerySection.deleteMany({
           where: { galleryId: gallery.id },
-        });
+        })
 
         for (const s of params.sections) {
           await tx.giftGallerySection.create({
@@ -145,12 +142,12 @@ export const giftGalleryRepository = {
                 })),
               },
             },
-          });
+          })
         }
 
-        return gallery;
+        return gallery
       },
-      { isolationLevel: "Serializable" },
-    );
+      { isolationLevel: 'Serializable' },
+    )
   },
-};
+}

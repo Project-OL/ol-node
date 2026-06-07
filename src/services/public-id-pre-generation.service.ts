@@ -45,7 +45,10 @@ async function runHorizonJobInner(): Promise<HorizonJobResult> {
     cursor = batchEnd + 1n
   }
 
-  log.info({ scanned, vipsAdded, skipped, target: target.toString() }, '[pregen] horizon batch complete')
+  log.info(
+    { scanned, vipsAdded, skipped, target: target.toString() },
+    '[pregen] horizon batch complete',
+  )
   return { scanned, vipsAdded, skipped }
 }
 
@@ -96,7 +99,10 @@ export async function processBatch(
   try {
     await pipeline.exec()
   } catch (err) {
-    log.error({ err }, '[pregen] Redis SADD pipeline failed (DB is authoritative; next run repairs)')
+    log.error(
+      { err },
+      '[pregen] Redis SADD pipeline failed (DB is authoritative; next run repairs)',
+    )
   }
 
   log.info(

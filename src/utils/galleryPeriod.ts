@@ -16,10 +16,7 @@ export function getActivePeriod(now: Date = new Date()): {
   const periodStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0))
   const periodEnd = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0) - 1)
 
-  const secondsRemaining = Math.max(
-    0,
-    Math.floor((periodEnd.getTime() - now.getTime()) / 1000),
-  )
+  const secondsRemaining = Math.max(0, Math.floor((periodEnd.getTime() - now.getTime()) / 1000))
 
   return { year, month, periodStart, periodEnd, secondsRemaining }
 }

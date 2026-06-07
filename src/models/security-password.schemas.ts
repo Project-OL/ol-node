@@ -7,9 +7,7 @@ import { z } from 'zod'
 const otpFiveDigits = /^\d{5}$/
 
 /** Numeric security PIN; no account-password strength rules. */
-export const securityPinSchema = z
-  .string()
-  .regex(/^\d{4,8}$/, 'PIN must be 4 to 8 digits')
+export const securityPinSchema = z.string().regex(/^\d{4,8}$/, 'PIN must be 4 to 8 digits')
 
 export const getIdentifiersSchema = z.object({})
 

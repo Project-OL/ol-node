@@ -65,4 +65,3 @@ export type PaginatedResult<T> = {
   nextCursor: string | null
   total: number
 }
-

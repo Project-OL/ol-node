@@ -52,4 +52,3 @@ export const userSubscriberRepository = {
     return map
   },
 }
-

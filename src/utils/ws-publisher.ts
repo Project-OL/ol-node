@@ -78,10 +78,7 @@ function wsEventToServerFrame(event: WsEvent): ServerFrame {
   }
 }
 
-export async function publishToConversation(
-  conversationId: string,
-  event: WsEvent,
-): Promise<void> {
+export async function publishToConversation(conversationId: string, event: WsEvent): Promise<void> {
   const frame = wsEventToServerFrame(event)
   await publishServerFrameToConversation(conversationId, frame)
 }

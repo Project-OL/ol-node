@@ -30,10 +30,7 @@ export type PaginatedBlockList = {
  * smaller limit than what was cached (e.g. cache from default 20, request limit=2),
  * return only the first `limit` rows and a cursor for the next page.
  */
-function sliceBlockListFromCache(
-  cached: PaginatedBlockList,
-  limit: number,
-): PaginatedBlockList {
+function sliceBlockListFromCache(cached: PaginatedBlockList, limit: number): PaginatedBlockList {
   const rows = cached.blocks
   if (rows.length === 0) {
     return { blocks: [], nextCursor: null }
@@ -100,16 +97,9 @@ export const blockService = {
     })
   },
 
-  async bulkUnblock(
-    blockerId: string,
-    blockedPublicIds: string[],
-  ): Promise<{ count: number }> {
+  async bulkUnblock(blockerId: string, blockedPublicIds: string[]): Promise<{ count: number }> {
     if (blockedPublicIds.length > 50) {
-      throw new AppError(
-        400,
-        'Max 50 users per bulk unblock',
-        'INVALID_REQUEST',
-      )
+      throw new AppError(400, 'Max 50 users per bulk unblock', 'INVALID_REQUEST')
     }
     const blockedIds = await Promise.all(
       blockedPublicIds.map(async (pid) => (await resolveBlockedTarget(pid)).userId),
@@ -129,16 +119,12 @@ export const blockService = {
     blockerId: string,
     targetPublicId: string,
   ): Promise<{ isBlocked: boolean; publicId: string }> {
-    const { userId: targetId, canonicalPublicId } =
-      await resolveBlockedTarget(targetPublicId)
+    const { userId: targetId, canonicalPublicId } = await resolveBlockedTarget(targetPublicId)
     const existing = await blockRepository.findBlock(blockerId, targetId)
     return { isBlocked: existing !== null, publicId: canonicalPublicId }
   },
 
-  async getBlockList(
-    blockerId: string,
-    input: GetBlockListInput,
-  ): Promise<PaginatedBlockList> {
+  async getBlockList(blockerId: string, input: GetBlockListInput): Promise<PaginatedBlockList> {
     if (!input.search && !input.cursor) {
       const cached = await cacheService.get(RedisKeys.blockList(blockerId))
       if (cached) {
@@ -168,11 +154,7 @@ export const blockService = {
       nextCursor: raw.nextCursor,
     }
     if (!input.search && !input.cursor) {
-      await cacheService.set(
-        RedisKeys.blockList(blockerId),
-        JSON.stringify(result),
-        BLOCK_LIST_TTL,
-      )
+      await cacheService.set(RedisKeys.blockList(blockerId), JSON.stringify(result), BLOCK_LIST_TTL)
     }
     return result
   },

@@ -18,7 +18,10 @@ export default async function securityPasswordRoutes(app: FastifyInstance) {
     '/identifiers',
     {
       preHandler: [...preAuth, securityPasswordRateLimits.getIdentifiers],
-      schema: { tags: ['Security'], description: 'List verified auth identifiers for OTP selection' },
+      schema: {
+        tags: ['Security'],
+        description: 'List verified auth identifiers for OTP selection',
+      },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.userId!
@@ -56,17 +59,28 @@ export default async function securityPasswordRoutes(app: FastifyInstance) {
     '/password/send-otp',
     {
       preHandler: [...preAuth, securityPasswordRateLimits.sendOtp],
-      schema: { tags: ['Security'], description: 'Send OTP to selected identifier before setting security PIN' },
+      schema: {
+        tags: ['Security'],
+        description: 'Send OTP to selected identifier before setting security PIN',
+      },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.userId!
       const body = sendOtpSchema.safeParse(request.body)
       if (!body.success) {
-        throw new AppError(400, body.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST', {
-          fieldErrors: body.error.flatten().fieldErrors,
-        })
+        throw new AppError(
+          400,
+          body.error.errors[0]?.message ?? 'Validation failed',
+          'INVALID_REQUEST',
+          {
+            fieldErrors: body.error.flatten().fieldErrors,
+          },
+        )
       }
-      const result = await securityPasswordService.sendOtpForPassword(userId, body.data.identifierId)
+      const result = await securityPasswordService.sendOtpForPassword(
+        userId,
+        body.data.identifierId,
+      )
       return reply.status(200).send(result)
     },
   )
@@ -75,15 +89,23 @@ export default async function securityPasswordRoutes(app: FastifyInstance) {
     '/password/verify-otp',
     {
       preHandler: [...preAuth, securityPasswordRateLimits.verifyOtp],
-      schema: { tags: ['Security'], description: 'Verify OTP and get reset token for set security PIN' },
+      schema: {
+        tags: ['Security'],
+        description: 'Verify OTP and get reset token for set security PIN',
+      },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.userId!
       const body = verifyOtpSchema.safeParse(request.body)
       if (!body.success) {
-        throw new AppError(400, body.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST', {
-          fieldErrors: body.error.flatten().fieldErrors,
-        })
+        throw new AppError(
+          400,
+          body.error.errors[0]?.message ?? 'Validation failed',
+          'INVALID_REQUEST',
+          {
+            fieldErrors: body.error.flatten().fieldErrors,
+          },
+        )
       }
       const result = await securityPasswordService.verifyOtpForPassword(
         userId,
@@ -100,16 +122,22 @@ export default async function securityPasswordRoutes(app: FastifyInstance) {
       preHandler: [...preAuth, securityPasswordRateLimits.set],
       schema: {
         tags: ['Security'],
-        description: 'Set security PIN using reset token from verify-otp (no password-strength rules on PIN)',
+        description:
+          'Set security PIN using reset token from verify-otp (no password-strength rules on PIN)',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.userId!
       const body = setPinSchema.safeParse(request.body)
       if (!body.success) {
-        throw new AppError(400, body.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST', {
-          fieldErrors: body.error.flatten().fieldErrors,
-        })
+        throw new AppError(
+          400,
+          body.error.errors[0]?.message ?? 'Validation failed',
+          'INVALID_REQUEST',
+          {
+            fieldErrors: body.error.flatten().fieldErrors,
+          },
+        )
       }
       const { setAt } = await securityPasswordService.setPin(
         userId,
@@ -137,9 +165,14 @@ export default async function securityPasswordRoutes(app: FastifyInstance) {
       const userId = request.userId!
       const body = changePinSchema.safeParse(request.body)
       if (!body.success) {
-        throw new AppError(400, body.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST', {
-          fieldErrors: body.error.flatten().fieldErrors,
-        })
+        throw new AppError(
+          400,
+          body.error.errors[0]?.message ?? 'Validation failed',
+          'INVALID_REQUEST',
+          {
+            fieldErrors: body.error.flatten().fieldErrors,
+          },
+        )
       }
       const { changedAt } = await securityPasswordService.changePin(
         userId,
@@ -164,9 +197,14 @@ export default async function securityPasswordRoutes(app: FastifyInstance) {
       const userId = request.userId!
       const body = resetPasswordSchema.safeParse(request.body)
       if (!body.success) {
-        throw new AppError(400, body.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST', {
-          fieldErrors: body.error.flatten().fieldErrors,
-        })
+        throw new AppError(
+          400,
+          body.error.errors[0]?.message ?? 'Validation failed',
+          'INVALID_REQUEST',
+          {
+            fieldErrors: body.error.flatten().fieldErrors,
+          },
+        )
       }
       const result = await securityPasswordService.resetPassword(
         userId,

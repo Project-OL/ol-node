@@ -46,10 +46,7 @@ export const userLevelRepository = {
     type: 'livestream' | 'wealth',
     newLevel: number,
   ): Promise<void> {
-    const data =
-      type === 'livestream'
-        ? { livestreamLevel: newLevel }
-        : { wealthLevel: newLevel }
+    const data = type === 'livestream' ? { livestreamLevel: newLevel } : { wealthLevel: newLevel }
     await prisma.userLevel.update({
       where: { userId },
       data,
@@ -63,4 +60,3 @@ export const userLevelRepository = {
     })
   },
 }
-

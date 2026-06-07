@@ -56,7 +56,11 @@ export const storeRepository = {
     })
   },
 
-  async activateItem(userId: string, userStoreItemId: string, category: StoreItemCategory): Promise<void> {
+  async activateItem(
+    userId: string,
+    userStoreItemId: string,
+    category: StoreItemCategory,
+  ): Promise<void> {
     await prisma.$transaction(
       async (tx) => {
         const activeRow = await tx.userActiveStoreItems.findUnique({
@@ -89,7 +93,11 @@ export const storeRepository = {
     )
   },
 
-  async deactivateItem(userId: string, userStoreItemId: string, category: StoreItemCategory): Promise<void> {
+  async deactivateItem(
+    userId: string,
+    userStoreItemId: string,
+    category: StoreItemCategory,
+  ): Promise<void> {
     await prisma.$transaction(
       async (tx) => {
         await tx.userStoreItem.update({
@@ -111,7 +119,9 @@ export const storeRepository = {
     )
   },
 
-  async expireItem(userStoreItemId: string): Promise<{ userId: string; category: StoreItemCategory } | null> {
+  async expireItem(
+    userStoreItemId: string,
+  ): Promise<{ userId: string; category: StoreItemCategory } | null> {
     return prisma.$transaction(
       async (tx) => {
         const row = await tx.userStoreItem.findUnique({

@@ -1,50 +1,44 @@
-import { LevelType, Prisma } from "@prisma/client";
-import { redisClient, getRedisForRead } from "../config/redis";
-import {
-  RedisKeys,
-  USER_LEVEL_TTL,
-  LEVEL_CONFIG_TTL,
-} from "../config/redis";
-import { walletUserLevelRepository } from "../repositories/wallet-user-level.repository";
+import { LevelType, Prisma } from '@prisma/client'
+import { redisClient, getRedisForRead } from '../config/redis'
+import { RedisKeys, USER_LEVEL_TTL, LEVEL_CONFIG_TTL } from '../config/redis'
+import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
 
 export type LevelSnapshot = {
-  currentLevel: number;
-  cumulativeTotal: string;
-  nextLevelThreshold: string | null;
-  distanceToUpgrade: string | null;
-  progressNumerator: string;
-  progressDenominator: string | null;
-  leveledUp: boolean;
-  previousLevel: number;
-};
+  currentLevel: number
+  cumulativeTotal: string
+  nextLevelThreshold: string | null
+  distanceToUpgrade: string | null
+  progressNumerator: string
+  progressDenominator: string | null
+  leveledUp: boolean
+  previousLevel: number
+}
 
-export type LevelThreshold = { level: number; threshold: bigint };
+export type LevelThreshold = { level: number; threshold: bigint }
 
 async function getThresholds(levelType: LevelType): Promise<LevelThreshold[]> {
   const redisKey =
-    levelType === LevelType.WEALTH
-      ? RedisKeys.levelConfigWealth()
-      : RedisKeys.levelConfigStream();
+    levelType === LevelType.WEALTH ? RedisKeys.levelConfigWealth() : RedisKeys.levelConfigStream()
 
   try {
-    const redis = getRedisForRead();
-    const cached = await redis.get(redisKey);
+    const redis = getRedisForRead()
+    const cached = await redis.get(redisKey)
     if (cached) {
-      const parsed = JSON.parse(cached) as { level: number; threshold: string }[];
+      const parsed = JSON.parse(cached) as { level: number; threshold: string }[]
       return parsed.map((r) => ({
         level: r.level,
         threshold: BigInt(r.threshold),
-      }));
+      }))
     }
   } catch {
     // fall through to DB
   }
 
-  const configs = await walletUserLevelRepository.getConfigs(levelType);
+  const configs = await walletUserLevelRepository.getConfigs(levelType)
   const thresholds: LevelThreshold[] = configs.map((c) => ({
     level: c.level,
     threshold: c.threshold,
-  }));
+  }))
 
   try {
     await redisClient.set(
@@ -55,32 +49,29 @@ async function getThresholds(levelType: LevelType): Promise<LevelThreshold[]> {
           threshold: t.threshold.toString(),
         })),
       ),
-      "EX",
+      'EX',
       LEVEL_CONFIG_TTL,
-    );
+    )
   } catch {
     // ignore
   }
 
-  return thresholds;
+  return thresholds
 }
 
 /**
  * Highest level whose threshold <= cumulativeTotal. Thresholds must be sorted by level ascending.
  */
-export function computeLevel(
-  cumulativeTotal: bigint,
-  thresholds: LevelThreshold[],
-): number {
-  let level = 1;
+export function computeLevel(cumulativeTotal: bigint, thresholds: LevelThreshold[]): number {
+  let level = 1
   for (const t of thresholds) {
     if (cumulativeTotal >= t.threshold) {
-      level = t.level;
+      level = t.level
     } else {
-      break;
+      break
     }
   }
-  return level;
+  return level
 }
 
 function buildSnapshot(
@@ -89,28 +80,23 @@ function buildSnapshot(
   previousLevel: number,
   thresholds: LevelThreshold[],
 ): LevelSnapshot {
-  const nextConfig = thresholds.find((t) => t.level === currentLevel + 1);
-  const currentThreshold =
-    thresholds.find((t) => t.level === currentLevel)?.threshold ?? 0n;
-  const nextThreshold = nextConfig?.threshold ?? null;
+  const nextConfig = thresholds.find((t) => t.level === currentLevel + 1)
+  const currentThreshold = thresholds.find((t) => t.level === currentLevel)?.threshold ?? 0n
+  const nextThreshold = nextConfig?.threshold ?? null
 
-  const progressNumerator = cumulativeTotal - currentThreshold;
-  const progressDenominator =
-    nextThreshold !== null ? nextThreshold - currentThreshold : null;
+  const progressNumerator = cumulativeTotal - currentThreshold
+  const progressDenominator = nextThreshold !== null ? nextThreshold - currentThreshold : null
 
   return {
     currentLevel,
     cumulativeTotal: cumulativeTotal.toString(),
     nextLevelThreshold: nextThreshold?.toString() ?? null,
-    distanceToUpgrade:
-      nextThreshold !== null
-        ? (nextThreshold - cumulativeTotal).toString()
-        : null,
+    distanceToUpgrade: nextThreshold !== null ? (nextThreshold - cumulativeTotal).toString() : null,
     progressNumerator: progressNumerator.toString(),
     progressDenominator: progressDenominator?.toString() ?? null,
     leveledUp: currentLevel > previousLevel,
     previousLevel,
-  };
+  }
 }
 
 export const walletLevelService = {
@@ -118,13 +104,13 @@ export const walletLevelService = {
     const redisKey =
       levelType === LevelType.WEALTH
         ? RedisKeys.userWealthLevel(userId)
-        : RedisKeys.userLivestreamLevel(userId);
+        : RedisKeys.userLivestreamLevel(userId)
 
     try {
-      const redis = getRedisForRead();
-      const cached = await redis.get(redisKey);
+      const redis = getRedisForRead()
+      const cached = await redis.get(redisKey)
       if (cached) {
-        return JSON.parse(cached) as LevelSnapshot;
+        return JSON.parse(cached) as LevelSnapshot
       }
     } catch {
       // cold path
@@ -133,27 +119,22 @@ export const walletLevelService = {
     const [record, thresholds] = await Promise.all([
       walletUserLevelRepository.getOrCreate(userId, levelType),
       getThresholds(levelType),
-    ]);
+    ])
 
     const snapshot = buildSnapshot(
       record.cumulativeTotal,
       record.currentLevel,
       record.currentLevel,
       thresholds,
-    );
-    snapshot.leveledUp = false;
+    )
+    snapshot.leveledUp = false
 
     try {
-      await redisClient.set(
-        redisKey,
-        JSON.stringify(snapshot),
-        "EX",
-        USER_LEVEL_TTL,
-      );
+      await redisClient.set(redisKey, JSON.stringify(snapshot), 'EX', USER_LEVEL_TTL)
     } catch {
       // ignore
     }
-    return snapshot;
+    return snapshot
   },
 
   async applyCredit(
@@ -166,12 +147,12 @@ export const walletLevelService = {
       where: { userId_levelType: { userId, levelType } },
       create: { userId, levelType, currentLevel: 1, cumulativeTotal: 0n },
       update: {},
-    });
+    })
 
-    const newCumulative = current.cumulativeTotal + increment;
-    const thresholds = await getThresholds(levelType);
-    const newLevel = computeLevel(newCumulative, thresholds);
-    const previousLevel = current.currentLevel;
+    const newCumulative = current.cumulativeTotal + increment
+    const thresholds = await getThresholds(levelType)
+    const newLevel = computeLevel(newCumulative, thresholds)
+    const previousLevel = current.currentLevel
 
     await tx.walletUserLevel.update({
       where: { userId_levelType: { userId, levelType } },
@@ -179,9 +160,9 @@ export const walletLevelService = {
         cumulativeTotal: newCumulative,
         currentLevel: newLevel,
       },
-    });
+    })
 
-    return { newLevel, previousLevel, newCumulative };
+    return { newLevel, previousLevel, newCumulative }
   },
 
   async refreshCache(
@@ -191,39 +172,29 @@ export const walletLevelService = {
     newLevel: number,
     previousLevel: number,
   ): Promise<LevelSnapshot> {
-    const thresholds = await getThresholds(levelType);
-    const snapshot = buildSnapshot(
-      newCumulative,
-      newLevel,
-      previousLevel,
-      thresholds,
-    );
+    const thresholds = await getThresholds(levelType)
+    const snapshot = buildSnapshot(newCumulative, newLevel, previousLevel, thresholds)
 
     const redisKey =
       levelType === LevelType.WEALTH
         ? RedisKeys.userWealthLevel(userId)
-        : RedisKeys.userLivestreamLevel(userId);
+        : RedisKeys.userLivestreamLevel(userId)
 
     try {
-      await redisClient.set(
-        redisKey,
-        JSON.stringify(snapshot),
-        "EX",
-        USER_LEVEL_TTL,
-      );
+      await redisClient.set(redisKey, JSON.stringify(snapshot), 'EX', USER_LEVEL_TTL)
     } catch {
       // ignore
     }
-    return snapshot;
+    return snapshot
   },
 
   async invalidateCache(userId: string, levelType: LevelType) {
     const redisKey =
       levelType === LevelType.WEALTH
         ? RedisKeys.userWealthLevel(userId)
-        : RedisKeys.userLivestreamLevel(userId);
+        : RedisKeys.userLivestreamLevel(userId)
     try {
-      await redisClient.del(redisKey);
+      await redisClient.del(redisKey)
     } catch {
       // ignore
     }
@@ -231,15 +202,15 @@ export const walletLevelService = {
 
   async invalidateConfigCache() {
     try {
-      await redisClient.del(RedisKeys.levelConfigWealth());
-      await redisClient.del(RedisKeys.levelConfigStream());
+      await redisClient.del(RedisKeys.levelConfigWealth())
+      await redisClient.del(RedisKeys.levelConfigStream())
     } catch {
       // ignore
     }
   },
 
   async getLevelTable(levelType: LevelType) {
-    return getThresholds(levelType);
+    return getThresholds(levelType)
   },
 
   /**
@@ -307,4 +278,4 @@ export const walletLevelService = {
 
     return map
   },
-};
+}

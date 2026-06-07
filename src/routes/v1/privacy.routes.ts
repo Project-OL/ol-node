@@ -103,7 +103,11 @@ export default async function privacyRoutes(app: FastifyInstance) {
         const userId = request.userId!
         const parsed = togglePrivacySchema.safeParse(request.body ?? {})
         if (!parsed.success) {
-          throw new AppError(400, parsed.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST')
+          throw new AppError(
+            400,
+            parsed.error.errors[0]?.message ?? 'Validation failed',
+            'INVALID_REQUEST',
+          )
         }
         const result = await privacyService.toggleInvisibleVisitor(userId, parsed.data.enabled, {
           ip: request.ip,
@@ -157,7 +161,11 @@ export default async function privacyRoutes(app: FastifyInstance) {
         const userId = request.userId!
         const parsed = togglePrivacySchema.safeParse(request.body ?? {})
         if (!parsed.success) {
-          throw new AppError(400, parsed.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST')
+          throw new AppError(
+            400,
+            parsed.error.errors[0]?.message ?? 'Validation failed',
+            'INVALID_REQUEST',
+          )
         }
         const result = await privacyService.toggleMysteryLive(userId, parsed.data.enabled, {
           ip: request.ip,
@@ -211,7 +219,11 @@ export default async function privacyRoutes(app: FastifyInstance) {
         const userId = request.userId!
         const parsed = togglePrivacySchema.safeParse(request.body ?? {})
         if (!parsed.success) {
-          throw new AppError(400, parsed.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST')
+          throw new AppError(
+            400,
+            parsed.error.errors[0]?.message ?? 'Validation failed',
+            'INVALID_REQUEST',
+          )
         }
         const result = await privacyService.toggleMysteryRank(userId, parsed.data.enabled, {
           ip: request.ip,
@@ -265,7 +277,11 @@ export default async function privacyRoutes(app: FastifyInstance) {
         const userId = request.userId!
         const parsed = togglePrivacySchema.safeParse(request.body ?? {})
         if (!parsed.success) {
-          throw new AppError(400, parsed.error.errors[0]?.message ?? 'Validation failed', 'INVALID_REQUEST')
+          throw new AppError(
+            400,
+            parsed.error.errors[0]?.message ?? 'Validation failed',
+            'INVALID_REQUEST',
+          )
         }
         const result = await privacyService.toggleInvisibleOnline(userId, parsed.data.enabled, {
           ip: request.ip,

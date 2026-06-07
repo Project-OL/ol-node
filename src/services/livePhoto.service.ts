@@ -1,59 +1,61 @@
-import { randomUUID } from "crypto";
-import { LivePhotoVerificationState } from "@prisma/client";
-import { env } from "../config/env";
-import { s3Bucket } from "../config/s3";
-import { RedisKeys, redisClient } from "../config/redis";
-import { AppError } from "../middlewares/errorHandler";
-import { cacheRedisService } from "./cacheRedis.service";
-import { storageService } from "./storage.service";
-import { faceVerificationRepository } from "../repositories/faceVerification.repository";
-import { livePhotoRepository } from "../repositories/livePhoto.repository";
+import { randomUUID } from 'crypto'
+import { LivePhotoVerificationState } from '@prisma/client'
+import { env } from '../config/env'
+import { s3Bucket } from '../config/s3'
+import { RedisKeys, redisClient } from '../config/redis'
+import { AppError } from '../middlewares/errorHandler'
+import { cacheRedisService } from './cacheRedis.service'
+import { storageService } from './storage.service'
+import { faceVerificationRepository } from '../repositories/faceVerification.repository'
+import { livePhotoRepository } from '../repositories/livePhoto.repository'
 import {
   buildLivePhotoVerifyJobId,
   enqueueLivePhotoS3Purge,
   enqueueLivePhotoVerification,
   livePhotoVerifyQueue,
-} from "../queues/live-photo.queue";
-import { rootLogger } from "../utils/rootLogger";
-import { bustLivePhotoCaches } from "./live-photo/live-photo-cache";
+} from '../queues/live-photo.queue'
+import { rootLogger } from '../utils/rootLogger'
+import { bustLivePhotoCaches } from './live-photo/live-photo-cache'
 
-const log = rootLogger.child({ module: "livePhoto.service" });
+const log = rootLogger.child({ module: 'livePhoto.service' })
 
 const ALLOWED_LIVE_MIME = new Map<string, string>([
-  ["image/jpeg", "jpg"],
-  ["image/jpg", "jpg"],
-  ["image/png", "png"],
-  ["image/webp", "webp"],
-]);
+  ['image/jpeg', 'jpg'],
+  ['image/jpg', 'jpg'],
+  ['image/png', 'png'],
+  ['image/webp', 'webp'],
+])
 
 export type LivePhotoMeStatusDto = {
-  hasLivePhoto: boolean;
-  verificationState: LivePhotoVerificationState;
-  verifiedAt: string | null;
-  imageUrl: string | null;
-  similarityScore: number | null;
+  hasLivePhoto: boolean
+  verificationState: LivePhotoVerificationState
+  verifiedAt: string | null
+  imageUrl: string | null
+  similarityScore: number | null
   /** Set when `verificationState` is `FAILED` or `REJECTED` — worker / server failure code (e.g. `invalid_image_format`). */
-  errorReason: string | null;
-};
+  errorReason: string | null
+}
 
 function validateOwnedLivePhotoKey(userId: string, s3Key: string): void {
-  const prefix = `live-photo/${userId}/`;
+  const prefix = `live-photo/${userId}/`
   if (!s3Key.startsWith(prefix)) {
-    throw new AppError(400, "Invalid live photo key for user", "LIVE_PHOTO_INVALID_KEY");
+    throw new AppError(400, 'Invalid live photo key for user', 'LIVE_PHOTO_INVALID_KEY')
   }
-  if (s3Key.includes("..") || s3Key.includes("\0") || s3Key.includes("//")) {
-    throw new AppError(400, "Invalid live photo key", "LIVE_PHOTO_INVALID_KEY");
+  if (s3Key.includes('..') || s3Key.includes('\0') || s3Key.includes('//')) {
+    throw new AppError(400, 'Invalid live photo key', 'LIVE_PHOTO_INVALID_KEY')
   }
 }
 
 function buildS3Key(userId: string, ext: string): string {
-  const now = new Date();
-  const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-  return `live-photo/${userId}/${y}/${m}/${randomUUID()}.${ext}`;
+  const now = new Date()
+  const y = now.getUTCFullYear()
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0')
+  return `live-photo/${userId}/${y}/${m}/${randomUUID()}.${ext}`
 }
 
-function rowToMeDto(row: Awaited<ReturnType<typeof livePhotoRepository.findByUserId>>): LivePhotoMeStatusDto {
+function rowToMeDto(
+  row: Awaited<ReturnType<typeof livePhotoRepository.findByUserId>>,
+): LivePhotoMeStatusDto {
   if (!row) {
     return {
       hasLivePhoto: false,
@@ -62,47 +64,44 @@ function rowToMeDto(row: Awaited<ReturnType<typeof livePhotoRepository.findByUse
       imageUrl: null,
       similarityScore: null,
       errorReason: null,
-    };
+    }
   }
-  const hasKey = row.s3Key.trim().length > 0;
+  const hasKey = row.s3Key.trim().length > 0
   const hasLivePhoto =
     hasKey ||
-    row.verificationState === "VERIFIED" ||
-    row.verificationState === "PROCESSING" ||
-    row.verificationState === "PENDING_VERIFICATION";
-  let imageUrl: string | null = null;
-  if (row.verificationState === "VERIFIED") {
-    imageUrl =
-      row.imageUrl?.trim() ||
-      (hasKey ? safePublicUrl(row.s3Key) : null);
+    row.verificationState === 'VERIFIED' ||
+    row.verificationState === 'PROCESSING' ||
+    row.verificationState === 'PENDING_VERIFICATION'
+  let imageUrl: string | null = null
+  if (row.verificationState === 'VERIFIED') {
+    imageUrl = row.imageUrl?.trim() || (hasKey ? safePublicUrl(row.s3Key) : null)
   }
-  const showErrorReason =
-    row.verificationState === "FAILED" || row.verificationState === "REJECTED";
+  const showErrorReason = row.verificationState === 'FAILED' || row.verificationState === 'REJECTED'
   return {
     hasLivePhoto,
     verificationState: row.verificationState,
     verifiedAt: row.verifiedAt?.toISOString() ?? null,
     imageUrl,
     similarityScore:
-      row.verificationState === "VERIFIED" && row.similarityScore != null
+      row.verificationState === 'VERIFIED' && row.similarityScore != null
         ? Math.round(row.similarityScore * 100) / 100
         : null,
-    errorReason: showErrorReason ? (row.failedReason?.trim() || null) : null,
-  };
+    errorReason: showErrorReason ? row.failedReason?.trim() || null : null,
+  }
 }
 
 function safePublicUrl(key: string): string | null {
   try {
-    return storageService.getCdnOrS3PublicUrl(key);
+    return storageService.getCdnOrS3PublicUrl(key)
   } catch {
-    return null;
+    return null
   }
 }
 
 export const livePhotoService = {
   async getMeStatus(userId: string): Promise<LivePhotoMeStatusDto> {
-    const cacheKey = RedisKeys.livePhotoProfile(userId);
-    const cached = await cacheRedisService.get<LivePhotoMeStatusDto>(cacheKey);
+    const cacheKey = RedisKeys.livePhotoProfile(userId)
+    const cached = await cacheRedisService.get<LivePhotoMeStatusDto>(cacheKey)
     if (
       cached &&
       cached.verificationState !== LivePhotoVerificationState.PROCESSING &&
@@ -111,128 +110,141 @@ export const livePhotoService = {
       const staleFailurePayload =
         (cached.verificationState === LivePhotoVerificationState.FAILED ||
           cached.verificationState === LivePhotoVerificationState.REJECTED) &&
-        !("errorReason" in cached);
+        !('errorReason' in cached)
       if (!staleFailurePayload) {
-        return { ...cached, errorReason: cached.errorReason ?? null };
+        return { ...cached, errorReason: cached.errorReason ?? null }
       }
     }
-    const row = await livePhotoRepository.findByUserId(userId);
-    const dto = rowToMeDto(row);
+    const row = await livePhotoRepository.findByUserId(userId)
+    const dto = rowToMeDto(row)
     const inFlight =
       dto.verificationState === LivePhotoVerificationState.PROCESSING ||
-      dto.verificationState === LivePhotoVerificationState.PENDING_VERIFICATION;
+      dto.verificationState === LivePhotoVerificationState.PENDING_VERIFICATION
     if (!inFlight) {
-      await cacheRedisService.set(cacheKey, dto, env.LIVE_PHOTO_PROFILE_CACHE_TTL_SEC);
+      await cacheRedisService.set(cacheKey, dto, env.LIVE_PHOTO_PROFILE_CACHE_TTL_SEC)
     }
-    return dto;
+    return dto
   },
 
   /** Compact block for GET /users/me (no Redis — follows wallet/guardian always-fresh pattern). */
   async buildMeLivePhotoBlock(userId: string): Promise<{
-    verified: boolean;
-    imageUrl: string | null;
-    verifiedAt: string | null;
+    verified: boolean
+    imageUrl: string | null
+    verifiedAt: string | null
   }> {
-    const row = await livePhotoRepository.findByUserId(userId);
-    if (!row || row.verificationState !== "VERIFIED") {
-      return { verified: false, imageUrl: null, verifiedAt: null };
+    const row = await livePhotoRepository.findByUserId(userId)
+    if (!row || row.verificationState !== 'VERIFIED') {
+      return { verified: false, imageUrl: null, verifiedAt: null }
     }
-    const imageUrl =
-      row.imageUrl?.trim() ||
-      (row.s3Key ? safePublicUrl(row.s3Key) : null);
+    const imageUrl = row.imageUrl?.trim() || (row.s3Key ? safePublicUrl(row.s3Key) : null)
     return {
       verified: true,
       imageUrl,
       verifiedAt: row.verifiedAt?.toISOString() ?? null,
-    };
+    }
   },
 
-  async createUploadUrl(userId: string, mimeType: string): Promise<{
-    uploadUrl: string;
-    s3Key: string;
-    publicUrl: string;
-    expiresInSec: number;
+  async createUploadUrl(
+    userId: string,
+    mimeType: string,
+  ): Promise<{
+    uploadUrl: string
+    s3Key: string
+    publicUrl: string
+    expiresInSec: number
   }> {
-    const bucket = s3Bucket?.trim();
+    const bucket = s3Bucket?.trim()
     if (!bucket) {
-      throw new AppError(503, "File storage is not configured", "S3_NOT_CONFIGURED");
+      throw new AppError(503, 'File storage is not configured', 'S3_NOT_CONFIGURED')
     }
-    const normalized = mimeType.trim().toLowerCase();
-    const ext = ALLOWED_LIVE_MIME.get(normalized);
+    const normalized = mimeType.trim().toLowerCase()
+    const ext = ALLOWED_LIVE_MIME.get(normalized)
     if (!ext) {
-      throw new AppError(400, "Only JPEG, PNG, or WEBP images are allowed", "LIVE_PHOTO_INVALID_MIME");
+      throw new AppError(
+        400,
+        'Only JPEG, PNG, or WEBP images are allowed',
+        'LIVE_PHOTO_INVALID_MIME',
+      )
     }
-    const s3Key = buildS3Key(userId, ext);
-    const expiresInSec = env.LIVE_PHOTO_UPLOAD_URL_EXPIRES_SEC;
+    const s3Key = buildS3Key(userId, ext)
+    const expiresInSec = env.LIVE_PHOTO_UPLOAD_URL_EXPIRES_SEC
     const uploadUrl = await storageService.getPresignedPutUrl(s3Key, normalized, expiresInSec, {
-      cacheControl: "private, max-age=0, no-transform",
-    });
+      cacheControl: 'private, max-age=0, no-transform',
+    })
     await livePhotoRepository.upsertPendingUpload(userId, {
       s3Key,
       s3Bucket: bucket,
-      verificationState: "PENDING_UPLOAD",
-    });
-    const publicUrl = storageService.getCdnOrS3PublicUrl(s3Key);
-    await bustLivePhotoCaches(userId);
+      verificationState: 'PENDING_UPLOAD',
+    })
+    const publicUrl = storageService.getCdnOrS3PublicUrl(s3Key)
+    await bustLivePhotoCaches(userId)
     await redisClient.set(
       RedisKeys.livePhotoVerifyStatus(userId),
-      JSON.stringify({ state: "PENDING_UPLOAD", at: Date.now() }),
-      "EX",
+      JSON.stringify({ state: 'PENDING_UPLOAD', at: Date.now() }),
+      'EX',
       env.LIVE_PHOTO_VERIFY_STATUS_CACHE_TTL_SEC,
-    );
-    return { uploadUrl, s3Key, publicUrl, expiresInSec };
+    )
+    return { uploadUrl, s3Key, publicUrl, expiresInSec }
   },
 
-  async requestVerify(userId: string, s3Key: string, requestId?: string): Promise<
-    | { status: "PROCESSING" }
-    | { status: "VERIFIED"; verifiedAt: string; imageUrl: string | null; similarityScore: number }
+  async requestVerify(
+    userId: string,
+    s3Key: string,
+    requestId?: string,
+  ): Promise<
+    | { status: 'PROCESSING' }
+    | { status: 'VERIFIED'; verifiedAt: string; imageUrl: string | null; similarityScore: number }
   > {
-    validateOwnedLivePhotoKey(userId, s3Key);
-    const bucket = s3Bucket?.trim();
+    validateOwnedLivePhotoKey(userId, s3Key)
+    const bucket = s3Bucket?.trim()
     if (!bucket) {
-      throw new AppError(503, "File storage is not configured", "S3_NOT_CONFIGURED");
+      throw new AppError(503, 'File storage is not configured', 'S3_NOT_CONFIGURED')
     }
 
-    const face = await faceVerificationRepository.getProfileByUserId(userId);
-    if (!face || face.status !== "INDEXED" || !face.s3KeyReference?.trim()) {
+    const face = await faceVerificationRepository.getProfileByUserId(userId)
+    if (!face || face.status !== 'INDEXED' || !face.s3KeyReference?.trim()) {
       throw new AppError(
         400,
-        "Face profile must be indexed before live photo verification",
-        "LIVE_PHOTO_FACE_NOT_READY",
-      );
+        'Face profile must be indexed before live photo verification',
+        'LIVE_PHOTO_FACE_NOT_READY',
+      )
     }
 
-    const row = await livePhotoRepository.findByUserId(userId);
+    const row = await livePhotoRepository.findByUserId(userId)
     if (!row || row.s3Key !== s3Key) {
-      throw new AppError(400, "Live photo key does not match pending upload", "LIVE_PHOTO_KEY_MISMATCH");
+      throw new AppError(
+        400,
+        'Live photo key does not match pending upload',
+        'LIVE_PHOTO_KEY_MISMATCH',
+      )
     }
 
-    if (row.verificationState === "VERIFIED" && row.s3Key === s3Key) {
+    if (row.verificationState === 'VERIFIED' && row.s3Key === s3Key) {
       return {
-        status: "VERIFIED",
+        status: 'VERIFIED',
         verifiedAt: row.verifiedAt!.toISOString(),
         imageUrl: row.imageUrl ?? safePublicUrl(row.s3Key),
         similarityScore: row.similarityScore ?? 0,
-      };
+      }
     }
 
-    if (row.verificationState === "PROCESSING" && row.s3Key === s3Key) {
+    if (row.verificationState === 'PROCESSING' && row.s3Key === s3Key) {
       const jobId = buildLivePhotoVerifyJobId({
         userId,
         s3Key,
         generation: row.verifyGeneration,
-      });
-      const existing = await livePhotoVerifyQueue.getJob(jobId);
-      let shouldEnqueue = false;
+      })
+      const existing = await livePhotoVerifyQueue.getJob(jobId)
+      let shouldEnqueue = false
       if (!existing) {
-        shouldEnqueue = true;
+        shouldEnqueue = true
       } else {
-        const state = await existing.getState();
-        if (state === "waiting" || state === "active" || state === "delayed") {
-          shouldEnqueue = false;
-        } else if (state === "completed" || state === "failed") {
-          await existing.remove().catch(() => undefined);
-          shouldEnqueue = true;
+        const state = await existing.getState()
+        if (state === 'waiting' || state === 'active' || state === 'delayed') {
+          shouldEnqueue = false
+        } else if (state === 'completed' || state === 'failed') {
+          await existing.remove().catch(() => undefined)
+          shouldEnqueue = true
         }
       }
       if (shouldEnqueue) {
@@ -241,54 +253,54 @@ export const livePhotoService = {
           s3Key,
           generation: row.verifyGeneration,
           requestId,
-        });
+        })
         log.info(
           { userId, generation: row.verifyGeneration, requestId, jobId },
-          "live_photo_verify_re_enqueued_while_processing",
-        );
+          'live_photo_verify_re_enqueued_while_processing',
+        )
       }
       await redisClient.set(
         RedisKeys.livePhotoVerifyStatus(userId),
-        JSON.stringify({ state: "PROCESSING", at: Date.now() }),
-        "EX",
+        JSON.stringify({ state: 'PROCESSING', at: Date.now() }),
+        'EX',
         env.LIVE_PHOTO_VERIFY_STATUS_CACHE_TTL_SEC,
-      );
-      return { status: "PROCESSING" };
+      )
+      return { status: 'PROCESSING' }
     }
 
-    if (row.verificationState !== "PENDING_UPLOAD") {
+    if (row.verificationState !== 'PENDING_UPLOAD') {
       throw new AppError(
         409,
-        "Live photo is not awaiting verification",
-        "LIVE_PHOTO_INVALID_STATE",
+        'Live photo is not awaiting verification',
+        'LIVE_PHOTO_INVALID_STATE',
         { state: row.verificationState },
-      );
+      )
     }
 
-    let meta;
+    let meta
     try {
-      meta = await storageService.headObjectMetadata(s3Key);
+      meta = await storageService.headObjectMetadata(s3Key)
     } catch (e) {
-      if (e instanceof AppError) throw e;
-      throw e;
+      if (e instanceof AppError) throw e
+      throw e
     }
     if (meta.contentLength <= 0 || meta.contentLength > env.LIVE_PHOTO_MAX_SIZE_BYTES) {
-      throw new AppError(413, "Live photo file size is invalid", "LIVE_PHOTO_FILE_TOO_LARGE", {
+      throw new AppError(413, 'Live photo file size is invalid', 'LIVE_PHOTO_FILE_TOO_LARGE', {
         maxBytes: env.LIVE_PHOTO_MAX_SIZE_BYTES,
-      });
+      })
     }
-    const ct = (meta.contentType ?? "").toLowerCase();
-    if (ct && !ct.startsWith("image/")) {
-      throw new AppError(400, "Uploaded object must be an image", "LIVE_PHOTO_INVALID_CONTENT_TYPE");
+    const ct = (meta.contentType ?? '').toLowerCase()
+    if (ct && !ct.startsWith('image/')) {
+      throw new AppError(400, 'Uploaded object must be an image', 'LIVE_PHOTO_INVALID_CONTENT_TYPE')
     }
 
-    const updated = await livePhotoRepository.tryBeginProcessing(userId, s3Key);
+    const updated = await livePhotoRepository.tryBeginProcessing(userId, s3Key)
     if (!updated) {
-      const again = await livePhotoRepository.findByUserId(userId);
-      if (again?.verificationState === "PROCESSING" && again.s3Key === s3Key) {
-        return { status: "PROCESSING" };
+      const again = await livePhotoRepository.findByUserId(userId)
+      if (again?.verificationState === 'PROCESSING' && again.s3Key === s3Key) {
+        return { status: 'PROCESSING' }
       }
-      throw new AppError(409, "Could not start verification", "LIVE_PHOTO_VERIFY_RACE");
+      throw new AppError(409, 'Could not start verification', 'LIVE_PHOTO_VERIFY_RACE')
     }
 
     await enqueueLivePhotoVerification({
@@ -296,33 +308,36 @@ export const livePhotoService = {
       s3Key,
       generation: updated.verifyGeneration,
       requestId,
-    });
+    })
 
     await redisClient.set(
       RedisKeys.livePhotoVerifyStatus(userId),
-      JSON.stringify({ state: "PROCESSING", at: Date.now(), generation: updated.verifyGeneration }),
-      "EX",
+      JSON.stringify({ state: 'PROCESSING', at: Date.now(), generation: updated.verifyGeneration }),
+      'EX',
       env.LIVE_PHOTO_VERIFY_STATUS_CACHE_TTL_SEC,
-    );
-    await bustLivePhotoCaches(userId);
-    log.info({ userId, generation: updated.verifyGeneration, requestId }, "live_photo_verify_enqueued");
-    return { status: "PROCESSING" };
+    )
+    await bustLivePhotoCaches(userId)
+    log.info(
+      { userId, generation: updated.verifyGeneration, requestId },
+      'live_photo_verify_enqueued',
+    )
+    return { status: 'PROCESSING' }
   },
 
   async remove(userId: string): Promise<{ ok: true }> {
-    const row = await livePhotoRepository.findByUserId(userId);
-    const keysToPurge: string[] = [];
-    if (row?.s3Key?.trim()) keysToPurge.push(row.s3Key.trim());
+    const row = await livePhotoRepository.findByUserId(userId)
+    const keysToPurge: string[] = []
+    if (row?.s3Key?.trim()) keysToPurge.push(row.s3Key.trim())
     if (row) {
-      await livePhotoRepository.softReset(userId);
+      await livePhotoRepository.softReset(userId)
     }
-    await bustLivePhotoCaches(userId);
+    await bustLivePhotoCaches(userId)
     if (keysToPurge.length > 0) {
-      await enqueueLivePhotoS3Purge(keysToPurge);
+      await enqueueLivePhotoS3Purge(keysToPurge)
     }
-    log.info({ userId }, "live_photo_removed");
-    return { ok: true };
+    log.info({ userId }, 'live_photo_removed')
+    return { ok: true }
   },
-};
+}
 
-export { bustLivePhotoCaches } from "./live-photo/live-photo-cache";
+export { bustLivePhotoCaches } from './live-photo/live-photo-cache'

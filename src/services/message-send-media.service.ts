@@ -7,10 +7,7 @@ import {
   assertAudioDurationAllowed,
   verifyUploadedAudioObject,
 } from './message-audio-object.service'
-import {
-  AUDIO_CODEC_VALUES,
-  type AudioCodecValue,
-} from '../lib/message-audio.constants'
+import { AUDIO_CODEC_VALUES, type AudioCodecValue } from '../lib/message-audio.constants'
 import {
   assertValidWaveformPeaksNormalized,
   encodeWaveformPeaksNormalized,
@@ -71,7 +68,11 @@ export function assertMessageTypeMediaAlignment(
   assertMediaOrdersContiguous(items)
   if (type === 'AUDIO') {
     if (items.length !== 1 || items[0]!.mediaType !== 'AUDIO') {
-      throw new AppError(400, 'AUDIO messages require exactly one AUDIO media item', 'INVALID_REQUEST')
+      throw new AppError(
+        400,
+        'AUDIO messages require exactly one AUDIO media item',
+        'INVALID_REQUEST',
+      )
     }
   }
   if (type === 'TEXT' && items.length > 0) {

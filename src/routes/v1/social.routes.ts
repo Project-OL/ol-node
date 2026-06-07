@@ -1,10 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { socialRateLimits } from '../../middlewares/rateLimitAuth'
-import {
-  visitParamSchema,
-  socialCursorQuerySchema,
-} from '../../models/schemas'
+import { visitParamSchema, socialCursorQuerySchema } from '../../models/schemas'
 import { followService } from '../../services/follow.service'
 import { visitorService } from '../../services/visitor.service'
 import { userRepository } from '../../repositories/user.repository'
@@ -39,10 +36,7 @@ export default async function socialRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
       const userId = request.userId!
       const targetUserId = await resolvePublicId(request.params.publicId)
       const result = await followService.follow(userId, targetUserId, {
@@ -70,10 +64,7 @@ export default async function socialRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
       const userId = request.userId!
       const targetUserId = await resolvePublicId(request.params.publicId)
       await followService.unfollow(userId, targetUserId, {
@@ -176,10 +167,7 @@ export default async function socialRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
       const targetUserId = await resolvePublicId(request.params.publicId)
       const result = await followService.getCounts(targetUserId)
       return reply.status(200).send(result)
@@ -200,10 +188,7 @@ export default async function socialRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (
-      request: FastifyRequest<{ Params: { publicId: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
       const userId = request.userId!
       const parsed = visitParamSchema.safeParse({ profileId: request.params.publicId })
       if (!parsed.success) {

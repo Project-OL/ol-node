@@ -1,9 +1,7 @@
 import { postRepository } from '../repositories/post.repository'
 import type { PostAuthor, PostResponse, TaggedUser } from '../types/post.types'
 
-export type PostWithRelations = NonNullable<
-  Awaited<ReturnType<typeof postRepository.findById>>
->
+export type PostWithRelations = NonNullable<Awaited<ReturnType<typeof postRepository.findById>>>
 
 function computeAge(dob: Date | null): number | null {
   if (!dob) return null
@@ -27,7 +25,7 @@ function toTaggedUser(user: {
   const fullName =
     user.firstName && user.lastName
       ? `${user.firstName} ${user.lastName}`
-      : user.firstName ?? user.lastName
+      : (user.firstName ?? user.lastName)
   const trimmed = fullName?.trim()
   const displayName = trimmed && trimmed.length > 0 ? trimmed : user.username
 

@@ -46,10 +46,7 @@ export const deviceService = {
   /**
    * Get all active devices for user (with active session). Cache-aside, TTL 5 min.
    */
-  async getDevices(
-    userId: string,
-    currentDeviceId?: string,
-  ): Promise<DeviceInfo[]> {
+  async getDevices(userId: string, currentDeviceId?: string): Promise<DeviceInfo[]> {
     const cached = await cacheService.getUserDevices(userId)
     if (cached) {
       try {
@@ -114,17 +111,10 @@ export const deviceService = {
       throw new AppError(404, 'Device not found', 'DEVICE_NOT_FOUND')
     }
     if (device.deviceId === currentDeviceId) {
-      throw new AppError(
-        400,
-        'Cannot revoke current device',
-        'CANNOT_REVOKE_CURRENT_DEVICE',
-      )
+      throw new AppError(400, 'Cannot revoke current device', 'CANNOT_REVOKE_CURRENT_DEVICE')
     }
 
-    const session = await sessionRepository.findActiveByUserIdAndDeviceId(
-      userId,
-      device.deviceId,
-    )
+    const session = await sessionRepository.findActiveByUserIdAndDeviceId(userId, device.deviceId)
     if (session) {
       await sessionRepository.revokeById(session.id)
       await redisClient.del(RedisKeys.session(session.id))
@@ -166,34 +156,19 @@ export const deviceService = {
   }> {
     const secPassword = await securityPasswordRepository.findByUserId(userId)
     if (!secPassword) {
-      throw new AppError(
-        400,
-        'Security password not set',
-        'SECURITY_PASSWORD_NOT_SET',
-      )
+      throw new AppError(400, 'Security password not set', 'SECURITY_PASSWORD_NOT_SET')
     }
 
-    const verified = await passwordService.compare(
-      securityPassword,
-      secPassword.passwordHash,
-    )
+    const verified = await passwordService.compare(securityPassword, secPassword.passwordHash)
     if (!verified) {
-      throw new AppError(
-        401,
-        'Wrong security password',
-        'SECURITY_PASSWORD_INCORRECT',
-      )
+      throw new AppError(401, 'Wrong security password', 'SECURITY_PASSWORD_INCORRECT')
     }
 
     const sessions = await sessionRepository.findActiveByUserId(userId)
     const otherSessions = sessions.filter((s) => s.deviceId !== currentDeviceId)
 
     if (otherSessions.length === 0) {
-      throw new AppError(
-        400,
-        'No other devices to logout from',
-        'NO_OTHER_DEVICES',
-      )
+      throw new AppError(400, 'No other devices to logout from', 'NO_OTHER_DEVICES')
     }
 
     const revokedDevices: Array<{ deviceName: string; lastActiveAt: Date }> = []
@@ -304,10 +279,7 @@ export const deviceService = {
     }
 
     await deviceRepository.deleteLinkedAccount(deviceId, targetUserId)
-    const revokedSessionIds = await sessionRepository.revokeByUserAndDevice(
-      targetUserId,
-      deviceId,
-    )
+    const revokedSessionIds = await sessionRepository.revokeByUserAndDevice(targetUserId, deviceId)
     for (const id of revokedSessionIds) {
       await redisClient.del(RedisKeys.session(id))
     }

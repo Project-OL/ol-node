@@ -1,5 +1,11 @@
-import { randomUUID } from "crypto";
-import { CoinTxType, LedgerDirection, PointTxType, Prisma, WalletCurrencyType } from "@prisma/client";
+import { randomUUID } from 'crypto'
+import {
+  CoinTxType,
+  LedgerDirection,
+  PointTxType,
+  Prisma,
+  WalletCurrencyType,
+} from '@prisma/client'
 import {
   redisClient,
   RedisKeys,
@@ -7,36 +13,34 @@ import {
   CT_RATES_TTL,
   CT_RECENT_USERS_TTL,
   getRedisForRead,
-} from "../config/redis";
-import { AppError } from "../middlewares/errorHandler";
-import { coinTradingRepository } from "../repositories/coinTrading.repository";
-import { walletRepository } from "../repositories/wallet.repository";
-import { coinLedgerRepository } from "../repositories/coin-ledger.repository";
-import { pointWalletService } from "./point-wallet.service";
-import { coinWalletService } from "./coin-wallet.service";
-import { walletService } from "./wallet.service";
-import { agencyService } from "./agency.service";
-import { userRepository } from "../repositories/user.repository";
-import { epayClient } from "../lib/epay.client";
-import { prisma } from "../config/database";
+} from '../config/redis'
+import { AppError } from '../middlewares/errorHandler'
+import { coinTradingRepository } from '../repositories/coinTrading.repository'
+import { walletRepository } from '../repositories/wallet.repository'
+import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
+import { pointWalletService } from './point-wallet.service'
+import { coinWalletService } from './coin-wallet.service'
+import { walletService } from './wallet.service'
+import { agencyService } from './agency.service'
+import { userRepository } from '../repositories/user.repository'
+import { epayClient } from '../lib/epay.client'
+import { prisma } from '../config/database'
 
-const TX_TIMEOUT_MS = 20_000;
+const TX_TIMEOUT_MS = 20_000
 
 function resolveRecipientWalletType(
   recipient: { isAgent: boolean },
-  targetWalletType?: "PERSONAL" | "TRADING",
+  targetWalletType?: 'PERSONAL' | 'TRADING',
 ): WalletCurrencyType {
-  if (!recipient.isAgent) return WalletCurrencyType.COIN;
-  if (targetWalletType === "PERSONAL") return WalletCurrencyType.COIN;
-  return WalletCurrencyType.TRADING_COIN;
+  if (!recipient.isAgent) return WalletCurrencyType.COIN
+  if (targetWalletType === 'PERSONAL') return WalletCurrencyType.COIN
+  return WalletCurrencyType.TRADING_COIN
 }
 
-function walletTypeFromTransferRecord(
-  recipientWalletType: string,
-): WalletCurrencyType {
-  return recipientWalletType === "TRADING"
+function walletTypeFromTransferRecord(recipientWalletType: string): WalletCurrencyType {
+  return recipientWalletType === 'TRADING'
     ? WalletCurrencyType.TRADING_COIN
-    : WalletCurrencyType.COIN;
+    : WalletCurrencyType.COIN
 }
 
 async function invalidateTradingTransferCaches(
@@ -44,26 +48,26 @@ async function invalidateTradingTransferCaches(
   recipientUserId: string,
   recipientWalletType: WalletCurrencyType,
 ) {
-  await walletService.adjustTradingBalanceCache(senderUserId);
+  await walletService.adjustTradingBalanceCache(senderUserId)
   if (recipientWalletType === WalletCurrencyType.COIN) {
-    await walletService.adjustCoinBalanceCache(recipientUserId, 0n);
+    await walletService.adjustCoinBalanceCache(recipientUserId, 0n)
   } else {
-    await walletService.adjustTradingBalanceCache(recipientUserId);
+    await walletService.adjustTradingBalanceCache(recipientUserId)
   }
-  await redisClient.del(RedisKeys.ctRecentUsers(senderUserId));
+  await redisClient.del(RedisKeys.ctRecentUsers(senderUserId))
 }
 
 function parseUsd(v: Prisma.Decimal): number {
-  return Number(v.toString());
+  return Number(v.toString())
 }
 
 function formatPackage(row: {
-  id: string;
-  tradingCoins: bigint;
-  priceCents: number;
-  coinsPerUsd: number;
-  currency: string;
-  label: string | null;
+  id: string
+  tradingCoins: bigint
+  priceCents: number
+  coinsPerUsd: number
+  currency: string
+  label: string | null
 }) {
   return {
     id: row.id,
@@ -73,80 +77,95 @@ function formatPackage(row: {
     coinsPerUsd: row.coinsPerUsd,
     currency: row.currency,
     label: row.label,
-  };
+  }
 }
 
 export const coinTradingService = {
   async getTopupPackages() {
-    const key = RedisKeys.ctTopupPackages();
-    const cached = await redisClient.get(key);
-    if (cached) return JSON.parse(cached);
-    const rows = await coinTradingRepository.getTopupPackages();
-    const packages = rows.map(formatPackage);
-    await redisClient.set(key, JSON.stringify(packages), "EX", CT_RATES_TTL);
-    return packages;
+    const key = RedisKeys.ctTopupPackages()
+    const cached = await redisClient.get(key)
+    if (cached) return JSON.parse(cached)
+    const rows = await coinTradingRepository.getTopupPackages()
+    const packages = rows.map(formatPackage)
+    await redisClient.set(key, JSON.stringify(packages), 'EX', CT_RATES_TTL)
+    return packages
   },
   async getTopupRates() {
-    const key = RedisKeys.ctTopupRates();
-    const cached = await redisClient.get(key);
-    if (cached) return JSON.parse(cached);
-    const rows = await coinTradingRepository.getTopupRates();
-    await redisClient.set(key, JSON.stringify(rows), "EX", CT_RATES_TTL);
-    return rows;
+    const key = RedisKeys.ctTopupRates()
+    const cached = await redisClient.get(key)
+    if (cached) return JSON.parse(cached)
+    const rows = await coinTradingRepository.getTopupRates()
+    await redisClient.set(key, JSON.stringify(rows), 'EX', CT_RATES_TTL)
+    return rows
   },
   async getExchangeRates() {
-    const key = RedisKeys.ctExchangeRates();
-    const cached = await redisClient.get(key);
-    if (cached) return JSON.parse(cached);
-    const rows = await coinTradingRepository.getExchangeRates();
-    await redisClient.set(key, JSON.stringify(rows), "EX", CT_RATES_TTL);
-    return rows;
+    const key = RedisKeys.ctExchangeRates()
+    const cached = await redisClient.get(key)
+    if (cached) return JSON.parse(cached)
+    const rows = await coinTradingRepository.getExchangeRates()
+    await redisClient.set(key, JSON.stringify(rows), 'EX', CT_RATES_TTL)
+    return rows
   },
   async lookupTopupRate(amountUsd: number) {
-    const rates = await coinTradingRepository.getTopupRates();
-    const tier = rates.find((r) => amountUsd >= parseUsd(r.minUsd) && (r.maxUsd == null || amountUsd < parseUsd(r.maxUsd)));
-    if (!tier) throw new AppError(400, "No rate tier", "RATE_NOT_FOUND");
-    const totalCoins = BigInt(Math.floor(amountUsd * tier.coinsPerUsd));
-    return { coinsPerUsd: tier.coinsPerUsd, totalCoins };
+    const rates = await coinTradingRepository.getTopupRates()
+    const tier = rates.find(
+      (r) =>
+        amountUsd >= parseUsd(r.minUsd) && (r.maxUsd == null || amountUsd < parseUsd(r.maxUsd)),
+    )
+    if (!tier) throw new AppError(400, 'No rate tier', 'RATE_NOT_FOUND')
+    const totalCoins = BigInt(Math.floor(amountUsd * tier.coinsPerUsd))
+    return { coinsPerUsd: tier.coinsPerUsd, totalCoins }
   },
   async lookupExchangeRate(pointsToExchange: bigint) {
-    const usdEquiv = Number(pointsToExchange) / 10000.0;
-    const rates = await coinTradingRepository.getExchangeRates();
-    const tier = rates.find((r) => usdEquiv >= parseUsd(r.minUsdEquiv) && (r.maxUsdEquiv == null || usdEquiv < parseUsd(r.maxUsdEquiv)));
-    if (!tier) throw new AppError(400, "No rate tier", "RATE_NOT_FOUND");
-    const tradingCoinsAwarded = BigInt(Math.floor((Number(pointsToExchange) * tier.coinsPerUsd) / 10000));
-    return { usdEquiv, coinsPerUsd: tier.coinsPerUsd, tradingCoinsAwarded };
+    const usdEquiv = Number(pointsToExchange) / 10000.0
+    const rates = await coinTradingRepository.getExchangeRates()
+    const tier = rates.find(
+      (r) =>
+        usdEquiv >= parseUsd(r.minUsdEquiv) &&
+        (r.maxUsdEquiv == null || usdEquiv < parseUsd(r.maxUsdEquiv)),
+    )
+    if (!tier) throw new AppError(400, 'No rate tier', 'RATE_NOT_FOUND')
+    const tradingCoinsAwarded = BigInt(
+      Math.floor((Number(pointsToExchange) * tier.coinsPerUsd) / 10000),
+    )
+    return { usdEquiv, coinsPerUsd: tier.coinsPerUsd, tradingCoinsAwarded }
   },
   async initiateTopup(
     agentUserId: string,
-    input: { packageId?: string; amountUsd?: number; currency: string; callbackUrl: string; returnUrl: string },
+    input: {
+      packageId?: string
+      amountUsd?: number
+      currency: string
+      callbackUrl: string
+      returnUrl: string
+    },
   ) {
-    const user = await userRepository.findById(agentUserId);
-    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
-    await agencyService.enforcePauseGate(agentUserId);
+    const user = await userRepository.findById(agentUserId)
+    if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
+    await agencyService.enforcePauseGate(agentUserId)
 
-    let amountUsd: number;
-    let tradingCoinsAwarded: bigint;
-    let rateApplied: number;
-    let packageId: string | undefined;
+    let amountUsd: number
+    let tradingCoinsAwarded: bigint
+    let rateApplied: number
+    let packageId: string | undefined
 
     if (input.packageId) {
-      const pkg = await coinTradingRepository.getTopupPackageById(input.packageId);
-      if (!pkg) throw new AppError(404, "Package not found", "PACKAGE_NOT_FOUND");
-      packageId = pkg.id;
-      amountUsd = pkg.priceCents / 100;
-      tradingCoinsAwarded = pkg.tradingCoins;
-      rateApplied = pkg.coinsPerUsd;
+      const pkg = await coinTradingRepository.getTopupPackageById(input.packageId)
+      if (!pkg) throw new AppError(404, 'Package not found', 'PACKAGE_NOT_FOUND')
+      packageId = pkg.id
+      amountUsd = pkg.priceCents / 100
+      tradingCoinsAwarded = pkg.tradingCoins
+      rateApplied = pkg.coinsPerUsd
     } else if (input.amountUsd != null) {
-      const rate = await this.lookupTopupRate(input.amountUsd);
-      amountUsd = input.amountUsd;
-      tradingCoinsAwarded = rate.totalCoins;
-      rateApplied = rate.coinsPerUsd;
+      const rate = await this.lookupTopupRate(input.amountUsd)
+      amountUsd = input.amountUsd
+      tradingCoinsAwarded = rate.totalCoins
+      rateApplied = rate.coinsPerUsd
     } else {
-      throw new AppError(400, "packageId or amountUsd required", "TOPUP_INPUT_REQUIRED");
+      throw new AppError(400, 'packageId or amountUsd required', 'TOPUP_INPUT_REQUIRED')
     }
 
-    const idempotencyKey = `trading-topup:${agentUserId}:${Date.now()}`;
+    const idempotencyKey = `trading-topup:${agentUserId}:${Date.now()}`
     const order = await prisma.coinTradingTopupOrder.create({
       data: {
         agentUserId,
@@ -155,211 +174,253 @@ export const coinTradingService = {
         tradingCoinsAwarded,
         rateApplied,
         idempotencyKey,
-        status: "PENDING",
+        status: 'PENDING',
       },
-    });
+    })
     const epay = await epayClient.createOrder({
       amountUsd,
       currency: input.currency,
       orderId: order.id,
-      orderType: "TRADING_TOPUP",
-      description: "Trading coin top-up",
+      orderType: 'TRADING_TOPUP',
+      description: 'Trading coin top-up',
       callbackUrl: input.callbackUrl,
       returnUrl: input.returnUrl,
-    });
-    await prisma.coinTradingTopupOrder.update({ where: { id: order.id }, data: { epayRef: epay.gatewayRef } });
+    })
+    await prisma.coinTradingTopupOrder.update({
+      where: { id: order.id },
+      data: { epayRef: epay.gatewayRef },
+    })
     return {
       paymentUrl: epay.paymentUrl,
       orderId: order.id,
       amountUsd: amountUsd.toFixed(2),
       tradingCoinsAwarded: tradingCoinsAwarded.toString(),
       packageId: packageId ?? null,
-    };
+    }
   },
-  async confirmTopup(order: { id: string; agentUserId: string; amountUsd: Prisma.Decimal; tradingCoinsAwarded: bigint; status: string }, payload: { gatewayRef: string; amountUsd: number }) {
-    await prisma.$transaction(async (tx) => {
-      const fresh = await tx.coinTradingTopupOrder.findUnique({ where: { id: order.id } });
-      if (!fresh || fresh.status !== "PENDING") return;
-      if (Number(fresh.amountUsd.toString()) !== payload.amountUsd) {
-        throw new AppError(400, "Webhook amount mismatch", "TOPUP_AMOUNT_MISMATCH");
-      }
-      const wallet = await walletRepository.getOrCreate(fresh.agentUserId, WalletCurrencyType.TRADING_COIN);
-      await walletRepository.lockForUpdate(tx, wallet.id);
-      const last = await tx.coinLedgerEntry.findFirst({ where: { walletId: wallet.id }, orderBy: { createdAt: "desc" }, select: { balanceAfter: true } });
-      const balance = last?.balanceAfter ?? 0n;
-      const entry = await coinLedgerRepository.insert(tx, {
-        walletId: wallet.id,
-        direction: LedgerDirection.CREDIT,
-        txType: CoinTxType.TRADING_TOPUP,
-        amount: fresh.tradingCoinsAwarded,
-        balanceAfter: balance + fresh.tradingCoinsAwarded,
-        refId: payload.gatewayRef,
-        description: "Trading coin top-up",
-        idempotencyKey: `trading-topup:${fresh.id}`,
-      });
-      await tx.coinTradingTopupOrder.update({
-        where: { id: fresh.id },
-        data: { status: "COMPLETED", ledgerEntryId: entry.id },
-      });
-    }, { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS });
-    await walletService.adjustTradingBalanceCache(order.agentUserId);
+  async confirmTopup(
+    order: {
+      id: string
+      agentUserId: string
+      amountUsd: Prisma.Decimal
+      tradingCoinsAwarded: bigint
+      status: string
+    },
+    payload: { gatewayRef: string; amountUsd: number },
+  ) {
+    await prisma.$transaction(
+      async (tx) => {
+        const fresh = await tx.coinTradingTopupOrder.findUnique({ where: { id: order.id } })
+        if (!fresh || fresh.status !== 'PENDING') return
+        if (Number(fresh.amountUsd.toString()) !== payload.amountUsd) {
+          throw new AppError(400, 'Webhook amount mismatch', 'TOPUP_AMOUNT_MISMATCH')
+        }
+        const wallet = await walletRepository.getOrCreate(
+          fresh.agentUserId,
+          WalletCurrencyType.TRADING_COIN,
+        )
+        await walletRepository.lockForUpdate(tx, wallet.id)
+        const last = await tx.coinLedgerEntry.findFirst({
+          where: { walletId: wallet.id },
+          orderBy: { createdAt: 'desc' },
+          select: { balanceAfter: true },
+        })
+        const balance = last?.balanceAfter ?? 0n
+        const entry = await coinLedgerRepository.insert(tx, {
+          walletId: wallet.id,
+          direction: LedgerDirection.CREDIT,
+          txType: CoinTxType.TRADING_TOPUP,
+          amount: fresh.tradingCoinsAwarded,
+          balanceAfter: balance + fresh.tradingCoinsAwarded,
+          refId: payload.gatewayRef,
+          description: 'Trading coin top-up',
+          idempotencyKey: `trading-topup:${fresh.id}`,
+        })
+        await tx.coinTradingTopupOrder.update({
+          where: { id: fresh.id },
+          data: { status: 'COMPLETED', ledgerEntryId: entry.id },
+        })
+      },
+      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+    )
+    await walletService.adjustTradingBalanceCache(order.agentUserId)
   },
   async exchangePointsForTradingCoins(agentUserId: string, pointsToExchange: bigint) {
-    if (pointsToExchange < 10_000n) throw new AppError(400, "Minimum 10,000 points", "MIN_POINTS_EXCHANGE");
-    const user = await userRepository.findById(agentUserId);
-    if (!user?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
-    await agencyService.enforcePauseGate(agentUserId);
-    const rate = await this.lookupExchangeRate(pointsToExchange);
-    const exchangeRefId = randomUUID();
-    await prisma.$transaction(async (tx) => {
-      await pointWalletService.debit(agentUserId, pointsToExchange, PointTxType.TRANSFER_OUT, tx, {
-        idempotencyKey: `exchange-pts:${exchangeRefId}`,
-        refId: exchangeRefId,
-        description: "Points exchanged for trading coins",
-        metadata: { exchangeRefId },
-      });
-      await coinWalletService.credit(agentUserId, rate.tradingCoinsAwarded, CoinTxType.TRADING_EXCHANGE_FROM_POINTS, tx, {
-        idempotencyKey: `exchange-ct:${agentUserId}:${Date.now()}`,
-        description: "Trading coins from points exchange",
-        applyWealthCredit: false,
-        currencyType: WalletCurrencyType.TRADING_COIN,
-      });
-    }, { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS });
-    await walletService.adjustPointBalanceCache(agentUserId, 0n);
-    await walletService.adjustTradingBalanceCache(agentUserId);
-    return { tradingCoinsAwarded: rate.tradingCoinsAwarded.toString() };
+    if (pointsToExchange < 10_000n)
+      throw new AppError(400, 'Minimum 10,000 points', 'MIN_POINTS_EXCHANGE')
+    const user = await userRepository.findById(agentUserId)
+    if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
+    await agencyService.enforcePauseGate(agentUserId)
+    const rate = await this.lookupExchangeRate(pointsToExchange)
+    const exchangeRefId = randomUUID()
+    await prisma.$transaction(
+      async (tx) => {
+        await pointWalletService.debit(
+          agentUserId,
+          pointsToExchange,
+          PointTxType.TRANSFER_OUT,
+          tx,
+          {
+            idempotencyKey: `exchange-pts:${exchangeRefId}`,
+            refId: exchangeRefId,
+            description: 'Points exchanged for trading coins',
+            metadata: { exchangeRefId },
+          },
+        )
+        await coinWalletService.credit(
+          agentUserId,
+          rate.tradingCoinsAwarded,
+          CoinTxType.TRADING_EXCHANGE_FROM_POINTS,
+          tx,
+          {
+            idempotencyKey: `exchange-ct:${agentUserId}:${Date.now()}`,
+            description: 'Trading coins from points exchange',
+            applyWealthCredit: false,
+            currencyType: WalletCurrencyType.TRADING_COIN,
+          },
+        )
+      },
+      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+    )
+    await walletService.adjustPointBalanceCache(agentUserId, 0n)
+    await walletService.adjustTradingBalanceCache(agentUserId)
+    return { tradingCoinsAwarded: rate.tradingCoinsAwarded.toString() }
   },
   async transferTradingCoins(
     senderAgentUserId: string,
     input: {
-      recipientPublicId: string;
-      tradingCoins: bigint;
-      targetWalletType?: "PERSONAL" | "TRADING";
-      idempotencyKey: string;
+      recipientPublicId: string
+      tradingCoins: bigint
+      targetWalletType?: 'PERSONAL' | 'TRADING'
+      idempotencyKey: string
     },
   ) {
-    if (input.tradingCoins < 100n) throw new AppError(400, "Minimum transfer is 100", "MIN_TRANSFER");
-    const sender = await userRepository.findById(senderAgentUserId);
-    if (!sender?.isAgent) throw new AppError(403, "Agent only", "AGENT_ONLY");
-    await agencyService.enforcePauseGate(senderAgentUserId);
-    const pid = Number(input.recipientPublicId);
-    const recipient = await userRepository.findByPublicId(pid);
-    if (!recipient) throw new AppError(404, "Recipient not found", "RECIPIENT_NOT_FOUND");
-    if (recipient.id === senderAgentUserId) throw new AppError(400, "Self transfer blocked", "SELF_TRANSFER");
-    const recipientWalletType = resolveRecipientWalletType(
-      recipient,
-      input.targetWalletType,
-    );
-    const transfer = await prisma.$transaction(async (tx) => {
-      const senderDebit = await coinWalletService.debit(
-        senderAgentUserId,
-        input.tradingCoins,
-        CoinTxType.TRADING_TRANSFER_OUT,
-        tx,
-        {
-          idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:out`,
-          description: "Trading coin transfer out",
-          counterpartyId: recipient.id,
-          currencyType: WalletCurrencyType.TRADING_COIN,
-        },
-      );
-      const recipientCredit = await coinWalletService.credit(
-        recipient.id,
-        input.tradingCoins,
-        CoinTxType.TRADING_TRANSFER_IN,
-        tx,
-        {
-          idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:in`,
-          description: "Trading coin transfer in",
-          counterpartyId: senderAgentUserId,
-          applyWealthCredit: false,
-          currencyType: recipientWalletType,
-        },
-      );
-      return coinTradingRepository.createTransfer(
-        {
+    if (input.tradingCoins < 100n)
+      throw new AppError(400, 'Minimum transfer is 100', 'MIN_TRANSFER')
+    const sender = await userRepository.findById(senderAgentUserId)
+    if (!sender?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
+    await agencyService.enforcePauseGate(senderAgentUserId)
+    const pid = Number(input.recipientPublicId)
+    const recipient = await userRepository.findByPublicId(pid)
+    if (!recipient) throw new AppError(404, 'Recipient not found', 'RECIPIENT_NOT_FOUND')
+    if (recipient.id === senderAgentUserId)
+      throw new AppError(400, 'Self transfer blocked', 'SELF_TRANSFER')
+    const recipientWalletType = resolveRecipientWalletType(recipient, input.targetWalletType)
+    const transfer = await prisma.$transaction(
+      async (tx) => {
+        const senderDebit = await coinWalletService.debit(
           senderAgentUserId,
-          recipientUserId: recipient.id,
-          tradingCoinsDebited: input.tradingCoins,
-          coinsCredited: input.tradingCoins,
-          recipientWalletType: recipientWalletType === WalletCurrencyType.COIN ? "PERSONAL" : "TRADING",
-          senderLedgerEntryId: senderDebit.ledgerEntryId,
-          recipientLedgerEntryId: recipientCredit.ledgerEntryId,
-          idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}`,
-        },
-        tx,
-      );
-    }, { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS });
-    await invalidateTradingTransferCaches(
-      senderAgentUserId,
-      recipient.id,
-      recipientWalletType,
-    );
-    return transfer;
+          input.tradingCoins,
+          CoinTxType.TRADING_TRANSFER_OUT,
+          tx,
+          {
+            idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:out`,
+            description: 'Trading coin transfer out',
+            counterpartyId: recipient.id,
+            currencyType: WalletCurrencyType.TRADING_COIN,
+          },
+        )
+        const recipientCredit = await coinWalletService.credit(
+          recipient.id,
+          input.tradingCoins,
+          CoinTxType.TRADING_TRANSFER_IN,
+          tx,
+          {
+            idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:in`,
+            description: 'Trading coin transfer in',
+            counterpartyId: senderAgentUserId,
+            applyWealthCredit: false,
+            currencyType: recipientWalletType,
+          },
+        )
+        return coinTradingRepository.createTransfer(
+          {
+            senderAgentUserId,
+            recipientUserId: recipient.id,
+            tradingCoinsDebited: input.tradingCoins,
+            coinsCredited: input.tradingCoins,
+            recipientWalletType:
+              recipientWalletType === WalletCurrencyType.COIN ? 'PERSONAL' : 'TRADING',
+            senderLedgerEntryId: senderDebit.ledgerEntryId,
+            recipientLedgerEntryId: recipientCredit.ledgerEntryId,
+            idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}`,
+          },
+          tx,
+        )
+      },
+      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+    )
+    await invalidateTradingTransferCaches(senderAgentUserId, recipient.id, recipientWalletType)
+    return transfer
   },
   async reverseTransfer(adminUserId: string, transferId: string, reason: string) {
-    const transfer = await coinTradingRepository.getTransferById(transferId);
-    if (!transfer) throw new AppError(404, "Transfer not found", "TRANSFER_NOT_FOUND");
-    if (transfer.reversedAt) throw new AppError(409, "Transfer already reversed", "TRANSFER_ALREADY_REVERSED");
-    const recipientWalletType = walletTypeFromTransferRecord(
-      transfer.recipientWalletType,
-    );
-    await prisma.$transaction(async (tx) => {
-      await coinWalletService.credit(
-        transfer.senderAgentUserId,
-        transfer.tradingCoinsDebited,
-        CoinTxType.TRADING_TRANSFER_REVERSAL,
-        tx,
-        {
-          idempotencyKey: `trading-reversal:${transfer.id}:sender`,
-          description: "Admin fraud reversal credit",
-          applyWealthCredit: false,
-          currencyType: WalletCurrencyType.TRADING_COIN,
-        },
-      );
-      await coinWalletService.debit(
-        transfer.recipientUserId,
-        transfer.coinsCredited,
-        CoinTxType.TRADING_TRANSFER_REVERSAL,
-        tx,
-        {
-          idempotencyKey: `trading-reversal:${transfer.id}:recipient`,
-          description: "Admin fraud reversal debit",
-          currencyType: recipientWalletType,
-        },
-      );
-      await coinTradingRepository.reverseTransfer({ id: transfer.id, reversedByUserId: adminUserId, reason }, tx);
-    }, { isolationLevel: "Serializable", timeout: TX_TIMEOUT_MS });
+    const transfer = await coinTradingRepository.getTransferById(transferId)
+    if (!transfer) throw new AppError(404, 'Transfer not found', 'TRANSFER_NOT_FOUND')
+    if (transfer.reversedAt)
+      throw new AppError(409, 'Transfer already reversed', 'TRANSFER_ALREADY_REVERSED')
+    const recipientWalletType = walletTypeFromTransferRecord(transfer.recipientWalletType)
+    await prisma.$transaction(
+      async (tx) => {
+        await coinWalletService.credit(
+          transfer.senderAgentUserId,
+          transfer.tradingCoinsDebited,
+          CoinTxType.TRADING_TRANSFER_REVERSAL,
+          tx,
+          {
+            idempotencyKey: `trading-reversal:${transfer.id}:sender`,
+            description: 'Admin fraud reversal credit',
+            applyWealthCredit: false,
+            currencyType: WalletCurrencyType.TRADING_COIN,
+          },
+        )
+        await coinWalletService.debit(
+          transfer.recipientUserId,
+          transfer.coinsCredited,
+          CoinTxType.TRADING_TRANSFER_REVERSAL,
+          tx,
+          {
+            idempotencyKey: `trading-reversal:${transfer.id}:recipient`,
+            description: 'Admin fraud reversal debit',
+            currencyType: recipientWalletType,
+          },
+        )
+        await coinTradingRepository.reverseTransfer(
+          { id: transfer.id, reversedByUserId: adminUserId, reason },
+          tx,
+        )
+      },
+      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+    )
     await invalidateTradingTransferCaches(
       transfer.senderAgentUserId,
       transfer.recipientUserId,
       recipientWalletType,
-    );
+    )
   },
   async getTradingBalance(agentUserId: string) {
-    const key = RedisKeys.ctBalance(agentUserId);
-    const cached = await redisClient.get(key);
-    if (cached != null) return BigInt(cached);
-    const balance = await coinTradingRepository.getTradingBalance(agentUserId);
-    await redisClient.set(key, balance.toString(), "EX", CT_BALANCE_TTL);
-    return balance;
+    const key = RedisKeys.ctBalance(agentUserId)
+    const cached = await redisClient.get(key)
+    if (cached != null) return BigInt(cached)
+    const balance = await coinTradingRepository.getTradingBalance(agentUserId)
+    await redisClient.set(key, balance.toString(), 'EX', CT_BALANCE_TTL)
+    return balance
   },
   listTopupHistory(agentUserId: string, opts: { limit: number; cursor?: string }) {
-    return coinTradingRepository.listTopupOrders(agentUserId, opts);
+    return coinTradingRepository.listTopupOrders(agentUserId, opts)
   },
   async listTransferHistory(
     userId: string,
     opts: {
-      role: "sender" | "recipient" | "all";
-      direction?: "credit" | "debit";
-      fromDate?: Date;
-      toDate?: Date;
-      limit: number;
-      cursor?: string;
+      role: 'sender' | 'recipient' | 'all'
+      direction?: 'credit' | 'debit'
+      fromDate?: Date
+      toDate?: Date
+      limit: number
+      cursor?: string
     },
   ) {
     if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
-      throw new AppError(400, "fromDate must be before or equal to toDate", "INVALID_DATE_RANGE");
+      throw new AppError(400, 'fromDate must be before or equal to toDate', 'INVALID_DATE_RANGE')
     }
     const rows = await coinTradingRepository.listTransfers({
       userId,
@@ -369,16 +430,16 @@ export const coinTradingService = {
       toDate: opts.toDate,
       limit: opts.limit,
       cursor: opts.cursor,
-    });
-    const hasMore = rows.length > opts.limit;
-    const page = hasMore ? rows.slice(0, opts.limit) : rows;
-    const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null;
+    })
+    const hasMore = rows.length > opts.limit
+    const page = hasMore ? rows.slice(0, opts.limit) : rows
+    const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null
     const items = page.map((row) => {
-      const isDebit = row.senderAgentUserId === userId;
-      const counterpartyUser = isDebit ? row.recipient : row.senderAgent;
+      const isDebit = row.senderAgentUserId === userId
+      const counterpartyUser = isDebit ? row.recipient : row.senderAgent
       return {
         id: row.id,
-        direction: isDebit ? ("debit" as const) : ("credit" as const),
+        direction: isDebit ? ('debit' as const) : ('credit' as const),
         tradingCoinsDebited: row.tradingCoinsDebited.toString(),
         coinsCredited: row.coinsCredited.toString(),
         recipientWalletType: row.recipientWalletType,
@@ -389,20 +450,21 @@ export const coinTradingService = {
           avatarUrl: counterpartyUser.avatarUrl,
           publicId: counterpartyUser.publicId.toString(),
         },
-      };
-    });
-    return { items, nextCursor };
+      }
+    })
+    return { items, nextCursor }
   },
 
   async getRecentTransactionUsers(agencyUserId: string) {
-    const redis = getRedisForRead();
-    const cacheKey = RedisKeys.ctRecentUsers(agencyUserId);
-    const cached = await redis.get(cacheKey);
-    if (cached) return JSON.parse(cached) as Awaited<
-      ReturnType<typeof coinTradingRepository.getRecentTransactionUsers>
-    >;
-    const rows = await coinTradingRepository.getRecentTransactionUsers(agencyUserId);
-    await redisClient.set(cacheKey, JSON.stringify(rows), "EX", CT_RECENT_USERS_TTL);
-    return rows;
+    const redis = getRedisForRead()
+    const cacheKey = RedisKeys.ctRecentUsers(agencyUserId)
+    const cached = await redis.get(cacheKey)
+    if (cached)
+      return JSON.parse(cached) as Awaited<
+        ReturnType<typeof coinTradingRepository.getRecentTransactionUsers>
+      >
+    const rows = await coinTradingRepository.getRecentTransactionUsers(agencyUserId)
+    await redisClient.set(cacheKey, JSON.stringify(rows), 'EX', CT_RECENT_USERS_TTL)
+    return rows
   },
-};
+}

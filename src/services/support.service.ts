@@ -15,8 +15,7 @@ import type {
 } from '../models/support.schemas'
 
 /** Agency promotion / CS force-exit use explicit admin routes (`/admin/agency/*`); do not auto-invoke from ticket lifecycle here. */
-const AUTO_REPLY_CONTENT =
-  'Thank you for your feedback, we will reply you within 24 hours.'
+const AUTO_REPLY_CONTENT = 'Thank you for your feedback, we will reply you within 24 hours.'
 
 const PRESIGN_TTL_SEC = 600
 
@@ -204,9 +203,7 @@ export const supportService = {
       messages: chronological,
       hasMore: messages.length === messageQuery.limit,
       nextCursor:
-        messages.length === messageQuery.limit
-          ? String(messages[messages.length - 1]!.id)
-          : null,
+        messages.length === messageQuery.limit ? String(messages[messages.length - 1]!.id) : null,
     })
   },
 

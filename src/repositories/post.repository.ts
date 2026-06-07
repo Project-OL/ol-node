@@ -352,4 +352,3 @@ export const postRepository = {
     return result
   },
 }
-

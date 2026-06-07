@@ -4,8 +4,8 @@ export const MIN_CALL_PRICE = 1800
 
 /** Creator's livestream level → max coins/min they may charge. */
 export const CALL_PRICE_CAPS: { maxLevel: number; maxPrice: number }[] = [
-  { maxLevel: 4,  maxPrice: 1800 },
-  { maxLevel: 9,  maxPrice: 2400 },
+  { maxLevel: 4, maxPrice: 1800 },
+  { maxLevel: 9, maxPrice: 2400 },
   { maxLevel: 14, maxPrice: 3000 },
   { maxLevel: 19, maxPrice: 3600 },
   { maxLevel: 24, maxPrice: 4800 },
@@ -22,14 +22,16 @@ export function maxPriceForLevel(livestreamLevel: number): number {
   return 9600
 }
 
-export const UpdateCallSettingsSchema = z.object({
-  pricePerMin: z.number().int().min(MIN_CALL_PRICE).optional(),
-  blockLv5: z.boolean().optional(),
-  blockLv10: z.boolean().optional(),
-}).refine(
-  (d) => d.pricePerMin !== undefined || d.blockLv5 !== undefined || d.blockLv10 !== undefined,
-  { message: 'At least one field required' },
-)
+export const UpdateCallSettingsSchema = z
+  .object({
+    pricePerMin: z.number().int().min(MIN_CALL_PRICE).optional(),
+    blockLv5: z.boolean().optional(),
+    blockLv10: z.boolean().optional(),
+  })
+  .refine(
+    (d) => d.pricePerMin !== undefined || d.blockLv5 !== undefined || d.blockLv10 !== undefined,
+    { message: 'At least one field required' },
+  )
 
 export const InitiateCallSchema = z.object({
   creatorPublicId: z.string().min(1),

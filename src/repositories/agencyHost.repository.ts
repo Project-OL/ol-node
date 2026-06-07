@@ -1,5 +1,5 @@
-import type { AgencyHostHistoryReason, Prisma } from "@prisma/client";
-import { prismaRead } from "../config/database";
+import type { AgencyHostHistoryReason, Prisma } from '@prisma/client'
+import { prismaRead } from '../config/database'
 
 export const agencyHostRepository = {
   async insertHost(
@@ -11,19 +11,19 @@ export const agencyHostRepository = {
         agencyUserId: data.agencyUserId,
         hostUserId: data.hostUserId,
       },
-    });
+    })
   },
 
   async removeHost(hostUserId: string, tx: Prisma.TransactionClient) {
     return tx.agencyHost.delete({
       where: { hostUserId },
-    });
+    })
   },
 
   async getHost(hostUserId: string) {
     return prismaRead.agencyHost.findUnique({
       where: { hostUserId },
-    });
+    })
   },
 
   async getHostWithAgency(hostUserId: string) {
@@ -36,18 +36,15 @@ export const agencyHostRepository = {
           },
         },
       },
-    });
+    })
   },
 
-  async listHosts(
-    agencyUserId: string,
-    params: { limit: number; cursor?: string | null },
-  ) {
-    let cursor: { joinedAt: Date; hostUserId: string } | null = null;
+  async listHosts(agencyUserId: string, params: { limit: number; cursor?: string | null }) {
+    let cursor: { joinedAt: Date; hostUserId: string } | null = null
     if (params.cursor) {
-      const parts = params.cursor.split("|");
+      const parts = params.cursor.split('|')
       if (parts.length === 2 && parts[0] && parts[1]) {
-        cursor = { joinedAt: new Date(parts[0]), hostUserId: parts[1] };
+        cursor = { joinedAt: new Date(parts[0]), hostUserId: parts[1] }
       }
     }
 
@@ -62,11 +59,11 @@ export const agencyHostRepository = {
             },
           ],
         }
-      : { agencyUserId };
+      : { agencyUserId }
 
     return prismaRead.agencyHost.findMany({
       where,
-      orderBy: [{ joinedAt: "desc" }, { hostUserId: "desc" }],
+      orderBy: [{ joinedAt: 'desc' }, { hostUserId: 'desc' }],
       take: params.limit + 1,
       select: {
         hostUserId: true,
@@ -87,7 +84,7 @@ export const agencyHostRepository = {
           },
         },
       },
-    });
+    })
   },
 
   /**
@@ -99,44 +96,41 @@ export const agencyHostRepository = {
     agencyUserId: string,
     hostUserIds: string[],
   ): Promise<
-    Map<
-      string,
-      { hostEarnings: bigint; hostCommission: bigint; liveDurationSeconds: bigint }
-    >
+    Map<string, { hostEarnings: bigint; hostCommission: bigint; liveDurationSeconds: bigint }>
   > {
     const map = new Map<
       string,
       { hostEarnings: bigint; hostCommission: bigint; liveDurationSeconds: bigint }
-    >();
-    if (hostUserIds.length === 0) return map;
+    >()
+    if (hostUserIds.length === 0) return map
 
     const rows = await prismaRead.agencyDailyEarning.groupBy({
-      by: ["hostUserId"],
+      by: ['hostUserId'],
       where: { agencyUserId, hostUserId: { in: hostUserIds } },
       _sum: {
         hostEarningsPoints: true,
         hostCommissionPoints: true,
         liveDurationSeconds: true,
       },
-    });
+    })
 
     for (const r of rows) {
       map.set(r.hostUserId, {
         hostEarnings: r._sum.hostEarningsPoints ?? 0n,
         hostCommission: r._sum.hostCommissionPoints ?? 0n,
         liveDurationSeconds: r._sum.liveDurationSeconds ?? 0n,
-      });
+      })
     }
-    return map;
+    return map
   },
 
   async insertHistory(
     row: {
-      agencyUserId: string;
-      hostUserId: string;
-      joinedAt: Date;
-      reason: AgencyHostHistoryReason;
-      exitMetadata?: Prisma.InputJsonValue | null;
+      agencyUserId: string
+      hostUserId: string
+      joinedAt: Date
+      reason: AgencyHostHistoryReason
+      exitMetadata?: Prisma.InputJsonValue | null
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -148,45 +142,45 @@ export const agencyHostRepository = {
         reason: row.reason,
         exitMetadata: row.exitMetadata ?? undefined,
       },
-    });
+    })
   },
 
   /** Most recent exit or join audit row for cooldown checks. */
   async getRecentExitForHost(hostUserId: string) {
     return prismaRead.agencyHostHistory.findFirst({
       where: { hostUserId },
-      orderBy: { exitedAt: "desc" },
-    });
+      orderBy: { exitedAt: 'desc' },
+    })
   },
 
   async countHostsForAgency(agencyUserId: string) {
     return prismaRead.agencyHost.count({
       where: { agencyUserId },
-    });
+    })
   },
 
   async listHostUserIdsForAgency(agencyUserId: string) {
     return prismaRead.agencyHost.findMany({
       where: { agencyUserId },
       select: { hostUserId: true },
-    });
+    })
   },
 
   async findLatestRejectedApplication(hostUserId: string) {
     return prismaRead.agencyHostApplication.findFirst({
-      where: { hostUserId, status: "REJECTED" },
-      orderBy: { resolvedAt: "desc" },
-    });
+      where: { hostUserId, status: 'REJECTED' },
+      orderBy: { resolvedAt: 'desc' },
+    })
   },
 
   async findLatestResolvedLeaveApplication(hostUserId: string) {
     return prismaRead.agencyLeaveApplication.findFirst({
       where: {
         hostUserId,
-        status: { not: "CANCELLED" },
+        status: { not: 'CANCELLED' },
         resolvedAt: { not: null },
       },
-      orderBy: { resolvedAt: "desc" },
-    });
+      orderBy: { resolvedAt: 'desc' },
+    })
   },
-};
+}

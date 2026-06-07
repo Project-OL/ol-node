@@ -2,7 +2,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import { UpdateCallSettingsSchema, InitiateCallSchema } from '../../models/call.schemas'
-import { videoCallSettingsService, videoCallSessionService } from '../../services/video-call.service'
+import {
+  videoCallSettingsService,
+  videoCallSessionService,
+} from '../../services/video-call.service'
 
 export default async function callRoutes(app: FastifyInstance) {
   const preAuth = [authenticate]
@@ -13,7 +16,10 @@ export default async function callRoutes(app: FastifyInstance) {
     '/settings',
     {
       preHandler: preAuth,
-      schema: { tags: ['Video Call'], description: 'Get my video call settings and price cap for my current livestream level' },
+      schema: {
+        tags: ['Video Call'],
+        description: 'Get my video call settings and price cap for my current livestream level',
+      },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const settings = await videoCallSettingsService.get(request.userId!)
@@ -25,12 +31,19 @@ export default async function callRoutes(app: FastifyInstance) {
     '/settings',
     {
       preHandler: preAuth,
-      schema: { tags: ['Video Call'], description: 'Update video call price and caller restrictions' },
+      schema: {
+        tags: ['Video Call'],
+        description: 'Update video call price and caller restrictions',
+      },
     },
     async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
       const parsed = UpdateCallSettingsSchema.safeParse(request.body)
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid request', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid request',
+          'INVALID_REQUEST',
+        )
       }
       const updated = await videoCallSettingsService.update(request.userId!, parsed.data)
       return reply.send(updated)
@@ -41,7 +54,10 @@ export default async function callRoutes(app: FastifyInstance) {
     '/price-table',
     {
       preHandler: preAuth,
-      schema: { tags: ['Video Call'], description: 'Get the call price cap table (livestream level → max coins/min)' },
+      schema: {
+        tags: ['Video Call'],
+        description: 'Get the call price cap table (livestream level → max coins/min)',
+      },
     },
     async (_request: FastifyRequest, reply: FastifyReply) => {
       return reply.send({ priceTable: videoCallSettingsService.priceTable() })
@@ -54,14 +70,24 @@ export default async function callRoutes(app: FastifyInstance) {
     '/initiate',
     {
       preHandler: preAuth,
-      schema: { tags: ['Video Call'], description: 'Initiate a video call to a creator by publicId' },
+      schema: {
+        tags: ['Video Call'],
+        description: 'Initiate a video call to a creator by publicId',
+      },
     },
     async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
       const parsed = InitiateCallSchema.safeParse(request.body)
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid request', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid request',
+          'INVALID_REQUEST',
+        )
       }
-      const result = await videoCallSessionService.initiate(request.userId!, parsed.data.creatorPublicId)
+      const result = await videoCallSessionService.initiate(
+        request.userId!,
+        parsed.data.creatorPublicId,
+      )
       return reply.code(201).send(result)
     },
   )
@@ -72,7 +98,8 @@ export default async function callRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Video Call'],
-        description: 'Minute tick: deduct coins from caller, credit points to creator. Returns canContinue flag.',
+        description:
+          'Minute tick: deduct coins from caller, credit points to creator. Returns canContinue flag.',
         params: {
           type: 'object',
           required: ['sessionId'],
@@ -112,7 +139,8 @@ export default async function callRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Video Call'],
-        description: 'Get a LiveKit join token for an active session (for creator to join after notification)',
+        description:
+          'Get a LiveKit join token for an active session (for creator to join after notification)',
         params: {
           type: 'object',
           required: ['sessionId'],
@@ -121,7 +149,10 @@ export default async function callRoutes(app: FastifyInstance) {
       },
     },
     async (request: FastifyRequest<{ Params: { sessionId: string } }>, reply: FastifyReply) => {
-      const result = await videoCallSessionService.joinToken(request.params.sessionId, request.userId!)
+      const result = await videoCallSessionService.joinToken(
+        request.params.sessionId,
+        request.userId!,
+      )
       return reply.send(result)
     },
   )

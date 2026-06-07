@@ -36,7 +36,9 @@ import { displayNameFromUser } from '../utils/profileDisplay'
 
 const SIGNUP_VERIFIED_TTL = 300
 
-function normalizeHeaders(h?: Record<string, string | string[] | undefined>): Record<string, string | undefined> | undefined {
+function normalizeHeaders(
+  h?: Record<string, string | string[] | undefined>,
+): Record<string, string | undefined> | undefined {
   if (!h) return undefined
   const out: Record<string, string | undefined> = {}
   for (const [k, v] of Object.entries(h)) {
@@ -45,7 +47,10 @@ function normalizeHeaders(h?: Record<string, string | string[] | undefined>): Re
   return out
 }
 
-function getIp(request?: { ip?: string; headers?: Record<string, string | string[] | undefined> }): string {
+function getIp(request?: {
+  ip?: string
+  headers?: Record<string, string | string[] | undefined>
+}): string {
   const h = request?.headers
   const forwarded = h?.['x-forwarded-for']
   const first = Array.isArray(forwarded) ? forwarded[0] : forwarded
@@ -53,7 +58,9 @@ function getIp(request?: { ip?: string; headers?: Record<string, string | string
   return request?.ip ?? '0.0.0.0'
 }
 
-function getUserAgent(request?: { headers?: Record<string, string | string[] | undefined> }): string | undefined {
+function getUserAgent(request?: {
+  headers?: Record<string, string | string[] | undefined>
+}): string | undefined {
   const ua = request?.headers?.['user-agent']
   return Array.isArray(ua) ? ua[0] : ua
 }
@@ -71,7 +78,10 @@ export const authV2Service = {
    * Check if identifier is registered. When `exists` is true, includes `passwordSet`, all `authMethods`,
    * and `identifiers` (provider + raw identifier per linked row) for login/OTP/password-reset UX.
    */
-  async checkAvailability(provider: AuthProvider, identifier: string): Promise<CheckAvailabilityResult> {
+  async checkAvailability(
+    provider: AuthProvider,
+    identifier: string,
+  ): Promise<CheckAvailabilityResult> {
     validateIdentifier(provider, identifier)
     const auth = await authIdentifierRepository.findByProviderAndIdentifier(provider, identifier)
     if (!auth) {
@@ -92,7 +102,10 @@ export const authV2Service = {
 
   async signupSendOtp(provider: AuthProvider, identifier: string) {
     validateIdentifier(provider, identifier)
-    const existing = await authIdentifierRepository.findByProviderAndIdentifier(provider, identifier)
+    const existing = await authIdentifierRepository.findByProviderAndIdentifier(
+      provider,
+      identifier,
+    )
     if (existing) throw new AppError(400, 'Identifier already registered', 'IDENTIFIER_TAKEN')
     await otpAuthService.createAndStore({ targetIdentifier: identifier, purpose: 'signup' })
     return { message: 'OTP sent successfully', expiresIn: 300 }
@@ -124,7 +137,10 @@ export const authV2Service = {
     validateIdentifier(provider, identifier)
     const strength = passwordService.validateStrength(password)
     if (!strength.ok) throw new AppError(400, strength.error, 'WEAK_PASSWORD')
-    const existingAuth = await authIdentifierRepository.findByProviderAndIdentifier(provider, identifier)
+    const existingAuth = await authIdentifierRepository.findByProviderAndIdentifier(
+      provider,
+      identifier,
+    )
     if (existingAuth) throw new AppError(409, 'User already exists', 'USER_EXISTS')
     const key = RedisKeys.signupVerified(provider, identifier)
     const verified = await redisClient.get(key)
@@ -132,7 +148,8 @@ export const authV2Service = {
     await redisClient.del(key)
     const { publicId } = await publicIdService.getNextPublicId('')
     const passwordHash = await passwordService.hash(password)
-    const username = provider === 'email' ? identifier.split('@')[0]! : `user_${identifier.slice(-6)}`
+    const username =
+      provider === 'email' ? identifier.split('@')[0]! : `user_${identifier.slice(-6)}`
     const user = await prisma.$transaction(async (tx) => {
       const u = await tx.user.create({
         data: {
@@ -212,7 +229,8 @@ export const authV2Service = {
   ) {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
-    if (user.status === 'active') throw new AppError(409, 'Profile already completed', 'PROFILE_ALREADY_COMPLETE')
+    if (user.status === 'active')
+      throw new AppError(409, 'Profile already completed', 'PROFILE_ALREADY_COMPLETE')
     const dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : undefined
     await userRepository.updateProfile(userId, {
       firstName: data.firstName,
@@ -299,7 +317,8 @@ export const authV2Service = {
     if (user.status === 'deleted') {
       throw new AppError(403, 'Account has been permanently deleted.', 'ACCOUNT_DELETED')
     }
-    if (user.status === 'suspended') throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
+    if (user.status === 'suspended')
+      throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
     const publicId = Number(user.publicId)
 
     await deviceService.linkAccountToDevice(deviceId, user.id)
@@ -322,7 +341,9 @@ export const authV2Service = {
       actionType: 'login',
       actionStatus: 'success',
       actionDetails: { method: 'otp', provider },
-      request: request ? { ip: getIp(request), headers: normalizeHeaders(request.headers) } : undefined,
+      request: request
+        ? { ip: getIp(request), headers: normalizeHeaders(request.headers) }
+        : undefined,
       deviceId,
     })
     return {
@@ -351,7 +372,8 @@ export const authV2Service = {
     let user: { id: string; publicId: bigint; passwordSet: boolean; status: string } | null = null
     if (provider === 'publicId') {
       const num = Number(identifier)
-      if (!Number.isInteger(num) || num < 0) throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
+      if (!Number.isInteger(num) || num < 0)
+        throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
       user = await userRepository.findByPublicId(num)
     } else {
       const auth = await authIdentifierRepository.findByProviderAndIdentifier(provider, identifier)
@@ -370,7 +392,8 @@ export const authV2Service = {
     if (user.status === 'deleted') {
       throw new AppError(403, 'Account has been permanently deleted.', 'ACCOUNT_DELETED')
     }
-    if (user.status === 'suspended') throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
+    if (user.status === 'suspended')
+      throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
     const pw = await prisma.authPassword.findUnique({
       where: { userId: user.id },
       include: { user: { select: { id: true, publicId: true, passwordSet: true, status: true } } },
@@ -413,7 +436,9 @@ export const authV2Service = {
       actionType: 'login',
       actionStatus: 'success',
       actionDetails: { method: 'password', provider },
-      request: request ? { ip: getIp(request), headers: normalizeHeaders(request.headers) } : undefined,
+      request: request
+        ? { ip: getIp(request), headers: normalizeHeaders(request.headers) }
+        : undefined,
       deviceId,
     })
     return {
@@ -427,7 +452,10 @@ export const authV2Service = {
     }
   },
 
-  async refresh(refreshToken: string, request?: { ip?: string; headers?: Record<string, string | string[] | undefined> }) {
+  async refresh(
+    refreshToken: string,
+    request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
     const ip = getIp(request)
     const result = await sessionService.rotateRefresh(refreshToken, ip)
     return {
@@ -456,7 +484,9 @@ export const authV2Service = {
       actionType: 'LOGOUT_SESSION_REVOKED',
       actionStatus: 'success',
       actionDetails: { sessionId },
-      request: request ? { ip: getIp(request), headers: normalizeHeaders(request.headers) } : undefined,
+      request: request
+        ? { ip: getIp(request), headers: normalizeHeaders(request.headers) }
+        : undefined,
     })
     return { message: 'Logged out successfully' }
   },
@@ -468,7 +498,9 @@ export const authV2Service = {
     const hasPassword = await passwordService.hasPassword(auth.userId)
     if (!hasPassword) throw new AppError(400, "User doesn't have password set", 'NO_PASSWORD')
     const ids = await authIdentifierRepository.findByUserId(auth.userId)
-    const methods = ids.filter((a) => a.provider === 'email' || a.provider === 'phone').map((a) => a.provider as AuthProvider)
+    const methods = ids
+      .filter((a) => a.provider === 'email' || a.provider === 'phone')
+      .map((a) => a.provider as AuthProvider)
     return {
       userId: auth.userId,
       availableMethods: methods,
@@ -555,20 +587,38 @@ export const authV2Service = {
   async getSettings(userId: string, currentSessionId?: string) {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
-    let identifiersRaw = await cacheService.getUserAuthIdentifiers(userId)
-    type CachedId = { provider: string; identifier: string; isVerified: boolean; verifiedAt: string | null; isPrimary: boolean }
+    const identifiersRaw = await cacheService.getUserAuthIdentifiers(userId)
+    type CachedId = {
+      provider: string
+      identifier: string
+      isVerified: boolean
+      verifiedAt: string | null
+      isPrimary: boolean
+    }
     let authIdentifiers: CachedId[]
     if (identifiersRaw) {
       try {
         authIdentifiers = JSON.parse(identifiersRaw) as CachedId[]
       } catch {
         const fromDb = await authIdentifierRepository.findByUserId(userId)
-        authIdentifiers = fromDb.map((a) => ({ provider: a.provider, identifier: a.identifier, isVerified: a.isVerified, verifiedAt: a.verifiedAt?.toISOString() ?? null, isPrimary: a.isPrimary }))
+        authIdentifiers = fromDb.map((a) => ({
+          provider: a.provider,
+          identifier: a.identifier,
+          isVerified: a.isVerified,
+          verifiedAt: a.verifiedAt?.toISOString() ?? null,
+          isPrimary: a.isPrimary,
+        }))
         await cacheService.setUserAuthIdentifiers(userId, authIdentifiers)
       }
     } else {
       const fromDb = await authIdentifierRepository.findByUserId(userId)
-      authIdentifiers = fromDb.map((a) => ({ provider: a.provider, identifier: a.identifier, isVerified: a.isVerified, verifiedAt: a.verifiedAt?.toISOString() ?? null, isPrimary: a.isPrimary }))
+      authIdentifiers = fromDb.map((a) => ({
+        provider: a.provider,
+        identifier: a.identifier,
+        isVerified: a.isVerified,
+        verifiedAt: a.verifiedAt?.toISOString() ?? null,
+        isPrimary: a.isPrimary,
+      }))
       await cacheService.setUserAuthIdentifiers(userId, authIdentifiers)
     }
     const sessions = await sessionService.listSessions(userId, currentSessionId)
@@ -602,10 +652,12 @@ export const authV2Service = {
 
   async passwordSet(userId: string, password: string) {
     const hasPassword = await passwordService.hasPassword(userId)
-    if (hasPassword) throw new AppError(400, 'User already has password set', 'PASSWORD_ALREADY_SET')
+    if (hasPassword)
+      throw new AppError(400, 'User already has password set', 'PASSWORD_ALREADY_SET')
     const ids = await authIdentifierRepository.findByUserId(userId)
     const hasEmailOrPhone = ids.some((a) => a.provider === 'email' || a.provider === 'phone')
-    if (!hasEmailOrPhone) throw new AppError(400, "User doesn't have email or phone bound", 'NO_EMAIL_OR_PHONE')
+    if (!hasEmailOrPhone)
+      throw new AppError(400, "User doesn't have email or phone bound", 'NO_EMAIL_OR_PHONE')
     const strength = passwordService.validateStrength(password)
     if (!strength.ok) throw new AppError(400, strength.error, 'WEAK_PASSWORD')
     await passwordService.createPassword(userId, password)
@@ -634,7 +686,9 @@ export const authV2Service = {
       userId,
       actionType: 'password_change',
       actionStatus: 'success',
-      request: request ? { ip: getIp(request), headers: normalizeHeaders(request.headers) } : undefined,
+      request: request
+        ? { ip: getIp(request), headers: normalizeHeaders(request.headers) }
+        : undefined,
     })
     return { message: 'Password changed successfully', allSessionsInvalidated: true }
   },
@@ -645,17 +699,30 @@ export const authV2Service = {
     if (!r.success) throw new AppError(400, 'Invalid email format', 'INVALID_EMAIL')
     const existing = await authIdentifierRepository.findByProviderAndIdentifier('email', newEmail)
     if (existing) {
-      if (existing.userId === userId) throw new AppError(400, 'Email already bound to current user', 'EMAIL_ALREADY_BOUND')
+      if (existing.userId === userId)
+        throw new AppError(400, 'Email already bound to current user', 'EMAIL_ALREADY_BOUND')
       throw new AppError(400, 'Email already in use by another user', 'EMAIL_TAKEN')
     }
-    await otpAuthService.createAndStore({ targetIdentifier: newEmail, purpose: 'bind_email', userId })
+    await otpAuthService.createAndStore({
+      targetIdentifier: newEmail,
+      purpose: 'bind_email',
+      userId,
+    })
     return { message: 'OTP sent to new email', expiresIn: 300 }
   },
 
   async emailBindVerifyOtp(userId: string, newEmail: string, otp: string) {
-    const valid = await otpAuthService.verify({ targetIdentifier: newEmail, purpose: 'bind_email', otp, userId })
+    const valid = await otpAuthService.verify({
+      targetIdentifier: newEmail,
+      purpose: 'bind_email',
+      otp,
+      userId,
+    })
     if (!valid) throw new AppError(400, 'OTP invalid or expired', 'OTP_INVALID')
-    await providerService.bindProvider(userId, 'email', newEmail, { isVerified: true, isPrimary: false })
+    await providerService.bindProvider(userId, 'email', newEmail, {
+      isVerified: true,
+      isPrimary: false,
+    })
     await auditService.log({
       userId,
       actionType: 'provider_bind',
@@ -667,18 +734,39 @@ export const authV2Service = {
 
   async emailModifyVerifyOld(userId: string, currentEmail: string) {
     const auth = await authIdentifierRepository.findByProviderAndIdentifier('email', currentEmail)
-    if (!auth || auth.userId !== userId) throw new AppError(400, "Email doesn't match current bound email", 'EMAIL_MISMATCH')
-    await otpAuthService.createAndStore({ targetIdentifier: currentEmail, purpose: 'modify_email', userId })
-    await redisClient.set(RedisKeys.emailModifyInProgress(userId), JSON.stringify({ currentEmail }), 'EX', 300)
+    if (!auth || auth.userId !== userId)
+      throw new AppError(400, "Email doesn't match current bound email", 'EMAIL_MISMATCH')
+    await otpAuthService.createAndStore({
+      targetIdentifier: currentEmail,
+      purpose: 'modify_email',
+      userId,
+    })
+    await redisClient.set(
+      RedisKeys.emailModifyInProgress(userId),
+      JSON.stringify({ currentEmail }),
+      'EX',
+      300,
+    )
     return { message: 'OTP sent to current email', expiresIn: 300 }
   },
 
   async emailModifyVerifyOldOtp(userId: string, currentEmail: string, otp: string) {
     const auth = await authIdentifierRepository.findByProviderAndIdentifier('email', currentEmail)
-    if (!auth || auth.userId !== userId) throw new AppError(400, "Email doesn't match current bound email", 'EMAIL_MISMATCH')
-    const valid = await otpAuthService.verify({ targetIdentifier: currentEmail, purpose: 'modify_email', otp, userId })
+    if (!auth || auth.userId !== userId)
+      throw new AppError(400, "Email doesn't match current bound email", 'EMAIL_MISMATCH')
+    const valid = await otpAuthService.verify({
+      targetIdentifier: currentEmail,
+      purpose: 'modify_email',
+      otp,
+      userId,
+    })
     if (!valid) throw new AppError(400, 'OTP invalid or expired', 'OTP_INVALID')
-    await redisClient.set(RedisKeys.emailModifyInProgress(userId), JSON.stringify({ currentEmail, verifiedOldAt: Date.now() }), 'EX', 300)
+    await redisClient.set(
+      RedisKeys.emailModifyInProgress(userId),
+      JSON.stringify({ currentEmail, verifiedOldAt: Date.now() }),
+      'EX',
+      300,
+    )
     return { message: 'Current email verified' }
   },
 
@@ -686,18 +774,48 @@ export const authV2Service = {
     const raw = await redisClient.get(RedisKeys.emailModifyInProgress(userId))
     if (!raw) throw new AppError(400, 'Please verify current email first', 'OLD_EMAIL_NOT_VERIFIED')
     const data = JSON.parse(raw) as { currentEmail: string; verifiedOldAt?: number }
-    if (!data.verifiedOldAt) throw new AppError(400, 'Please verify current email first', 'OLD_EMAIL_NOT_VERIFIED')
-    const existingNew = await authIdentifierRepository.findByProviderAndIdentifier('email', newEmail)
-    if (existingNew && existingNew.userId !== userId) throw new AppError(400, 'New email already in use', 'EMAIL_TAKEN')
+    if (!data.verifiedOldAt)
+      throw new AppError(400, 'Please verify current email first', 'OLD_EMAIL_NOT_VERIFIED')
+    const existingNew = await authIdentifierRepository.findByProviderAndIdentifier(
+      'email',
+      newEmail,
+    )
+    if (existingNew && existingNew.userId !== userId)
+      throw new AppError(400, 'New email already in use', 'EMAIL_TAKEN')
     if (!otp) {
-      await otpAuthService.createAndStore({ targetIdentifier: newEmail, purpose: 'modify_email', userId })
-      await redisClient.set(RedisKeys.emailModifyInProgress(userId), JSON.stringify({ ...data, newEmail }), 'EX', 300)
+      await otpAuthService.createAndStore({
+        targetIdentifier: newEmail,
+        purpose: 'modify_email',
+        userId,
+      })
+      await redisClient.set(
+        RedisKeys.emailModifyInProgress(userId),
+        JSON.stringify({ ...data, newEmail }),
+        'EX',
+        300,
+      )
       return { message: 'OTP sent to new email', expiresIn: 300 }
     }
-    const valid = await otpAuthService.verify({ targetIdentifier: newEmail, purpose: 'modify_email', otp, userId })
+    const valid = await otpAuthService.verify({
+      targetIdentifier: newEmail,
+      purpose: 'modify_email',
+      otp,
+      userId,
+    })
     if (!valid) throw new AppError(400, 'OTP invalid or expired', 'OTP_INVALID')
-    const current = await authIdentifierRepository.findByUserId(userId).then((r) => r.find((a) => a.provider === 'email'))
-    if (current) await prisma.authIdentifier.update({ where: { id: current.id }, data: { identifier: newEmail, isVerified: true, verifiedAt: new Date(), version: { increment: 1 } } })
+    const current = await authIdentifierRepository
+      .findByUserId(userId)
+      .then((r) => r.find((a) => a.provider === 'email'))
+    if (current)
+      await prisma.authIdentifier.update({
+        where: { id: current.id },
+        data: {
+          identifier: newEmail,
+          isVerified: true,
+          verifiedAt: new Date(),
+          version: { increment: 1 },
+        },
+      })
     await redisClient.del(RedisKeys.emailModifyInProgress(userId))
     await cacheService.invalidateUserAuthIdentifiers(userId)
     await auditService.log({
@@ -715,17 +833,30 @@ export const authV2Service = {
     if (!r.success) throw new AppError(400, 'Invalid phone format (E.164)', 'INVALID_PHONE')
     const existing = await authIdentifierRepository.findByProviderAndIdentifier('phone', newPhone)
     if (existing) {
-      if (existing.userId === userId) throw new AppError(400, 'Phone already bound to current user', 'PHONE_ALREADY_BOUND')
+      if (existing.userId === userId)
+        throw new AppError(400, 'Phone already bound to current user', 'PHONE_ALREADY_BOUND')
       throw new AppError(400, 'Phone already in use', 'PHONE_TAKEN')
     }
-    await otpAuthService.createAndStore({ targetIdentifier: newPhone, purpose: 'bind_phone', userId })
+    await otpAuthService.createAndStore({
+      targetIdentifier: newPhone,
+      purpose: 'bind_phone',
+      userId,
+    })
     return { message: 'OTP sent to new phone', expiresIn: 300 }
   },
 
   async phoneBindVerifyOtp(userId: string, newPhone: string, otp: string) {
-    const valid = await otpAuthService.verify({ targetIdentifier: newPhone, purpose: 'bind_phone', otp, userId })
+    const valid = await otpAuthService.verify({
+      targetIdentifier: newPhone,
+      purpose: 'bind_phone',
+      otp,
+      userId,
+    })
     if (!valid) throw new AppError(400, 'OTP invalid or expired', 'OTP_INVALID')
-    await providerService.bindProvider(userId, 'phone', newPhone, { isVerified: true, isPrimary: false })
+    await providerService.bindProvider(userId, 'phone', newPhone, {
+      isVerified: true,
+      isPrimary: false,
+    })
     await auditService.log({
       userId,
       actionType: 'provider_bind',
@@ -737,18 +868,39 @@ export const authV2Service = {
 
   async phoneModifyVerifyOld(userId: string, currentPhone: string) {
     const auth = await authIdentifierRepository.findByProviderAndIdentifier('phone', currentPhone)
-    if (!auth || auth.userId !== userId) throw new AppError(400, "Phone doesn't match current bound phone", 'PHONE_MISMATCH')
-    await otpAuthService.createAndStore({ targetIdentifier: currentPhone, purpose: 'modify_phone', userId })
-    await redisClient.set(RedisKeys.phoneModifyInProgress(userId), JSON.stringify({ currentPhone }), 'EX', 300)
+    if (!auth || auth.userId !== userId)
+      throw new AppError(400, "Phone doesn't match current bound phone", 'PHONE_MISMATCH')
+    await otpAuthService.createAndStore({
+      targetIdentifier: currentPhone,
+      purpose: 'modify_phone',
+      userId,
+    })
+    await redisClient.set(
+      RedisKeys.phoneModifyInProgress(userId),
+      JSON.stringify({ currentPhone }),
+      'EX',
+      300,
+    )
     return { message: 'OTP sent to current phone', expiresIn: 300 }
   },
 
   async phoneModifyVerifyOldOtp(userId: string, currentPhone: string, otp: string) {
     const auth = await authIdentifierRepository.findByProviderAndIdentifier('phone', currentPhone)
-    if (!auth || auth.userId !== userId) throw new AppError(400, "Phone doesn't match current bound phone", 'PHONE_MISMATCH')
-    const valid = await otpAuthService.verify({ targetIdentifier: currentPhone, purpose: 'modify_phone', otp, userId })
+    if (!auth || auth.userId !== userId)
+      throw new AppError(400, "Phone doesn't match current bound phone", 'PHONE_MISMATCH')
+    const valid = await otpAuthService.verify({
+      targetIdentifier: currentPhone,
+      purpose: 'modify_phone',
+      otp,
+      userId,
+    })
     if (!valid) throw new AppError(400, 'OTP invalid or expired', 'OTP_INVALID')
-    await redisClient.set(RedisKeys.phoneModifyInProgress(userId), JSON.stringify({ currentPhone, verifiedOldAt: Date.now() }), 'EX', 300)
+    await redisClient.set(
+      RedisKeys.phoneModifyInProgress(userId),
+      JSON.stringify({ currentPhone, verifiedOldAt: Date.now() }),
+      'EX',
+      300,
+    )
     return { message: 'Current phone verified' }
   },
 
@@ -756,18 +908,48 @@ export const authV2Service = {
     const raw = await redisClient.get(RedisKeys.phoneModifyInProgress(userId))
     if (!raw) throw new AppError(400, 'Please verify current phone first', 'OLD_PHONE_NOT_VERIFIED')
     const data = JSON.parse(raw) as { currentPhone: string; verifiedOldAt?: number }
-    if (!data.verifiedOldAt) throw new AppError(400, 'Please verify current phone first', 'OLD_PHONE_NOT_VERIFIED')
-    const existingNew = await authIdentifierRepository.findByProviderAndIdentifier('phone', newPhone)
-    if (existingNew && existingNew.userId !== userId) throw new AppError(400, 'New phone already in use', 'PHONE_TAKEN')
+    if (!data.verifiedOldAt)
+      throw new AppError(400, 'Please verify current phone first', 'OLD_PHONE_NOT_VERIFIED')
+    const existingNew = await authIdentifierRepository.findByProviderAndIdentifier(
+      'phone',
+      newPhone,
+    )
+    if (existingNew && existingNew.userId !== userId)
+      throw new AppError(400, 'New phone already in use', 'PHONE_TAKEN')
     if (!otp) {
-      await otpAuthService.createAndStore({ targetIdentifier: newPhone, purpose: 'modify_phone', userId })
-      await redisClient.set(RedisKeys.phoneModifyInProgress(userId), JSON.stringify({ ...data, newPhone }), 'EX', 300)
+      await otpAuthService.createAndStore({
+        targetIdentifier: newPhone,
+        purpose: 'modify_phone',
+        userId,
+      })
+      await redisClient.set(
+        RedisKeys.phoneModifyInProgress(userId),
+        JSON.stringify({ ...data, newPhone }),
+        'EX',
+        300,
+      )
       return { message: 'OTP sent to new phone', expiresIn: 300 }
     }
-    const valid = await otpAuthService.verify({ targetIdentifier: newPhone, purpose: 'modify_phone', otp, userId })
+    const valid = await otpAuthService.verify({
+      targetIdentifier: newPhone,
+      purpose: 'modify_phone',
+      otp,
+      userId,
+    })
     if (!valid) throw new AppError(400, 'OTP invalid or expired', 'OTP_INVALID')
-    const current = await authIdentifierRepository.findByUserId(userId).then((r) => r.find((a) => a.provider === 'phone'))
-    if (current) await prisma.authIdentifier.update({ where: { id: current.id }, data: { identifier: newPhone, isVerified: true, verifiedAt: new Date(), version: { increment: 1 } } })
+    const current = await authIdentifierRepository
+      .findByUserId(userId)
+      .then((r) => r.find((a) => a.provider === 'phone'))
+    if (current)
+      await prisma.authIdentifier.update({
+        where: { id: current.id },
+        data: {
+          identifier: newPhone,
+          isVerified: true,
+          verifiedAt: new Date(),
+          version: { increment: 1 },
+        },
+      })
     await redisClient.del(RedisKeys.phoneModifyInProgress(userId))
     await cacheService.invalidateUserAuthIdentifiers(userId)
     await auditService.log({
@@ -780,7 +962,12 @@ export const authV2Service = {
   },
 
   // ----- OAuth login (Phase 2) -----
-  async oauthGoogle(idToken: string, deviceName: string, deviceId: string, request?: { ip?: string; headers?: Record<string, string | string[] | undefined> }) {
+  async oauthGoogle(
+    idToken: string,
+    deviceName: string,
+    deviceId: string,
+    request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
     const userInfo = await verifyGoogleToken(idToken)
     return oauthService.loginOrSignup(
       'google',
@@ -792,7 +979,12 @@ export const authV2Service = {
     )
   },
 
-  async oauthFacebook(accessToken: string, deviceName: string, deviceId: string, request?: { ip?: string; headers?: Record<string, string | string[] | undefined> }) {
+  async oauthFacebook(
+    accessToken: string,
+    deviceName: string,
+    deviceId: string,
+    request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
     const userInfo = await verifyFacebookToken(accessToken)
     return oauthService.loginOrSignup(
       'facebook',
@@ -804,7 +996,12 @@ export const authV2Service = {
     )
   },
 
-  async oauthApple(identityToken: string, deviceName: string, deviceId: string, request?: { ip?: string; headers?: Record<string, string | string[] | undefined> }) {
+  async oauthApple(
+    identityToken: string,
+    deviceName: string,
+    deviceId: string,
+    request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
     const userInfo = await verifyAppleToken(identityToken)
     return oauthService.loginOrSignup(
       'apple',
