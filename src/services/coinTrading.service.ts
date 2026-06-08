@@ -405,8 +405,23 @@ export const coinTradingService = {
     await redisClient.set(key, balance.toString(), 'EX', CT_BALANCE_TTL)
     return balance
   },
-  listTopupHistory(agentUserId: string, opts: { limit: number; cursor?: string }) {
-    return coinTradingRepository.listTopupOrders(agentUserId, opts)
+  async listTopupHistory(agentUserId: string, opts: { limit: number; cursor?: string }) {
+    const rows = await coinTradingRepository.listTopupOrders(agentUserId, opts)
+    const ledgerIds = [
+      ...new Set(rows.map((row) => row.ledgerEntryId).filter((id): id is string => id != null)),
+    ]
+    const ledgerBalances = new Map(
+      (await coinTradingRepository.listLedgerBalancesByIds(ledgerIds)).map((entry) => [
+        entry.id,
+        entry.balanceAfter,
+      ]),
+    )
+    return rows.map((row) => ({
+      ...row,
+      balanceAfter: row.ledgerEntryId
+        ? (ledgerBalances.get(row.ledgerEntryId)?.toString() ?? null)
+        : null,
+    }))
   },
   async listTransferHistory(
     userId: string,
