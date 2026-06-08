@@ -130,6 +130,13 @@ export const coinTradingRepository = {
       },
     })
   },
+  listLedgerBalancesByIds(ids: string[]) {
+    if (ids.length === 0) return Promise.resolve([])
+    return prismaRead.coinLedgerEntry.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, balanceAfter: true },
+    })
+  },
   async getRecentTransactionUsers(agencyUserId: string, limit = 10) {
     const rows = await prismaRead.$queryRaw<
       Array<{

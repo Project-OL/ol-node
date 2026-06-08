@@ -434,15 +434,26 @@ export const coinTradingService = {
     const hasMore = rows.length > opts.limit
     const page = hasMore ? rows.slice(0, opts.limit) : rows
     const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null
+    const ledgerIds = [
+      ...new Set(page.flatMap((row) => [row.senderLedgerEntryId, row.recipientLedgerEntryId])),
+    ]
+    const ledgerBalances = new Map(
+      (await coinTradingRepository.listLedgerBalancesByIds(ledgerIds)).map((entry) => [
+        entry.id,
+        entry.balanceAfter,
+      ]),
+    )
     const items = page.map((row) => {
       const isDebit = row.senderAgentUserId === userId
       const counterpartyUser = isDebit ? row.recipient : row.senderAgent
+      const ledgerEntryId = isDebit ? row.senderLedgerEntryId : row.recipientLedgerEntryId
       return {
         id: row.id,
         direction: isDebit ? ('debit' as const) : ('credit' as const),
         tradingCoinsDebited: row.tradingCoinsDebited.toString(),
         coinsCredited: row.coinsCredited.toString(),
         recipientWalletType: row.recipientWalletType,
+        balanceAfter: ledgerBalances.get(ledgerEntryId)?.toString() ?? null,
         createdAt: row.createdAt.toISOString(),
         counterparty: {
           id: counterpartyUser.id,
