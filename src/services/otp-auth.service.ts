@@ -7,6 +7,8 @@ import { createHmac, timingSafeEqual, randomInt } from 'crypto'
 import { env } from '../config/env'
 import { otpTokenRepository } from '../repositories/otp-token.repository'
 import type { OtpPurpose } from '../models/types'
+import { auditService } from './audit.service'
+import { maskOtpTargetIdentifier, otpDeliveryService } from './otp-delivery.service'
 
 const OTP_VALIDITY_MS = 5 * 60 * 1000
 
@@ -42,6 +44,13 @@ export const otpAuthService = {
     userId?: string | null
   }): Promise<{ expiresAt: Date }> {
     const otp = env.STATIC_OTP_DEV ?? generateOtp()
+    if (env.NODE_ENV !== 'production') {
+      console.log('==================== OTP GENERATED ====================')
+      console.log('Target:', params.targetIdentifier)
+      console.log('Purpose:', params.purpose)
+      console.log('OTP:', otp)
+      console.log('======================================================')
+    }
     const otpHash = hashOtp(otp)
     const expiresAt = new Date(Date.now() + OTP_VALIDITY_MS)
     await otpTokenRepository.create({
@@ -50,6 +59,20 @@ export const otpAuthService = {
       otpPurpose: params.purpose,
       targetIdentifier: params.targetIdentifier,
       expiresAt,
+    })
+    auditService.log({
+      userId: params.userId,
+      actionType: 'OTP_GENERATED',
+      actionStatus: 'success',
+      actionDetails: {
+        purpose: params.purpose,
+        target: maskOtpTargetIdentifier(params.targetIdentifier),
+      },
+    })
+    await otpDeliveryService.send({
+      otp,
+      targetIdentifier: params.targetIdentifier,
+      purpose: params.purpose,
     })
     return { expiresAt }
   },

@@ -2,7 +2,9 @@ import { PrismaClient } from '@prisma/client'
 import { env } from './env'
 
 declare global {
+  // eslint-disable-next-line no-var -- required for Node global augmentation in dev hot-reload
   var __prisma: PrismaClient | undefined
+  // eslint-disable-next-line no-var -- required for Node global augmentation in dev hot-reload
   var __prismaRead: PrismaClient | undefined
 }
 
@@ -11,9 +13,7 @@ const prismaOptions: { log: ('query' | 'error' | 'warn')[]; errorFormat: 'minima
   errorFormat: 'minimal',
 }
 
-export const prisma =
-  global.__prisma ??
-  new PrismaClient(prismaOptions)
+export const prisma = global.__prisma ?? new PrismaClient(prismaOptions)
 
 /** Read replica client when DATABASE_READ_URL is set; use for read-only queries to scale reads. */
 export const prismaRead: PrismaClient =

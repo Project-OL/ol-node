@@ -3,6 +3,7 @@ import { otpAuthService } from '../../src/services/otp-auth.service'
 
 vi.mock('../../src/config/env', () => ({
   env: {
+    NODE_ENV: 'test',
     JWT_ACCESS_SECRET: 'test-secret-at-least-32-characters-long',
     STATIC_OTP_DEV: undefined,
   },
@@ -17,12 +18,26 @@ vi.mock('../../src/repositories/otp-token.repository', () => ({
   },
 }))
 
+const deliverySend = vi.fn().mockResolvedValue(undefined)
+vi.mock('../../src/services/otp-delivery.service', () => ({
+  maskOtpTargetIdentifier: (target: string) => `masked:${target}`,
+  otpDeliveryService: {
+    send: (...args: unknown[]) => deliverySend(...args),
+  },
+}))
+
+const auditLog = vi.fn()
+vi.mock('../../src/services/audit.service', () => ({
+  auditService: {
+    log: (...args: unknown[]) => auditLog(...args),
+  },
+}))
+
 const { otpTokenRepository } = await import('../../src/repositories/otp-token.repository')
 
 describe('otpAuthService', () => {
   beforeEach(() => {
-    vi.mocked(otpTokenRepository.create).mockClear()
-    vi.mocked(otpTokenRepository.findValid).mockClear()
+    vi.clearAllMocks()
   })
 
   describe('createAndStore', () => {
@@ -38,6 +53,17 @@ describe('otpAuthService', () => {
       expect(call.otpHash).toMatch(/^[a-f0-9]{64}$/)
       expect(call.otpPurpose).toBe('signup')
       expect(call.targetIdentifier).toBe('user@example.com')
+      expect(deliverySend).toHaveBeenCalledWith({
+        otp: expect.stringMatching(/^\d{5}$/),
+        targetIdentifier: 'user@example.com',
+        purpose: 'signup',
+      })
+      expect(auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionType: 'OTP_GENERATED',
+          actionStatus: 'success',
+        }),
+      )
     })
   })
 

@@ -101,11 +101,26 @@ const envSchema = z
     OTP_MAX_ATTEMPTS: z.coerce.number().default(5),
     STATIC_OTP_DEV: z.string().length(5).optional(), // e.g. "22222" for dev; when set, OTP is fixed and hashed
     SMS_PROVIDER_API_KEY: z.string().optional(),
+    OTP_DELIVERY_ENABLED: z.coerce.boolean().default(false),
+    MSG91_AUTH_KEY: z.string().optional(),
+    MSG91_SMS_TEMPLATE_ID: z.string().optional(),
+    MSG91_WHATSAPP_TEMPLATE_ID: z.string().optional(),
+    MSG91_WHATSAPP_SENDER: z.string().optional(),
+    MSG91_SENDER_ID: z.string().optional(),
+    MSG91_DLT_ENTITY_ID: z.string().optional(),
+    SES_FROM_EMAIL: z.string().email().optional(),
+    SES_ACCESS_KEY_ID: z.string().optional(),
+    SES_SECRET_ACCESS_KEY: z.string().optional(),
 
     ALLOWED_ORIGINS: z
       .string()
       .default('http://localhost:3000')
-      .transform((value) => value.split(',').map((v) => v.trim()).filter(Boolean)),
+      .transform((value) =>
+        value
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean),
+      ),
 
     RATE_LIMIT_MAX: z.coerce.number().default(100),
     RATE_LIMIT_TIME_WINDOW: z.coerce.number().default(60000),
@@ -134,9 +149,9 @@ const envSchema = z
     LIVEKIT_API_KEY: z.string().optional(),
     LIVEKIT_API_SECRET: z.string().optional(),
 
-    EPAY_BASE_URL: z.string().url().default("https://epay.invalid"),
-    EPAY_API_KEY: z.string().min(1).default("epay-test-key"),
-    EPAY_WEBHOOK_SECRET: z.string().min(1).default("epay-test-secret"),
+    EPAY_BASE_URL: z.string().url().default('https://epay.invalid'),
+    EPAY_API_KEY: z.string().min(1).default('epay-test-key'),
+    EPAY_WEBHOOK_SECRET: z.string().min(1).default('epay-test-secret'),
 
     /** Shared secret for LiveKit backend → ol-node-rest live session webhooks (must match LiveKit server). */
     LIVE_WEBHOOK_SECRET: z.string().min(32),
@@ -159,7 +174,7 @@ const envSchema = z
       .transform((s) =>
         s
           ? s
-              .split(",")
+              .split(',')
               .map((id) => id.trim())
               .filter(Boolean)
           : [],
@@ -169,13 +184,13 @@ const envSchema = z
     RICH_TIER_ROLLOVER_ENABLED: z
       .string()
       .optional()
-      .transform((s) => s === "true"),
+      .transform((s) => s === 'true'),
 
     /** When not `true`, scheduled agency level recompute master no-ops (admin enqueue still works). */
     AGENCY_LEVEL_RECOMPUTE_ENABLED: z
       .string()
       .optional()
-      .transform((s) => s === "true"),
+      .transform((s) => s === 'true'),
 
     /** VIP-pattern IDs to classify ahead of `next_public_id_sequence.next_value` (numeric string or number). */
     PUBLIC_ID_PREGEN_HORIZON_AHEAD: z.coerce.bigint().default(1_000_000n),
@@ -197,7 +212,8 @@ const envSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['JWT_REFRESH_SECRET'],
-        message: 'JWT_REFRESH_SECRET is required in production and must be different from JWT_ACCESS_SECRET',
+        message:
+          'JWT_REFRESH_SECRET is required in production and must be different from JWT_ACCESS_SECRET',
       })
     }
     if (val.NODE_ENV === 'production' && !val.DEVICE_FINGERPRINT_SECRET) {
@@ -206,6 +222,29 @@ const envSchema = z
         path: ['DEVICE_FINGERPRINT_SECRET'],
         message: 'DEVICE_FINGERPRINT_SECRET is required in production (min 32 chars)',
       })
+    }
+    if (val.OTP_DELIVERY_ENABLED) {
+      const requiredDeliveryVars: Array<keyof typeof val> = [
+        'MSG91_AUTH_KEY',
+        'MSG91_SMS_TEMPLATE_ID',
+        'MSG91_WHATSAPP_TEMPLATE_ID',
+        'MSG91_WHATSAPP_SENDER',
+        'MSG91_SENDER_ID',
+        'MSG91_DLT_ENTITY_ID',
+        'SES_FROM_EMAIL',
+        'SES_ACCESS_KEY_ID',
+        'SES_SECRET_ACCESS_KEY',
+        'AWS_REGION',
+      ]
+      for (const key of requiredDeliveryVars) {
+        if (!val[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when OTP_DELIVERY_ENABLED=true`,
+          })
+        }
+      }
     }
   })
 
