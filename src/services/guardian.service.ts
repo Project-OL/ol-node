@@ -17,6 +17,7 @@ import {
   type GuardianWithTargetUser,
 } from '../repositories/guardian.repository'
 import { enqueueGuardianExpiry } from '../queues/guardian.queue'
+import { ledgerHostPointsKey } from '../utils/ledger-idempotency'
 import type { PurchaseGuardianInput } from '../models/guardian.schemas'
 import type { ActiveGuardianProfileDto } from '../models/profile.types'
 import { walletLevelService } from './user-level.service'
@@ -329,7 +330,7 @@ export const guardianService = {
             PointTxType.GUARDIAN_PURCHASE,
             tx,
             {
-              idempotencyKey: `guardian-host-pts:${row.id}`,
+              idempotencyKey: ledgerHostPointsKey(idempotencyKey),
               refId: row.id,
               counterpartyId: guardianUserId,
               description: 'Guardian purchase revenue (50%)',

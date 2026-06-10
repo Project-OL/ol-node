@@ -28,6 +28,7 @@ import { subscriptionRepository } from '../repositories/subscription.repository'
 import { userRepository } from '../repositories/user.repository'
 import { userSubscriberRepository } from '../repositories/userSubscriber.repository'
 import { hostRevenuePointsFromCoins } from '../config/host-revenue-shares'
+import { ledgerHostPointsKey } from '../utils/ledger-idempotency'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { walletService } from './wallet.service'
@@ -268,7 +269,7 @@ export const subscriptionService = {
           subscriberId,
           subscriptionId: created.id,
           coinsPaid: SUBSCRIPTION_COIN_COST,
-          idempotencyKey: `sub-host-pts:${created.id}:initial`,
+          idempotencyKey: ledgerHostPointsKey(idempotencyKey),
           description: 'Creator subscription revenue (50%)',
         })
         bustAgentUserId = credited.bustAgentUserId

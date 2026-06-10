@@ -7,6 +7,9 @@ import {
 /** Captures wallet.upsert currencyType from coinWalletService.debit/credit. */
 const upsertCurrencyTypes: WalletCurrencyType[] = [];
 
+let exchangePointDebitKey = "";
+let exchangeTradingCreditKey = "";
+
 vi.mock("../../src/config/redis", () => ({
   redisClient: {
     get: vi.fn().mockResolvedValue(null),
@@ -48,10 +51,15 @@ vi.mock("../../src/repositories/wallet.repository", () => ({
 vi.mock("../../src/repositories/coin-ledger.repository", () => ({
   coinLedgerRepository: {
     findByIdempotencyKey: vi.fn().mockResolvedValue(null),
-    insert: vi.fn().mockImplementation(async (_tx, data) => ({
-      id: "ledger-1",
-      balanceAfter: data.balanceAfter,
-    })),
+    insert: vi.fn().mockImplementation(async (_tx, data: { idempotencyKey: string }) => {
+      if (data.idempotencyKey.startsWith("exchange-ct:")) {
+        exchangeTradingCreditKey = data.idempotencyKey;
+      }
+      return {
+        id: "ledger-1",
+        balanceAfter: data.balanceAfter,
+      };
+    }),
     computeBalance: vi.fn().mockResolvedValue(0n),
   },
 }));
@@ -77,7 +85,18 @@ vi.mock("../../src/repositories/user.repository", () => ({
 
 vi.mock("../../src/services/point-wallet.service", () => ({
   pointWalletService: {
-    debit: vi.fn().mockResolvedValue({ ledgerEntryId: "pt-1" }),
+    debit: vi.fn().mockImplementation(
+      async (
+        _u,
+        _a,
+        _t,
+        _tx,
+        opts: { idempotencyKey: string },
+      ) => {
+        exchangePointDebitKey = opts.idempotencyKey;
+        return { ledgerEntryId: "pt-1" };
+      },
+    ),
   },
 }));
 
@@ -243,6 +262,8 @@ describe("coinWalletService wallet selection", () => {
 describe("coinTradingService transfer/exchange wallet selection", () => {
   beforeEach(() => {
     upsertCurrencyTypes.length = 0;
+    exchangePointDebitKey = "";
+    exchangeTradingCreditKey = "";
     vi.clearAllMocks();
     vi.mocked(userRepository.findById).mockResolvedValue({
       id: "agent-1",
@@ -283,6 +304,10 @@ describe("coinTradingService transfer/exchange wallet selection", () => {
 
     await coinTradingService.exchangePointsForTradingCoins("agent-1", 10_000n);
 
+    expect(exchangePointDebitKey).toMatch(/^exchange-pts:[0-9a-f-]{36}$/i);
+    expect(exchangeTradingCreditKey).toBe(
+      exchangePointDebitKey.replace(/^exchange-pts:/, "exchange-ct:"),
+    );
     expect(upsertCurrencyTypes).toContain(WalletCurrencyType.TRADING_COIN);
     expect(upsertCurrencyTypes).not.toContain(WalletCurrencyType.COIN);
     expect(walletService.adjustPointBalanceCache).toHaveBeenCalledWith(

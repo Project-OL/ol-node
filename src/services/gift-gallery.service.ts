@@ -144,6 +144,15 @@ function buildMergedResponse(
   }
 }
 
+function refreshPeriodFields(payload: GalleryResponse): GalleryResponse {
+  const { secondsRemaining } = getActivePeriod()
+  return {
+    ...payload,
+    monthEndAt: getMonthEndIso(),
+    secondsRemaining,
+  }
+}
+
 async function loadGlobalGalleryForCache(
   year: number,
   month: number,
@@ -205,7 +214,7 @@ export const giftGalleryService = {
     try {
       const raw = await redisClient.get(hostKey)
       if (raw) {
-        return JSON.parse(raw) as GalleryResponse
+        return refreshPeriodFields(JSON.parse(raw) as GalleryResponse)
       }
     } catch {
       // cold path

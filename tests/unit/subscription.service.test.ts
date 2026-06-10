@@ -162,9 +162,20 @@ describe('subscriptionService', () => {
     await subscriptionService.createSubscription('fan-1', 'creator-1')
 
     expect(debitForCreatorSubscription).toHaveBeenCalled()
+    const purchaseKey = (
+      debitForCreatorSubscription.mock.calls[0]![2] as { idempotencyKey: string }
+    ).idempotencyKey
     expect(upsertActiveInTx).toHaveBeenCalled()
     expect(upsertPairInTx).toHaveBeenCalled()
-    expect(creditInTransaction).toHaveBeenCalled()
+    expect(creditInTransaction).toHaveBeenCalledWith(
+      'creator-1',
+      2500n,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        idempotencyKey: `${purchaseKey}:host-points`,
+      }),
+    )
     expect(adjustCoinBalanceCache).toHaveBeenCalledWith('fan-1', 5000n)
     expect(adjustPointBalanceCache).toHaveBeenCalledWith('creator-1', 2500n)
     expect(redisSet).toHaveBeenCalled()

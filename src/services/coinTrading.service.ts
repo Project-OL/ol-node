@@ -273,7 +273,7 @@ export const coinTradingService = {
           CoinTxType.TRADING_EXCHANGE_FROM_POINTS,
           tx,
           {
-            idempotencyKey: `exchange-ct:${agentUserId}:${Date.now()}`,
+            idempotencyKey: `exchange-ct:${exchangeRefId}`,
             description: 'Trading coins from points exchange',
             applyWealthCredit: false,
             currencyType: WalletCurrencyType.TRADING_COIN,

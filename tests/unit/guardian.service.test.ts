@@ -190,8 +190,19 @@ describe('guardianService', () => {
     })
 
     expect(debitForGuardianPurchase).toHaveBeenCalled()
+    const purchaseKey = (
+      debitForGuardianPurchase.mock.calls[0]![2] as { idempotencyKey: string }
+    ).idempotencyKey
     expect(upsertGuardian).toHaveBeenCalled()
-    expect(creditInTransaction).toHaveBeenCalled()
+    expect(creditInTransaction).toHaveBeenCalledWith(
+      'target-1',
+      75000n,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        idempotencyKey: `${purchaseKey}:host-points`,
+      }),
+    )
     expect(enqueueGuardianExpiry).toHaveBeenCalledWith('g-1', expect.any(Date))
     expect(adjustCoinBalanceCache).toHaveBeenCalledWith('guardian-1', 150000n)
     expect(adjustPointBalanceCache).toHaveBeenCalledWith('target-1', 75000n)

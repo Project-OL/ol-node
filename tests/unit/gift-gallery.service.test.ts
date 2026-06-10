@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const upsertGlobalGallery = vi.fn();
 const findGlobalGallery = vi.fn();
@@ -58,6 +58,10 @@ describe("giftGalleryService", () => {
     redisGet.mockResolvedValue(null);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("upsertGallery validates gifts and upserts global gallery, deletes template key", async () => {
     await giftGalleryService.upsertGallery({
       year: 2026,
@@ -73,7 +77,9 @@ describe("giftGalleryService", () => {
     expect(redisDel).toHaveBeenCalledWith("gallery:template:2026:4");
   });
 
-  it("getGalleryForHost returns cached payload without DB on Redis hit", async () => {
+  it("getGalleryForHost refreshes dynamic countdown fields on Redis hit without DB", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-15T12:00:00.000Z"));
     const cached = {
       galleryId: "gal-1",
       hostUserId: "host-1",
@@ -88,7 +94,10 @@ describe("giftGalleryService", () => {
     };
     redisGet.mockResolvedValueOnce(JSON.stringify(cached));
     const out = await giftGalleryService.getGalleryForHost("host-1");
-    expect(out).toEqual(cached);
+    expect(out).toEqual({
+      ...cached,
+      secondsRemaining: 1339199,
+    });
     expect(findGlobalGallery).not.toHaveBeenCalled();
   });
 
@@ -179,6 +188,8 @@ describe("giftGalleryService", () => {
   });
 
   it("checkIsFull returns received and remaining gift lists", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-15T12:00:00.000Z"));
     redisGet.mockResolvedValueOnce(
       JSON.stringify({
         galleryId: "gal-1",
@@ -233,6 +244,7 @@ describe("giftGalleryService", () => {
 
     const out = await giftGalleryService.checkIsFull("host-1");
     expect(out.isFullGallery).toBe(false);
+    expect(out.secondsRemaining).toBe(1339199);
     expect(out.receivedGifts).toHaveLength(1);
     expect(out.remainingGifts).toHaveLength(1);
     expect(out.receivedGifts[0]).toMatchObject({ giftId: "g-1" });
