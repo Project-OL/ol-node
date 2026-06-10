@@ -22,6 +22,7 @@ export type ResolvedPublicIdentity = {
   /** Shown ID: rare/VIP overlay when set — same rule as `GET /users/me`. */
   displayPublicId: string
   isAgency: boolean
+  avatarUrl: string | null
 }
 
 export const userSearchService = {
@@ -42,6 +43,7 @@ export const userSearchService = {
       publicId: String(user.publicId),
       displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
       isAgency: Boolean(user.isAgent),
+      avatarUrl: user.avatarUrl ?? null,
     }
   },
 

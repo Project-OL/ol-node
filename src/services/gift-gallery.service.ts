@@ -178,6 +178,28 @@ async function loadGlobalGalleryForCache(
   return gallery
 }
 
+/** Drop template + all per-host merged caches for a UTC month (gift metadata changes). */
+async function bustGalleryCachesForMonth(year: number, month: number): Promise<void> {
+  try {
+    await redisClient.del(RedisKeys.giftGalleryTemplate(year, month))
+  } catch {
+    // ignore
+  }
+  const pattern = `gallery:*:${year}:${month}`
+  let cursor = '0'
+  do {
+    const [next, keys] = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 200)
+    cursor = next
+    if (keys.length > 0) {
+      try {
+        await redisClient.del(...keys)
+      } catch {
+        // ignore
+      }
+    }
+  } while (cursor !== '0')
+}
+
 export const giftGalleryService = {
   async upsertGallery(params: {
     year: number
@@ -384,5 +406,11 @@ export const giftGalleryService = {
     } catch {
       // ignore
     }
+  },
+
+  /** Invalidate global template + all host merged caches for the active UTC month. */
+  async invalidateActiveMonthCaches(): Promise<void> {
+    const { year, month } = getActivePeriod()
+    await bustGalleryCachesForMonth(year, month)
   },
 }

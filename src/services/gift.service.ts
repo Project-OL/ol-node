@@ -2,6 +2,7 @@ import { redisClient, RedisKeys } from '../config/redis'
 import { GIFT_LIST_CACHE_TTL } from '../config/redis'
 import { giftRepository, type GiftWithTags } from '../repositories/gift.repository'
 import { AppError } from '../middlewares/errorHandler'
+import { giftGalleryService } from './gift-gallery.service'
 
 async function invalidateGiftCaches(affectedTags: string[]) {
   try {
@@ -9,6 +10,7 @@ async function invalidateGiftCaches(affectedTags: string[]) {
     for (const tag of affectedTags) {
       await redisClient.del(RedisKeys.giftByTag(tag))
     }
+    await giftGalleryService.invalidateActiveMonthCaches()
   } catch {
     // best-effort
   }
