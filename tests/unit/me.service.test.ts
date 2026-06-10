@@ -128,6 +128,32 @@ vi.mock('../../src/services/agency.service', () => ({
   },
 }))
 
+const buildMeLivePhotoBlock = vi.fn()
+vi.mock('../../src/services/livePhoto.service', () => ({
+  livePhotoService: {
+    buildMeLivePhotoBlock: (...a: unknown[]) => buildMeLivePhotoBlock(...a),
+  },
+}))
+
+const isFaceVerifiedForUser = vi.fn()
+vi.mock('../../src/repositories/faceVerification.repository', () => ({
+  faceVerificationRepository: {
+    isVerifiedForUser: (...a: unknown[]) => isFaceVerifiedForUser(...a),
+  },
+}))
+
+vi.mock('../../src/config/redis', () => ({
+  redisClient: {
+    get: vi.fn().mockResolvedValue(null),
+  },
+  RedisKeys: {
+    userMe: (id: string) => `user:me:${id}`,
+    userProfile: (id: string) => `user:profile:${id}`,
+    userUsernameLock: (id: string) => `user:username_lock:${id}`,
+    userActiveVipId: (id: string) => `user:active-vip:${id}`,
+  },
+}))
+
 import { meService } from '../../src/services/me.service'
 import { verifyAccess } from '../../src/utils/jwt'
 
@@ -215,6 +241,12 @@ describe('meService', () => {
       vipPreventBeingKicked: false,
       vipLiveTranslationEnabled: false,
     })
+    buildMeLivePhotoBlock.mockResolvedValue({
+      verified: false,
+      imageUrl: null,
+      verifiedAt: null,
+    })
+    isFaceVerifiedForUser.mockResolvedValue(false)
     getCoinBalance.mockResolvedValue(20_000n)
     getPointBalance.mockResolvedValue(0n)
     walletUserLevelGetByUser.mockResolvedValue(null)
@@ -273,6 +305,12 @@ describe('meService', () => {
     agency: {
       role: 'NONE' as const,
     },
+    livePhoto: {
+      verified: false,
+      imageUrl: null,
+      verifiedAt: null,
+    },
+    faceVerified: false,
   }
 
   it('getMe returns cached payload on Redis HIT', async () => {
@@ -310,7 +348,16 @@ describe('meService', () => {
     expect(out.data.canChangeUsername).toBe(true)
     expect(typeof out.data.isVipActive).toBe('boolean')
     expect(out.data.isVipActive).toBe(false)
+    expect(out.data.faceVerified).toBe(false)
     expect(cacheSet).toHaveBeenCalled()
+  })
+
+  it('getMe returns faceVerified true when indexed face profile exists', async () => {
+    cacheGet.mockResolvedValueOnce(null)
+    findForMe.mockResolvedValueOnce(baseRow())
+    isFaceVerifiedForUser.mockResolvedValueOnce(true)
+    const out = await meService.getMe('user-1')
+    expect(out.data.faceVerified).toBe(true)
   })
 
   it('getMe ignores legacy Redis payload without dateOfBirth key (refetch + bust cache)', async () => {

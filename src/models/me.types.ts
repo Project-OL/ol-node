@@ -107,6 +107,8 @@ export interface MeResponseDto extends MeProfileCache {
     imageUrl: string | null
     verifiedAt: string | null
   }
+  /** Face registration indexed in Rekognition, or agency KYC `face_verified`. */
+  faceVerified: boolean
 }
 
 export interface PatchMeResponseDto {

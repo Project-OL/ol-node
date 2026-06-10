@@ -12,6 +12,7 @@ import { storeService } from './store.service'
 import { richTierService } from './rich-tier.service'
 import { vipMembershipService } from './vip-membership.service'
 import { prismaRead } from '../config/database'
+import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 
 export type ResolvedPublicIdentity = {
   userId: string
@@ -69,6 +70,7 @@ export const userSearchService = {
       blockedByMe,
       richTier,
       vipMembership,
+      faceVerified,
     ] = await Promise.all([
       followRepository.existsFollow(requesterId, user.id),
       followRepository.existsFollow(user.id, requesterId),
@@ -79,6 +81,7 @@ export const userSearchService = {
       blockRepository.isBlocked(requesterId, user.id),
       richTierService.getRichTierCardFields(user.id),
       vipMembershipService.getActiveMembershipSummary(user.id),
+      faceVerificationRepository.isVerifiedForUser(user.id),
     ])
     const isFriend = isFollowing && isFollowedBy
 
@@ -156,6 +159,7 @@ export const userSearchService = {
       activeStoreItems,
       galleryCompletion,
       vipMembership,
+      faceVerified,
       agencyTag,
     }
   },

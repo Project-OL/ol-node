@@ -44,6 +44,8 @@ export type UserCard = {
     isHost: boolean
     agencyPublicId?: string
   }
+  /** Face registration indexed in Rekognition, or agency KYC `face_verified`. */
+  faceVerified?: boolean
   /** Paid VIP membership (Diamond/SVIP); cosmetic flags mirror `isActive`. */
   vipMembership?: {
     isActive: boolean

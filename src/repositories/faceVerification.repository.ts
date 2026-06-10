@@ -10,6 +10,21 @@ export const faceVerificationRepository = {
     return prismaRead.userFaceProfile.findUnique({ where: { userId } })
   },
 
+  /** Indexed face profile or agency KYC `face_verified` (same gate as host leave / agency dashboard). */
+  async isVerifiedForUser(userId: string): Promise<boolean> {
+    const [kyc, profile] = await Promise.all([
+      prismaRead.agencyApplicationKyc.findUnique({
+        where: { userId },
+        select: { faceVerified: true },
+      }),
+      prismaRead.userFaceProfile.findUnique({
+        where: { userId },
+        select: { status: true },
+      }),
+    ])
+    return Boolean(kyc?.faceVerified) || profile?.status === 'INDEXED'
+  },
+
   createPendingProfile(
     input: {
       userId: string
