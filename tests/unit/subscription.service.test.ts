@@ -19,6 +19,8 @@ const upsertActiveInTx = vi.fn()
 const updateById = vi.fn()
 const getActiveSubscriptions = vi.fn()
 const queryTopCreatorsByCountry = vi.fn()
+const queryTopCreatorsGlobal = vi.fn()
+const queryTopCreatorsByPostCount = vi.fn()
 vi.mock('../../src/repositories/subscription.repository', () => ({
   subscriptionRepository: {
     findByPair: (...a: unknown[]) => findByPair(...a),
@@ -33,6 +35,8 @@ vi.mock('../../src/repositories/subscription.repository', () => ({
     updateById: (...a: unknown[]) => updateById(...a),
     getActiveSubscriptions: (...a: unknown[]) => getActiveSubscriptions(...a),
     queryTopCreatorsByCountry: (...a: unknown[]) => queryTopCreatorsByCountry(...a),
+    queryTopCreatorsGlobal: (...a: unknown[]) => queryTopCreatorsGlobal(...a),
+    queryTopCreatorsByPostCount: (...a: unknown[]) => queryTopCreatorsByPostCount(...a),
   },
 }))
 
@@ -126,6 +130,8 @@ vi.mock('../../src/config/redis', () => ({
       `sub:access:${subscriberId}:${creatorId}`,
     subscriptionCreatorCount: (creatorId: string) => `sub:count:${creatorId}`,
     subscriptionTopCreators: (country: string) => `sub:top-creators:${country}`,
+    subscriptionTopCreatorsGlobal: () => `sub:top-creators:global`,
+    subscriptionTopCreatorsByPosts: () => `sub:top-creators:global:posts`,
   },
   SUBSCRIPTION_COUNT_CACHE_TTL: 300,
   SUB_TOP_CREATORS_TTL: 300,
@@ -402,13 +408,28 @@ describe('subscriptionService', () => {
     })
   })
 
-  it('getTopCreatorsByCountry throws COUNTRY_NOT_SET when profile country missing', async () => {
+  it('getTopCreatorsByCountry skips country pool and uses global fallbacks when profile country missing', async () => {
     prismaReadUserFindUnique.mockResolvedValue({ country: null })
+    redisGet.mockResolvedValue(null)
+    queryTopCreatorsGlobal.mockResolvedValue([
+      {
+        id: 'g1',
+        publicId: 101n,
+        username: 'global1',
+        firstName: null,
+        lastName: null,
+        avatarUrl: null,
+        _count: { creatorSubsAsHost: 80 },
+      },
+    ])
 
-    await expect(subscriptionService.getTopCreatorsByCountry('fan-1')).rejects.toMatchObject({
-      statusCode: 400,
-      code: 'COUNTRY_NOT_SET',
-    })
+    const result = await subscriptionService.getTopCreatorsByCountry('fan-1')
+
+    expect(queryTopCreatorsByCountry).not.toHaveBeenCalled()
+    expect(queryTopCreatorsGlobal).toHaveBeenCalledWith(4)
+    expect(result.country).toBeNull()
+    expect(result.creators).toHaveLength(1)
+    expect(result.creators[0]?.userId).toBe('g1')
   })
 
   it('getTopCreatorsByCountry excludes caller from cached top-4', async () => {
@@ -452,6 +473,83 @@ describe('subscriptionService', () => {
     expect(result.creators).toHaveLength(3)
     expect(result.creators.every((c) => c.userId !== 'fan-1')).toBe(true)
     expect(queryTopCreatorsByCountry).not.toHaveBeenCalled()
+    expect(queryTopCreatorsGlobal).not.toHaveBeenCalled()
+    expect(queryTopCreatorsByPostCount).not.toHaveBeenCalled()
+  })
+
+  it('getTopCreatorsByCountry falls back to global subscribers when country pool is empty', async () => {
+    prismaReadUserFindUnique.mockResolvedValue({ country: 'IN' })
+    redisGet.mockImplementation(async (key: string) => {
+      if (key === 'sub:top-creators:IN') return null
+      if (key === 'sub:top-creators:global') return null
+      return null
+    })
+    queryTopCreatorsByCountry.mockResolvedValue([])
+    queryTopCreatorsGlobal.mockResolvedValue([
+      {
+        id: 'g1',
+        publicId: 101n,
+        username: 'global1',
+        firstName: null,
+        lastName: null,
+        avatarUrl: null,
+        _count: { creatorSubsAsHost: 80 },
+      },
+      {
+        id: 'g2',
+        publicId: 102n,
+        username: 'global2',
+        firstName: null,
+        lastName: null,
+        avatarUrl: null,
+        _count: { creatorSubsAsHost: 70 },
+      },
+    ])
+
+    const result = await subscriptionService.getTopCreatorsByCountry('fan-1')
+
+    expect(queryTopCreatorsByCountry).toHaveBeenCalledWith('IN', 4)
+    expect(queryTopCreatorsGlobal).toHaveBeenCalledWith(4)
+    expect(queryTopCreatorsByPostCount).not.toHaveBeenCalled()
+    expect(result.country).toBe('IN')
+    expect(result.creators).toHaveLength(2)
+    expect(result.creators[0]?.userId).toBe('g1')
+    expect(redisSet).toHaveBeenCalledWith(
+      'sub:top-creators:global',
+      expect.any(String),
+      'EX',
+      300,
+    )
+    expect(redisSet).not.toHaveBeenCalledWith('sub:top-creators:IN', expect.any(String), 'EX', 300)
+  })
+
+  it('getTopCreatorsByCountry falls back to global post count when country and global subscriber pools are empty', async () => {
+    prismaReadUserFindUnique.mockResolvedValue({ country: 'IN' })
+    redisGet.mockResolvedValue(null)
+    queryTopCreatorsByCountry.mockResolvedValue([])
+    queryTopCreatorsGlobal.mockResolvedValue([])
+    queryTopCreatorsByPostCount.mockResolvedValue([
+      {
+        id: 'p1',
+        publicId: 201n,
+        username: 'poster1',
+        firstName: 'Post',
+        lastName: 'One',
+        avatarUrl: 'https://cdn.example/a.png',
+        _count: { creatorSubsAsHost: 0 },
+      },
+    ])
+
+    const result = await subscriptionService.getTopCreatorsByCountry('fan-1')
+
+    expect(queryTopCreatorsByPostCount).toHaveBeenCalledWith(4)
+    expect(result.creators).toHaveLength(1)
+    expect(result.creators[0]).toMatchObject({
+      userId: 'p1',
+      publicId: '201',
+      displayName: 'Post One',
+      subscriberCount: 0,
+    })
   })
 
   it('getSubscriptionFeed returns empty when no ACTIVE subscriptions', async () => {

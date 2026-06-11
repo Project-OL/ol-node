@@ -106,7 +106,7 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Subscriptions'],
         description:
-          'Top creators in the caller country by ACTIVE subscriber count (excludes caller). Requires profile country.',
+          'Top creators for discovery: country by ACTIVE subscriber count (when profile country is set), then app-wide subscribers, then app-wide post count (excludes caller, max 3).',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {

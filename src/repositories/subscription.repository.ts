@@ -8,6 +8,27 @@ const BLOCKED_USER_STATUSES = [
   'deleted',
 ] as const satisfies readonly (typeof USER_STATUSES)[number][]
 
+const topCreatorBySubscriberWhere = {
+  status: { notIn: [...BLOCKED_USER_STATUSES] },
+  creatorSubsAsHost: { some: { status: CreatorSubscriptionStatus.ACTIVE } },
+} as const
+
+const topCreatorBySubscriberSelect = {
+  id: true,
+  publicId: true,
+  username: true,
+  firstName: true,
+  lastName: true,
+  avatarUrl: true,
+  _count: {
+    select: {
+      creatorSubsAsHost: {
+        where: { status: CreatorSubscriptionStatus.ACTIVE },
+      },
+    },
+  },
+} as const
+
 const userListSelect = {
   id: true,
   publicId: true,
@@ -122,33 +143,42 @@ export const subscriptionRepository = {
   },
 
   async queryTopCreatorsByCountry(country: string, limit: number) {
-    const rows = await prismaRead.user.findMany({
+    return prismaRead.user.findMany({
       where: {
         country,
-        status: { notIn: [...BLOCKED_USER_STATUSES] },
-        creatorSubsAsHost: { some: { status: CreatorSubscriptionStatus.ACTIVE } },
+        ...topCreatorBySubscriberWhere,
       },
-      select: {
-        id: true,
-        publicId: true,
-        username: true,
-        firstName: true,
-        lastName: true,
-        avatarUrl: true,
-        _count: {
-          select: {
-            creatorSubsAsHost: {
-              where: { status: CreatorSubscriptionStatus.ACTIVE },
-            },
-          },
-        },
-      },
+      select: topCreatorBySubscriberSelect,
       orderBy: {
         creatorSubsAsHost: { _count: 'desc' },
       },
       take: limit,
     })
-    return rows
+  },
+
+  async queryTopCreatorsGlobal(limit: number) {
+    return prismaRead.user.findMany({
+      where: topCreatorBySubscriberWhere,
+      select: topCreatorBySubscriberSelect,
+      orderBy: {
+        creatorSubsAsHost: { _count: 'desc' },
+      },
+      take: limit,
+    })
+  },
+
+  async queryTopCreatorsByPostCount(limit: number) {
+    return prismaRead.user.findMany({
+      where: {
+        status: { notIn: [...BLOCKED_USER_STATUSES] },
+        posts: { some: {} },
+      },
+      select: topCreatorBySubscriberSelect,
+      orderBy: {
+        posts: { _count: 'desc' },
+      },
+      take: limit,
+    })
   },
 
   async updateByIdInTx(

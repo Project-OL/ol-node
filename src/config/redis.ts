@@ -187,6 +187,10 @@ export const RedisKeys = {
   subscriptionMutationRateLimit: (userId: string) => `ratelimit:subscription:mut:${userId}`,
   /** Country-scoped top creators by ACTIVE subscriber count (discovery). */
   subscriptionTopCreators: (country: string) => `sub:top-creators:${country}`,
+  /** App-wide top creators by ACTIVE subscriber count (country fallback). */
+  subscriptionTopCreatorsGlobal: () => `sub:top-creators:global`,
+  /** App-wide top creators by post count (last-resort fallback). */
+  subscriptionTopCreatorsByPosts: () => `sub:top-creators:global:posts`,
   subscriptionTopCreatorsRateLimit: (userId: string) =>
     `ratelimit:subscription:top-creators:${userId}`,
   subscriptionFeedRateLimit: (userId: string) => `ratelimit:subscription:feed:${userId}`,

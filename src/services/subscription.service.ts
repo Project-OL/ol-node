@@ -130,9 +130,17 @@ function buildDisplayName(user: {
   return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
 
-function mapTopCreatorRow(
-  row: Awaited<ReturnType<typeof subscriptionRepository.queryTopCreatorsByCountry>>[number],
-): TopCreatorCard {
+type TopCreatorRow = {
+  id: string
+  publicId: bigint
+  username: string
+  firstName: string | null
+  lastName: string | null
+  avatarUrl: string | null
+  _count: { creatorSubsAsHost: number }
+}
+
+function mapTopCreatorRow(row: TopCreatorRow): TopCreatorCard {
   return {
     userId: row.id,
     publicId: row.publicId.toString(),
@@ -140,6 +148,25 @@ function mapTopCreatorRow(
     avatarUrl: row.avatarUrl,
     subscriberCount: row._count.creatorSubsAsHost,
   }
+}
+
+function excludeCallerTake3(cards: TopCreatorCard[], userId: string): TopCreatorCard[] {
+  return cards.filter((c) => c.userId !== userId).slice(0, 3)
+}
+
+async function loadTopCreators(
+  cacheKey: string,
+  loader: () => Promise<TopCreatorRow[]>,
+): Promise<TopCreatorCard[]> {
+  const cached = await getRedisForRead().get(cacheKey)
+  if (cached) {
+    return JSON.parse(cached) as TopCreatorCard[]
+  }
+  const cards = (await loader()).map(mapTopCreatorRow)
+  if (cards.length > 0) {
+    await redisClient.set(cacheKey, JSON.stringify(cards), 'EX', SUB_TOP_CREATORS_TTL)
+  }
+  return cards
 }
 
 export const subscriptionService = {
@@ -154,33 +181,35 @@ export const subscriptionService = {
 
   async getTopCreatorsByCountry(
     userId: string,
-  ): Promise<{ creators: TopCreatorCard[]; country: string }> {
+  ): Promise<{ creators: TopCreatorCard[]; country: string | null }> {
     const user = await prismaRead.user.findUnique({
       where: { id: userId },
       select: { country: true },
     })
-    if (!user?.country) {
-      throw new AppError(
-        400,
-        'Please set your country in your profile to see top creators',
-        'COUNTRY_NOT_SET',
+    const country = user?.country ?? null
+
+    if (country) {
+      const countryPool = await loadTopCreators(RedisKeys.subscriptionTopCreators(country), () =>
+        subscriptionRepository.queryTopCreatorsByCountry(country, 4),
       )
+      const countryCreators = excludeCallerTake3(countryPool, userId)
+      if (countryCreators.length > 0) {
+        return { creators: countryCreators, country }
+      }
     }
 
-    const country = user.country
-    const cacheKey = RedisKeys.subscriptionTopCreators(country)
-    const cached = await getRedisForRead().get(cacheKey)
-
-    let top4: TopCreatorCard[]
-    if (cached) {
-      top4 = JSON.parse(cached) as TopCreatorCard[]
-    } else {
-      const rows = await subscriptionRepository.queryTopCreatorsByCountry(country, 4)
-      top4 = rows.map(mapTopCreatorRow)
-      await redisClient.set(cacheKey, JSON.stringify(top4), 'EX', SUB_TOP_CREATORS_TTL)
+    const globalPool = await loadTopCreators(RedisKeys.subscriptionTopCreatorsGlobal(), () =>
+      subscriptionRepository.queryTopCreatorsGlobal(4),
+    )
+    let creators = excludeCallerTake3(globalPool, userId)
+    if (creators.length > 0) {
+      return { creators, country }
     }
 
-    const creators = top4.filter((c) => c.userId !== userId).slice(0, 3)
+    const postsPool = await loadTopCreators(RedisKeys.subscriptionTopCreatorsByPosts(), () =>
+      subscriptionRepository.queryTopCreatorsByPostCount(4),
+    )
+    creators = excludeCallerTake3(postsPool, userId)
     return { creators, country }
   },
 
