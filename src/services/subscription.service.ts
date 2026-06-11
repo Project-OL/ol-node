@@ -24,7 +24,10 @@ import {
   enqueueSubscriptionGrace,
   enqueueSubscriptionRenewal,
 } from '../queues/subscription.queue'
-import { subscriptionRepository } from '../repositories/subscription.repository'
+import {
+  subscriptionRepository,
+  type TopCreatorQueryRow,
+} from '../repositories/subscription.repository'
 import { userRepository } from '../repositories/user.repository'
 import { userSubscriberRepository } from '../repositories/userSubscriber.repository'
 import { hostRevenuePointsFromCoins } from '../config/host-revenue-shares'
@@ -130,17 +133,7 @@ function buildDisplayName(user: {
   return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
 
-type TopCreatorRow = {
-  id: string
-  publicId: bigint
-  username: string
-  firstName: string | null
-  lastName: string | null
-  avatarUrl: string | null
-  _count: { creatorSubsAsHost: number }
-}
-
-function mapTopCreatorRow(row: TopCreatorRow): TopCreatorCard {
+function mapTopCreatorRow(row: TopCreatorQueryRow): TopCreatorCard {
   return {
     userId: row.id,
     publicId: row.publicId.toString(),
@@ -156,7 +149,7 @@ function excludeCallerTake3(cards: TopCreatorCard[], userId: string): TopCreator
 
 async function loadTopCreators(
   cacheKey: string,
-  loader: () => Promise<TopCreatorRow[]>,
+  loader: () => Promise<TopCreatorQueryRow[]>,
 ): Promise<TopCreatorCard[]> {
   const cached = await getRedisForRead().get(cacheKey)
   if (cached) {

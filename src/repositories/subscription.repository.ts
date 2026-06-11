@@ -11,7 +11,7 @@ const BLOCKED_USER_STATUSES = [
 const topCreatorBySubscriberWhere = {
   status: { notIn: [...BLOCKED_USER_STATUSES] },
   creatorSubsAsHost: { some: { status: CreatorSubscriptionStatus.ACTIVE } },
-} as const
+} satisfies Prisma.UserWhereInput
 
 const topCreatorBySubscriberSelect = {
   id: true,
@@ -28,6 +28,10 @@ const topCreatorBySubscriberSelect = {
     },
   },
 } as const
+
+export type TopCreatorQueryRow = Prisma.UserGetPayload<{
+  select: typeof topCreatorBySubscriberSelect
+}>
 
 const userListSelect = {
   id: true,
@@ -142,7 +146,7 @@ export const subscriptionRepository = {
     })
   },
 
-  async queryTopCreatorsByCountry(country: string, limit: number) {
+  async queryTopCreatorsByCountry(country: string, limit: number): Promise<TopCreatorQueryRow[]> {
     return prismaRead.user.findMany({
       where: {
         country,
@@ -156,7 +160,7 @@ export const subscriptionRepository = {
     })
   },
 
-  async queryTopCreatorsGlobal(limit: number) {
+  async queryTopCreatorsGlobal(limit: number): Promise<TopCreatorQueryRow[]> {
     return prismaRead.user.findMany({
       where: topCreatorBySubscriberWhere,
       select: topCreatorBySubscriberSelect,
@@ -167,7 +171,7 @@ export const subscriptionRepository = {
     })
   },
 
-  async queryTopCreatorsByPostCount(limit: number) {
+  async queryTopCreatorsByPostCount(limit: number): Promise<TopCreatorQueryRow[]> {
     return prismaRead.user.findMany({
       where: {
         status: { notIn: [...BLOCKED_USER_STATUSES] },
