@@ -15,6 +15,7 @@ import {
   loginPasswordBodySchema,
   refreshBodySchema,
   sessionRevokeBodySchema,
+  tokenLogoutBodySchema,
   passwordResetSendOtpBodySchema,
   passwordResetSendOtpToProviderBodySchema,
   passwordResetVerifyOtpBodySchema,
@@ -225,6 +226,38 @@ export default async function authRoutes(app: FastifyInstance) {
     const result = await authV2Service.logout(userId, payload, request)
     return reply.send(result)
   })
+
+  app.post(
+    '/logout/token',
+    { preHandler: [authRateLimits.logoutToken] },
+    async (request, reply) => {
+      const parsed = tokenLogoutBodySchema.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.status(400).send({
+          code: 'INVALID_REQUEST',
+          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        })
+      }
+      const result = await authV2Service.logoutByAccessToken(parsed.data.accessToken, request)
+      return reply.send(result)
+    },
+  )
+
+  app.post(
+    '/access/invalidate',
+    { preHandler: [authRateLimits.invalidateAccessToken] },
+    async (request, reply) => {
+      const parsed = tokenLogoutBodySchema.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.status(400).send({
+          code: 'INVALID_REQUEST',
+          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        })
+      }
+      const result = await authV2Service.invalidateAccessByToken(parsed.data.accessToken, request)
+      return reply.send(result)
+    },
+  )
 
   app.post('/session/revoke', { preHandler: [authenticate] }, async (request, reply) => {
     const userId = (request as { userId?: string }).userId

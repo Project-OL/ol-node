@@ -239,6 +239,16 @@ export const sessionRepository = {
     })
   },
 
+  /** Bump session tokenVersion only (invalidates outstanding access JWTs; refresh hash unchanged). */
+  async bumpTokenVersionOnly(sessionId: string): Promise<{ sessionTokenVersion: number }> {
+    const row = await prisma.session.update({
+      where: { id: sessionId },
+      data: { tokenVersion: { increment: 1 } },
+      select: { tokenVersion: true },
+    })
+    return { sessionTokenVersion: row.tokenVersion }
+  },
+
   /** In-place refresh rotation: new hash + bump session tokenVersion (invalidates old access JWTs for this session). */
   async updateRefreshTokenAndBumpVersion(
     sessionId: string,

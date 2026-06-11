@@ -366,6 +366,48 @@ export const sessionService = {
     await writeSessionRedis(sessionId, hydrated)
   },
 
+  /**
+   * Invalidate outstanding access JWTs for this session without revoking refresh.
+   * Bumps sessions.token_version (access checks return SESSION_TOKEN_STALE); refresh hash unchanged.
+   */
+  async invalidateAccessToken(
+    sessionId: string,
+    userId: string,
+  ): Promise<{ sessionTokenVersion: number }> {
+    const session = await sessionRepository.findById(sessionId)
+    if (!session) throw new AppError(404, 'Session not found', 'SESSION_NOT_FOUND')
+    if (session.userId !== userId) {
+      throw new AppError(403, 'Cannot invalidate another user session', 'FORBIDDEN')
+    }
+    if (session.isRevoked || !session.isActive) {
+      throw new AppError(401, 'Session invalid', 'SESSION_INVALID')
+    }
+
+    const { sessionTokenVersion } = await sessionRepository.bumpTokenVersionOnly(sessionId)
+
+    const raw = await redisClient.get(RedisKeys.session(sessionId))
+    if (raw) {
+      try {
+        const blob = JSON.parse(raw) as SessionRedisBlob
+        if (!blob.revoked && blob.userId === userId) {
+          await writeSessionRedis(sessionId, { ...blob, sessionTokenVersion })
+        }
+      } catch {
+        const hydrated = await hydrateSessionBlob(sessionId)
+        if (hydrated) {
+          await writeSessionRedis(sessionId, { ...hydrated, sessionTokenVersion })
+        }
+      }
+    } else {
+      const hydrated = await hydrateSessionBlob(sessionId)
+      if (hydrated) {
+        await writeSessionRedis(sessionId, { ...hydrated, sessionTokenVersion })
+      }
+    }
+
+    return { sessionTokenVersion }
+  },
+
   async revokeSession(sessionId: string, userId: string) {
     const session = await sessionRepository.findById(sessionId)
     if (!session) throw new AppError(404, 'Session not found', 'SESSION_NOT_FOUND')

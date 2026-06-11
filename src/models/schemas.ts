@@ -116,6 +116,11 @@ export const logoutBodySchema = z
   })
   .optional()
 
+/** Body for POST /auth/logout/token — revoke session from access JWT in request body. */
+export const tokenLogoutBodySchema = z.object({
+  accessToken: z.string().min(1, 'accessToken required'),
+})
+
 // Password reset send OTP
 export const passwordResetSendOtpBodySchema = z.object({
   identifier: z.string().min(1),

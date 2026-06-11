@@ -256,6 +256,16 @@ export const authRateLimits = {
     max: 5,
     windowMs: 86400000,
   }),
+  logoutToken: createAuthRateLimit({
+    endpoint: 'auth.logout.token',
+    max: 30,
+    windowMs: 60000,
+  }),
+  invalidateAccessToken: createAuthRateLimit({
+    endpoint: 'auth.access.invalidate',
+    max: 30,
+    windowMs: 60000,
+  }),
 }
 
 /** Per-user rate limiters for security password (use after authenticate). */

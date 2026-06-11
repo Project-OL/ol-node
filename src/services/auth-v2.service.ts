@@ -9,7 +9,7 @@
 import crypto from 'crypto'
 import { prisma } from '../config/database'
 import { redisClient, RedisKeys } from '../config/redis'
-import { signAccess, signRefresh } from '../utils/jwt'
+import { signAccess, signRefresh, verifyAccessForLogout } from '../utils/jwt'
 import { authIdentifierRepository } from '../repositories/auth-identifier.repository'
 import { authPasswordRepository } from '../repositories/auth-password.repository'
 import { userRepository } from '../repositories/user.repository'
@@ -478,7 +478,86 @@ export const authV2Service = {
     if (!sessionId) {
       throw new AppError(400, 'Session id missing from token', 'SESSION_ID_REQUIRED')
     }
-    await sessionService.revokeSession(sessionId, userId)
+    return this.revokeAccessTokenSession(userId, sessionId, request)
+  },
+
+  /**
+   * Logout using access JWT from request body (no Authorization header).
+   * Accepts expired tokens when signature is still valid.
+   */
+  async logoutByAccessToken(
+    accessToken: string,
+    request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
+    let payload: JwtAccessPayload
+    try {
+      payload = verifyAccessForLogout(accessToken)
+    } catch {
+      throw new AppError(401, 'Invalid token', 'INVALID_TOKEN')
+    }
+    const userId = payload.userId ?? payload.sub
+    if (!userId) {
+      throw new AppError(401, 'Invalid token', 'INVALID_TOKEN')
+    }
+    const sessionId = payload.sessionId
+    if (!sessionId) {
+      throw new AppError(400, 'Session id missing from token', 'SESSION_ID_REQUIRED')
+    }
+    return this.revokeAccessTokenSession(userId, sessionId, request)
+  },
+
+  /**
+   * Soft logout: invalidate the given access JWT only. Session + refresh stay valid.
+   * Client should call POST /auth/refresh to obtain a new access token.
+   */
+  async invalidateAccessByToken(
+    accessToken: string,
+    request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
+    let payload: JwtAccessPayload
+    try {
+      payload = verifyAccessForLogout(accessToken)
+    } catch {
+      throw new AppError(401, 'Invalid token', 'INVALID_TOKEN')
+    }
+    const userId = payload.userId ?? payload.sub
+    if (!userId) {
+      throw new AppError(401, 'Invalid token', 'INVALID_TOKEN')
+    }
+    const sessionId = payload.sessionId
+    if (!sessionId) {
+      throw new AppError(400, 'Session id missing from token', 'SESSION_ID_REQUIRED')
+    }
+
+    const { sessionTokenVersion } = await sessionService.invalidateAccessToken(sessionId, userId)
+    await auditService.log({
+      userId,
+      actionType: 'ACCESS_TOKEN_INVALIDATED',
+      actionStatus: 'success',
+      actionDetails: { sessionId, sessionTokenVersion },
+      request: request
+        ? { ip: getIp(request), headers: normalizeHeaders(request.headers) }
+        : undefined,
+    })
+    return {
+      message: 'Access token invalidated; refresh to continue',
+      sessionTokenVersion,
+    }
+  },
+
+  async revokeAccessTokenSession(
+    userId: string,
+    sessionId: string,
+    request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
+  ) {
+    try {
+      await sessionService.revokeSession(sessionId, userId)
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'SESSION_NOT_FOUND') {
+        return { message: 'Logged out successfully' as const, alreadyRevoked: true as const }
+      }
+      throw e
+    }
     await auditService.log({
       userId,
       actionType: 'LOGOUT_SESSION_REVOKED',
@@ -488,7 +567,7 @@ export const authV2Service = {
         ? { ip: getIp(request), headers: normalizeHeaders(request.headers) }
         : undefined,
     })
-    return { message: 'Logged out successfully' }
+    return { message: 'Logged out successfully' as const }
   },
 
   // ----- Phase 3: Password reset -----

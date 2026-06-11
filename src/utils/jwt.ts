@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken'
+import jwt, { TokenExpiredError } from 'jsonwebtoken'
 import { env } from '../config/env'
 import type { JwtAccessPayload, JwtRefreshPayload } from '../models/types'
 
@@ -34,6 +34,21 @@ export function signRefresh(payload: Omit<JwtRefreshPayload, 'iat' | 'exp'>): st
 
 export function verifyAccess(token: string): JwtAccessPayload {
   return jwt.verify(token, ACCESS_SECRET, { algorithms: ['HS256'] }) as JwtAccessPayload
+}
+
+/** Verify access JWT for logout; accepts cryptographically valid but expired tokens. */
+export function verifyAccessForLogout(token: string): JwtAccessPayload {
+  try {
+    return verifyAccess(token)
+  } catch (e) {
+    if (e instanceof TokenExpiredError) {
+      return jwt.verify(token, ACCESS_SECRET, {
+        algorithms: ['HS256'],
+        ignoreExpiration: true,
+      }) as JwtAccessPayload
+    }
+    throw e
+  }
 }
 
 export function verifyRefresh(token: string): JwtRefreshPayload {
