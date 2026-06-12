@@ -126,7 +126,8 @@ export default async function deviceRoutes(app: FastifyInstance) {
       preHandler: [...preAuth, deviceRateLimits.list],
       schema: {
         tags: ['Devices'],
-        description: 'List accounts linked to the current device',
+        description:
+          'List accounts with an active session on the current device (from JWT deviceId)',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {

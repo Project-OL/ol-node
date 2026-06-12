@@ -15,12 +15,15 @@ vi.mock('../../src/config/redis', () => ({
 
 const countLinkedAccounts = vi.fn()
 const findLinkedAccounts = vi.fn()
+const findActiveSessionAccountsOnDevice = vi.fn()
 const upsertLinkedAccount = vi.fn()
 const deleteLinkedAccount = vi.fn()
 vi.mock('../../src/repositories/device.repository', () => ({
   deviceRepository: {
     countLinkedAccounts: (...args: unknown[]) => countLinkedAccounts(...args),
     findLinkedAccounts: (...args: unknown[]) => findLinkedAccounts(...args),
+    findActiveSessionAccountsOnDevice: (...args: unknown[]) =>
+      findActiveSessionAccountsOnDevice(...args),
     upsertLinkedAccount: (...args: unknown[]) => upsertLinkedAccount(...args),
     deleteLinkedAccount: (...args: unknown[]) => deleteLinkedAccount(...args),
   },
@@ -145,10 +148,10 @@ describe('deviceService linked accounts', () => {
       const result = await deviceService.getLinkedAccounts(deviceId)
 
       expect(result).toEqual(cached)
-      expect(findLinkedAccounts).not.toHaveBeenCalled()
+      expect(findActiveSessionAccountsOnDevice).not.toHaveBeenCalled()
     })
 
-    it('fetches from repo and caches on miss', async () => {
+    it('fetches active session accounts from repo and caches on miss', async () => {
       cacheGet.mockResolvedValue(null)
       const accounts = [
         {
@@ -160,12 +163,13 @@ describe('deviceService linked accounts', () => {
           lastUsedAt: new Date(),
         },
       ]
-      findLinkedAccounts.mockResolvedValue(accounts)
+      findActiveSessionAccountsOnDevice.mockResolvedValue(accounts)
 
       const result = await deviceService.getLinkedAccounts(deviceId)
 
       expect(result).toHaveLength(1)
-      expect(findLinkedAccounts).toHaveBeenCalledWith(deviceId)
+      expect(findActiveSessionAccountsOnDevice).toHaveBeenCalledWith(deviceId)
+      expect(findLinkedAccounts).not.toHaveBeenCalled()
       expect(cacheSet).toHaveBeenCalledWith(
         `device:${deviceId}:linked`,
         expect.any(String),

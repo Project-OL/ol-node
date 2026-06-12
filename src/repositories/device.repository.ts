@@ -54,6 +54,49 @@ export const deviceRepository = {
     })
   },
 
+  async findActiveSessionAccountsOnDevice(deviceId: string): Promise<LinkedAccountWithUser[]> {
+    const sessions = await prismaRead.session.findMany({
+      where: {
+        deviceId,
+        isActive: true,
+        isRevoked: false,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { lastActiveAt: 'desc' },
+      distinct: ['userId'],
+      include: {
+        user: {
+          select: {
+            id: true,
+            publicId: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    })
+
+    return sessions.map((session) => {
+      const { user } = session
+      const fullName =
+        user.firstName && user.lastName
+          ? `${user.firstName} ${user.lastName}`
+          : (user.firstName ?? user.lastName)
+      const displayName = fullName && fullName.trim().length > 0 ? fullName : user.username
+
+      return {
+        userId: user.id,
+        publicId: Number(user.publicId),
+        displayName,
+        avatarUrl: user.avatarUrl,
+        linkedAt: session.createdAt,
+        lastUsedAt: session.lastActiveAt,
+      }
+    })
+  },
+
   async findLinkedAccounts(deviceId: string): Promise<LinkedAccountWithUser[]> {
     const rows = await prismaRead.deviceLinkedAccount.findMany({
       where: { deviceId },

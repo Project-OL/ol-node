@@ -415,6 +415,9 @@ export const sessionService = {
       throw new AppError(403, 'Cannot revoke another user session', 'FORBIDDEN')
     await sessionRepository.revokeById(sessionId)
     await redisClient.del(RedisKeys.session(sessionId))
+    if (session.deviceId) {
+      await redisClient.del(RedisKeys.deviceLinkedAccounts(session.deviceId))
+    }
     authSessionMetrics.bumpRevoke()
   },
 
@@ -427,9 +430,13 @@ export const sessionService = {
     const sessions = await sessionRepository.findActiveByUserId(userId)
     await sessionRepository.revokeAllByUserId(userId)
     if (sessions.length > 0) {
+      const deviceIds = new Set(sessions.map((s) => s.deviceId).filter(Boolean))
       const pipe = redisClient.pipeline()
       for (const s of sessions) {
         pipe.del(RedisKeys.session(s.id))
+      }
+      for (const deviceId of deviceIds) {
+        pipe.del(RedisKeys.deviceLinkedAccounts(deviceId))
       }
       await pipe.exec()
     }

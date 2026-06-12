@@ -303,7 +303,7 @@ export const deviceService = {
       return JSON.parse(cached) as LinkedAccountWithUser[]
     }
 
-    const accounts = await deviceRepository.findLinkedAccounts(deviceId)
+    const accounts = await deviceRepository.findActiveSessionAccountsOnDevice(deviceId)
     await cacheService.set(cacheKey, JSON.stringify(accounts), 1800)
     return accounts
   },

@@ -31,7 +31,7 @@ const MONTHLY_PRICE: Record<GuardianTier, number> = {
 const DURATION_MULTIPLIER: Record<number, number> = {
   1: 1,
   3: 3,
-  6: 9,
+  6: 6,
   12: 12,
 }
 
