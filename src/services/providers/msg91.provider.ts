@@ -38,7 +38,7 @@ function isExpectedProviderError(error: unknown): error is AxiosError {
   return axios.isAxiosError(error)
 }
 
-function mergeTemplateVariables(
+function buildWhatsappTemplateVariables(
   otp: string,
   purpose: string,
   templateVariables?: Record<string, string>,
@@ -51,10 +51,25 @@ function mergeTemplateVariables(
   }
 }
 
+/** MSG91 SMS template exposes a single placeholder named `var` for the OTP. */
+function buildSmsTemplateVariables(
+  otp: string,
+  templateVariables?: Record<string, string>,
+): Record<string, string> {
+  return {
+    var: otp,
+    ...(templateVariables ?? {}),
+  }
+}
+
 export const msg91Provider = {
   async sendWhatsappOtp(params: WhatsappOtpParams): Promise<OtpProviderResult> {
     try {
-      const variables = mergeTemplateVariables(params.otp, params.purpose, params.templateVariables)
+      const variables = buildWhatsappTemplateVariables(
+        params.otp,
+        params.purpose,
+        params.templateVariables,
+      )
       const response = await msg91Client.post(
         '/api/v5/whatsapp/whatsapp-outbound-message/bulk/',
         {
@@ -95,7 +110,7 @@ export const msg91Provider = {
 
   async sendSmsOtp(params: SmsOtpParams): Promise<OtpProviderResult> {
     try {
-      const variables = mergeTemplateVariables(params.otp, params.purpose, params.templateVariables)
+      const variables = buildSmsTemplateVariables(params.otp, params.templateVariables)
       const response = await msg91Client.post(
         '/api/v5/flow/',
         {
