@@ -53,6 +53,7 @@ export const cacheService = {
    */
   async invalidateUserAuthIdentifiers(userId: string): Promise<void> {
     await redisClient.del(RedisKeys.userAuthIdentifiers(userId))
+    await redisClient.del(RedisKeys.userSecurityIdentifiers(userId))
   },
 
   /**

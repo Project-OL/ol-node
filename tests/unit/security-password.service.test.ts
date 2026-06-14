@@ -124,16 +124,17 @@ describe('securityPasswordService', () => {
       expect(findByUserId).not.toHaveBeenCalled()
     })
 
-    it('filters to verified only', async () => {
+    it('returns all email and phone identifiers (not only isVerified)', async () => {
       findByUserId.mockResolvedValue([
         { id: '1', userId, provider: 'email', identifier: 'a@b.com', isVerified: true },
-        { id: '2', userId, provider: 'phone', identifier: '+123', isVerified: false },
+        { id: '2', userId, provider: 'phone', identifier: '+1234567890', isVerified: false },
+        { id: '3', userId, provider: 'google', identifier: 'google-sub', isVerified: true },
       ])
 
       const result = await securityPasswordService.getIdentifiers(userId)
 
-      expect(result).toHaveLength(1)
-      expect(result[0].provider).toBe('email')
+      expect(result).toHaveLength(2)
+      expect(result.map((r) => r.provider)).toEqual(['email', 'phone'])
     })
   })
 
@@ -179,11 +180,20 @@ describe('securityPasswordService', () => {
       })
     })
 
-    it('throws IDENTIFIER_NOT_VERIFIED when not verified', async () => {
+    it('sends OTP for unverified email or phone bound to user', async () => {
       findById.mockResolvedValue({ ...verifiedIdentifier, isVerified: false })
 
+      const result = await securityPasswordService.sendOtpForPassword(userId, identifierId)
+
+      expect(result.otpSent).toBe(true)
+      expect(otpCreateAndStore).toHaveBeenCalled()
+    })
+
+    it('throws INVALID_IDENTIFIER for non-OTP providers', async () => {
+      findById.mockResolvedValue({ ...verifiedIdentifier, provider: 'google', identifier: 'sub-1' })
+
       await expect(securityPasswordService.sendOtpForPassword(userId, identifierId)).rejects.toMatchObject({
-        code: 'IDENTIFIER_NOT_VERIFIED',
+        code: 'INVALID_IDENTIFIER',
         statusCode: 400,
       })
     })

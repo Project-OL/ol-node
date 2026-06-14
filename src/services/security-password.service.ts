@@ -12,6 +12,7 @@ import { passwordService } from './password.service'
 import { auditService } from './audit.service'
 import { AppError } from '../middlewares/errorHandler'
 
+const OTP_ELIGIBLE_PROVIDERS = new Set(['email', 'phone'])
 const LOCKOUT_MS = env.SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES * 60 * 1000
 const RESET_TOKEN_TTL = env.SECURITY_PASSWORD_RESET_TOKEN_EXPIRY_SECONDS
 const IDENTIFIERS_CACHE_TTL = 3600
@@ -45,8 +46,8 @@ export const securityPasswordService = {
     }
 
     const rows = await authIdentifierRepository.findByUserId(userId)
-    const verified = rows.filter((r) => r.isVerified)
-    const result: SecurityIdentifierView[] = verified.map((r) => ({
+    const eligible = rows.filter((r) => OTP_ELIGIBLE_PROVIDERS.has(r.provider))
+    const result: SecurityIdentifierView[] = eligible.map((r) => ({
       id: r.id,
       provider: r.provider,
       identifier: r.identifier,
@@ -70,8 +71,8 @@ export const securityPasswordService = {
     if (!identifier || identifier.userId !== userId) {
       throw new AppError(404, 'Auth identifier not found', 'IDENTIFIER_NOT_FOUND')
     }
-    if (!identifier.isVerified) {
-      throw new AppError(400, 'Identifier not verified', 'IDENTIFIER_NOT_VERIFIED')
+    if (!OTP_ELIGIBLE_PROVIDERS.has(identifier.provider)) {
+      throw new AppError(400, 'Identifier cannot receive OTP', 'INVALID_IDENTIFIER')
     }
 
     await otpAuthService.createAndStore({
