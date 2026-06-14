@@ -1,0 +1,141 @@
+import { randomUUID } from 'crypto'
+import { CoinTxType, PointTxType, WalletCurrencyType } from '@prisma/client'
+import { prisma } from '../config/database'
+import { AppError } from '../middlewares/errorHandler'
+import { userRepository } from '../repositories/user.repository'
+import { auditService } from './audit.service'
+import { coinWalletService } from './coin-wallet.service'
+import { pointWalletService } from './point-wallet.service'
+import { walletService } from './wallet.service'
+
+const TX_TIMEOUT_MS = 20_000
+
+export type AdminWalletCreditResult = {
+  ok: true
+  userId: string
+  credited: {
+    coins?: string
+    points?: string
+    tradingCoins?: string
+  }
+  balances: {
+    coins?: { ledgerEntryId: string; balanceAfter: string }
+    points?: { ledgerEntryId: string; balanceAfter: string }
+    tradingCoins?: { ledgerEntryId: string; balanceAfter: string }
+  }
+}
+
+export const adminWalletService = {
+  async creditUserWallets(params: {
+    adminUserId: string
+    targetUserId: string
+    coins?: bigint
+    points?: bigint
+    tradingCoins?: bigint
+    description?: string
+    idempotencyKey?: string
+  }): Promise<AdminWalletCreditResult> {
+    const hasCoins = params.coins != null && params.coins > 0n
+    const hasPoints = params.points != null && params.points > 0n
+    const hasTrading = params.tradingCoins != null && params.tradingCoins > 0n
+    if (!hasCoins && !hasPoints && !hasTrading) {
+      throw new AppError(400, 'At least one positive amount is required', 'INVALID_REQUEST')
+    }
+
+    const user = await userRepository.findById(params.targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const baseKey =
+      params.idempotencyKey?.trim() ||
+      `admin-wallet-credit:${params.adminUserId}:${randomUUID()}`
+    const description = params.description?.trim() || 'Admin wallet adjustment'
+    const metadata = { adminUserId: params.adminUserId, source: 'admin_wallet_credit' }
+
+    const credited: AdminWalletCreditResult['credited'] = {}
+    const balances: AdminWalletCreditResult['balances'] = {}
+
+    if (hasPoints) {
+      const points = params.points!
+      const entry = await pointWalletService.creditPoints({
+        userId: params.targetUserId,
+        amount: points,
+        txType: PointTxType.ADJUSTMENT,
+        description,
+        metadata,
+        idempotencyKey: `${baseKey}:points`,
+      })
+      credited.points = points.toString()
+      balances.points = {
+        ledgerEntryId: entry.ledgerEntryId,
+        balanceAfter: entry.balanceAfter,
+      }
+    }
+
+    if (hasCoins) {
+      const coins = params.coins!
+      const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
+        async (tx) =>
+          coinWalletService.credit(params.targetUserId, coins, CoinTxType.ADJUSTMENT, tx, {
+            idempotencyKey: `${baseKey}:coins`,
+            description,
+            metadata,
+            applyWealthCredit: false,
+            currencyType: WalletCurrencyType.COIN,
+          }),
+        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      )
+      await walletService.adjustCoinBalanceCache(params.targetUserId, coins)
+      credited.coins = coins.toString()
+      balances.coins = {
+        ledgerEntryId,
+        balanceAfter: balanceAfter.toString(),
+      }
+    }
+
+    if (hasTrading) {
+      const tradingCoins = params.tradingCoins!
+      const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
+        async (tx) =>
+          coinWalletService.credit(
+            params.targetUserId,
+            tradingCoins,
+            CoinTxType.ADJUSTMENT,
+            tx,
+            {
+              idempotencyKey: `${baseKey}:trading`,
+              description,
+              metadata,
+              applyWealthCredit: false,
+              currencyType: WalletCurrencyType.TRADING_COIN,
+            },
+          ),
+        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      )
+      await walletService.adjustTradingBalanceCache(params.targetUserId)
+      credited.tradingCoins = tradingCoins.toString()
+      balances.tradingCoins = {
+        ledgerEntryId,
+        balanceAfter: balanceAfter.toString(),
+      }
+    }
+
+    auditService.log({
+      userId: params.adminUserId,
+      actionType: 'ADMIN_WALLET_CREDIT',
+      actionStatus: 'success',
+      actionDetails: {
+        targetUserId: params.targetUserId,
+        credited,
+        description,
+        idempotencyKey: baseKey,
+      },
+    })
+
+    return {
+      ok: true,
+      userId: params.targetUserId,
+      credited,
+      balances,
+    }
+  },
+}

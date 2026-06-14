@@ -4,6 +4,8 @@ import { z } from 'zod'
 import { requireAdmin } from '../../middlewares/requireAdmin'
 import { AppError } from '../../middlewares/errorHandler'
 import { agencyAgentApplicationRepository } from '../../repositories/agencyAgentApplication.repository'
+import { agencyAgentApplicationService } from '../../services/agencyAgentApplication.service'
+import { adminWalletService } from '../../services/adminWallet.service'
 import { agencyService } from '../../services/agency.service'
 import { agencyHostService } from '../../services/agencyHost.service'
 import { agencyCommissionService } from '../../services/agencyCommission.service'
@@ -30,9 +32,30 @@ const listAgentApplicationsQuerySchema = z.object({
   status: z
     .enum(['PENDING', 'UNDER_REVIEW', 'MORE_DOCS_REQUIRED', 'APPROVED', 'REJECTED'])
     .optional(),
+  /** When true (default), returns open review queue only. When false with no `status`, returns all. */
+  forReview: z.coerce.boolean().optional(),
   skip: z.coerce.number().int().min(0).default(0),
-  take: z.coerce.number().int().min(1).max(50).default(20),
+  take: z.coerce.number().int().min(1).max(100).default(20),
 })
+
+const positiveAmountString = z
+  .string()
+  .regex(/^\d+$/, 'Must be a non-negative integer string')
+  .transform((v) => BigInt(v))
+  .refine((v) => v > 0n, 'Amount must be positive')
+
+const adminWalletCreditBodySchema = z
+  .object({
+    coins: positiveAmountString.optional(),
+    points: positiveAmountString.optional(),
+    tradingCoins: positiveAmountString.optional(),
+    description: z.string().min(1).max(500).optional(),
+    idempotencyKey: z.string().min(8).max(128).optional(),
+  })
+  .refine(
+    (body) => body.coins != null || body.points != null || body.tradingCoins != null,
+    { message: 'At least one of coins, points, or tradingCoins is required' },
+  )
 
 const agentApplicationStatusPatchSchema = z.object({
   status: z.enum(['UNDER_REVIEW', 'MORE_DOCS_REQUIRED', 'REJECTED']),
@@ -91,14 +114,38 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     { preHandler: [requireAdmin] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const q = listAgentApplicationsQuerySchema.parse(request.query ?? {})
+      const forReview = q.forReview ?? true
       const statuses = q.status
         ? ([q.status] as AgencyAgentApplicationStatus[])
-        : DEFAULT_AGENT_APP_LIST_STATUSES
-      const [items, total] = await Promise.all([
-        agencyAgentApplicationRepository.listByStatus(statuses, q.skip, q.take),
-        agencyAgentApplicationRepository.count(statuses),
-      ])
-      return reply.send({ items, total, skip: q.skip, take: q.take })
+        : forReview
+          ? DEFAULT_AGENT_APP_LIST_STATUSES
+          : undefined
+      const result = await agencyAgentApplicationService.listForAdminReview({
+        statuses,
+        skip: q.skip,
+        take: q.take,
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/wallet/credit',
+    { preHandler: [requireAdmin] },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const adminUserId = request.userId
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = adminWalletCreditBodySchema.parse(request.body ?? {})
+      const result = await adminWalletService.creditUserWallets({
+        adminUserId,
+        targetUserId: request.params.userId,
+        coins: body.coins,
+        points: body.points,
+        tradingCoins: body.tradingCoins,
+        description: body.description,
+        idempotencyKey: body.idempotencyKey,
+      })
+      return reply.send(result)
     },
   )
 

@@ -51,7 +51,16 @@ export const agencyAgentApplicationRepository = {
       skip,
       take,
       include: {
-        user: { select: { id: true, username: true, firstName: true, lastName: true } },
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            defaultPublicId: true,
+            faceProfile: { select: { status: true } },
+          },
+        },
         kyc: true,
       },
     })
