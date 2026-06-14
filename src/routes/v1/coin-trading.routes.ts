@@ -35,6 +35,7 @@ const transferSchema = z.object({
 
 const ListTransfersQuerySchema = z.object({
   direction: z.enum(['credit', 'debit']).optional(),
+  role: z.enum(['sent', 'received']).optional(),
   fromDate: z.string().datetime().optional(),
   toDate: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),

@@ -137,6 +137,26 @@ export const coinTradingRepository = {
       select: { id: true, balanceAfter: true },
     })
   },
+  /** Resolve coin_trading_transfers rows for ledger history legacy fields. */
+  findTransfersByLedgerEntryIds(ledgerEntryIds: string[]) {
+    if (ledgerEntryIds.length === 0) return Promise.resolve([])
+    return prismaRead.coinTradingTransfer.findMany({
+      where: {
+        OR: [
+          { senderLedgerEntryId: { in: ledgerEntryIds } },
+          { recipientLedgerEntryId: { in: ledgerEntryIds } },
+        ],
+      },
+      select: {
+        id: true,
+        senderLedgerEntryId: true,
+        recipientLedgerEntryId: true,
+        tradingCoinsDebited: true,
+        coinsCredited: true,
+        recipientWalletType: true,
+      },
+    })
+  },
   async getRecentTransactionUsers(agencyUserId: string, limit = 10) {
     const rows = await prismaRead.$queryRaw<
       Array<{

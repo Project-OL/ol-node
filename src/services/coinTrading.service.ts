@@ -485,14 +485,23 @@ export const coinTradingService = {
         : []
     const counterpartyMap = new Map(counterpartyUsers.map((u) => [u.id, u]))
 
+    const ledgerIds = page.map((e) => e.id)
+    const transferRows = await coinTradingRepository.findTransfersByLedgerEntryIds(ledgerIds)
+    const transferByLedgerId = new Map<string, (typeof transferRows)[number]>()
+    for (const t of transferRows) {
+      transferByLedgerId.set(t.senderLedgerEntryId, t)
+      transferByLedgerId.set(t.recipientLedgerEntryId, t)
+    }
+
     const items = page.map((e) => {
       const cp = e.counterpartyId ? counterpartyMap.get(e.counterpartyId) : null
       const isDebit = e.direction === LedgerDirection.DEBIT
-      return {
+      const amountStr = e.amount.toString()
+      const base = {
         id: e.id,
         direction: isDebit ? ('debit' as const) : ('credit' as const),
         txType: e.txType,
-        amount: e.amount.toString(),
+        amount: amountStr,
         balanceAfter: e.balanceAfter.toString(),
         description: e.description,
         refId: e.refId,
@@ -505,6 +514,28 @@ export const coinTradingService = {
               publicId: cp.publicId.toString(),
             }
           : null,
+      }
+
+      const isTransferLeg =
+        e.txType === CoinTxType.TRADING_TRANSFER_OUT ||
+        e.txType === CoinTxType.TRADING_TRANSFER_IN
+      if (!isTransferLeg) return base
+
+      const transfer = transferByLedgerId.get(e.id)
+      if (transfer) {
+        return {
+          ...base,
+          transferId: transfer.id,
+          tradingCoinsDebited: transfer.tradingCoinsDebited.toString(),
+          coinsCredited: transfer.coinsCredited.toString(),
+          recipientWalletType: transfer.recipientWalletType,
+        }
+      }
+
+      return {
+        ...base,
+        tradingCoinsDebited: amountStr,
+        coinsCredited: amountStr,
       }
     })
 
