@@ -10,6 +10,7 @@ import {
   rateLimitCtTransfer,
 } from '../../middlewares/rateLimitAuth'
 import { userRepository } from '../../repositories/user.repository'
+import { env } from '../../config/env'
 
 const topupSchema = z
   .object({
@@ -33,14 +34,26 @@ const transferSchema = z.object({
   idempotencyKey: z.string().min(1),
 })
 
+const listTransfersRoleSchema =
+  env.NODE_ENV === 'production'
+    ? z.enum(['sent', 'received']).optional()
+    : z.enum(['sent', 'received', 'all']).optional()
+
 const ListTransfersQuerySchema = z.object({
   direction: z.enum(['credit', 'debit']).optional(),
-  role: z.enum(['sent', 'received']).optional(),
+  role: listTransfersRoleSchema,
   fromDate: z.string().datetime().optional(),
   toDate: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().uuid().optional(),
 })
+
+function resolveTransferDirection(parsed: z.infer<typeof ListTransfersQuerySchema>) {
+  if (parsed.direction) return parsed.direction
+  if (parsed.role === 'sent') return 'debit' as const
+  if (parsed.role === 'received') return 'credit' as const
+  return undefined
+}
 
 export default async function coinTradingRoutes(app: FastifyInstance) {
   app.get(
@@ -150,7 +163,7 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const parsed = ListTransfersQuerySchema.parse(request.query ?? {})
       const result = await coinTradingService.listTransferHistory(request.userId!, {
-        direction: parsed.direction,
+        direction: resolveTransferDirection(parsed),
         fromDate: parsed.fromDate ? new Date(parsed.fromDate) : undefined,
         toDate: parsed.toDate ? new Date(parsed.toDate) : undefined,
         limit: parsed.limit,
