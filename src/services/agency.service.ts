@@ -127,11 +127,18 @@ export const agencyService = {
           where: { id: userRow.id },
           data: { isAgent: true },
         })
-        await tx.wallet.create({
-          data: {
+        await tx.wallet.upsert({
+          where: {
+            userId_currencyType: {
+              userId: userRow.id,
+              currencyType: WalletCurrencyType.TRADING_COIN,
+            },
+          },
+          create: {
             userId: userRow.id,
             currencyType: WalletCurrencyType.TRADING_COIN,
           },
+          update: {},
         })
         await tx.supportTicket.update({
           where: { id: params.ticketId },
@@ -225,11 +232,18 @@ export const agencyService = {
           where: { id: userRow.id },
           data: { isAgent: true },
         })
-        await tx.wallet.create({
-          data: {
+        await tx.wallet.upsert({
+          where: {
+            userId_currencyType: {
+              userId: userRow.id,
+              currencyType: WalletCurrencyType.TRADING_COIN,
+            },
+          },
+          create: {
             userId: userRow.id,
             currencyType: WalletCurrencyType.TRADING_COIN,
           },
+          update: {},
         })
         await tx.agencyAgentApplication.update({
           where: { id: params.applicationId },

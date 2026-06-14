@@ -3,6 +3,7 @@ import { CoinTxType, PointTxType, WalletCurrencyType } from '@prisma/client'
 import { prisma } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { userRepository } from '../repositories/user.repository'
+import { agencyRepository } from '../repositories/agency.repository'
 import { auditService } from './audit.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
@@ -17,6 +18,9 @@ export type AdminWalletCreditResult = {
     coins?: string
     points?: string
     tradingCoins?: string
+  }
+  skipped?: {
+    tradingCoins?: 'NO_AGENCY'
   }
   balances: {
     coins?: { ledgerEntryId: string; balanceAfter: string }
@@ -53,17 +57,18 @@ export const adminWalletService = {
 
     const credited: AdminWalletCreditResult['credited'] = {}
     const balances: AdminWalletCreditResult['balances'] = {}
+    const skipped: AdminWalletCreditResult['skipped'] = {}
 
     if (hasPoints) {
       const points = params.points!
-      const entry = await pointWalletService.creditPoints({
+      const entry = (await pointWalletService.creditPoints({
         userId: params.targetUserId,
         amount: points,
         txType: PointTxType.ADJUSTMENT,
         description,
         metadata,
         idempotencyKey: `${baseKey}:points`,
-      })
+      })) as { ledgerEntryId: string; balanceAfter: string }
       credited.points = points.toString()
       balances.points = {
         ledgerEntryId: entry.ledgerEntryId,
@@ -93,29 +98,34 @@ export const adminWalletService = {
     }
 
     if (hasTrading) {
-      const tradingCoins = params.tradingCoins!
-      const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
-        async (tx) =>
-          coinWalletService.credit(
-            params.targetUserId,
-            tradingCoins,
-            CoinTxType.ADJUSTMENT,
-            tx,
-            {
-              idempotencyKey: `${baseKey}:trading`,
-              description,
-              metadata,
-              applyWealthCredit: false,
-              currencyType: WalletCurrencyType.TRADING_COIN,
-            },
-          ),
-        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
-      )
-      await walletService.adjustTradingBalanceCache(params.targetUserId)
-      credited.tradingCoins = tradingCoins.toString()
-      balances.tradingCoins = {
-        ledgerEntryId,
-        balanceAfter: balanceAfter.toString(),
+      const agency = await agencyRepository.getAgencyByUserId(params.targetUserId)
+      if (!agency) {
+        skipped.tradingCoins = 'NO_AGENCY'
+      } else {
+        const tradingCoins = params.tradingCoins!
+        const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
+          async (tx) =>
+            coinWalletService.credit(
+              params.targetUserId,
+              tradingCoins,
+              CoinTxType.ADJUSTMENT,
+              tx,
+              {
+                idempotencyKey: `${baseKey}:trading`,
+                description: description || 'Admin trading coin credit',
+                metadata,
+                applyWealthCredit: false,
+                currencyType: WalletCurrencyType.TRADING_COIN,
+              },
+            ),
+          { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+        )
+        await walletService.adjustTradingBalanceCache(params.targetUserId)
+        credited.tradingCoins = tradingCoins.toString()
+        balances.tradingCoins = {
+          ledgerEntryId,
+          balanceAfter: balanceAfter.toString(),
+        }
       }
     }
 
@@ -126,6 +136,7 @@ export const adminWalletService = {
       actionDetails: {
         targetUserId: params.targetUserId,
         credited,
+        skipped: Object.keys(skipped).length > 0 ? skipped : undefined,
         description,
         idempotencyKey: baseKey,
       },
@@ -136,6 +147,7 @@ export const adminWalletService = {
       userId: params.targetUserId,
       credited,
       balances,
+      ...(Object.keys(skipped).length > 0 ? { skipped } : {}),
     }
   },
 }

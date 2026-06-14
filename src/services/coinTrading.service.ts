@@ -493,4 +493,67 @@ export const coinTradingService = {
     await redisClient.set(cacheKey, JSON.stringify(rows), 'EX', CT_RECENT_USERS_TTL)
     return rows
   },
+
+  /** TRADING_COIN wallet ledger — top-ups, exchanges, admin credits, transfer legs. */
+  async listTradingCoinHistory(
+    userId: string,
+    opts: {
+      direction?: 'credit' | 'debit'
+      types?: CoinTxType[]
+      fromDate?: Date
+      toDate?: Date
+      limit: number
+      cursor?: string
+    },
+  ) {
+    if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
+      throw new AppError(400, 'fromDate must be before or equal to toDate', 'INVALID_DATE_RANGE')
+    }
+    const user = await userRepository.findById(userId)
+    if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
+
+    const defaultTypes: CoinTxType[] = [
+      CoinTxType.TRADING_TOPUP,
+      CoinTxType.TRADING_EXCHANGE_FROM_POINTS,
+      CoinTxType.TRADING_TRANSFER_IN,
+      CoinTxType.TRADING_TRANSFER_OUT,
+      CoinTxType.TRADING_TRANSFER_REVERSAL,
+      CoinTxType.ADJUSTMENT,
+    ]
+
+    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN)
+    const entries = await coinLedgerRepository.list({
+      walletId: wallet.id,
+      types: opts.types?.length ? opts.types : defaultTypes,
+      direction:
+        opts.direction === 'credit'
+          ? LedgerDirection.CREDIT
+          : opts.direction === 'debit'
+            ? LedgerDirection.DEBIT
+            : undefined,
+      from: opts.fromDate,
+      to: opts.toDate,
+      cursor: opts.cursor,
+      limit: opts.limit,
+    })
+
+    const hasMore = entries.length > opts.limit
+    const page = hasMore ? entries.slice(0, opts.limit) : entries
+    const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null
+
+    return {
+      items: page.map((e) => ({
+        id: e.id,
+        direction: e.direction === 'CREDIT' ? ('credit' as const) : ('debit' as const),
+        txType: e.txType,
+        amount: e.amount.toString(),
+        balanceAfter: e.balanceAfter.toString(),
+        description: e.description,
+        refId: e.refId,
+        counterpartyId: e.counterpartyId,
+        createdAt: e.createdAt.toISOString(),
+      })),
+      nextCursor,
+    }
+  },
 }

@@ -4,6 +4,7 @@ import { CoinTxType, LedgerDirection, Prisma } from '@prisma/client'
 export type CoinLedgerFilter = {
   walletId: string
   types?: CoinTxType[]
+  direction?: LedgerDirection
   from?: Date
   to?: Date
   cursor?: string
@@ -47,6 +48,7 @@ export const coinLedgerRepository = {
       walletId: filter.walletId,
       ...(Object.keys(createdAt).length > 0 ? { createdAt } : {}),
       ...(filter.types?.length ? { txType: { in: filter.types } } : {}),
+      ...(filter.direction ? { direction: filter.direction } : {}),
     }
 
     return prismaRead.coinLedgerEntry.findMany({

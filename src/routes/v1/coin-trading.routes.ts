@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { CoinTxType } from '@prisma/client'
 import { z } from 'zod'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
@@ -40,6 +41,15 @@ const ListTransfersQuerySchema = z.object({
   toDate: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().optional(),
+})
+
+const ListHistoryQuerySchema = z.object({
+  direction: z.enum(['credit', 'debit']).optional(),
+  types: z.string().optional(),
+  fromDate: z.string().datetime().optional(),
+  toDate: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().uuid().optional(),
 })
 
 export default async function coinTradingRoutes(app: FastifyInstance) {
@@ -141,6 +151,27 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
         idempotencyKey: body.idempotencyKey,
       })
       return reply.status(201).send(result)
+    },
+  )
+
+  app.get(
+    '/history',
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = ListHistoryQuerySchema.parse(request.query ?? {})
+      const types = parsed.types
+        ?.split(',')
+        .map((t) => t.trim())
+        .filter(Boolean) as CoinTxType[] | undefined
+      const result = await coinTradingService.listTradingCoinHistory(request.userId!, {
+        direction: parsed.direction,
+        types,
+        fromDate: parsed.fromDate ? new Date(parsed.fromDate) : undefined,
+        toDate: parsed.toDate ? new Date(parsed.toDate) : undefined,
+        limit: parsed.limit,
+        cursor: parsed.cursor,
+      })
+      return reply.send(result)
     },
   )
 
