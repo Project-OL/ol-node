@@ -37,7 +37,7 @@ const transferSchema = z.object({
 
 const listTransfersRoleSchema =
   env.NODE_ENV === 'production'
-    ? z.enum(['sent', 'received']).optional()
+    ? z.enum(['sent', 'received', 'all']).optional()
     : z.enum(['sent', 'received', 'all']).optional()
 
 const ListTransfersQuerySchema = z.object({
