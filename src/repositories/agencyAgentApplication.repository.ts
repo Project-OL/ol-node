@@ -44,9 +44,12 @@ export const agencyAgentApplicationRepository = {
     })
   },
 
-  async listByStatus(statuses: AgencyAgentApplicationStatus[], skip = 0, take = 20) {
+  async listByStatus(statuses?: AgencyAgentApplicationStatus[], skip = 0, take = 20) {
+    const where: Prisma.AgencyAgentApplicationWhereInput = statuses?.length
+      ? { status: { in: statuses } }
+      : {}
     return prismaRead.agencyAgentApplication.findMany({
-      where: { status: { in: statuses } },
+      where,
       orderBy: { createdAt: 'asc' },
       skip,
       take,
