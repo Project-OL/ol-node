@@ -223,6 +223,37 @@ const FIELD_OVERRIDES: Record<string, Partial<EndpointLock>> = {
       nextCursor: { type: "string", optional: true, description: "UUID or null" },
     },
   },
+  "coin-trading.history.get": {
+    query: {
+      direction: { type: "enum", optional: true, values: ["credit", "debit"] },
+      types: {
+        type: "string",
+        optional: true,
+        description: "Comma-separated CoinTxType; default includes ADJUSTMENT",
+      },
+      fromDate: { type: "string", optional: true, description: "ISO-8601 datetime" },
+      toDate: { type: "string", optional: true, description: "ISO-8601 datetime" },
+      limit: { type: "integer", optional: true, description: "1-50, default 20" },
+      cursor: { type: "string", optional: true, description: "UUID ledger entry id" },
+    },
+    response: {
+      items: {
+        type: "array",
+        items: {
+          id: { type: "string", description: "UUID ledger entry id" },
+          direction: { type: "enum", values: ["credit", "debit"] },
+          txType: { type: "string", description: "CoinTxType incl. ADJUSTMENT" },
+          amount: { type: "string", description: "BigInt serialized" },
+          balanceAfter: { type: "string", description: "BigInt serialized" },
+          description: { type: "string", optional: true },
+          refId: { type: "string", optional: true },
+          counterpartyId: { type: "string", optional: true, description: "UUID or null" },
+          createdAt: { type: "string", description: "ISO-8601" },
+        },
+      },
+      nextCursor: { type: "string", optional: true, description: "UUID or null" },
+    },
+  },
   "coin-trading.balance.get": {
     response: {
       balance: { type: "string", description: "BigInt serialized TRADING_COIN balance" },
