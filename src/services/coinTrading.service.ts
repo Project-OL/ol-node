@@ -24,7 +24,7 @@ import { walletService } from './wallet.service'
 import { agencyService } from './agency.service'
 import { userRepository } from '../repositories/user.repository'
 import { epayClient } from '../lib/epay.client'
-import { prisma } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -426,80 +426,7 @@ export const coinTradingService = {
   async listTransferHistory(
     userId: string,
     opts: {
-      role: 'sender' | 'recipient' | 'all'
       direction?: 'credit' | 'debit'
-      fromDate?: Date
-      toDate?: Date
-      limit: number
-      cursor?: string
-    },
-  ) {
-    if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
-      throw new AppError(400, 'fromDate must be before or equal to toDate', 'INVALID_DATE_RANGE')
-    }
-    const rows = await coinTradingRepository.listTransfers({
-      userId,
-      role: opts.role,
-      direction: opts.direction,
-      fromDate: opts.fromDate,
-      toDate: opts.toDate,
-      limit: opts.limit,
-      cursor: opts.cursor,
-    })
-    const hasMore = rows.length > opts.limit
-    const page = hasMore ? rows.slice(0, opts.limit) : rows
-    const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null
-    const ledgerIds = [
-      ...new Set(page.flatMap((row) => [row.senderLedgerEntryId, row.recipientLedgerEntryId])),
-    ]
-    const ledgerBalances = new Map(
-      (await coinTradingRepository.listLedgerBalancesByIds(ledgerIds)).map((entry) => [
-        entry.id,
-        entry.balanceAfter,
-      ]),
-    )
-    const items = page.map((row) => {
-      const isDebit = row.senderAgentUserId === userId
-      const counterpartyUser = isDebit ? row.recipient : row.senderAgent
-      const ledgerEntryId = isDebit ? row.senderLedgerEntryId : row.recipientLedgerEntryId
-      return {
-        id: row.id,
-        direction: isDebit ? ('debit' as const) : ('credit' as const),
-        tradingCoinsDebited: row.tradingCoinsDebited.toString(),
-        coinsCredited: row.coinsCredited.toString(),
-        recipientWalletType: row.recipientWalletType,
-        balanceAfter: ledgerBalances.get(ledgerEntryId)?.toString() ?? null,
-        createdAt: row.createdAt.toISOString(),
-        counterparty: {
-          id: counterpartyUser.id,
-          name: counterpartyUser.username,
-          avatarUrl: counterpartyUser.avatarUrl,
-          publicId: counterpartyUser.publicId.toString(),
-        },
-      }
-    })
-    return { items, nextCursor }
-  },
-
-  async getRecentTransactionUsers(agencyUserId: string) {
-    const redis = getRedisForRead()
-    const cacheKey = RedisKeys.ctRecentUsers(agencyUserId)
-    const cached = await redis.get(cacheKey)
-    if (cached)
-      return JSON.parse(cached) as Awaited<
-        ReturnType<typeof coinTradingRepository.getRecentTransactionUsers>
-      >
-    const rows = await coinTradingRepository.getRecentTransactionUsers(agencyUserId)
-    await redisClient.set(cacheKey, JSON.stringify(rows), 'EX', CT_RECENT_USERS_TTL)
-    return rows
-  },
-
-  /** TRADING_COIN wallet ledger — top-ups, exchanges, admin credits, transfer legs. */
-  async listTradingCoinHistory(
-    userId: string,
-    opts: {
-      direction?: 'credit' | 'debit'
-      types?: CoinTxType[]
       fromDate?: Date
       toDate?: Date
       limit: number
@@ -512,7 +439,7 @@ export const coinTradingService = {
     const user = await userRepository.findById(userId)
     if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
 
-    const defaultTypes: CoinTxType[] = [
+    const tradingTxTypes: CoinTxType[] = [
       CoinTxType.TRADING_TOPUP,
       CoinTxType.TRADING_EXCHANGE_FROM_POINTS,
       CoinTxType.TRADING_TRANSFER_IN,
@@ -524,7 +451,7 @@ export const coinTradingService = {
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN)
     const entries = await coinLedgerRepository.list({
       walletId: wallet.id,
-      types: opts.types?.length ? opts.types : defaultTypes,
+      types: tradingTxTypes,
       direction:
         opts.direction === 'credit'
           ? LedgerDirection.CREDIT
@@ -541,19 +468,59 @@ export const coinTradingService = {
     const page = hasMore ? entries.slice(0, opts.limit) : entries
     const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null
 
-    return {
-      items: page.map((e) => ({
+    const counterpartyIds = [
+      ...new Set(page.map((e) => e.counterpartyId).filter((id): id is string => id != null)),
+    ]
+    const counterpartyUsers =
+      counterpartyIds.length > 0
+        ? await prismaRead.user.findMany({
+            where: { id: { in: counterpartyIds } },
+            select: {
+              id: true,
+              username: true,
+              avatarUrl: true,
+              publicId: true,
+            },
+          })
+        : []
+    const counterpartyMap = new Map(counterpartyUsers.map((u) => [u.id, u]))
+
+    const items = page.map((e) => {
+      const cp = e.counterpartyId ? counterpartyMap.get(e.counterpartyId) : null
+      const isDebit = e.direction === LedgerDirection.DEBIT
+      return {
         id: e.id,
-        direction: e.direction === 'CREDIT' ? ('credit' as const) : ('debit' as const),
+        direction: isDebit ? ('debit' as const) : ('credit' as const),
         txType: e.txType,
         amount: e.amount.toString(),
         balanceAfter: e.balanceAfter.toString(),
         description: e.description,
         refId: e.refId,
-        counterpartyId: e.counterpartyId,
         createdAt: e.createdAt.toISOString(),
-      })),
-      nextCursor,
-    }
+        counterparty: cp
+          ? {
+              id: cp.id,
+              name: cp.username,
+              avatarUrl: cp.avatarUrl,
+              publicId: cp.publicId.toString(),
+            }
+          : null,
+      }
+    })
+
+    return { items, nextCursor }
+  },
+
+  async getRecentTransactionUsers(agencyUserId: string) {
+    const redis = getRedisForRead()
+    const cacheKey = RedisKeys.ctRecentUsers(agencyUserId)
+    const cached = await redis.get(cacheKey)
+    if (cached)
+      return JSON.parse(cached) as Awaited<
+        ReturnType<typeof coinTradingRepository.getRecentTransactionUsers>
+      >
+    const rows = await coinTradingRepository.getRecentTransactionUsers(agencyUserId)
+    await redisClient.set(cacheKey, JSON.stringify(rows), 'EX', CT_RECENT_USERS_TTL)
+    return rows
   },
 }
