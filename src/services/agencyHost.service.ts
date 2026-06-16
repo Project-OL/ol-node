@@ -14,6 +14,7 @@ import { walletService } from './wallet.service'
 import { walletLevelService } from './user-level.service'
 import { userRepository } from '../repositories/user.repository'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
+import { countriesMatch } from '../utils/agency-country'
 
 type HostEarningsAgg = {
   hostEarnings: bigint
@@ -212,16 +213,30 @@ export const agencyHostService = {
 
     await agencyService.enforcePauseGate(agency.userId)
 
-    const hostUser = await prisma.user.findUnique({
-      where: { id: hostUserId },
-      select: {
-        id: true,
-        currentAgencyId: true,
-        isAgent: true,
-      },
-    })
+    const [hostUser, agencyOwner] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: hostUserId },
+        select: {
+          id: true,
+          currentAgencyId: true,
+          isAgent: true,
+          country: true,
+        },
+      }),
+      prisma.user.findUnique({
+        where: { id: agency.userId },
+        select: { country: true },
+      }),
+    ])
     if (!hostUser) {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    }
+    if (!countriesMatch(hostUser.country, agencyOwner?.country)) {
+      throw new AppError(
+        403,
+        'Agency is not available in your country',
+        'COUNTRY_MISMATCH',
+      )
     }
     if (hostUser.isAgent) {
       throw new AppError(403, 'Agents cannot apply as hosts', 'INVALID_APPLICANT')

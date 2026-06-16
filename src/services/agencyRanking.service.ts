@@ -176,11 +176,24 @@ export const agencyRankingService = {
   /**
    * Phase 1: sorted by `totalHostsCount` DESC for every period (placeholder until Phase 2 earnings).
    */
-  async getRanking(params: { period: AgencyRankingPeriod; limit: number; cursor?: string | null }) {
+  async getRanking(params: {
+    period: AgencyRankingPeriod
+    limit: number
+    cursor?: string | null
+    country: string | null
+  }) {
     const limit = Math.min(Math.max(params.limit, 1), 100)
     const skip = decodeCursor(params.cursor ?? undefined)
-    const cacheKey = RedisKeys.agencyRanking(params.period, limit, params.cursor ?? '')
+    const countryKey = params.country ?? 'none'
+    const cacheKey = RedisKeys.agencyRanking(countryKey, params.period, limit, params.cursor ?? '')
 
+    if (!params.country) {
+      return {
+        period: params.period,
+        items: [] as AgencyRankingItem[],
+        nextCursor: null,
+      }
+    }
     try {
       const redis = getRedisForRead()
       const cached = await redis.get(cacheKey)
@@ -198,6 +211,7 @@ export const agencyRankingService = {
     const rows = await agencyRepository.listForRanking({
       limit,
       skip,
+      country: params.country,
     })
 
     const hasMore = rows.length > limit

@@ -511,10 +511,19 @@ export async function updateReadCursor(
 export async function getUnreadCount(conversationId: string, userId: string): Promise<number> {
   const member = await prismaRead.conversationMember.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
-    select: { lastReadAt: true },
+    select: { lastReadAt: true, lastReadMessageId: true },
   })
   if (!member) return 0
-  const since = member.lastReadAt ?? new Date(0)
+  let since = member.lastReadAt ?? new Date(0)
+  if (member.lastReadMessageId) {
+    const cursorMsg = await prismaRead.message.findUnique({
+      where: { id: member.lastReadMessageId },
+      select: { createdAt: true },
+    })
+    if (cursorMsg && cursorMsg.createdAt > since) {
+      since = cursorMsg.createdAt
+    }
+  }
   return prismaRead.message.count({
     where: {
       conversationId,

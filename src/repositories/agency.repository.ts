@@ -99,8 +99,12 @@ export const agencyRepository = {
    * Phase 1: sort by totalHostsCount desc, tie-break defaultPublicId desc.
    * Cursor: opaque offset string (see agencyRanking.service).
    */
-  async listForRanking(params: { limit: number; skip: number }) {
+  async listForRanking(params: { limit: number; skip: number; country: string | null }) {
+    if (!params.country) return []
     return prismaRead.agency.findMany({
+      where: {
+        user: { country: params.country },
+      },
       orderBy: [{ totalHostsCount: 'desc' }, { defaultPublicId: 'desc' }],
       skip: params.skip,
       take: params.limit + 1,

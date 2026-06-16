@@ -28,7 +28,7 @@ import { prismaRead } from '../config/database'
 import { rootLogger } from '../utils/rootLogger'
 import type { SendMessageInput } from '../models/messaging.schemas'
 import { s3Bucket } from '../config/s3'
-import type { MediaItemInput } from '../repositories/message.repository'
+import type { MediaItemInput, SendMessageWithOutboxResult } from '../repositories/message.repository'
 import {
   assertMessageTypeMediaAlignment,
   prepareMediaItemsForSend,
@@ -123,6 +123,74 @@ function mediaItemsWithServerBucket(items: MediaItemInput[]): MediaItemInput[] {
     ...item,
     s3Bucket: bucket,
   }))
+}
+
+function isSendCreated(
+  result: SendMessageWithOutboxResult,
+): result is Extract<SendMessageWithOutboxResult, { status: 'created' }> {
+  return result.status === 'created'
+}
+
+/** Deterministic idempotency key — one auto-reply per TEXT_COINS trigger seq. */
+export function buildAutoReplyClientMessageId(
+  conversationId: string,
+  triggerMessageSeq: number,
+): string {
+  return `auto-reply:${conversationId}:${triggerMessageSeq}`
+}
+
+async function pushMessageToHotCache(conversationId: string, msg: MessageWithDetails): Promise<void> {
+  const msgKey = RedisKeys.convMessages(conversationId)
+  const msgJson = JSON.stringify(
+    { ...msg, createdAt: msg.createdAt.toISOString() },
+    (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+  )
+  await redisClient.zadd(msgKey, Number(msg.seq), msgJson)
+  await redisClient.expire(msgKey, MSG_HOT_TTL)
+  await redisClient.zremrangebyrank(msgKey, 0, -101)
+}
+
+async function applyNewMessageSideEffects(params: {
+  conversationId: string
+  msg: MessageWithDetails
+  outboxId: bigint
+  otherMemberIds: string[]
+  senderId: string
+}): Promise<void> {
+  await pushMessageToHotCache(params.conversationId, params.msg)
+  for (const uid of params.otherMemberIds) {
+    if (uid === params.senderId) continue
+    await redisClient.incr(RedisKeys.unreadCount(uid, params.conversationId))
+  }
+  await enqueueMessageOutboxPublish(params.outboxId)
+  for (const mi of params.msg.mediaItems) {
+    if (mi.mediaType === 'AUDIO' && mi.processingStatus === MediaProcessingStatus.ENQUEUED) {
+      await enqueueMessageMediaAudioProcessing(mi.id)
+    }
+  }
+}
+
+async function markConversationReadOnView(
+  userId: string,
+  conversationId: string,
+  messages: MessageWithDetails[],
+): Promise<void> {
+  await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
+  const latest = messages[0]
+  if (!latest?.id) return
+  try {
+    const updated = await messageRepository.updateReadCursor(conversationId, userId, latest.id)
+    if (updated) {
+      await publishServerFrameToConversation(conversationId, {
+        t: 'READ',
+        conversationId,
+        userId,
+        lastReadMessageId: latest.id,
+      })
+    }
+  } catch (err) {
+    messagingLog.warn({ err, conversationId, userId }, 'markConversationReadOnView failed')
+  }
 }
 
 export const messagingService = {
@@ -262,35 +330,24 @@ export const messagingService = {
       ),
     )
 
-    if (result.status === 'created') {
-      const msgKey = RedisKeys.convMessages(conversationId)
-      const msgJson = JSON.stringify(
-        {
-          ...msg,
-          createdAt: msg.createdAt.toISOString(),
-        },
-        (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
-      )
-      const zscore = Number(msg.seq)
-      await redisClient.zadd(msgKey, zscore, msgJson)
-      await redisClient.expire(msgKey, MSG_HOT_TTL)
-      await redisClient.zremrangebyrank(msgKey, 0, -101)
-      for (const uid of otherMemberIds) {
-        await redisClient.incr(RedisKeys.unreadCount(uid, conversationId))
-      }
-      await enqueueMessageOutboxPublish(result.outboxId)
-      for (const mi of result.message.mediaItems) {
-        if (mi.mediaType === 'AUDIO' && mi.processingStatus === MediaProcessingStatus.ENQUEUED) {
-          await enqueueMessageMediaAudioProcessing(mi.id)
-        }
-      }
-      if (input.type === 'TEXT_COINS') {
-        setImmediate(() => {
-          void maybeEnqueueAutoReply(conversationId, msg.seq).catch((err) => {
-            messagingLog.warn({ err, conversationId }, 'TEXT_COINS auto-reply enqueue failed')
-          })
+    if (isSendCreated(result)) {
+      await applyNewMessageSideEffects({
+        conversationId,
+        msg,
+        outboxId: result.outboxId,
+        otherMemberIds,
+        senderId,
+      })
+    }
+
+    // Auto-reply on every TEXT_COINS send attempt (including idempotent retries with
+    // status `duplicate`) so a retried clientMessageId still triggers the worker.
+    if (input.type === 'TEXT_COINS') {
+      setImmediate(() => {
+        void maybeEnqueueAutoReply(conversationId, msg.seq).catch((err) => {
+          messagingLog.warn({ err, conversationId }, 'TEXT_COINS auto-reply enqueue failed')
         })
-      }
+      })
     }
 
     return msg
@@ -329,32 +386,21 @@ export const messagingService = {
       isAutoReply: true,
     })
 
-    if (result.status !== 'created') return
+    if (!isSendCreated(result)) return
 
-    const msg = result.message
     await Promise.all(
       conv.members.map((m: { userId: string }) =>
         cacheService.delete(RedisKeys.userConversations(m.userId)),
       ),
     )
 
-    const msgKey = RedisKeys.convMessages(conversationId)
-    const msgJson = JSON.stringify(
-      {
-        ...msg,
-        createdAt: msg.createdAt.toISOString(),
-      },
-      (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
-    )
-    const zscore = Number(msg.seq)
-    await redisClient.zadd(msgKey, zscore, msgJson)
-    await redisClient.expire(msgKey, MSG_HOT_TTL)
-    await redisClient.zremrangebyrank(msgKey, 0, -101)
-    for (const uid of otherMemberIds) {
-      if (uid === senderUserId) continue
-      await redisClient.incr(RedisKeys.unreadCount(uid, conversationId))
-    }
-    await enqueueMessageOutboxPublish(result.outboxId)
+    await applyNewMessageSideEffects({
+      conversationId,
+      msg: result.message,
+      outboxId: result.outboxId,
+      otherMemberIds,
+      senderId: senderUserId,
+    })
   },
 
   async listMessages(
@@ -367,7 +413,10 @@ export const messagingService = {
     if (!conv) {
       throw new AppError(403, 'Not a member', 'FORBIDDEN')
     }
-    if (!cursor) {
+    const selfMember = conv.members.find((m) => m.userId === userId)
+    const historyClearedAfter = selfMember?.deletedAt ?? null
+
+    if (!cursor && !historyClearedAfter) {
       const raw = await redisClient.zrevrange(
         RedisKeys.convMessages(conversationId),
         0,
@@ -387,14 +436,12 @@ export const messagingService = {
           messages.length > 0
             ? ((messages[messages.length - 1]?.createdAt as Date)?.toISOString() ?? null)
             : null
-        await messageRepository.markAsRead(conversationId, userId)
-        await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
+        await markConversationReadOnView(userId, conversationId, messages)
         return { messages, nextCursor }
       }
     }
     const result = await messageRepository.listMessages(conversationId, userId, cursor, limit)
-    await messageRepository.markAsRead(conversationId, userId)
-    await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
+    await markConversationReadOnView(userId, conversationId, result.messages)
     return result
   },
 
@@ -453,6 +500,7 @@ export const messagingService = {
     }
     await conversationRepository.markConversationDeleted(conversationId, userId)
     await cacheService.delete(RedisKeys.userConversations(userId))
+    await redisClient.del(RedisKeys.convMessages(conversationId))
     await auditService.log({
       actionType: 'CLEAR_CHAT',
       actionStatus: 'success',
@@ -507,6 +555,7 @@ export const messagingService = {
       throw new AppError(404, 'Message not found', 'NOT_FOUND')
     }
     await messageRepository.removeReaction(messageId, userId, emoji)
+    await cacheService.delete(RedisKeys.convMessages(msg.conversationId))
     await publishToConversation(msg.conversationId, {
       type: 'REACTION_REMOVED',
       conversationId: msg.conversationId,

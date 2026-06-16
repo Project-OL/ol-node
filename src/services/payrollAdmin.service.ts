@@ -79,6 +79,7 @@ export const payrollAdminService = {
     await withdrawalService.assignToAgency(withdrawalId, {
       overrideAgencyUserId: agencyUserId,
       allowBeyondAssignmentCap: true,
+      rejectOnIneligibleOverride: !!agencyUserId,
     })
     auditService.log({
       userId: adminUserId,

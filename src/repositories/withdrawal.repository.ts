@@ -177,12 +177,20 @@ export const withdrawalRepository = {
 
   /**
    * Round-robin pick (FOR UPDATE SKIP LOCKED). Updates last_payroll_assigned_at in same tx.
+   * Only agencies whose owner `users.country` matches `hostCountry` are eligible.
    */
-  async getNextEligibleAgency(tx: Prisma.TransactionClient): Promise<string | null> {
+  async getNextEligibleAgency(
+    tx: Prisma.TransactionClient,
+    hostCountry: string,
+  ): Promise<string | null> {
     const rows = await tx.$queryRaw<Array<{ user_id: string }>>`
-      SELECT user_id FROM agencies
-      WHERE payroll_enabled = true AND paused_at IS NULL
-      ORDER BY last_payroll_assigned_at ASC NULLS FIRST, user_id ASC
+      SELECT a.user_id
+      FROM agencies a
+      INNER JOIN users u ON u.id = a.user_id
+      WHERE a.payroll_enabled = true
+        AND a.paused_at IS NULL
+        AND u.country = ${hostCountry}
+      ORDER BY a.last_payroll_assigned_at ASC NULLS FIRST, a.user_id ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     `

@@ -457,16 +457,25 @@ export const withdrawalService = {
       overrideAgencyUserId?: string
       /** Admin manual assign may exceed automatic attempt cap. */
       allowBeyondAssignmentCap?: boolean
+      /** When override agency is ineligible (wrong country / payroll off), throw instead of PENDING_PLATFORM. */
+      rejectOnIneligibleOverride?: boolean
     },
   ) {
     let assignmentIdOut: string | null = null
     let expiresAtOut: Date | null = null
+    let countryMismatch = false
 
     await prisma.$transaction(
       async (tx) => {
         const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
         if (!w) return
         if (w.status !== 'PENDING' && w.status !== 'PENDING_PLATFORM') return
+
+        const host = await tx.user.findUnique({
+          where: { id: w.userId },
+          select: { country: true },
+        })
+        const hostCountry = host?.country ?? null
 
         const cfgCap = await tx.payrollConfig.findUnique({ where: { id: 1 } })
         const maxAttempts = cfgCap?.maxAssignmentAttempts ?? 5
@@ -491,20 +500,26 @@ export const withdrawalService = {
         }
 
         let agencyUserId: string | null = null
-        if (opts?.overrideAgencyUserId) {
+        if (!hostCountry) {
+          agencyUserId = null
+        } else if (opts?.overrideAgencyUserId) {
           const ag = await tx.agency.findFirst({
             where: {
               userId: opts.overrideAgencyUserId,
               payrollEnabled: true,
               pausedAt: null,
+              user: { country: hostCountry },
             },
           })
           if (ag) {
             agencyUserId = ag.userId
             await withdrawalRepository.touchAgencyPayrollTimestamp(agencyUserId, tx)
+          } else if (opts.rejectOnIneligibleOverride) {
+            countryMismatch = true
+            return
           }
         } else {
-          agencyUserId = await withdrawalRepository.getNextEligibleAgency(tx)
+          agencyUserId = await withdrawalRepository.getNextEligibleAgency(tx, hostCountry)
         }
 
         if (!agencyUserId) {
@@ -515,7 +530,7 @@ export const withdrawalService = {
           auditService.log({
             actionType: 'WITHDRAWAL_NO_AGENCY',
             actionStatus: 'success',
-            actionDetails: { withdrawalId },
+            actionDetails: { withdrawalId, hostCountry },
           })
           return
         }
@@ -545,6 +560,14 @@ export const withdrawalService = {
       },
       { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
     )
+
+    if (countryMismatch) {
+      throw new AppError(
+        400,
+        'Agency agent must be in the same country as the withdrawing host',
+        'COUNTRY_MISMATCH',
+      )
+    }
 
     if (assignmentIdOut && expiresAtOut) {
       await enqueuePayrollSla(assignmentIdOut, expiresAtOut)
