@@ -1,6 +1,6 @@
 import crypto, { randomUUID } from 'crypto'
 import { prisma } from '../config/database'
-import { hostGiftPointsFromCoinSpend } from '../config/host-revenue-shares'
+import { hostPointsFromGift } from '../config/host-revenue-shares'
 import { redisClient, RedisKeys } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { giftRepository } from '../repositories/gift.repository'
@@ -62,13 +62,13 @@ export const giftTransactionService = {
     }
 
     const coinCost = gift.coinCost
-    const pointsAwarded = hostGiftPointsFromCoinSpend(coinCost)
+    const pointsAwarded = Number(hostPointsFromGift(BigInt(coinCost)))
     const idemBase = `gift:${crypto.randomUUID()}`
     const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys()
 
     const senderHasActiveVipMembership = await vipMembershipService.hasActive(params.senderUserId)
 
-    type WealthRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>
+    type LevelRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>
 
     const txResult = await prisma.$transaction(
       async (tx) => {
@@ -115,7 +115,15 @@ export const giftTransactionService = {
         })
         await walletRepository.bumpVersion(tx, senderCoinWallet.id)
 
-        let wealthResult: WealthRet | null = null
+        // Wealth XP tracks coin SPEND: the sender's full gift coin cost.
+        const wealthResult = await walletLevelService.applyCredit(
+          tx,
+          params.senderUserId,
+          LevelType.WEALTH,
+          cost,
+        )
+
+        let livestreamResult: LevelRet | null = null
         let bustAgentUserId: string | null = null
         const giftTxRefId = pointsAwarded > 0 ? randomUUID() : null
 
@@ -127,13 +135,6 @@ export const giftTransactionService = {
             select: { balanceAfter: true },
           })
           const ptBal = lastPt?.balanceAfter ?? 0n
-
-          wealthResult = await walletLevelService.applyCredit(
-            tx,
-            params.receiverUserId,
-            LevelType.WEALTH,
-            pt,
-          )
 
           const ptEntry = await pointLedgerRepository.insert(tx, {
             walletId: receiverPointWallet.id,
@@ -148,6 +149,14 @@ export const giftTransactionService = {
             idempotencyKey: `${idemBase}-point`,
           })
           await walletRepository.bumpVersion(tx, receiverPointWallet.id)
+
+          // Livestream XP tracks host earnings: the gift-receive point credit.
+          livestreamResult = await walletLevelService.applyCredit(
+            tx,
+            params.receiverUserId,
+            LevelType.LIVESTREAM,
+            pt,
+          )
 
           const { agencyCommissionService } = await import('./agencyCommission.service')
           const ac = await agencyCommissionService.applyCommission(
@@ -204,6 +213,7 @@ export const giftTransactionService = {
         return {
           transactionId: gt.id,
           wealthResult,
+          livestreamResult,
           bustAgentUserId,
         }
       },
@@ -213,13 +223,23 @@ export const giftTransactionService = {
     await walletService.adjustCoinBalanceCache(params.senderUserId, 0n)
     await walletService.adjustPointBalanceCache(params.receiverUserId, 0n)
 
-    if (txResult.wealthResult && pointsAwarded > 0) {
+    if (txResult.wealthResult) {
       await walletLevelService.refreshCache(
-        params.receiverUserId,
+        params.senderUserId,
         LevelType.WEALTH,
         txResult.wealthResult.newCumulative,
         txResult.wealthResult.newLevel,
         txResult.wealthResult.previousLevel,
+      )
+    }
+
+    if (txResult.livestreamResult && pointsAwarded > 0) {
+      await walletLevelService.refreshCache(
+        params.receiverUserId,
+        LevelType.LIVESTREAM,
+        txResult.livestreamResult.newCumulative,
+        txResult.livestreamResult.newLevel,
+        txResult.livestreamResult.previousLevel,
       )
     }
 

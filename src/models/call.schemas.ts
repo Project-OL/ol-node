@@ -1,6 +1,7 @@
 import { z } from 'zod'
+import { getMaxCallPriceForLevel, MIN_CALL_PRICE_COINS_PER_MIN } from '../utils/call-price'
 
-export const MIN_CALL_PRICE = 1800
+export const MIN_CALL_PRICE = MIN_CALL_PRICE_COINS_PER_MIN
 
 /** Creator's livestream level → max coins/min they may charge. */
 export const CALL_PRICE_CAPS: { maxLevel: number; maxPrice: number }[] = [
@@ -16,10 +17,7 @@ export const CALL_PRICE_CAPS: { maxLevel: number; maxPrice: number }[] = [
 
 /** Return the max price allowed for a given livestream level. */
 export function maxPriceForLevel(livestreamLevel: number): number {
-  for (const tier of CALL_PRICE_CAPS) {
-    if (livestreamLevel <= tier.maxLevel) return tier.maxPrice
-  }
-  return 9600
+  return getMaxCallPriceForLevel(livestreamLevel)
 }
 
 export const UpdateCallSettingsSchema = z

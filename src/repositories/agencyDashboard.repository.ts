@@ -10,12 +10,17 @@ import { endOfUTCDay, startOfUTCDay, toUTCDateOnly, utcNow } from '../utils/date
  * strictly read-only — commission ledger writes happen in
  * `agencyCommissionService.applyCommission`.
  *
- * Agent-own-earnings eligible point credit types. Kept in sync with
- * `COMMISSION_ELIGIBLE_TX_TYPES` in `agencyCommission.service.ts` so an agent's
- * own gifting/call/subscription credits are counted the same way host
- * commission eligibility is computed.
+ * Agent-own-earnings eligible point credit types — drives the legacy
+ * `agentOwnEarnings` / `totalEarnings` / `totalCommission` fields only.
+ *
+ * NOTE: this set is intentionally broader than agency commission eligibility
+ * (`COMMISSION_ELIGIBLE_TX_TYPES` in `agencyCommission.service.ts`, which is now
+ * GIFT_RECEIVE / VIDEO_CALL / LIVESTREAM_GIFT only). It is kept unchanged here to
+ * preserve the existing agent-own response fields. The new `totalEarningsPoints`
+ * field is computed purely from `agency_daily_earnings`
+ * (host_earnings_points + host_commission_points) and does not use this list.
  */
-const COMMISSION_ELIGIBLE_TX_TYPES = [
+const AGENT_OWN_EARNINGS_TX_TYPES = [
   'LIVESTREAM_GIFT',
   'GIFT_RECEIVE',
   'VIDEO_CALL',
@@ -29,6 +34,8 @@ export interface EarningsOverview {
   totalHostCommission: string
   agentOwnCommission: string
   totalCommission: string
+  /** Agency total economic activity for the period = host earnings + host commission. */
+  totalEarningsPoints: string
   payrollCommission: string
   currentLevel: string
   currentRateBp: number
@@ -41,6 +48,8 @@ export interface HostDataSummary {
   hostsWithIncome: number
   totalLiveDurationSeconds: string
   totalLiveDurationFormatted: string
+  /** host earnings + host commission across all hosts for the period. */
+  totalEarningsPoints: string
 }
 
 export interface HostCommissionItem {
@@ -55,6 +64,8 @@ export interface HostCommissionItem {
   livestreamLevel: number
   hostEarnings: string
   commissionEarned: string
+  /** hostEarnings + commissionEarned for this host within the period. */
+  totalEarningsPoints: string
   liveDurationSeconds: string
   liveDurationFormatted: string
   isAgentSelf?: boolean
@@ -75,6 +86,8 @@ export interface HostDrilldown {
   remainingPoints: string
   hostEarnings: string
   commissionEarned: string
+  /** hostEarnings + commissionEarned for this host within the period. */
+  totalEarningsPoints: string
   liveDurationSeconds: string
   liveDurationFormatted: string
   platformHourlySalary: string
@@ -85,6 +98,8 @@ export interface AgentEarnedToday {
   earnedToday: string
   accumulatedEarnings: string
   pointsBalance: string
+  /** host earnings + host commission for today (agency_daily_earnings). */
+  totalEarningsPoints: string
 }
 
 async function getAgencyRateBp(agencyUserId: string): Promise<{ level: string; rateBp: number }> {
@@ -109,7 +124,7 @@ async function sumAgentOwnEarnings(agencyUserId: string, start: Date, end: Date)
     WHERE w.user_id       = ${agencyUserId}::uuid
       AND w.currency_type = 'POINT'
       AND ple.direction   = 'CREDIT'
-      AND ple.tx_type::text = ANY(${[...COMMISSION_ELIGIBLE_TX_TYPES]}::text[])
+      AND ple.tx_type::text = ANY(${[...AGENT_OWN_EARNINGS_TX_TYPES]}::text[])
       AND ple.created_at >= ${start}
       AND ple.created_at <= ${end}
   `
@@ -189,6 +204,10 @@ export const agencyDashboardRepository = {
     const totalHostCommission = dailyAgg?.totalHostCommission ?? 0n
     const totalEarnings = totalHostEarnings + agentOwnEarnings
     const totalCommission = totalHostCommission + agentOwnCommission
+    // Agency total economic activity = host earnings + host commission. The
+    // agent-as-own-host case is already captured in agency_daily_earnings, so no
+    // special case is needed here.
+    const totalEarningsPoints = totalHostEarnings + totalHostCommission
 
     return {
       totalEarnings: bigIntToStr(totalEarnings),
@@ -197,6 +216,7 @@ export const agencyDashboardRepository = {
       totalHostCommission: bigIntToStr(totalHostCommission),
       agentOwnCommission: bigIntToStr(agentOwnCommission),
       totalCommission: bigIntToStr(totalCommission),
+      totalEarningsPoints: bigIntToStr(totalEarningsPoints),
       payrollCommission: bigIntToStr(payrollAgg?.payrollCommission ?? 0n),
       currentLevel: level,
       currentRateBp: rateBp,
@@ -231,12 +251,14 @@ export const agencyDashboardRepository = {
     `
 
     const [incomeAndDuration] = await prismaRead.$queryRaw<
-      Array<{ hostsWithIncome: bigint; totalLiveDuration: bigint }>
+      Array<{ hostsWithIncome: bigint; totalLiveDuration: bigint; totalEarningsPoints: bigint }>
     >`
       SELECT
         COUNT(DISTINCT ade.host_user_id) FILTER (WHERE ade.host_earnings_points > 0)::BIGINT
           AS "hostsWithIncome",
-        COALESCE(SUM(ade.live_duration_seconds), 0)::BIGINT AS "totalLiveDuration"
+        COALESCE(SUM(ade.live_duration_seconds), 0)::BIGINT AS "totalLiveDuration",
+        COALESCE(SUM(ade.host_earnings_points + ade.host_commission_points), 0)::BIGINT
+          AS "totalEarningsPoints"
       FROM agency_daily_earnings ade
       WHERE ade.agency_user_id = ${agencyUserId}::uuid
         AND ade.day BETWEEN ${startDay}::date AND ${endDay}::date
@@ -250,6 +272,7 @@ export const agencyDashboardRepository = {
       hostsWithIncome: Number(incomeAndDuration?.hostsWithIncome ?? 0n),
       totalLiveDurationSeconds: bigIntToStr(totalLiveSecs),
       totalLiveDurationFormatted: formatDuration(totalLiveSecs),
+      totalEarningsPoints: bigIntToStr(incomeAndDuration?.totalEarningsPoints ?? 0n),
     }
   },
 
@@ -329,6 +352,7 @@ export const agencyDashboardRepository = {
       livestreamLevel: r.livestreamLevel ?? 0,
       hostEarnings: bigIntToStr(r.hostEarnings),
       commissionEarned: bigIntToStr(r.commissionEarned),
+      totalEarningsPoints: bigIntToStr((r.hostEarnings ?? 0n) + (r.commissionEarned ?? 0n)),
       liveDurationSeconds: bigIntToStr(r.liveDurationSeconds),
       liveDurationFormatted: formatDuration(r.liveDurationSeconds ?? 0n),
     }))
@@ -417,6 +441,7 @@ export const agencyDashboardRepository = {
       remainingPoints: bigIntToStr(pointsBalance),
       hostEarnings: bigIntToStr(agg?.hostEarnings ?? 0n),
       commissionEarned: bigIntToStr(agg?.commissionEarned ?? 0n),
+      totalEarningsPoints: bigIntToStr((agg?.hostEarnings ?? 0n) + (agg?.commissionEarned ?? 0n)),
       liveDurationSeconds: bigIntToStr(agg?.liveDurationSeconds ?? 0n),
       liveDurationFormatted: formatDuration(agg?.liveDurationSeconds ?? 0n),
       platformHourlySalary: '0',
@@ -452,7 +477,7 @@ export const agencyDashboardRepository = {
           WHERE w.user_id       = ${agencyUserId}::uuid
             AND w.currency_type = 'POINT'
             AND ple.direction   = 'CREDIT'
-            AND ple.tx_type::text = ANY(${[...COMMISSION_ELIGIBLE_TX_TYPES]}::text[])
+            AND ple.tx_type::text = ANY(${[...AGENT_OWN_EARNINGS_TX_TYPES]}::text[])
         `.then((rows) => rows[0]?.earned ?? 0n),
       getPointsBalance(agencyUserId),
     ])
@@ -464,6 +489,9 @@ export const agencyDashboardRepository = {
       earnedToday: bigIntToStr(earnedToday),
       accumulatedEarnings: bigIntToStr(accumulatedEarnings),
       pointsBalance: bigIntToStr(pointsBalance),
+      // host earnings + host commission for today (agency_daily_earnings already
+      // includes the agent-as-own-host rows).
+      totalEarningsPoints: bigIntToStr(todayAgg?.earned ?? 0n),
     }
   },
 }

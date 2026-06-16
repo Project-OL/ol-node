@@ -972,6 +972,7 @@ enum CoinTxType {
   GUARDIAN_PURCHASE
   STORE_ITEM_PURCHASE
   VIP_MEMBERSHIP_PURCHASE
+  POINT_EXCHANGE_TO_COINS
 }
 
 enum PointTxType {
@@ -1424,15 +1425,16 @@ model WithdrawalPayrollAssignment {
 
 model PayrollConfig {
   id                    Int      @id @default(1)
-  platformFeeRateBp     Int      @default(600) @map("platform_fee_rate_bp")
-  agentRewardRateBp     Int      @default(300) @map("agent_reward_rate_bp")
+  platformFeeRateBp     Int      @default(500) @map("platform_fee_rate_bp")
+  agentRewardRateBp     Int      @default(600) @map("agent_reward_rate_bp")
   serviceFeeUsd         Decimal  @default(1.00) @map("service_fee_usd") @db.Decimal(8, 2)
   minWithdrawalUsd      Decimal  @default(10.00) @map("min_withdrawal_usd") @db.Decimal(12, 2)
   maxWithdrawalUsd      Decimal  @default(10000000.00) @map("max_withdrawal_usd") @db.Decimal(18, 2)
   slaHours              Int      @default(2) @map("sla_hours")
   waitingHours          Int      @default(2) @map("waiting_hours")
   maxAssignmentAttempts Int      @default(5) @map("max_assignment_attempts")
-  inrPerUsd             Decimal  @default(88.00) @map("inr_per_usd") @db.Decimal(8, 2)
+  inrPerUsd             Decimal  @default(94.00) @map("inr_per_usd") @db.Decimal(8, 2)
+  nprPerUsd             Decimal  @default(150.00) @map("npr_per_usd") @db.Decimal(10, 4)
   updatedAt             DateTime @updatedAt @map("updated_at")
   updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
 

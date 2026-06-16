@@ -65,7 +65,17 @@ vi.mock("../../src/repositories/coin-ledger.repository", () => ({
 }));
 
 vi.mock("../../src/services/user-level.service", () => ({
-  walletLevelService: { applyCredit: vi.fn().mockResolvedValue(null) },
+  walletLevelService: {
+    applyCredit: vi.fn().mockResolvedValue(null),
+    invalidateCache: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+vi.mock("../../src/services/rich-tier.service", () => ({
+  richTierService: {
+    applyRecharge: vi.fn().mockResolvedValue({ year: 2026, month: 6 }),
+    refreshCacheAfterRecharge: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 vi.mock("../../src/repositories/coinTrading.repository", () => ({
@@ -133,6 +143,7 @@ import { coinWalletService } from "../../src/services/coin-wallet.service";
 import { coinTradingService } from "../../src/services/coinTrading.service";
 import { userRepository } from "../../src/repositories/user.repository";
 import { walletService } from "../../src/services/wallet.service";
+import { coinTradingRepository } from "../../src/repositories/coinTrading.repository";
 
 function makeTx() {
   return {
@@ -296,11 +307,9 @@ describe("coinTradingService transfer/exchange wallet selection", () => {
   });
 
   it("exchangePointsForTradingCoins credits TRADING_COIN not COIN", async () => {
-    vi.spyOn(coinTradingService, "lookupExchangeRate").mockResolvedValue({
-      usdEquiv: 1,
-      coinsPerUsd: 9200,
-      tradingCoinsAwarded: 9200n,
-    });
+    vi.mocked(coinTradingRepository.getExchangeRates).mockResolvedValue([
+      { minUsdEquiv: 0, maxUsdEquiv: null, coinsPerUsd: 9200 },
+    ] as never);
 
     await coinTradingService.exchangePointsForTradingCoins("agent-1", 10_000n);
 

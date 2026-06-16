@@ -360,6 +360,11 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         }
       })
       await redisClient.del(RedisKeys.ctExchangeRates())
+      // Exchange packages are derived from these rates (cached per user type).
+      await redisClient.del(
+        RedisKeys.ctExchangePackages('agent'),
+        RedisKeys.ctExchangePackages('personal'),
+      )
       return reply.send({ ok: true })
     },
   )

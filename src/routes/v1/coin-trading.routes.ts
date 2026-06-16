@@ -66,6 +66,11 @@ const ListHistoryQuerySchema = z.object({
 })
 
 export default async function coinTradingRoutes(app: FastifyInstance) {
+  app.get('/exchange/packages', { preHandler: [authenticate] }, async (request, reply) => {
+    const packages = await coinTradingService.getExchangePackages(request.userId!)
+    return reply.send({ packages })
+  })
+
   app.get(
     '/balance',
     { preHandler: [authenticate] },
@@ -135,8 +140,6 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
     '/exchange',
     { preHandler: [authenticate, rateLimitCtExchange] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const user = await userRepository.findById(request.userId!)
-      if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
       const body = exchangeSchema.parse(request.body ?? {})
       const securityPassword = String(
         request.headers['x-security-password'] ?? body.securityPassword ?? '',

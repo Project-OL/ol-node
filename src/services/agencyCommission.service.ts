@@ -29,15 +29,18 @@ import { walletService } from './wallet.service'
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 export const MIN_AGENT_POINT_TRANSFER = 100_000n
 
+/**
+ * Point tx types that trigger agency commission.
+ * ONLY gifts and video calls generate commission.
+ * Subscription and guardian host credits do NOT.
+ */
 export const LIVE_COMMISSION_TX_TYPES = new Set<PointTxType>([
-  PointTxType.LIVESTREAM_GIFT,
   PointTxType.GIFT_RECEIVE,
+  PointTxType.LIVESTREAM_GIFT, // legacy enum, eligible if ever written
 ])
 
 export const MATCH_CHAT_COMMISSION_TX_TYPES = new Set<PointTxType>([
   PointTxType.VIDEO_CALL,
-  PointTxType.SUBSCRIPTION,
-  PointTxType.GUARDIAN_PURCHASE,
 ])
 
 export const COMMISSION_ELIGIBLE_TX_TYPES = new Set<PointTxType>([
@@ -382,6 +385,7 @@ export const agencyCommissionService = {
     to: string | null
     liveDurationSeconds: string
     liveDurationFormatted: string
+    totalEarningsPoints: string
     byTxType: Array<{ txType: string; totalAmount: string }>
   }> {
     const periodKey = commissionCacheKey(periodParams)
@@ -413,13 +417,14 @@ export const agencyCommissionService = {
       toDay,
     )
 
-    const [agg, liveDurationSeconds] = await Promise.all([
+    const [agg, liveDurationSeconds, dailyEarnings] = await Promise.all([
       agencyCommissionRepository.aggregateLedgerByTxTypeForAgencyHosts({
         agencyUserId,
         from,
         toExclusive,
       }),
       agencyCommissionRepository.sumLiveDurationForAgency(agencyUserId, period.start, period.end),
+      agencyCommissionRepository.sumAgencyDailyEarnings(agencyUserId, period.start, period.end),
     ])
 
     let lacking: bigint | null = null
@@ -441,6 +446,9 @@ export const agencyCommissionService = {
       to: periodParams.to ?? null,
       liveDurationSeconds: liveDurationSeconds.toString(),
       liveDurationFormatted: formatDuration(liveDurationSeconds),
+      totalEarningsPoints: (
+        dailyEarnings.hostEarningsPoints + dailyEarnings.hostCommissionPoints
+      ).toString(),
       byTxType: agg.map((r) => ({
         txType: r.txType,
         totalAmount: r.totalAmount.toString(),
@@ -474,6 +482,7 @@ export const agencyCommissionService = {
         hostUserId: r.hostUserId,
         hostEarningsPoints: r.hostEarningsPoints.toString(),
         hostCommissionPoints: r.hostCommissionPoints.toString(),
+        totalEarningsPoints: (r.hostEarningsPoints + r.hostCommissionPoints).toString(),
         liveDurationSeconds: r.liveDurationSeconds.toString(),
         liveDurationFormatted: formatDuration(r.liveDurationSeconds),
       })),
@@ -499,7 +508,7 @@ export const agencyCommissionService = {
 
     const period = resolveCommissionPeriod(periodParams)
     const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end)
-    const [rows, liveDurationSeconds] = await Promise.all([
+    const [rows, liveDurationSeconds, dailyEarnings] = await Promise.all([
       agencyCommissionRepository.aggregateLedgerForSingleHost({
         hostUserId,
         agencyUserId,
@@ -507,6 +516,12 @@ export const agencyCommissionService = {
         toExclusive,
       }),
       agencyCommissionRepository.sumLiveDurationForHost(
+        agencyUserId,
+        hostUserId,
+        period.start,
+        period.end,
+      ),
+      agencyCommissionRepository.sumHostDailyEarnings(
         agencyUserId,
         hostUserId,
         period.start,
@@ -540,6 +555,9 @@ export const agencyCommissionService = {
       to: periodParams.to ?? null,
       liveDurationSeconds: liveDurationSeconds.toString(),
       liveDurationFormatted: formatDuration(liveDurationSeconds),
+      totalEarningsPoints: (
+        dailyEarnings.hostEarningsPoints + dailyEarnings.hostCommissionPoints
+      ).toString(),
       totals: {
         allCredits: Object.values(map)
           .reduce((a, b) => a + b, 0n)

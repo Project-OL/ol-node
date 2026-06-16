@@ -1,4 +1,4 @@
-import { CoinTxType, LevelType, VipMembershipTier } from '@prisma/client'
+import { CoinTxType, VipMembershipTier } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
   getRedisForRead,
@@ -9,7 +9,6 @@ import {
 import { AppError } from '../middlewares/errorHandler'
 import { coinWalletService } from './coin-wallet.service'
 import { walletService } from './wallet.service'
-import { walletLevelService } from './user-level.service'
 import { cacheService } from './cache.service'
 import { vipMembershipRepository } from '../repositories/vipMembership.repository'
 import {
@@ -390,6 +389,7 @@ export const vipMembershipService = {
             idempotencyKey,
             description: `VIP membership (${tier})`,
             metadata: { tier, periodDays },
+            applyWealthXp: true,
           },
         )
 
@@ -454,7 +454,7 @@ export const vipMembershipService = {
     const claimDate = new Date(`${utcDateString(now)}T00:00:00.000Z`)
     const idempotencyKey = `vip-daily-claim:${userId}:${utcDateString(now)}`
 
-    const levelRefresh = await prisma.$transaction(
+    await prisma.$transaction(
       async (tx) => {
         const existing = await tx.vipDailyClaim.findUnique({
           where: { userId_claimDate: { userId, claimDate } },
@@ -463,6 +463,7 @@ export const vipMembershipService = {
           throw new AppError(409, 'Already claimed today', 'ALREADY_CLAIMED_TODAY')
         }
 
+        // VIP daily grant is NOT a recharge under the spend-based wealth model: no WEALTH XP.
         const credit = await coinWalletService.credit(
           userId,
           VIP_DAILY_GRANT_COINS,
@@ -472,7 +473,7 @@ export const vipMembershipService = {
             idempotencyKey,
             description: 'VIP daily reward',
             metadata: { claimDate: utcDateString(now) },
-            applyWealthCredit: true,
+            applyWealthCredit: false,
           },
         )
 
@@ -485,8 +486,6 @@ export const vipMembershipService = {
           },
           tx,
         )
-
-        return credit.levelResult
       },
       {
         isolationLevel: 'Serializable',
@@ -495,15 +494,6 @@ export const vipMembershipService = {
     )
 
     await walletService.adjustCoinBalanceCache(userId, 0n)
-    if (levelRefresh) {
-      await walletLevelService.refreshCache(
-        userId,
-        LevelType.WEALTH,
-        levelRefresh.newCumulative,
-        levelRefresh.newLevel,
-        levelRefresh.previousLevel,
-      )
-    }
 
     return {
       amount: VIP_DAILY_GRANT_COINS.toString(),

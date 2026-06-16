@@ -39,10 +39,10 @@ async function seedWalletLevelConfigs(
 async function main() {
   await prisma.coinPackage.createMany({
     data: [
-      { coins: 8_500, priceCents: 299, label: null, sortOrder: 1 },
-      { coins: 18_500, priceCents: 599, label: null, sortOrder: 2 },
-      { coins: 68_000, priceCents: 1999, label: "Popular", sortOrder: 3 },
-      { coins: 198_000, priceCents: 4999, label: null, sortOrder: 4 },
+      { coins: 18_500, priceCents: 299, label: null, sortOrder: 1 },
+      { coins: 64_000, priceCents: 999, label: null, sortOrder: 2 },
+      { coins: 193_000, priceCents: 2999, label: "Popular", sortOrder: 3 },
+      { coins: 655_000, priceCents: 9999, label: null, sortOrder: 4 },
     ],
     skipDuplicates: true,
   });

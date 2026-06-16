@@ -30,7 +30,7 @@ import {
 } from '../repositories/subscription.repository'
 import { userRepository } from '../repositories/user.repository'
 import { userSubscriberRepository } from '../repositories/userSubscriber.repository'
-import { hostRevenuePointsFromCoins } from '../config/host-revenue-shares'
+import { HOST_REVENUE_SHARES, hostPointsFromSubscription } from '../config/host-revenue-shares'
 import { ledgerHostPointsKey } from '../utils/ledger-idempotency'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
@@ -53,7 +53,7 @@ async function creditCreatorSubscriptionPoints(
     description: string
   },
 ): Promise<{ hostPoints: bigint; bustAgentUserId: string | null }> {
-  const hostPoints = hostRevenuePointsFromCoins(params.coinsPaid)
+  const hostPoints = hostPointsFromSubscription(params.coinsPaid)
   if (hostPoints <= 0n) {
     return { hostPoints: 0n, bustAgentUserId: null }
   }
@@ -70,8 +70,9 @@ async function creditCreatorSubscriptionPoints(
       description: params.description,
       metadata: {
         coinsPaid: params.coinsPaid.toString(),
-        hostShareBp: 5000,
+        hostShareBp: HOST_REVENUE_SHARES.SUBSCRIPTION_BP,
       },
+      applyLivestreamLevel: true,
     },
   )
   return { hostPoints, bustAgentUserId }
@@ -274,6 +275,7 @@ export const subscriptionService = {
             subscriptionId: `pending:${subscriberId}:${creatorId}`,
             idempotencyKey,
             description: 'Creator subscription (initial)',
+            applyWealthXp: true,
           },
           tx,
         )
@@ -292,7 +294,7 @@ export const subscriptionService = {
           subscriptionId: created.id,
           coinsPaid: SUBSCRIPTION_COIN_COST,
           idempotencyKey: ledgerHostPointsKey(idempotencyKey),
-          description: 'Creator subscription revenue (50%)',
+          description: 'Creator subscription revenue (75%)',
         })
         bustAgentUserId = credited.bustAgentUserId
 
@@ -302,7 +304,7 @@ export const subscriptionService = {
     )
 
     await walletService.adjustCoinBalanceCache(subscriberId, SUBSCRIPTION_COIN_COST)
-    const creatorPoints = hostRevenuePointsFromCoins(SUBSCRIPTION_COIN_COST)
+    const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
     if (creatorPoints > 0n) {
       await walletService.adjustPointBalanceCache(creatorId, creatorPoints)
     }
@@ -443,6 +445,7 @@ export const subscriptionService = {
               subscriptionId: sub.id,
               idempotencyKey,
               description: 'Creator subscription renewal',
+              applyWealthXp: true,
             },
             tx,
           )
@@ -452,7 +455,7 @@ export const subscriptionService = {
             subscriptionId: sub.id,
             coinsPaid: SUBSCRIPTION_COIN_COST,
             idempotencyKey: hostPtsIdem,
-            description: 'Creator subscription renewal revenue (50%)',
+            description: 'Creator subscription renewal revenue (75%)',
           })
           bustAgentUserId = credited.bustAgentUserId
         },
@@ -460,7 +463,7 @@ export const subscriptionService = {
       )
 
       await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
-      const creatorPoints = hostRevenuePointsFromCoins(SUBSCRIPTION_COIN_COST)
+      const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
       if (creatorPoints > 0n) {
         await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
       }
@@ -525,6 +528,7 @@ export const subscriptionService = {
               subscriptionId: sub.id,
               idempotencyKey,
               description: 'Creator subscription (grace recovery)',
+              applyWealthXp: true,
             },
             tx,
           )
@@ -534,7 +538,7 @@ export const subscriptionService = {
             subscriptionId: sub.id,
             coinsPaid: SUBSCRIPTION_COIN_COST,
             idempotencyKey: hostPtsIdem,
-            description: 'Creator subscription grace recovery revenue (50%)',
+            description: 'Creator subscription grace recovery revenue (75%)',
           })
           bustAgentUserId = credited.bustAgentUserId
         },
@@ -542,7 +546,7 @@ export const subscriptionService = {
       )
 
       await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
-      const creatorPoints = hostRevenuePointsFromCoins(SUBSCRIPTION_COIN_COST)
+      const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
       if (creatorPoints > 0n) {
         await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
       }

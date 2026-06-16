@@ -261,6 +261,8 @@ export const coinWalletService = {
       subscriptionId: string
       idempotencyKey: string
       description?: string
+      /** Apply WEALTH spend XP (default false). */
+      applyWealthXp?: boolean
     },
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
@@ -303,6 +305,9 @@ export const coinWalletService = {
         idempotencyKey: options.idempotencyKey,
       })
       await walletRepository.bumpVersion(inner, wallet.id)
+      if (options.applyWealthXp) {
+        await walletLevelService.applyCredit(inner, userId, LevelType.WEALTH, amount)
+      }
     }
 
     if (tx) {
@@ -329,6 +334,8 @@ export const coinWalletService = {
       targetUserId: string
       idempotencyKey: string
       description?: string
+      /** Apply WEALTH spend XP (default false). */
+      applyWealthXp?: boolean
     },
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
@@ -368,6 +375,9 @@ export const coinWalletService = {
         idempotencyKey: options.idempotencyKey,
       })
       await walletRepository.bumpVersion(inner, wallet.id)
+      if (options.applyWealthXp) {
+        await walletLevelService.applyCredit(inner, userId, LevelType.WEALTH, amount)
+      }
     }
 
     if (tx) {
@@ -391,6 +401,8 @@ export const coinWalletService = {
       storeItemId: string
       idempotencyKey: string
       description?: string
+      /** Apply WEALTH spend XP (default false). */
+      applyWealthXp?: boolean
     },
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
@@ -433,6 +445,9 @@ export const coinWalletService = {
         idempotencyKey: options.idempotencyKey,
       })
       await walletRepository.bumpVersion(inner, wallet.id)
+      if (options.applyWealthXp) {
+        await walletLevelService.applyCredit(inner, userId, LevelType.WEALTH, amount)
+      }
     }
     if (tx) return run(tx)
     await prisma.$transaction(async (inner) => run(inner), {
@@ -450,6 +465,8 @@ export const coinWalletService = {
       publicId: string
       idempotencyKey: string
       description?: string
+      /** Apply WEALTH spend XP (default false). */
+      applyWealthXp?: boolean
     },
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
@@ -492,6 +509,9 @@ export const coinWalletService = {
         idempotencyKey: options.idempotencyKey,
       })
       await walletRepository.bumpVersion(inner, wallet.id)
+      if (options.applyWealthXp) {
+        await walletLevelService.applyCredit(inner, userId, LevelType.WEALTH, amount)
+      }
     }
     if (tx) return run(tx)
     await prisma.$transaction(async (inner) => run(inner), {
@@ -517,6 +537,12 @@ export const coinWalletService = {
       counterpartyId?: string
       /** Defaults to personal COIN; pass TRADING_COIN for agent trading flows. */
       currencyType?: WalletCurrencyType
+      /**
+       * When true, applies WEALTH cumulative XP for the spend (personal COIN only).
+       * Wealth level tracks coin SPEND. Defaults to false. Never set for username
+       * change or trading-coin reversals.
+       */
+      applyWealthXp?: boolean
     },
   ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
     const existing = await coinLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
@@ -574,6 +600,11 @@ export const coinWalletService = {
       idempotencyKey: options.idempotencyKey,
     })
     await walletRepository.bumpVersion(tx, wallet.id)
+
+    if (options.applyWealthXp && currencyType === WalletCurrencyType.COIN) {
+      await walletLevelService.applyCredit(tx, userId, LevelType.WEALTH, amount)
+    }
+
     return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter }
   },
 

@@ -146,7 +146,7 @@ describe('subscriptionService', () => {
     debitForCreatorSubscription.mockResolvedValue(undefined)
     creditInTransaction.mockResolvedValue({
       ledgerEntryId: 'pt-1',
-      balanceAfter: 2500n,
+      balanceAfter: 37500n,
       bustAgentUserId: null,
     })
     findByIdUser.mockResolvedValue({ id: 'creator-1' })
@@ -175,15 +175,15 @@ describe('subscriptionService', () => {
     expect(upsertPairInTx).toHaveBeenCalled()
     expect(creditInTransaction).toHaveBeenCalledWith(
       'creator-1',
-      2500n,
+      37500n,
       expect.anything(),
       expect.anything(),
       expect.objectContaining({
         idempotencyKey: `${purchaseKey}:host-points`,
       }),
     )
-    expect(adjustCoinBalanceCache).toHaveBeenCalledWith('fan-1', 5000n)
-    expect(adjustPointBalanceCache).toHaveBeenCalledWith('creator-1', 2500n)
+    expect(adjustCoinBalanceCache).toHaveBeenCalledWith('fan-1', 50000n)
+    expect(adjustPointBalanceCache).toHaveBeenCalledWith('creator-1', 37500n)
     expect(redisSet).toHaveBeenCalled()
     expect(enqueueSubscriptionRenewal).toHaveBeenCalledWith(
       'sub-1',

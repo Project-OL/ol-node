@@ -93,7 +93,7 @@ describe('guardianService', () => {
     debitForGuardianPurchase.mockResolvedValue(undefined)
     creditInTransaction.mockResolvedValue({
       ledgerEntryId: 'pt-1',
-      balanceAfter: 75000n,
+      balanceAfter: 112500n,
       bustAgentUserId: null,
     })
     findByIdUser.mockResolvedValue({ id: 'target-1', username: 'target' })
@@ -196,7 +196,7 @@ describe('guardianService', () => {
     expect(upsertGuardian).toHaveBeenCalled()
     expect(creditInTransaction).toHaveBeenCalledWith(
       'target-1',
-      75000n,
+      112500n,
       expect.anything(),
       expect.anything(),
       expect.objectContaining({
@@ -205,7 +205,7 @@ describe('guardianService', () => {
     )
     expect(enqueueGuardianExpiry).toHaveBeenCalledWith('g-1', expect.any(Date))
     expect(adjustCoinBalanceCache).toHaveBeenCalledWith('guardian-1', 150000n)
-    expect(adjustPointBalanceCache).toHaveBeenCalledWith('target-1', 75000n)
+    expect(adjustPointBalanceCache).toHaveBeenCalledWith('target-1', 112500n)
     expect(result.guardianId).toBe('g-1')
     expect(result.coinsPaid).toBe('150000')
     expect(cacheDelete).toHaveBeenCalled()

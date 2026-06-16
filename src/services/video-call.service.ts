@@ -25,6 +25,7 @@ import {
   type UpdateCallSettingsInput,
 } from '../models/call.schemas'
 import { utcDayFromTimestamp } from '../utils/datetime'
+import { callerCoinDebitForCall } from '../config/host-revenue-shares'
 
 // ── LiveKit helpers ───────────────────────────────────────────────────────────
 
@@ -134,11 +135,13 @@ export const videoCallSessionService = {
       }
     }
 
-    // Check caller has enough coins for the first minute
+    // Check caller has enough coins for the first minute. The host sets `pricePerMin`
+    // in POINTS; the caller is charged coins at the markup rate.
     const callerBalance = await walletService.getCoinBalance(callerId)
-    if (callerBalance < BigInt(pricePerMin)) {
+    const firstMinuteCoinCost = callerCoinDebitForCall(BigInt(pricePerMin))
+    if (callerBalance < firstMinuteCoinCost) {
       throw new AppError(402, 'Insufficient coins for a one-minute call', 'INSUFFICIENT_COINS', {
-        required: pricePerMin,
+        required: firstMinuteCoinCost.toString(),
         balance: callerBalance.toString(),
       })
     }
@@ -190,7 +193,11 @@ export const videoCallSessionService = {
       throw new AppError(409, 'Call is not active', 'CALL_NOT_ACTIVE')
     }
 
-    const amount = BigInt(session.pricePerMin)
+    // Host's set price per minute is denominated in POINTS (`hostPricePerMin`).
+    // The caller is charged coins at the markup rate so the host receives exactly
+    // their set price as points.
+    const hostPricePerMin = BigInt(session.pricePerMin)
+    const callerDebit = callerCoinDebitForCall(hostPricePerMin)
     const minuteNum = session.minsCharged + 1
     const idemBase = `videocall-${sessionId}-min-${minuteNum}`
 
@@ -217,7 +224,7 @@ export const videoCallSessionService = {
           select: { balanceAfter: true },
         })
         const coinBalance = lastCoin?.balanceAfter ?? 0n
-        if (coinBalance < amount) {
+        if (coinBalance < callerDebit) {
           throw new AppError(402, 'Insufficient coins', 'INSUFFICIENT_COINS')
         }
 
@@ -225,14 +232,22 @@ export const videoCallSessionService = {
           walletId: callerCoinWallet.id,
           direction: LedgerDirection.DEBIT,
           txType: CoinTxType.VIDEO_CALL,
-          amount,
-          balanceAfter: coinBalance - amount,
+          amount: callerDebit,
+          balanceAfter: coinBalance - callerDebit,
           refId: sessionId,
           counterpartyId: session.creatorId,
           description: `Video call min #${minuteNum}`,
           idempotencyKey: `${idemBase}-coin`,
         })
         await walletRepository.bumpVersion(tx, callerCoinWallet.id)
+
+        // Wealth XP tracks coin SPEND: the caller's full coin debit for the minute.
+        await walletLevelService.applyCredit(
+          tx,
+          session.callerId,
+          LevelType.WEALTH,
+          callerDebit,
+        )
 
         // Lock creator point wallet and credit
         await walletRepository.lockForUpdate(tx, creatorPointWallet.id)
@@ -248,8 +263,8 @@ export const videoCallSessionService = {
           walletId: creatorPointWallet.id,
           direction: LedgerDirection.CREDIT,
           txType: PointTxType.VIDEO_CALL,
-          amount,
-          balanceAfter: pointBalance + amount,
+          amount: hostPricePerMin,
+          balanceAfter: pointBalance + hostPricePerMin,
           refId: sessionId,
           counterpartyId: session.callerId,
           description: `Video call min #${minuteNum}`,
@@ -262,7 +277,7 @@ export const videoCallSessionService = {
           {
             hostUserId: session.creatorId,
             hostLedgerEntryId: ptEntry.id,
-            hostPointsCredited: amount,
+            hostPointsCredited: hostPricePerMin,
             hostTxType: PointTxType.VIDEO_CALL,
             day: utcDayFromTimestamp(new Date()),
           },
@@ -270,11 +285,12 @@ export const videoCallSessionService = {
         )
         bustAgentUserId = ac.bustAgentUserId
 
+        // Livestream XP tracks host earnings: the host's point credit (their set price).
         const levelResult = await walletLevelService.applyCredit(
           tx,
           session.creatorId,
           LevelType.LIVESTREAM,
-          amount,
+          hostPricePerMin,
         )
 
         // Store levelResult on the outer scope for cache refresh after commit
@@ -292,12 +308,12 @@ export const videoCallSessionService = {
     await walletService.adjustCoinBalanceCache(session.callerId, 0n)
     await walletService.adjustPointBalanceCache(session.creatorId, 0n)
 
-    // Update session counters
-    await videoCallRepository.incrementMinute(sessionId, amount, amount)
+    // Update session counters: coins deducted from caller, points awarded to host.
+    await videoCallRepository.incrementMinute(sessionId, callerDebit, hostPricePerMin)
 
     // Check if caller can afford the next minute
     const remainingBalance = await walletService.getCoinBalance(session.callerId)
-    const canContinue = remainingBalance >= amount
+    const canContinue = remainingBalance >= callerDebit
 
     if (!canContinue) {
       await this.endInternal(sessionId, 'INSUFFICIENT_COINS', 'Caller ran out of coins')

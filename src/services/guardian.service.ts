@@ -2,7 +2,7 @@ import crypto from 'crypto'
 import type { Guardian, GuardianTier } from '@prisma/client'
 import { PointTxType } from '@prisma/client'
 import { prisma } from '../config/database'
-import { hostRevenuePointsFromCoins } from '../config/host-revenue-shares'
+import { HOST_REVENUE_SHARES, hostPointsFromGuardian } from '../config/host-revenue-shares'
 import { AppError } from '../middlewares/errorHandler'
 import { RedisKeys, GUARDIAN_ACTIVE_TTL, GUARDIAN_LIST_TTL } from '../config/redis'
 import { cacheService } from './cache.service'
@@ -307,6 +307,7 @@ export const guardianService = {
           {
             targetUserId: input.targetUserId,
             idempotencyKey,
+            applyWealthXp: true,
           },
           tx,
         )
@@ -322,7 +323,7 @@ export const guardianService = {
           tx,
         )
 
-        const hostPoints = hostRevenuePointsFromCoins(totalCoins)
+        const hostPoints = hostPointsFromGuardian(totalCoins)
         if (hostPoints > 0n) {
           const credited = await pointWalletService.creditInTransaction(
             input.targetUserId,
@@ -333,12 +334,13 @@ export const guardianService = {
               idempotencyKey: ledgerHostPointsKey(idempotencyKey),
               refId: row.id,
               counterpartyId: guardianUserId,
-              description: 'Guardian purchase revenue (50%)',
+              description: 'Guardian purchase revenue (75%)',
               metadata: {
                 coinsPaid: totalCoins.toString(),
                 tier: input.tier,
-                hostShareBp: 5000,
+                hostShareBp: HOST_REVENUE_SHARES.GUARDIAN_PURCHASE_BP,
               },
+              applyLivestreamLevel: true,
             },
           )
           bustAgentUserId = credited.bustAgentUserId
@@ -350,7 +352,7 @@ export const guardianService = {
     )
 
     await walletService.adjustCoinBalanceCache(guardianUserId, totalCoins)
-    const hostPoints = hostRevenuePointsFromCoins(totalCoins)
+    const hostPoints = hostPointsFromGuardian(totalCoins)
     if (hostPoints > 0n) {
       await walletService.adjustPointBalanceCache(input.targetUserId, hostPoints)
     }

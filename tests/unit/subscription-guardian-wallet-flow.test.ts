@@ -271,7 +271,7 @@ describe('subscription + guardian wallet flow', () => {
     findActiveGuardiansForTarget.mockImplementation(async () => guardianRows)
   })
 
-  it('debits user B coins and credits user A 50% points across subscribe, guardian, guardian, subscribe', async () => {
+  it('debits user B coins and credits user A 75% points across subscribe, guardian, guardian, subscribe', async () => {
     await subscriptionService.createSubscription(fanUserId, creatorUserId)
     await guardianService.purchaseGuardian(fanUserId, {
       targetUserId: creatorUserId,
@@ -285,10 +285,10 @@ describe('subscription + guardian wallet flow', () => {
     })
     await subscriptionService.createSubscription(fanUserId, creatorUserId)
 
-    expect(coinDebits).toEqual([5_000n, 150_000n, 150_000n, 5_000n])
-    expect(pointCredits).toEqual([2_500n, 75_000n, 75_000n, 2_500n])
-    expect(fanCoinBalance).toBe(190_000n)
-    expect(creatorPointBalance).toBe(155_000n)
+    expect(coinDebits).toEqual([50_000n, 150_000n, 150_000n, 50_000n])
+    expect(pointCredits).toEqual([37_500n, 112_500n, 112_500n, 37_500n])
+    expect(fanCoinBalance).toBe(100_000n)
+    expect(creatorPointBalance).toBe(300_000n)
 
     expect(debitForCreatorSubscription).toHaveBeenCalledTimes(2)
     expect(debitForGuardianPurchase).toHaveBeenCalledTimes(2)
@@ -299,13 +299,13 @@ describe('subscription + guardian wallet flow', () => {
     }
     expect(pointCreditKeys).not.toContain('sub-host-pts:sub-fixed:initial')
     expect(pointCreditKeys).not.toContain('guardian-host-pts:guardian-fixed')
-    expect(adjustCoinBalanceCache).toHaveBeenNthCalledWith(1, fanUserId, 5_000n)
+    expect(adjustCoinBalanceCache).toHaveBeenNthCalledWith(1, fanUserId, 50_000n)
     expect(adjustCoinBalanceCache).toHaveBeenNthCalledWith(2, fanUserId, 150_000n)
     expect(adjustCoinBalanceCache).toHaveBeenNthCalledWith(3, fanUserId, 150_000n)
-    expect(adjustCoinBalanceCache).toHaveBeenNthCalledWith(4, fanUserId, 5_000n)
-    expect(adjustPointBalanceCache).toHaveBeenNthCalledWith(1, creatorUserId, 2_500n)
-    expect(adjustPointBalanceCache).toHaveBeenNthCalledWith(2, creatorUserId, 75_000n)
-    expect(adjustPointBalanceCache).toHaveBeenNthCalledWith(3, creatorUserId, 75_000n)
-    expect(adjustPointBalanceCache).toHaveBeenNthCalledWith(4, creatorUserId, 2_500n)
+    expect(adjustCoinBalanceCache).toHaveBeenNthCalledWith(4, fanUserId, 50_000n)
+    expect(adjustPointBalanceCache).toHaveBeenNthCalledWith(1, creatorUserId, 37_500n)
+    expect(adjustPointBalanceCache).toHaveBeenNthCalledWith(2, creatorUserId, 112_500n)
+    expect(adjustPointBalanceCache).toHaveBeenNthCalledWith(3, creatorUserId, 112_500n)
+    expect(adjustPointBalanceCache).toHaveBeenNthCalledWith(4, creatorUserId, 37_500n)
   })
 })

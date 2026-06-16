@@ -13,7 +13,17 @@ import { enqueueRolloverMaster } from '../queues/rich-tier.queue'
 import { utcMonthBoundsExclusive, utcNow, utcYearMonth } from '../utils/datetime'
 import { AppError } from '../middlewares/errorHandler'
 
-export const RECHARGE_TX_TYPES = new Set<CoinTxType>([CoinTxType.TOPUP])
+/**
+ * Personal-COIN credits that count as a "recharge" for Rich tier monthly progress.
+ * These represent coins entering a user's personal wallet from an external source.
+ * NOTE: `TRADING_TRANSFER_IN` and `ADJUSTMENT` only count toward rich tier when they
+ * land in the personal COIN wallet — callers gate `applyRecharge` accordingly.
+ */
+export const RECHARGE_TX_TYPES = new Set<CoinTxType>([
+  CoinTxType.TOPUP,
+  CoinTxType.TRADING_TRANSFER_IN,
+  CoinTxType.ADJUSTMENT,
+])
 
 /** Minimum coins to reach Rich tier N (N = 1..10). Must match `rich_tier_configs` seed. */
 export const RICH_TIER_THRESHOLDS: readonly bigint[] = [

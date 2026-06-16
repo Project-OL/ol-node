@@ -414,8 +414,11 @@ export const pointWalletService = {
 
   /**
    * Point credit inside a caller-owned transaction. Idempotent on `idempotencyKey`.
-   * When `applyLivestreamLevel` is true (default), applies livestream cumulative XP
-   * (host earnings). Set false for agent commission / internal transfers.
+   * Livestream cumulative XP (host earnings) is applied ONLY when `applyLivestreamLevel`
+   * is explicitly `true`. It must be opt-in so internal/system credits (agent commission,
+   * agent point transfer, payroll payouts/rewards, withdrawal refunds) never inflate the
+   * livestream level. Authoritative livestream triggers: gift receive, video call host
+   * credit, subscription, guardian, admin point adjustment.
    */
   async creditInTransaction(
     userId: string,
@@ -499,7 +502,7 @@ export const pointWalletService = {
       bustAgentUserId = ac.bustAgentUserId
     }
 
-    const applyXp = options.applyLivestreamLevel !== false
+    const applyXp = options.applyLivestreamLevel === true
     if (
       applyXp &&
       txType !== PointTxType.AGENT_COMMISSION &&

@@ -160,6 +160,7 @@ export const RedisKeys = {
   ctTopupRates: () => 'ct:topup-rates',
   ctTopupPackages: () => 'ct:topup-packages',
   ctExchangeRates: () => 'ct:exchange-rates',
+  ctExchangePackages: (userType: 'agent' | 'personal') => `ct:exchange-packages:${userType}`,
   coinsellerSettings: (agencyUserId: string) => `agency:coinseller:${agencyUserId}`,
   walletIdem: (key: string) => `wallet:idem:${key}`,
   walletRateLimit: (userId: string, action: string) => `wallet:rl:${userId}:${action}`,

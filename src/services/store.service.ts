@@ -209,6 +209,7 @@ export const storeService = {
             recipientId: params.recipientId,
             storeItemId: item.id,
             idempotencyKey: params.idempotencyKey,
+            applyWealthXp: true,
           },
           tx,
         )
@@ -334,6 +335,7 @@ export const storeService = {
             recipientId: params.recipientId,
             publicId: params.publicId.toString(),
             idempotencyKey: params.idempotencyKey,
+            applyWealthXp: true,
           },
           tx,
         )

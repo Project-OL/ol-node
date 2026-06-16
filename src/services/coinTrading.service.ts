@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import {
   CoinTxType,
   LedgerDirection,
+  LevelType,
   PointTxType,
   Prisma,
   WalletCurrencyType,
@@ -20,11 +21,17 @@ import { walletRepository } from '../repositories/wallet.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
 import { pointWalletService } from './point-wallet.service'
 import { coinWalletService } from './coin-wallet.service'
+import { richTierService } from './rich-tier.service'
+import { walletLevelService } from './user-level.service'
 import { walletService } from './wallet.service'
 import { agencyService } from './agency.service'
 import { userRepository } from '../repositories/user.repository'
 import { epayClient } from '../lib/epay.client'
 import { prisma, prismaRead } from '../config/database'
+import {
+  PERSONAL_COIN_EXCHANGE_RATES,
+  type RateTierUsd,
+} from '../config/coin-trading-rates.defaults'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -59,6 +66,26 @@ async function invalidateTradingTransferCaches(
 
 function parseUsd(v: Prisma.Decimal): number {
   return Number(v.toString())
+}
+
+type DbExchangeTier = { minUsdEquiv: Prisma.Decimal; maxUsdEquiv: Prisma.Decimal | null; coinsPerUsd: number }
+
+/**
+ * Resolve `coinsPerUsd` for a USD-equivalent amount across either DB exchange-rate rows
+ * (`minUsdEquiv`/`maxUsdEquiv` Decimals) or the static personal `RateTierUsd` tiers.
+ */
+function lookupExchangeCoinsPerUsd(
+  rates: DbExchangeTier[] | RateTierUsd[],
+  usdEquiv: number,
+): number {
+  const tier = (rates as Array<DbExchangeTier | RateTierUsd>).find((r) => {
+    const min = 'minUsdEquiv' in r ? parseUsd(r.minUsdEquiv) : r.minUsd
+    const rawMax = 'maxUsdEquiv' in r ? r.maxUsdEquiv : r.maxUsd
+    const max = rawMax == null ? null : 'maxUsdEquiv' in r ? parseUsd(r.maxUsdEquiv as Prisma.Decimal) : (rawMax as number)
+    return usdEquiv >= min && (max == null || usdEquiv < max)
+  })
+  if (!tier) throw new AppError(400, 'No rate tier', 'RATE_NOT_FOUND')
+  return tier.coinsPerUsd
 }
 
 function formatPackage(row: {
@@ -105,6 +132,50 @@ export const coinTradingService = {
     const rows = await coinTradingRepository.getExchangeRates()
     await redisClient.set(key, JSON.stringify(rows), 'EX', CT_RATES_TTL)
     return rows
+  },
+  /**
+   * Point→coin exchange packages, with rates that depend on whether the user is an agent.
+   * Agents see agent exchange rates (TRADING_COIN); non-agents see personal rates (COIN).
+   * Cached per user TYPE (not per user) under `ct:exchange-packages:{agent|personal}`.
+   */
+  async getExchangePackages(userId: string) {
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    const isAgent = user.isAgent
+
+    const cacheKey = RedisKeys.ctExchangePackages(isAgent ? 'agent' : 'personal')
+    const cached = await redisClient.get(cacheKey)
+    if (cached) return JSON.parse(cached)
+
+    const rates = isAgent
+      ? await coinTradingRepository.getExchangeRates()
+      : PERSONAL_COIN_EXCHANGE_RATES
+
+    const BASE_PACKAGES = [
+      { id: 'pkg_exchange_100k', pointsRequired: 100_000n, label: '100K Points' },
+      { id: 'pkg_exchange_500k', pointsRequired: 500_000n, label: '500K Points' },
+    ] as const
+
+    const result = BASE_PACKAGES.map((pkg) => {
+      const usdEquiv = Number(pkg.pointsRequired) / 10_000
+      const rate = lookupExchangeCoinsPerUsd(rates, usdEquiv)
+      const coinsAwarded = (pkg.pointsRequired * BigInt(rate)) / 10_000n
+      return {
+        id: pkg.id,
+        pointsRequired: pkg.pointsRequired.toString(),
+        coinsAwarded: coinsAwarded.toString(),
+        coinsPerUsd: rate,
+        walletType: isAgent ? 'TRADING_COIN' : 'COIN',
+        usdEquivalent: (Number(pkg.pointsRequired) / 10_000).toFixed(2),
+        label: pkg.label,
+        description: `Exchange ${Number(pkg.pointsRequired).toLocaleString()} points for ${Number(
+          coinsAwarded,
+        ).toLocaleString()} ${isAgent ? 'trading coins' : 'coins'}`,
+      }
+    })
+
+    await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 3600)
+    return result
   },
   async lookupTopupRate(amountUsd: number) {
     const rates = await coinTradingRepository.getTopupRates()
@@ -245,46 +316,69 @@ export const coinTradingService = {
     )
     await walletService.adjustTradingBalanceCache(order.agentUserId)
   },
-  async exchangePointsForTradingCoins(agentUserId: string, pointsToExchange: bigint) {
+  async exchangePointsForTradingCoins(userId: string, pointsToExchange: bigint) {
     if (pointsToExchange < 10_000n)
       throw new AppError(400, 'Minimum 10,000 points', 'MIN_POINTS_EXCHANGE')
-    const user = await userRepository.findById(agentUserId)
-    if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
-    await agencyService.enforcePauseGate(agentUserId)
-    const rate = await this.lookupExchangeRate(pointsToExchange)
+
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    if (user.isAgent) {
+      await agencyService.enforcePauseGate(userId)
+    }
+
+    // Determine rate tier based on user type
+    const usdEquiv = Number(pointsToExchange) / 10000.0
+    const rates = user.isAgent
+      ? await coinTradingRepository.getExchangeRates()
+      : PERSONAL_COIN_EXCHANGE_RATES
+
+    const coinsPerUsd = lookupExchangeCoinsPerUsd(rates, usdEquiv)
+    const coinsAwarded = BigInt(Math.floor((Number(pointsToExchange) * coinsPerUsd) / 10000))
+
     const exchangeRefId = randomUUID()
+    const targetWalletType = user.isAgent
+      ? WalletCurrencyType.TRADING_COIN
+      : WalletCurrencyType.COIN
+    const coinTxType = user.isAgent
+      ? CoinTxType.TRADING_EXCHANGE_FROM_POINTS
+      : CoinTxType.POINT_EXCHANGE_TO_COINS
+
     await prisma.$transaction(
       async (tx) => {
-        await pointWalletService.debit(
-          agentUserId,
-          pointsToExchange,
-          PointTxType.TRANSFER_OUT,
-          tx,
-          {
-            idempotencyKey: `exchange-pts:${exchangeRefId}`,
-            refId: exchangeRefId,
-            description: 'Points exchanged for trading coins',
-            metadata: { exchangeRefId },
-          },
-        )
-        await coinWalletService.credit(
-          agentUserId,
-          rate.tradingCoinsAwarded,
-          CoinTxType.TRADING_EXCHANGE_FROM_POINTS,
-          tx,
-          {
-            idempotencyKey: `exchange-ct:${exchangeRefId}`,
-            description: 'Trading coins from points exchange',
-            applyWealthCredit: false,
-            currencyType: WalletCurrencyType.TRADING_COIN,
-          },
-        )
+        await pointWalletService.debit(userId, pointsToExchange, PointTxType.TRANSFER_OUT, tx, {
+          idempotencyKey: `exchange-pts:${exchangeRefId}`,
+          refId: exchangeRefId,
+          description: user.isAgent
+            ? 'Points exchanged for trading coins'
+            : 'Points exchanged for coins',
+          metadata: { exchangeRefId },
+        })
+
+        await coinWalletService.credit(userId, coinsAwarded, coinTxType, tx, {
+          idempotencyKey: user.isAgent
+            ? `exchange-ct:${exchangeRefId}`
+            : `exchange-coin:${exchangeRefId}`,
+          description: user.isAgent ? 'Trading coins from points exchange' : 'Coins from points exchange',
+          applyWealthCredit: false,
+          currencyType: targetWalletType,
+        })
       },
       { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
     )
-    await walletService.adjustPointBalanceCache(agentUserId, 0n)
-    await walletService.adjustTradingBalanceCache(agentUserId)
-    return { tradingCoinsAwarded: rate.tradingCoinsAwarded.toString() }
+
+    await walletService.adjustPointBalanceCache(userId, 0n)
+    if (user.isAgent) {
+      await walletService.adjustTradingBalanceCache(userId)
+    } else {
+      await walletService.adjustCoinBalanceCache(userId, 0n)
+    }
+
+    return {
+      coinsAwarded: coinsAwarded.toString(),
+      walletType: user.isAgent ? 'TRADING_COIN' : 'COIN',
+      exchangeRate: coinsPerUsd,
+    }
   },
   async transferTradingCoins(
     senderAgentUserId: string,
@@ -306,8 +400,12 @@ export const coinTradingService = {
     if (recipient.id === senderAgentUserId)
       throw new AppError(400, 'Self transfer blocked', 'SELF_TRANSFER')
     const recipientWalletType = resolveRecipientWalletType(recipient, input.targetWalletType)
-    const transfer = await prisma.$transaction(
+    // A transfer into a recipient's personal COIN wallet (non-agent / PERSONAL target)
+    // counts as a recharge: it accrues wealth XP and Rich tier monthly progress.
+    const recipientGetsPersonalCoin = recipientWalletType === WalletCurrencyType.COIN
+    const { transfer, recharge: recipientRecharge } = await prisma.$transaction(
       async (tx) => {
+        let recharge: { year: number; month: number } | null = null
         const senderDebit = await coinWalletService.debit(
           senderAgentUserId,
           input.tradingCoins,
@@ -329,11 +427,14 @@ export const coinTradingService = {
             idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:in`,
             description: 'Trading coin transfer in',
             counterpartyId: senderAgentUserId,
-            applyWealthCredit: false,
+            applyWealthCredit: recipientGetsPersonalCoin,
             currencyType: recipientWalletType,
           },
         )
-        return coinTradingRepository.createTransfer(
+        if (recipientGetsPersonalCoin) {
+          recharge = await richTierService.applyRecharge(recipient.id, input.tradingCoins, tx)
+        }
+        const transferRow = await coinTradingRepository.createTransfer(
           {
             senderAgentUserId,
             recipientUserId: recipient.id,
@@ -347,10 +448,21 @@ export const coinTradingService = {
           },
           tx,
         )
+        return { transfer: transferRow, recharge }
       },
       { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
     )
     await invalidateTradingTransferCaches(senderAgentUserId, recipient.id, recipientWalletType)
+    if (recipientGetsPersonalCoin) {
+      await walletLevelService.invalidateCache(recipient.id, LevelType.WEALTH)
+      if (recipientRecharge) {
+        await richTierService.refreshCacheAfterRecharge(
+          recipient.id,
+          recipientRecharge.year,
+          recipientRecharge.month,
+        )
+      }
+    }
     return transfer
   },
   async reverseTransfer(adminUserId: string, transferId: string, reason: string) {

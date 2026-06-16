@@ -166,6 +166,52 @@ export const agencyCommissionRepository = {
     }))
   },
 
+  /** Agency-wide host earnings + commission sums from the daily table for a day range. */
+  async sumAgencyDailyEarnings(
+    agencyUserId: string,
+    fromDay: Date,
+    toDay: Date,
+  ): Promise<{ hostEarningsPoints: bigint; hostCommissionPoints: bigint }> {
+    const rows = await prismaRead.$queryRaw<{ earnings: bigint; commission: bigint }[]>`
+      SELECT
+        COALESCE(SUM(e.host_earnings_points), 0)::bigint AS earnings,
+        COALESCE(SUM(e.host_commission_points), 0)::bigint AS commission
+      FROM agency_daily_earnings e
+      INNER JOIN users u ON u.id = e.host_user_id
+      WHERE e.agency_user_id = ${agencyUserId}::uuid
+        AND e.day >= ${fromDay}::date
+        AND e.day <= ${toDay}::date
+        AND u.status NOT IN ('suspended', 'deleted')
+    `
+    return {
+      hostEarningsPoints: rows[0]?.earnings ?? 0n,
+      hostCommissionPoints: rows[0]?.commission ?? 0n,
+    }
+  },
+
+  /** Single-host earnings + commission sums from the daily table for a day range. */
+  async sumHostDailyEarnings(
+    agencyUserId: string,
+    hostUserId: string,
+    fromDay: Date,
+    toDay: Date,
+  ): Promise<{ hostEarningsPoints: bigint; hostCommissionPoints: bigint }> {
+    const rows = await prismaRead.$queryRaw<{ earnings: bigint; commission: bigint }[]>`
+      SELECT
+        COALESCE(SUM(e.host_earnings_points), 0)::bigint AS earnings,
+        COALESCE(SUM(e.host_commission_points), 0)::bigint AS commission
+      FROM agency_daily_earnings e
+      WHERE e.agency_user_id = ${agencyUserId}::uuid
+        AND e.host_user_id = ${hostUserId}::uuid
+        AND e.day >= ${fromDay}::date
+        AND e.day <= ${toDay}::date
+    `
+    return {
+      hostEarningsPoints: rows[0]?.earnings ?? 0n,
+      hostCommissionPoints: rows[0]?.commission ?? 0n,
+    }
+  },
+
   async sumLiveDurationForAgency(
     agencyUserId: string,
     fromDay: Date,

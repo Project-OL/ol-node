@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { CoinTxType, PointTxType, WalletCurrencyType } from '@prisma/client'
+import { CoinTxType, LevelType, PointTxType, WalletCurrencyType } from '@prisma/client'
 import { prisma } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { userRepository } from '../repositories/user.repository'
@@ -7,6 +7,8 @@ import { agencyRepository } from '../repositories/agency.repository'
 import { auditService } from './audit.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
+import { richTierService } from './rich-tier.service'
+import { walletLevelService } from './user-level.service'
 import { walletService } from './wallet.service'
 
 const TX_TIMEOUT_MS = 20_000
@@ -78,18 +80,36 @@ export const adminWalletService = {
 
     if (hasCoins) {
       const coins = params.coins!
-      const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
-        async (tx) =>
-          coinWalletService.credit(params.targetUserId, coins, CoinTxType.ADJUSTMENT, tx, {
-            idempotencyKey: `${baseKey}:coins`,
-            description,
-            metadata,
-            applyWealthCredit: false,
-            currencyType: WalletCurrencyType.COIN,
-          }),
+      // Admin credit to a personal COIN wallet is a recharge: wealth XP + Rich tier progress.
+      const { ledgerEntryId, balanceAfter, recharge } = await prisma.$transaction(
+        async (tx) => {
+          const credit = await coinWalletService.credit(
+            params.targetUserId,
+            coins,
+            CoinTxType.ADJUSTMENT,
+            tx,
+            {
+              idempotencyKey: `${baseKey}:coins`,
+              description,
+              metadata,
+              applyWealthCredit: true,
+              currencyType: WalletCurrencyType.COIN,
+            },
+          )
+          const month = await richTierService.applyRecharge(params.targetUserId, coins, tx)
+          return { ...credit, recharge: month }
+        },
         { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
       )
       await walletService.adjustCoinBalanceCache(params.targetUserId, coins)
+      await walletLevelService.invalidateCache(params.targetUserId, LevelType.WEALTH)
+      if (recharge) {
+        await richTierService.refreshCacheAfterRecharge(
+          params.targetUserId,
+          recharge.year,
+          recharge.month,
+        )
+      }
       credited.coins = coins.toString()
       balances.coins = {
         ledgerEntryId,

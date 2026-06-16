@@ -81,9 +81,11 @@ describe("richTierService", () => {
     findMostRecent.mockResolvedValue(null);
   });
 
-  it("RECHARGE_TX_TYPES only contains TOPUP", () => {
+  it("RECHARGE_TX_TYPES contains exactly TOPUP, TRADING_TRANSFER_IN, ADJUSTMENT", () => {
     expect(RECHARGE_TX_TYPES.has(CoinTxType.TOPUP)).toBe(true);
-    expect(RECHARGE_TX_TYPES.size).toBe(1);
+    expect(RECHARGE_TX_TYPES.has(CoinTxType.TRADING_TRANSFER_IN)).toBe(true);
+    expect(RECHARGE_TX_TYPES.has(CoinTxType.ADJUSTMENT)).toBe(true);
+    expect(RECHARGE_TX_TYPES.size).toBe(3);
   });
 
   it("getCurrentTierForUser sets badgeVisible false when not VIP", async () => {
