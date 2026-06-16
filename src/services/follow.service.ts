@@ -1,4 +1,4 @@
-import { RedisKeys } from '../config/redis'
+import { RedisKeys, redisClient } from '../config/redis'
 import { cacheService } from './cache.service'
 import { auditService } from './audit.service'
 import { followRepository } from '../repositories/follow.repository'
@@ -102,6 +102,12 @@ async function toUserCards(
   return decorated
 }
 
+/** Bust cached followers/following/friends for one or more users (primary Redis). */
+export async function invalidateSocialCountsCache(...userIds: string[]): Promise<void> {
+  const unique = [...new Set(userIds.filter(Boolean))]
+  await Promise.all(unique.map((id) => cacheService.delete(RedisKeys.socialCounts(id))))
+}
+
 export const followService = {
   async follow(
     followerId: string,
@@ -120,8 +126,7 @@ export const followService = {
     await followRepository.upsertFollow(followerId, targetUserId)
     const isFriend = await followRepository.existsFollow(targetUserId, followerId)
 
-    await cacheService.delete(RedisKeys.socialCounts(followerId))
-    await cacheService.delete(RedisKeys.socialCounts(targetUserId))
+    await invalidateSocialCountsCache(followerId, targetUserId)
 
     await auditService.log({
       userId: followerId,
@@ -138,8 +143,7 @@ export const followService = {
   async unfollow(followerId: string, targetUserId: string, meta: AuditMeta): Promise<void> {
     await followRepository.deleteFollow(followerId, targetUserId)
 
-    await cacheService.delete(RedisKeys.socialCounts(followerId))
-    await cacheService.delete(RedisKeys.socialCounts(targetUserId))
+    await invalidateSocialCountsCache(followerId, targetUserId)
 
     await auditService.log({
       userId: followerId,
@@ -265,7 +269,13 @@ export const followService = {
     friends: number
   }> {
     const cacheKey = RedisKeys.socialCounts(userId)
-    const cached = await cacheService.get(cacheKey)
+    // Read from primary so invalidations are visible immediately (read replica can lag).
+    let cached: string | null = null
+    try {
+      cached = await redisClient.get(cacheKey)
+    } catch {
+      cached = null
+    }
     if (cached) {
       return JSON.parse(cached) as {
         followers: number

@@ -233,13 +233,15 @@ export const authV2Service = {
       throw new AppError(409, 'Profile already completed', 'PROFILE_ALREADY_COMPLETE')
     const dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : undefined
     const lastName = data.lastName && data.lastName.trim() !== '' ? data.lastName : null
+    const avatarUrl =
+      data.avatarUrl && data.avatarUrl.trim() !== '' ? data.avatarUrl.trim() : null
     await userRepository.updateProfile(userId, {
       firstName: data.firstName,
       lastName,
       dateOfBirth: dateOfBirth ?? null,
       country: data.country,
       gender: data.gender,
-      avatarUrl: data.avatarUrl ?? null,
+      avatarUrl,
       status: 'active',
       profileCompletedAt: new Date(),
     })

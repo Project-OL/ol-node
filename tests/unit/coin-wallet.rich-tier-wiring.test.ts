@@ -3,7 +3,7 @@ import { CoinTxType, LedgerDirection, LevelType, WalletCurrencyType } from "@pri
 
 const applyRecharge = vi.fn();
 const refreshCacheAfterRecharge = vi.fn();
-const wealthRefreshCache = vi.fn();
+const wealthGetSnapshot = vi.fn();
 
 vi.mock("../../src/services/rich-tier.service", async () => {
   const { CoinTxType: CT } = await import("@prisma/client");
@@ -23,12 +23,8 @@ vi.mock("../../src/services/audit.service", () => ({
 
 vi.mock("../../src/services/user-level.service", () => ({
   walletLevelService: {
-    applyCredit: vi.fn().mockResolvedValue({
-      newCumulative: 100n,
-      newLevel: 2,
-      previousLevel: 1,
-    }),
-    refreshCache: (...a: unknown[]) => wealthRefreshCache(...a),
+    applyCredit: vi.fn(),
+    getSnapshot: (...a: unknown[]) => wealthGetSnapshot(...a),
   },
 }));
 
@@ -91,12 +87,12 @@ describe("confirmTopup rich-tier wiring", () => {
       balanceAfter: 50n,
     });
     applyRecharge.mockResolvedValue({ year: 2026, month: 5 });
-    wealthRefreshCache.mockResolvedValue({
+    wealthGetSnapshot.mockResolvedValue({
       currentLevel: 2,
       cumulativeTotal: "100",
       distanceToUpgrade: "0",
-      leveledUp: true,
-      previousLevel: 1,
+      leveledUp: false,
+      previousLevel: 2,
       nextLevelThreshold: null,
       progressNumerator: "0",
       progressDenominator: null,
@@ -113,20 +109,20 @@ describe("confirmTopup rich-tier wiring", () => {
     );
   });
 
-  it("calls applyRecharge inside $transaction before commit, then wealth refreshCache then refreshCacheAfterRecharge", async () => {
+  it("calls applyRecharge inside $transaction, then getSnapshot (read-only) and refreshCacheAfterRecharge — no wealth applyCredit", async () => {
     const seq: string[] = [];
     applyRecharge.mockImplementation(async () => {
       seq.push("applyRecharge");
       return { year: 2026, month: 5 };
     });
-    wealthRefreshCache.mockImplementation(async () => {
-      seq.push("wealthRefresh");
+    wealthGetSnapshot.mockImplementation(async () => {
+      seq.push("wealthSnapshot");
       return {
         currentLevel: 2,
         cumulativeTotal: "100",
         distanceToUpgrade: "0",
         leveledUp: false,
-        previousLevel: 1,
+        previousLevel: 2,
         nextLevelThreshold: null,
         progressNumerator: "0",
         progressDenominator: null,
@@ -155,7 +151,7 @@ describe("confirmTopup rich-tier wiring", () => {
       50n,
       expect.anything(),
     );
-    expect(seq).toEqual(["applyRecharge", "wealthRefresh", "richRefresh"]);
+    expect(seq).toEqual(["applyRecharge", "richRefresh", "wealthSnapshot"]);
     expect(lockForUpdate).toHaveBeenCalled();
   });
 

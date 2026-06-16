@@ -22,10 +22,9 @@ const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
 export const coinWalletService = {
   /**
-   * Any new **coin CREDIT** flow (VIP reward, transfer in, etc.) must call
-   * `walletLevelService.applyCredit` inside the same `prisma.$transaction` as the ledger insert
-   * and `refreshCache` after commit (see `confirmTopup`). Flows in `RECHARGE_TX_TYPES` must also
-   * call `richTierService.applyRecharge` in-tx and `refreshCacheAfterRecharge` after commit.
+   * Coin CREDIT flows default to `applyWealthCredit: false`. Wealth XP tracks coin SPEND
+   * (debits via `applyWealthXp`). Recharge flows (TOPUP, TRADING_TRANSFER_IN to personal COIN,
+   * admin ADJUSTMENT) call `richTierService.applyRecharge` only — not wealth XP.
    */
   async listPackages() {
     return prisma.coinPackage.findMany({
@@ -99,7 +98,7 @@ export const coinWalletService = {
 
     const txType = CoinTxType.TOPUP
 
-    const { ledgerEntry, levelResult, richTierMonth } = await prisma.$transaction(
+    const { ledgerEntry, richTierMonth } = await prisma.$transaction(
       async (tx) => {
         await walletRepository.lockForUpdate(tx, wallet.id)
 
@@ -130,20 +129,12 @@ export const coinWalletService = {
           data: { status: 'PAID', gatewayRef, ledgerEntryId: entry.id },
         })
 
-        const lr = await walletLevelService.applyCredit(
-          tx,
-          userId,
-          LevelType.WEALTH,
-          BigInt(order.coins),
-        )
-
         const richMonth = RECHARGE_TX_TYPES.has(txType)
           ? await richTierService.applyRecharge(userId, BigInt(order.coins), tx)
           : null
 
         return {
           ledgerEntry: entry,
-          levelResult: lr,
           richTierMonth: richMonth,
         }
       },
@@ -152,14 +143,6 @@ export const coinWalletService = {
 
     await walletService.adjustCoinBalanceCache(userId, BigInt(order.coins))
 
-    const wealthSnapshot = await walletLevelService.refreshCache(
-      userId,
-      LevelType.WEALTH,
-      levelResult.newCumulative,
-      levelResult.newLevel,
-      levelResult.previousLevel,
-    )
-
     if (richTierMonth) {
       await richTierService.refreshCacheAfterRecharge(
         userId,
@@ -167,6 +150,8 @@ export const coinWalletService = {
         richTierMonth.month,
       )
     }
+
+    const wealthSnapshot = await walletLevelService.getSnapshot(userId, LevelType.WEALTH)
 
     auditService.log({
       userId,

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const redisDel = vi.fn()
 const redisGet = vi.fn()
+const redisDel = vi.fn()
 const redisSet = vi.fn()
 
 vi.mock('../../src/config/redis', () => ({
@@ -156,7 +156,7 @@ describe('followService', () => {
   })
 
   it('getCounts uses cache when available', async () => {
-    cacheGet.mockResolvedValueOnce(
+    redisGet.mockResolvedValueOnce(
       JSON.stringify({ followers: 1, following: 2, friends: 3 }),
     )
 
@@ -167,7 +167,7 @@ describe('followService', () => {
   })
 
   it('getCounts computes and caches when miss', async () => {
-    cacheGet.mockResolvedValueOnce(null)
+    redisGet.mockResolvedValueOnce(null)
     countFollowers.mockResolvedValueOnce(5)
     countFollowing.mockResolvedValueOnce(10)
     countFriends.mockResolvedValueOnce(2)

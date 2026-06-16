@@ -16,8 +16,9 @@ import { AppError } from '../middlewares/errorHandler'
 /**
  * Personal-COIN credits that count as a "recharge" for Rich tier monthly progress.
  * These represent coins entering a user's personal wallet from an external source.
- * NOTE: `TRADING_TRANSFER_IN` and `ADJUSTMENT` only count toward rich tier when they
- * land in the personal COIN wallet — callers gate `applyRecharge` accordingly.
+ * NOTE: Recharge flows do NOT increase wealth level (wealth tracks coin SPEND only).
+ * `TRADING_TRANSFER_IN` and `ADJUSTMENT` only count when landing in personal COIN —
+ * callers gate `applyRecharge` accordingly.
  */
 export const RECHARGE_TX_TYPES = new Set<CoinTxType>([
   CoinTxType.TOPUP,

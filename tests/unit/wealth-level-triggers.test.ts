@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CoinTxType, LevelType, WalletCurrencyType } from '@prisma/client'
 
 /**
- * Wealth XP now tracks coin SPEND (debits) plus a small set of recharge credits.
- * These tests pin the gating logic in coinWalletService: applyCredit(WEALTH) must
- * fire only when the caller opts in (`applyWealthXp` for debits / `applyWealthCredit`
- * for credits) and the wallet is personal COIN.
+ * Wealth XP tracks coin SPEND (debits). These tests pin the gating logic in
+ * coinWalletService: applyCredit(WEALTH) fires only when the caller opts in
+ * (`applyWealthXp` for debits / `applyWealthCredit` for credits) and the wallet
+ * is personal COIN. Recharge flows (TOPUP, transfer-in, admin credit) pass
+ * `applyWealthCredit: false` at call sites — rich tier only.
  */
 
 const applyCredit = vi.fn().mockResolvedValue({
@@ -171,7 +172,7 @@ describe('Wealth XP triggers (coin credit gating)', () => {
     vi.clearAllMocks()
   })
 
-  it('TRADING_TRANSFER_IN to personal COIN: applyCredit(WEALTH) called when applyWealthCredit=true', async () => {
+  it('applyWealthCredit=true on personal COIN credit still applies wealth (opt-in gate)', async () => {
     const tx = makeTx()
     await coinWalletService.credit(
       'recipient-1',

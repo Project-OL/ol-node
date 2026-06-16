@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto'
 import {
   CoinTxType,
   LedgerDirection,
-  LevelType,
   PointTxType,
   Prisma,
   WalletCurrencyType,
@@ -22,7 +21,6 @@ import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
 import { pointWalletService } from './point-wallet.service'
 import { coinWalletService } from './coin-wallet.service'
 import { richTierService } from './rich-tier.service'
-import { walletLevelService } from './user-level.service'
 import { walletService } from './wallet.service'
 import { agencyService } from './agency.service'
 import { userRepository } from '../repositories/user.repository'
@@ -400,8 +398,7 @@ export const coinTradingService = {
     if (recipient.id === senderAgentUserId)
       throw new AppError(400, 'Self transfer blocked', 'SELF_TRANSFER')
     const recipientWalletType = resolveRecipientWalletType(recipient, input.targetWalletType)
-    // A transfer into a recipient's personal COIN wallet (non-agent / PERSONAL target)
-    // counts as a recharge: it accrues wealth XP and Rich tier monthly progress.
+    // Transfer into a recipient's personal COIN wallet counts as Rich tier recharge only.
     const recipientGetsPersonalCoin = recipientWalletType === WalletCurrencyType.COIN
     const { transfer, recharge: recipientRecharge } = await prisma.$transaction(
       async (tx) => {
@@ -427,7 +424,7 @@ export const coinTradingService = {
             idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:in`,
             description: 'Trading coin transfer in',
             counterpartyId: senderAgentUserId,
-            applyWealthCredit: recipientGetsPersonalCoin,
+            applyWealthCredit: false,
             currencyType: recipientWalletType,
           },
         )
@@ -453,15 +450,12 @@ export const coinTradingService = {
       { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
     )
     await invalidateTradingTransferCaches(senderAgentUserId, recipient.id, recipientWalletType)
-    if (recipientGetsPersonalCoin) {
-      await walletLevelService.invalidateCache(recipient.id, LevelType.WEALTH)
-      if (recipientRecharge) {
-        await richTierService.refreshCacheAfterRecharge(
-          recipient.id,
-          recipientRecharge.year,
-          recipientRecharge.month,
-        )
-      }
+    if (recipientGetsPersonalCoin && recipientRecharge) {
+      await richTierService.refreshCacheAfterRecharge(
+        recipient.id,
+        recipientRecharge.year,
+        recipientRecharge.month,
+      )
     }
     return transfer
   },

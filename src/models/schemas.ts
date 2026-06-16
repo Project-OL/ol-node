@@ -69,7 +69,11 @@ export const completeProfileBodySchema = z
       .optional(),
     country: z.string().min(1).max(100),
     gender: z.enum(['male', 'female', 'other']),
-    avatarUrl: z.string().url().optional().or(z.literal('')),
+    /** Optional profile photo URL; omit, null, or empty string when user skips avatar upload. */
+    avatarUrl: z.preprocess(
+      (val) => (val === null || val === '' || val === undefined ? undefined : val),
+      z.string().url().optional(),
+    ),
     /** Stable per-app-install id (e.g. UUID v4 in Keychain). Omit on web; send on mobile to match login. */
     deviceId: z.string().min(1).max(255).optional(),
     deviceName: z.string().min(1).max(255).optional(),

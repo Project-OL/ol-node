@@ -241,6 +241,11 @@ export const userRepository = {
       },
     })
 
+    const followEdges = await prismaRead.userFollow.findMany({
+      where: { OR: [{ followerId: userId }, { followingId: userId }] },
+      select: { followerId: true, followingId: true },
+    })
+
     await prisma.$transaction(async (tx) => {
       const { agencyHostService } = await import('../services/agencyHost.service')
       await agencyHostService.handleHostAccountDeletion(userId, tx)
@@ -287,6 +292,14 @@ export const userRepository = {
         },
       })
     })
+
+    const { invalidateSocialCountsCache } = await import('../services/follow.service')
+    const affectedUserIds = new Set<string>([userId])
+    for (const edge of followEdges) {
+      affectedUserIds.add(edge.followerId)
+      affectedUserIds.add(edge.followingId)
+    }
+    await invalidateSocialCountsCache(...affectedUserIds)
   },
 
   /** Raw privacy toggles for read-gate composition (bulk). */

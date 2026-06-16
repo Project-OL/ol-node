@@ -292,7 +292,7 @@ const FIELD_OVERRIDES: Record<string, Partial<EndpointLock>> = {
       dateOfBirth: { type: "string", optional: true, description: "YYYY-MM-DD format" },
       country: { type: "string", required: true, description: "Country code or name, 1-100 chars" },
       gender: { type: "enum", required: true, values: ["male", "female", "other"] },
-      avatarUrl: { type: "string", optional: true, description: "Full URL or empty string" },
+      avatarUrl: { type: "string", optional: true, description: "Full URL; omit, null, or empty string when no avatar" },
       deviceId: { type: "string", optional: true, description: "Stable app install UUID; required with deviceName" },
       deviceName: { type: "string", optional: true, description: "Device display name; required with deviceId" },
     },
