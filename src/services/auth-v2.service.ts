@@ -217,7 +217,7 @@ export const authV2Service = {
     userId: string,
     data: {
       firstName: string
-      lastName: string
+      lastName?: string
       dateOfBirth?: string
       country: string
       gender: string
@@ -232,9 +232,10 @@ export const authV2Service = {
     if (user.status === 'active')
       throw new AppError(409, 'Profile already completed', 'PROFILE_ALREADY_COMPLETE')
     const dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : undefined
+    const lastName = data.lastName && data.lastName.trim() !== '' ? data.lastName : null
     await userRepository.updateProfile(userId, {
       firstName: data.firstName,
-      lastName: data.lastName,
+      lastName,
       dateOfBirth: dateOfBirth ?? null,
       country: data.country,
       gender: data.gender,

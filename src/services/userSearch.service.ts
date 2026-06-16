@@ -17,6 +17,7 @@ import { faceVerificationRepository } from '../repositories/faceVerification.rep
 export type ResolvedPublicIdentity = {
   userId: string
   username: string
+  name: string
   /** Base `users.public_id` (decimal string). */
   publicId: string
   /** Shown ID: rare/VIP overlay when set — same rule as `GET /users/me`. */
@@ -37,9 +38,17 @@ export const userSearchService = {
     }
     const user = await userRepository.findByPublicId(numericId)
     if (!user) return null
+
+    const fullName =
+      user.firstName && user.lastName
+        ? `${user.firstName} ${user.lastName}`
+        : (user.firstName ?? user.lastName)
+    const displayName = fullName && fullName.trim().length > 0 ? fullName : user.username
+
     return {
       userId: user.id,
-      username: user.username,
+      username: user.username ?? '',
+      name: displayName,
       publicId: String(user.publicId),
       displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
       isAgency: Boolean(user.isAgent),

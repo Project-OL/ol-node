@@ -62,7 +62,7 @@ export const signupCreatePasswordBodySchema = z.object({
 export const completeProfileBodySchema = z
   .object({
     firstName: z.string().min(1).max(255),
-    lastName: z.string().min(1).max(255),
+    lastName: z.string().max(255).optional().or(z.literal('')),
     dateOfBirth: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)

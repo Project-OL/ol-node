@@ -274,6 +274,29 @@ const FIELD_OVERRIDES: Record<string, Partial<EndpointLock>> = {
       updatedAt: { type: "string", description: "ISO-8601" },
     },
   },
+  "users.resolve-publicid.get": {
+    response: {
+      userId: { type: "string", description: "UUID" },
+      username: { type: "string", description: "username" },
+      name: { type: "string", description: "Display name (firstName lastName, or username fallback)" },
+      publicId: { type: "string", description: "Base public_id (decimal string)" },
+      displayPublicId: { type: "string", description: "Visible ID (VIP overlay or base)" },
+      isAgency: { type: "boolean", description: "users.is_agent" },
+      avatarUrl: { type: "string", optional: true, description: "CDN URL or null" },
+    },
+  },
+  "auth.signup-complete-profile.post": {
+    body: {
+      firstName: { type: "string", required: true, description: "User first name, 1-255 chars" },
+      lastName: { type: "string", optional: true, description: "User last name, 0-255 chars; empty string or omitted stores null" },
+      dateOfBirth: { type: "string", optional: true, description: "YYYY-MM-DD format" },
+      country: { type: "string", required: true, description: "Country code or name, 1-100 chars" },
+      gender: { type: "enum", required: true, values: ["male", "female", "other"] },
+      avatarUrl: { type: "string", optional: true, description: "Full URL or empty string" },
+      deviceId: { type: "string", optional: true, description: "Stable app install UUID; required with deviceName" },
+      deviceName: { type: "string", optional: true, description: "Device display name; required with deviceId" },
+    },
+  },
 };
 
 function applyOverrides(endpoints: EndpointLock[]): EndpointLock[] {
