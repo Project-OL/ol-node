@@ -576,14 +576,14 @@ export const agencyCommissionService = {
   },
 
   async transferPointsToAgent(params: {
-    senderAgentUserId: string
+    senderUserId: string
     recipientAgentUserId: string
     points: bigint
     idempotencyKey: string
   }): Promise<{ transferId: string }> {
-    const { senderAgentUserId, recipientAgentUserId, points, idempotencyKey } = params
+    const { senderUserId, recipientAgentUserId, points, idempotencyKey } = params
 
-    if (senderAgentUserId === recipientAgentUserId) {
+    if (senderUserId === recipientAgentUserId) {
       throw new AppError(400, 'Cannot transfer to yourself', 'INVALID_RECIPIENT')
     }
     if (points < MIN_AGENT_POINT_TRANSFER) {
@@ -594,17 +594,9 @@ export const agencyCommissionService = {
       )
     }
 
-    const [senderAg, recipientAg] = await Promise.all([
-      prismaRead.agency.findUnique({
-        where: { userId: senderAgentUserId },
-      }),
-      prismaRead.agency.findUnique({
+    const recipientAg = await prismaRead.agency.findUnique({
         where: { userId: recipientAgentUserId },
-      }),
-    ])
-    if (!senderAg) {
-      throw new AppError(403, 'Sender is not an agent', 'NOT_AN_AGENT')
-    }
+      })
     if (!recipientAg) {
       throw new AppError(400, 'Recipient is not an agent', 'INVALID_RECIPIENT')
     }
@@ -628,7 +620,7 @@ export const agencyCommissionService = {
         }
 
         const debit = await pointWalletService.debit(
-          senderAgentUserId,
+          senderUserId,
           points,
           PointTxType.AGENT_POINT_TRANSFER,
           tx,
@@ -647,7 +639,7 @@ export const agencyCommissionService = {
           tx,
           {
             idempotencyKey: `${idempotencyKey}:credit`,
-            counterpartyId: senderAgentUserId,
+            counterpartyId: senderUserId,
             refId: transferId,
             metadata: { transferId },
             applyLivestreamLevel: false,
@@ -657,7 +649,7 @@ export const agencyCommissionService = {
         await agencyPointTransferRepository.insertTransfer(
           {
             id: transferId,
-            senderAgentUserId,
+            senderAgentUserId: senderUserId,
             recipientAgentUserId,
             points,
             senderLedgerEntryId: debit.ledgerEntryId,
@@ -674,7 +666,7 @@ export const agencyCommissionService = {
     )
 
     await Promise.all([
-      walletService.adjustPointBalanceCache(senderAgentUserId, -points),
+      walletService.adjustPointBalanceCache(senderUserId, -points),
       walletService.adjustPointBalanceCache(recipientAgentUserId, points),
     ])
 

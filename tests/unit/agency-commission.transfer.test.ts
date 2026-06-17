@@ -59,6 +59,7 @@ import { agencyCommissionService } from "../../src/services/agencyCommission.ser
 
 beforeEach(() => {
   vi.clearAllMocks();
+  prismaAgencyFindUnique.mockResolvedValue({ userId: "a2" });
   prismaAgentTransferFindUnique.mockResolvedValue(null);
   prismaAgentTransferFindUniqueTx.mockResolvedValue(null);
   prismaTransaction.mockImplementation(async (fn: (t: unknown) => unknown) => {
@@ -75,7 +76,7 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
   it("rejects below minimum", async () => {
     await expect(
       agencyCommissionService.transferPointsToAgent({
-        senderAgentUserId: "a1",
+        senderUserId: "a1",
         recipientAgentUserId: "a2",
         points: 99_999n,
         idempotencyKey: "k1",
@@ -87,7 +88,7 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
   it("rejects self-transfer", async () => {
     await expect(
       agencyCommissionService.transferPointsToAgent({
-        senderAgentUserId: "a1",
+        senderUserId: "a1",
         recipientAgentUserId: "a1",
         points: 100_000n,
         idempotencyKey: "k1",
@@ -96,12 +97,10 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
   });
 
   it("rejects non-agent recipient", async () => {
-    prismaAgencyFindUnique
-      .mockResolvedValueOnce({ userId: "a1" })
-      .mockResolvedValueOnce(null);
+    prismaAgencyFindUnique.mockResolvedValueOnce(null);
     await expect(
       agencyCommissionService.transferPointsToAgent({
-        senderAgentUserId: "a1",
+        senderUserId: "a1",
         recipientAgentUserId: "na",
         points: 100_000n,
         idempotencyKey: "k1",
@@ -109,27 +108,20 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
     ).rejects.toMatchObject({ code: "INVALID_RECIPIENT" });
   });
 
-  it("403 when sender not agent", async () => {
-    prismaAgencyFindUnique
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ userId: "a2" });
+  it("allows non-agent sender when recipient is agent", async () => {
     await expect(
       agencyCommissionService.transferPointsToAgent({
-        senderAgentUserId: "na",
+        senderUserId: "non-agent-user",
         recipientAgentUserId: "a2",
         points: 100_000n,
         idempotencyKey: "k1",
       }),
-    ).rejects.toMatchObject({ code: "NOT_AN_AGENT", statusCode: 403 });
+    ).resolves.toMatchObject({ transferId: expect.any(String) });
   });
 
   it("happy path debits, credits, inserts audit row", async () => {
-    prismaAgencyFindUnique
-      .mockResolvedValueOnce({ userId: "a1" })
-      .mockResolvedValueOnce({ userId: "a2" });
-
     const out = await agencyCommissionService.transferPointsToAgent({
-      senderAgentUserId: "a1",
+      senderUserId: "a1",
       recipientAgentUserId: "a2",
       points: 150_000n,
       idempotencyKey: "idem-1",
@@ -150,13 +142,10 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
   });
 
   it("idempotent: existing row returns same transfer id without double debit", async () => {
-    prismaAgencyFindUnique
-      .mockResolvedValueOnce({ userId: "a1" })
-      .mockResolvedValueOnce({ userId: "a2" });
     prismaAgentTransferFindUnique.mockResolvedValue({ id: "existing-tx" });
 
     const out = await agencyCommissionService.transferPointsToAgent({
-      senderAgentUserId: "a1",
+      senderUserId: "a1",
       recipientAgentUserId: "a2",
       points: 100_000n,
       idempotencyKey: "idem-dup",
@@ -168,16 +157,13 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
   });
 
   it("propagates insufficient balance from debit", async () => {
-    prismaAgencyFindUnique
-      .mockResolvedValueOnce({ userId: "a1" })
-      .mockResolvedValueOnce({ userId: "a2" });
     debit.mockRejectedValueOnce(
       new AppError(400, "Insufficient points", "INSUFFICIENT_POINTS"),
     );
 
     await expect(
       agencyCommissionService.transferPointsToAgent({
-        senderAgentUserId: "a1",
+        senderUserId: "a1",
         recipientAgentUserId: "a2",
         points: 500_000n,
         idempotencyKey: "idem-ins",

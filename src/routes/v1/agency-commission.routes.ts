@@ -153,7 +153,7 @@ export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
       const idempotencyKey = `agent-point-transfer:${userId}:${ts}`
 
       const result = await agencyCommissionService.transferPointsToAgent({
-        senderAgentUserId: userId,
+        senderUserId: userId,
         recipientAgentUserId: recipientAgency.userId,
         points,
         idempotencyKey,
