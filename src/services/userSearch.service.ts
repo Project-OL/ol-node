@@ -172,6 +172,7 @@ export const userSearchService = {
       vipMembership,
       faceVerified,
       agencyTag,
+      adminTags: user.adminTags ?? [],
     }
   },
 }

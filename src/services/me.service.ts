@@ -92,6 +92,7 @@ function toProfileCache(
     // Authoritative `canChangeUsername` is set in `buildMeResponse` from live coin balance.
     canChangeUsername: true,
     usernameNextChangeAt: null,
+    adminTags: row.adminTags ?? [],
   }
 }
 
@@ -170,23 +171,28 @@ export const meService = {
   async getMe(userId: string): Promise<{ data: MeResponseDto; cache: 'HIT' | 'MISS' }> {
     const key = RedisKeys.userMe(userId)
     const cached = await cacheRedisService.get<MeProfileCache>(key)
-    // Entries cached before `dateOfBirth` was added omit the key; do not treat as authoritative null.
-    const cacheHasDobShape = cached != null && typeof cached === 'object' && 'dateOfBirth' in cached
+    // Entries cached before `dateOfBirth` or `adminTags` were added omit keys; do not treat as authoritative.
+    const cacheHasRequiredShape =
+      cached != null &&
+      typeof cached === 'object' &&
+      'dateOfBirth' in cached &&
+      'adminTags' in cached
 
     let profile: MeProfileCache
     let cacheResult: 'HIT' | 'MISS'
 
-    if (cached && cacheHasDobShape) {
+    if (cached && cacheHasRequiredShape) {
       meEndpointMetrics.cacheHits += 1
       profile = {
         ...cached,
         dateOfBirth: cached.dateOfBirth ?? null,
+        adminTags: cached.adminTags ?? [],
         // Backward compatibility for cached payloads written before displayPublicId existed.
         displayPublicId: (cached as MeProfileCache).displayPublicId ?? cached.publicId,
       }
       cacheResult = 'HIT'
     } else {
-      if (cached && !cacheHasDobShape) {
+      if (cached && !cacheHasRequiredShape) {
         try {
           await cacheRedisService.del(key)
         } catch {

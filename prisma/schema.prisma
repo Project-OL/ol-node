@@ -52,6 +52,8 @@ model User {
 
   isAgent         Boolean   @default(false) @map("is_agent")
   isTagged        Boolean   @default(false) @map("is_tagged")
+  /// Platform-admin labels (e.g. VIP, risk). Visible on GET /users/me and user search.
+  adminTags       String[]  @default([]) @map("admin_tags")
   lastActiveAt    DateTime? @map("last_active_at")
   currentAgencyId String?   @map("current_agency_id") @db.Uuid
 

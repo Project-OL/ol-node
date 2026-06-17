@@ -84,6 +84,7 @@ export const userRepository = {
         usernameUpdatedAt: true,
         passwordSet: true,
         isSupport: true,
+        adminTags: true,
         authIdentifiers: {
           select: { provider: true, identifier: true, isPrimary: true },
           orderBy: [{ isPrimary: 'desc' }, { provider: 'asc' }],
@@ -322,6 +323,14 @@ export const userRepository = {
       where: { id: userId },
       data: { isTagged },
       select: { id: true, isTagged: true },
+    })
+  },
+
+  async setAdminTags(userId: string, adminTags: string[]) {
+    return prisma.user.update({
+      where: { id: userId },
+      data: { adminTags },
+      select: { id: true, adminTags: true },
     })
   },
 }

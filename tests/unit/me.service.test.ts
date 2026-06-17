@@ -173,6 +173,7 @@ function baseRow(over: Partial<Record<string, unknown>> = {}) {
     bio: null as string | null,
     usernameUpdatedAt: null as Date | null,
     passwordSet: true,
+    adminTags: [] as string[],
     authIdentifiers: [
       { provider: 'email', identifier: 'j@example.com', isPrimary: true },
     ],
@@ -327,6 +328,7 @@ describe('meService', () => {
       gender: 'female' as const,
       canChangeUsername: true,
       usernameNextChangeAt: null,
+      adminTags: [],
     }
     cacheGet.mockResolvedValueOnce(cached)
     const out = await meService.getMe('user-1')
@@ -344,6 +346,7 @@ describe('meService', () => {
     expect(out.data.publicId).toBe('99')
     expect(out.data.displayPublicId).toBe('99')
     expect(out.data.dateOfBirth).toBeNull()
+    expect(out.data.adminTags).toEqual([])
     expect(out.data.coinsBalance).toBe('20000')
     expect(out.data.canChangeUsername).toBe(true)
     expect(typeof out.data.isVipActive).toBe('boolean')

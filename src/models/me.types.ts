@@ -40,6 +40,8 @@ export interface MeProfileCache {
   gender: MeGender | null
   canChangeUsername: boolean
   usernameNextChangeAt: string | null
+  /** Platform-admin labels; empty when none assigned. */
+  adminTags: string[]
 }
 
 export interface MeResponseDto extends MeProfileCache {
