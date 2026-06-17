@@ -16,6 +16,8 @@ const topCreatorBySubscriberWhere = {
 const topCreatorBySubscriberSelect = {
   id: true,
   publicId: true,
+  defaultPublicId: true,
+  currentVipPublicId: true,
   username: true,
   firstName: true,
   lastName: true,
@@ -36,6 +38,8 @@ export type TopCreatorQueryRow = Prisma.UserGetPayload<{
 const userListSelect = {
   id: true,
   publicId: true,
+  defaultPublicId: true,
+  currentVipPublicId: true,
   username: true,
   firstName: true,
   lastName: true,

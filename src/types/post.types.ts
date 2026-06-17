@@ -3,7 +3,11 @@ import type { PostVisibility } from '@prisma/client'
 export type TaggedUser = {
   userId: string
   displayName: string
+  /** First + last name when set; otherwise username. */
+  name: string
   publicId: string
+  /** Visible ID with rare/VIP overlay — same rule as `GET /users/me`. */
+  displayPublicId: string
   avatarUrl: string | null
 }
 

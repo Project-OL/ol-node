@@ -11,6 +11,7 @@ import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import type { ServerFrame } from '../realtime/types'
 import { storageService } from '../services/storage.service'
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
 export type MediaItemInput = {
   s3Key: string
@@ -36,7 +37,11 @@ export type MediaItemInput = {
 const senderSelect = {
   id: true,
   username: true,
+  firstName: true,
+  lastName: true,
+  publicId: true,
   defaultPublicId: true,
+  currentVipPublicId: true,
   avatarUrl: true,
 } as const
 
@@ -44,7 +49,13 @@ export type MessageWithDetails = Message & {
   sender: {
     id: string
     username: string
+    firstName: string | null
+    lastName: string | null
+    publicId: bigint
     defaultPublicId: bigint
+    currentVipPublicId: bigint | null
+    name: string
+    displayPublicId: string
     avatarUrl: string | null
   }
   mediaItems: Array<{
@@ -258,7 +269,7 @@ function mapToMessageWithDetails(
     isAutoReply: boolean
     createdAt: Date
     updatedAt: Date
-    sender: { id: string; username: string; defaultPublicId: bigint; avatarUrl: string | null }
+    sender: { id: string; username: string; firstName: string | null; lastName: string | null; publicId: bigint; defaultPublicId: bigint; currentVipPublicId: bigint | null; avatarUrl: string | null }
     mediaItems: Array<{
       id: string
       messageId: string
@@ -315,7 +326,18 @@ function mapToMessageWithDetails(
   })
   return {
     ...msg,
-    sender: msg.sender,
+    sender: {
+      id: msg.sender.id,
+      username: msg.sender.username,
+      firstName: msg.sender.firstName,
+      lastName: msg.sender.lastName,
+      publicId: msg.sender.publicId,
+      defaultPublicId: msg.sender.defaultPublicId,
+      currentVipPublicId: msg.sender.currentVipPublicId,
+      name: buildUserDisplayName(msg.sender),
+      displayPublicId: resolveDisplayPublicId(msg.sender),
+      avatarUrl: msg.sender.avatarUrl,
+    },
     mediaItems: mediaItemsWithUrl,
     replyTo: msg.replyTo,
     reactions,

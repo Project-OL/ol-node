@@ -2,6 +2,7 @@ import { prisma, prismaRead } from '../config/database'
 import type { UserFollow, User } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import type { TaggedUser } from '../types/post.types'
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
 interface FollowWithUser {
   follow: UserFollow
@@ -364,22 +365,21 @@ export const followRepository = {
         firstName: true,
         lastName: true,
         publicId: true,
+        defaultPublicId: true,
+        currentVipPublicId: true,
         avatarUrl: true,
       },
     })
 
     return users.map((user) => {
-      const fullName =
-        user.firstName && user.lastName
-          ? `${user.firstName} ${user.lastName}`
-          : (user.firstName ?? user.lastName)
-      const trimmed = fullName?.trim()
-      const displayName = trimmed && trimmed.length > 0 ? trimmed : user.username
+      const displayName = buildUserDisplayName(user)
 
       return {
         userId: user.id,
         displayName,
+        name: displayName,
         publicId: String(user.publicId),
+        displayPublicId: resolveDisplayPublicId(user),
         avatarUrl: user.avatarUrl,
       }
     })

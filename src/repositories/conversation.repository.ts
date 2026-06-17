@@ -1,5 +1,17 @@
 import type { Conversation, ConversationType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+
+const conversationMemberUserSelect = {
+  id: true,
+  username: true,
+  firstName: true,
+  lastName: true,
+  publicId: true,
+  defaultPublicId: true,
+  currentVipPublicId: true,
+  avatarUrl: true,
+} as const
 
 export type ConversationWithMembers = Conversation & {
   members: Array<{
@@ -15,7 +27,11 @@ export type ConversationWithMembers = Conversation & {
     user: {
       id: string
       username: string
+      firstName: string | null
+      lastName: string | null
+      publicId: bigint
       defaultPublicId: bigint
+      currentVipPublicId: bigint | null
       avatarUrl: string | null
     }
   }>
@@ -41,8 +57,10 @@ export type ConversationPreview = {
   members: Array<{
     id: string
     username: string
+    name: string
     avatarUrl: string | null
     defaultPublicId: string
+    displayPublicId: string
   }>
   lastMessage: {
     id: string
@@ -75,7 +93,7 @@ export async function createConversation(data: {
     include: {
       members: {
         include: {
-          user: { select: { id: true, username: true, defaultPublicId: true, avatarUrl: true } },
+          user: { select: conversationMemberUserSelect },
         },
       },
     },
@@ -115,7 +133,7 @@ export async function findConversationById(
     include: {
       members: {
         include: {
-          user: { select: { id: true, username: true, defaultPublicId: true, avatarUrl: true } },
+          user: { select: conversationMemberUserSelect },
         },
       },
       messages: {
@@ -164,7 +182,7 @@ export async function listConversationsForUser(
       members: {
         where: { isDeleted: false },
         include: {
-          user: { select: { id: true, username: true, avatarUrl: true, defaultPublicId: true } },
+          user: { select: conversationMemberUserSelect },
         },
       },
       messages: {
@@ -195,8 +213,10 @@ export async function listConversationsForUser(
     members: c.members.map((m) => ({
       id: m.user.id,
       username: m.user.username,
+      name: buildUserDisplayName(m.user),
       avatarUrl: m.user.avatarUrl,
       defaultPublicId: m.user.defaultPublicId.toString(),
+      displayPublicId: resolveDisplayPublicId(m.user),
     })),
     lastMessage: c.messages[0]
       ? {

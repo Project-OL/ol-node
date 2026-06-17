@@ -13,6 +13,8 @@ export type PostWithRelations = Prisma.PostGetPayload<{
             firstName: true
             lastName: true
             publicId: true
+            defaultPublicId: true
+            currentVipPublicId: true
             avatarUrl: true
           }
         }
@@ -25,6 +27,8 @@ export type PostWithRelations = Prisma.PostGetPayload<{
         firstName: true
         lastName: true
         publicId: true
+        defaultPublicId: true
+        currentVipPublicId: true
         avatarUrl: true
         gender: true
         dateOfBirth: true
@@ -87,6 +91,8 @@ export const postRepository = {
                 firstName: true,
                 lastName: true,
                 publicId: true,
+                defaultPublicId: true,
+                currentVipPublicId: true,
                 avatarUrl: true,
               },
             },
@@ -99,6 +105,8 @@ export const postRepository = {
             firstName: true,
             lastName: true,
             publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
             avatarUrl: true,
             gender: true,
             dateOfBirth: true,
@@ -147,6 +155,8 @@ export const postRepository = {
                 firstName: true,
                 lastName: true,
                 publicId: true,
+                defaultPublicId: true,
+                currentVipPublicId: true,
                 avatarUrl: true,
               },
             },
@@ -159,6 +169,8 @@ export const postRepository = {
             firstName: true,
             lastName: true,
             publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
             avatarUrl: true,
             gender: true,
             dateOfBirth: true,
@@ -194,6 +206,8 @@ export const postRepository = {
                 firstName: true,
                 lastName: true,
                 publicId: true,
+                defaultPublicId: true,
+                currentVipPublicId: true,
                 avatarUrl: true,
               },
             },
@@ -206,6 +220,8 @@ export const postRepository = {
             firstName: true,
             lastName: true,
             publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
             avatarUrl: true,
             gender: true,
             dateOfBirth: true,

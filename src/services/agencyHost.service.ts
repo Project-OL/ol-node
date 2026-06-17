@@ -15,6 +15,7 @@ import { walletLevelService } from './user-level.service'
 import { userRepository } from '../repositories/user.repository'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
 import { countriesMatch } from '../utils/agency-country'
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
 type HostEarningsAgg = {
   hostEarnings: bigint
@@ -34,19 +35,6 @@ const AUTO_APPROVE_MS = 7 * DAY_MS
 
 function nextAllowedFrom(ts: Date): Date {
   return new Date(ts.getTime() + COOLDOWN_MS)
-}
-
-function buildDisplayName(user: {
-  username: string
-  firstName: string | null
-  lastName: string | null
-}): string {
-  const fullName =
-    user.firstName && user.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : (user.firstName ?? user.lastName)
-  const trimmed = fullName?.trim()
-  return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
 
 function computeAge(dob: Date | null): number | null {
@@ -77,16 +65,18 @@ function mapHostProfileFields(
   levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
 ) {
   const level = levels.get(hostUserId)
+  const displayName = buildUserDisplayName(host)
   return {
     userId: host.id,
     publicId: host.publicId.toString(),
-    displayPublicId: String(host.currentVipPublicId ?? host.defaultPublicId ?? host.publicId),
+    displayPublicId: resolveDisplayPublicId(host),
+    name: displayName,
     gender: host.gender,
     age: computeAge(host.dateOfBirth),
     wealthLevel: level?.wealthLevel ?? 0,
     livestreamLevel: level?.livestreamLevel ?? 0,
     avatarUrl: host.avatarUrl,
-    displayName: buildDisplayName(host),
+    displayName,
   }
 }
 

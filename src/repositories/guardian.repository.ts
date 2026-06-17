@@ -8,6 +8,8 @@ export type GuardianUserCard = {
   lastName: string | null
   avatarUrl: string | null
   publicId: bigint
+  defaultPublicId: bigint
+  currentVipPublicId: bigint | null
   country: string | null
   gender: string | null
   dateOfBirth: Date | null
@@ -28,6 +30,8 @@ const userCardSelect = {
   lastName: true,
   avatarUrl: true,
   publicId: true,
+  defaultPublicId: true,
+  currentVipPublicId: true,
   country: true,
   gender: true,
   dateOfBirth: true,

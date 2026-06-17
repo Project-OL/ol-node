@@ -6,6 +6,8 @@ import { AppError } from '../middlewares/errorHandler'
 import { RedisKeys, BLOCK_LIST_TTL } from '../config/redis'
 import type { GetBlockListInput } from '../models/messaging.schemas'
 
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+
 export type BlockListItem = {
   id: string
   blockerId: string
@@ -15,6 +17,8 @@ export type BlockListItem = {
     id: string
     username: string
     defaultPublicId: string
+    displayPublicId: string
+    name: string
     /** Display URL for the blocked user’s avatar (same as User.avatarUrl). */
     avatarUrl: string | null
   }
@@ -147,7 +151,9 @@ export const blockService = {
         blocked: {
           id: b.blocked.id,
           username: b.blocked.username,
-          defaultPublicId: b.blocked.defaultPublicId,
+          defaultPublicId: b.blocked.defaultPublicId.toString(),
+          displayPublicId: resolveDisplayPublicId(b.blocked),
+          name: buildUserDisplayName(b.blocked),
           avatarUrl: b.blocked.avatarUrl ?? null,
         },
       })),

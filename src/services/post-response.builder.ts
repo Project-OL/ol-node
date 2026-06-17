@@ -1,5 +1,6 @@
 import { postRepository } from '../repositories/post.repository'
 import type { PostAuthor, PostResponse, TaggedUser } from '../types/post.types'
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
 export type PostWithRelations = NonNullable<Awaited<ReturnType<typeof postRepository.findById>>>
 
@@ -20,19 +21,18 @@ function toTaggedUser(user: {
   firstName: string | null
   lastName: string | null
   publicId: bigint
+  defaultPublicId: bigint
+  currentVipPublicId: bigint | null
   avatarUrl: string | null
 }): TaggedUser {
-  const fullName =
-    user.firstName && user.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : (user.firstName ?? user.lastName)
-  const trimmed = fullName?.trim()
-  const displayName = trimmed && trimmed.length > 0 ? trimmed : user.username
+  const displayName = buildUserDisplayName(user)
 
   return {
     userId: user.id,
     displayName,
+    name: displayName,
     publicId: String(user.publicId),
+    displayPublicId: resolveDisplayPublicId(user),
     avatarUrl: user.avatarUrl,
   }
 }
@@ -43,6 +43,8 @@ function toPostAuthor(user: {
   firstName: string | null
   lastName: string | null
   publicId: bigint
+  defaultPublicId: bigint
+  currentVipPublicId: bigint | null
   avatarUrl: string | null
   gender: string | null
   dateOfBirth: Date | null

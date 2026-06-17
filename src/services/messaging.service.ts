@@ -37,7 +37,9 @@ import {
 export type DmContact = {
   userId: string
   username: string
+  name: string
   publicId: string
+  displayPublicId: string
   avatar: string | null
   isOnline: boolean
   isMutual: boolean
@@ -586,25 +588,24 @@ export const messagingService = {
     let contactIds = friends.map((c: { userId: string }) => c.userId)
     let following: {
       userId: string
+      username: string
+      name?: string
       displayName: string
       publicId: string
+      displayPublicId: string
       avatarUrl: string | null
     }[] = []
     if (contactIds.length < 40) {
       const res = await followService.getFollowing(userId, userId, null, 40)
-      following = res.items.map(
-        (c: {
-          userId: string
-          displayName: string
-          publicId: string
-          avatarUrl: string | null
-        }) => ({
-          userId: c.userId,
-          displayName: c.displayName,
-          publicId: c.publicId,
-          avatarUrl: c.avatarUrl,
-        }),
-      )
+      following = res.items.map((c) => ({
+        userId: c.userId,
+        username: c.username,
+        name: c.name,
+        displayName: c.displayName,
+        publicId: c.publicId,
+        displayPublicId: c.displayPublicId,
+        avatarUrl: c.avatarUrl,
+      }))
       const set = new Set(contactIds)
       for (const c of following as Array<{ userId: string }>) {
         if (set.size >= 40) break
@@ -624,8 +625,10 @@ export const messagingService = {
       const card = friendCard ?? followCard
       return {
         userId: id,
-        username: card?.displayName ?? '',
+        username: card?.username ?? '',
+        name: card?.name ?? card?.displayName ?? '',
         publicId: card?.publicId ?? '',
+        displayPublicId: card?.displayPublicId ?? card?.publicId ?? '',
         avatar: card?.avatarUrl ?? null,
         isOnline: !!onlineValues[i] && !(effOnline.get(id)?.invisibleOnline ?? false),
         isMutual: !!friendCard,

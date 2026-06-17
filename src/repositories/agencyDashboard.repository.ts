@@ -2,6 +2,7 @@ import { prismaRead } from '../config/database'
 import { redisClient, RedisKeys } from '../config/redis'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
 import { endOfUTCDay, startOfUTCDay, toUTCDateOnly, utcNow } from '../utils/datetime'
+import { buildUserDisplayName } from '../utils/user-display'
 
 /**
  * Read-only aggregation repository for the agency agent dashboard.
@@ -55,6 +56,7 @@ export interface HostDataSummary {
 export interface HostCommissionItem {
   hostUserId: string
   displayName: string | null
+  name: string | null
   avatarUrl: string | null
   publicId: string
   displayPublicId: string
@@ -74,6 +76,7 @@ export interface HostCommissionItem {
 export interface HostDrilldown {
   hostUserId: string
   displayName: string | null
+  name: string | null
   avatarUrl: string | null
   publicId: string
   displayPublicId: string
@@ -293,6 +296,8 @@ export const agencyDashboardRepository = {
         commissionEarned: bigint
         liveDurationSeconds: bigint
         displayName: string | null
+        firstName: string | null
+        lastName: string | null
         avatarUrl: string | null
         publicId: bigint
         currentVipPublicId: bigint | null
@@ -308,6 +313,8 @@ export const agencyDashboardRepository = {
         SUM(ade.host_commission_points)::BIGINT             AS "commissionEarned",
         COALESCE(SUM(ade.live_duration_seconds), 0)::BIGINT AS "liveDurationSeconds",
         u.username                                          AS "displayName",
+        u.first_name                                        AS "firstName",
+        u.last_name                                         AS "lastName",
         u.avatar_url                                        AS "avatarUrl",
         u.default_public_id                                 AS "publicId",
         u.current_vip_public_id                             AS "currentVipPublicId",
@@ -327,7 +334,7 @@ export const agencyDashboardRepository = {
       WHERE ade.agency_user_id = ${agencyUserId}::uuid
         AND ade.day BETWEEN ${startDay}::date AND ${endDay}::date
       GROUP BY
-        ade.host_user_id, u.username, u.avatar_url, u.default_public_id,
+        ade.host_user_id, u.username, u.first_name, u.last_name, u.avatar_url, u.default_public_id,
         u.current_vip_public_id, u.is_tagged, wl_stream.current_level, wl_wealth.current_level
       ORDER BY SUM(ade.host_earnings_points) DESC, ade.host_user_id ASC
       LIMIT ${limit} OFFSET ${offset}
@@ -343,6 +350,11 @@ export const agencyDashboardRepository = {
     const items: HostCommissionItem[] = rows.map((r) => ({
       hostUserId: r.hostUserId,
       displayName: r.displayName ?? null,
+      name: buildUserDisplayName({
+        username: r.displayName ?? '',
+        firstName: r.firstName,
+        lastName: r.lastName,
+      }),
       avatarUrl: r.avatarUrl ?? null,
       publicId: bigIntToStr(r.publicId),
       displayPublicId: bigIntToStr(r.currentVipPublicId ?? r.publicId),
@@ -393,6 +405,8 @@ export const agencyDashboardRepository = {
         where: { id: hostUserId },
         select: {
           username: true,
+          firstName: true,
+          lastName: true,
           avatarUrl: true,
           defaultPublicId: true,
           currentVipPublicId: true,
@@ -429,6 +443,13 @@ export const agencyDashboardRepository = {
     return {
       hostUserId,
       displayName: user?.username ?? null,
+      name: user
+        ? buildUserDisplayName({
+            username: user.username,
+            firstName: user.firstName,
+            lastName: user.lastName,
+          })
+        : null,
       avatarUrl: user?.avatarUrl ?? null,
       publicId: bigIntToStr(user?.defaultPublicId),
       displayPublicId: bigIntToStr(user?.currentVipPublicId ?? user?.defaultPublicId),

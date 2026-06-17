@@ -21,6 +21,7 @@ import { ledgerHostPointsKey } from '../utils/ledger-idempotency'
 import type { PurchaseGuardianInput } from '../models/guardian.schemas'
 import type { ActiveGuardianProfileDto } from '../models/profile.types'
 import { walletLevelService, syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
 const MONTHLY_PRICE: Record<GuardianTier, number> = {
   SILVER: 150_000,
@@ -75,19 +76,6 @@ function computeAge(dob: Date | null): number | null {
   return age >= 0 ? age : null
 }
 
-function buildDisplayName(user: {
-  username: string
-  firstName: string | null
-  lastName: string | null
-}): string {
-  const fullName =
-    user.firstName && user.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : (user.firstName ?? user.lastName)
-  const trimmed = fullName?.trim()
-  return trimmed && trimmed.length > 0 ? trimmed : user.username
-}
-
 export type GuardianConfigDuration = { months: number; totalCoins: number }
 export type GuardianConfigTier = {
   tier: GuardianTier
@@ -100,8 +88,10 @@ export type GuardianListUser = {
   id: string
   username: string
   displayName: string
+  name: string
   avatarUrl: string | null
   publicId: string
+  displayPublicId: string
   country: string | null
   gender: string | null
   age: number | null
@@ -133,6 +123,7 @@ type CachedActiveGuardianSummary = {
   guardianId: string
   guardianUserId: string
   guardianPublicId: string
+  displayPublicId: string
   displayName: string
   avatarUrl: string | null
   tier: string
@@ -165,6 +156,7 @@ function parseCachedActiveGuardianSummary(raw: string): ActiveGuardianSummary | 
       guardianId: parsed.guardianId,
       guardianUserId: parsed.guardianUserId,
       guardianPublicId: parsed.guardianPublicId,
+      displayPublicId: parsed.displayPublicId ?? parsed.guardianPublicId,
       displayName: parsed.displayName,
       avatarUrl: parsed.avatarUrl,
       tier: parsed.tier,
@@ -173,6 +165,7 @@ function parseCachedActiveGuardianSummary(raw: string): ActiveGuardianSummary | 
       user: {
         userId: parsed.guardianUserId,
         publicId: parsed.guardianPublicId,
+        displayPublicId: parsed.displayPublicId ?? parsed.guardianPublicId,
         name: parsed.displayName,
         avatarUrl: parsed.avatarUrl,
       },
@@ -225,6 +218,7 @@ function mapToListItem(
 ): GuardianListItem {
   const topId = topByTarget.get(targetUserIdForTop) ?? null
   const level = levels.get(related.id)
+  const displayName = buildUserDisplayName(related)
   return {
     guardianId: row.id,
     tier: row.tier,
@@ -234,9 +228,11 @@ function mapToListItem(
     user: {
       id: related.id,
       username: related.username,
-      displayName: buildDisplayName(related),
+      displayName,
+      name: displayName,
       avatarUrl: related.avatarUrl,
       publicId: related.publicId.toString(),
+      displayPublicId: resolveDisplayPublicId(related),
       country: related.country,
       gender: related.gender,
       age: computeAge(related.dateOfBirth),
@@ -253,6 +249,8 @@ function guardianListCacheHasUserEnrichment(items: GuardianListItem[]): boolean 
     u != null &&
     typeof u === 'object' &&
     'publicId' in u &&
+    'displayPublicId' in u &&
+    'name' in u &&
     'livestreamLevel' in u &&
     'wealthLevel' in u
   )
@@ -432,11 +430,15 @@ export const guardianService = {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     }
 
+    const displayName = buildUserDisplayName(guardianUser)
+    const displayPublicId = resolveDisplayPublicId(guardianUser)
+
     const summary: ActiveGuardianSummary = {
       guardianId: top.id,
       guardianUserId: top.guardianUserId,
       guardianPublicId: guardianUser.publicId.toString(),
-      displayName: buildDisplayName(guardianUser),
+      displayPublicId,
+      displayName,
       avatarUrl: guardianUser.avatarUrl,
       tier: top.tier,
       purchasedAt: top.purchasedAt,
@@ -444,7 +446,8 @@ export const guardianService = {
       user: {
         userId: top.guardianUserId,
         publicId: guardianUser.publicId.toString(),
-        name: buildDisplayName(guardianUser),
+        displayPublicId,
+        name: displayName,
         avatarUrl: guardianUser.avatarUrl,
       },
     }

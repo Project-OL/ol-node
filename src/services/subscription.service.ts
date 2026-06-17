@@ -138,32 +138,26 @@ async function readThroughActiveSubscriberCount(creatorId: string): Promise<numb
   return count
 }
 
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+
 export type TopCreatorCard = {
   userId: string
   publicId: string
+  displayPublicId: string
+  name: string
   displayName: string
   avatarUrl: string | null
   subscriberCount: number
 }
 
-function buildDisplayName(user: {
-  username: string
-  firstName: string | null
-  lastName: string | null
-}): string {
-  const fullName =
-    user.firstName && user.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : (user.firstName ?? user.lastName)
-  const trimmed = fullName?.trim()
-  return trimmed && trimmed.length > 0 ? trimmed : user.username
-}
-
 function mapTopCreatorRow(row: TopCreatorQueryRow): TopCreatorCard {
+  const displayName = buildUserDisplayName(row)
   return {
     userId: row.id,
     publicId: row.publicId.toString(),
-    displayName: buildDisplayName(row),
+    displayPublicId: resolveDisplayPublicId(row),
+    name: displayName,
+    displayName,
     avatarUrl: row.avatarUrl,
     subscriberCount: row._count.creatorSubsAsHost,
   }
@@ -410,6 +404,8 @@ export const subscriptionService = {
     Array<{
       userId: string
       publicId: string
+      displayPublicId: string
+      name: string
       username: string
       displayName: string
       avatarUrl: string | null
@@ -417,20 +413,27 @@ export const subscriptionService = {
     }>
   > {
     const rows = await subscriptionRepository.listActiveCreatorsForSubscriber(subscriberId)
-    return rows.map((r) => ({
-      userId: r.creator.id,
-      publicId: r.creator.publicId.toString(),
-      username: r.creator.username,
-      displayName: buildDisplayName(r.creator),
-      avatarUrl: r.creator.avatarUrl,
-      country: r.creator.country,
-    }))
+    return rows.map((r) => {
+      const displayName = buildUserDisplayName(r.creator)
+      return {
+        userId: r.creator.id,
+        publicId: r.creator.publicId.toString(),
+        displayPublicId: resolveDisplayPublicId(r.creator),
+        name: displayName,
+        username: r.creator.username,
+        displayName,
+        avatarUrl: r.creator.avatarUrl,
+        country: r.creator.country,
+      }
+    })
   },
 
   async listMySubscribers(creatorId: string): Promise<
     Array<{
       userId: string
       publicId: string
+      displayPublicId: string
+      name: string
       username: string
       displayName: string
       avatarUrl: string | null
@@ -438,14 +441,19 @@ export const subscriptionService = {
     }>
   > {
     const rows = await subscriptionRepository.listActiveSubscribersForCreator(creatorId)
-    return rows.map((r) => ({
-      userId: r.subscriber.id,
-      publicId: r.subscriber.publicId.toString(),
-      username: r.subscriber.username,
-      displayName: buildDisplayName(r.subscriber),
-      avatarUrl: r.subscriber.avatarUrl,
-      country: r.subscriber.country,
-    }))
+    return rows.map((r) => {
+      const displayName = buildUserDisplayName(r.subscriber)
+      return {
+        userId: r.subscriber.id,
+        publicId: r.subscriber.publicId.toString(),
+        displayPublicId: resolveDisplayPublicId(r.subscriber),
+        name: displayName,
+        username: r.subscriber.username,
+        displayName,
+        avatarUrl: r.subscriber.avatarUrl,
+        country: r.subscriber.country,
+      }
+    })
   },
 
   async getActiveSubscriberCountByPublicId(publicId: number): Promise<number> {

@@ -5,6 +5,7 @@ import { agencyRepository } from '../repositories/agency.repository'
 import { agencyCoinsellerRepository } from '../repositories/agencyCoinseller.repository'
 import { agencyCoinsellerService } from './agencyCoinseller.service'
 import { walletLevelService } from './user-level.service'
+import { buildUserDisplayName } from '../utils/user-display'
 
 export type AgencyRankingPeriod = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'ALL_TIME'
 
@@ -25,6 +26,8 @@ export type AgencyPublicProfile = {
   /** Agency owner `users.avatar_url` (CDN URL or null). */
   avatarUrl: string | null
   displayName: string
+  /** Agency owner first + last name when set; otherwise username. */
+  name: string
   totalHostsCount: number
   lifetimeHostEarningsPoints: string
   currentLevel: string
@@ -75,6 +78,9 @@ type OwnerUserForProfile = {
   publicId: bigint
   defaultPublicId: bigint
   currentVipPublicId: bigint | null
+  username: string
+  firstName: string | null
+  lastName: string | null
   gender: string | null
   dateOfBirth: Date | null
   avatarUrl: string | null
@@ -116,6 +122,7 @@ export function mapAgencyToPublicProfile(params: {
     transferChannel: params.coinseller?.transferChannel ?? 'EPAY',
     avatarUrl: owner?.avatarUrl ?? null,
     displayName: agency.displayName,
+    name: owner ? buildUserDisplayName(owner) : agency.displayName,
     totalHostsCount: agency.totalHostsCount,
     lifetimeHostEarningsPoints: agency.lifetimeHostEarningsPoints.toString(),
     currentLevel: agency.currentLevel,
@@ -144,6 +151,9 @@ export const agencyRankingService = {
           publicId: true,
           defaultPublicId: true,
           currentVipPublicId: true,
+          username: true,
+          firstName: true,
+          lastName: true,
           gender: true,
           dateOfBirth: true,
           avatarUrl: true,
@@ -229,6 +239,9 @@ export const agencyRankingService = {
             publicId: true,
             defaultPublicId: true,
             currentVipPublicId: true,
+            username: true,
+            firstName: true,
+            lastName: true,
             gender: true,
             dateOfBirth: true,
             avatarUrl: true,

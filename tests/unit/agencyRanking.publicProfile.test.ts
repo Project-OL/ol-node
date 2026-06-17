@@ -4,6 +4,13 @@ const getAgencyByPublicId = vi.fn();
 const getDisplayLevelsForUsers = vi.fn();
 const userFindUnique = vi.fn();
 const kycFindUnique = vi.fn();
+const coinsellerFindMany = vi.fn();
+
+vi.mock("../../src/repositories/agencyCoinseller.repository", () => ({
+  agencyCoinsellerRepository: {
+    findManyByAgencyUserIds: (...args: unknown[]) => coinsellerFindMany(...args),
+  },
+}));
 
 vi.mock("../../src/repositories/agency.repository", () => ({
   agencyRepository: {
@@ -54,6 +61,9 @@ describe("mapAgencyToPublicProfile", () => {
         publicId: 34216592n,
         defaultPublicId: 34216592n,
         currentVipPublicId: 34263426n,
+        username: "drstrange",
+        firstName: "Stephen",
+        lastName: "Strange",
         gender: "female",
         dateOfBirth: new Date("1998-06-15"),
         avatarUrl: "https://cdn.example/avatar.png",
@@ -65,6 +75,7 @@ describe("mapAgencyToPublicProfile", () => {
 
     expect(profile.agencyPublicId).toBe("34216592");
     expect(profile.displayPublicId).toBe("34263426");
+    expect(profile.name).toBe("Stephen Strange");
     expect(profile.publicId).toBe("34216592");
     expect(profile.wealthLevel).toBe(18);
     expect(profile.agencyContactNumber).toBe("+919999999999");
@@ -99,16 +110,21 @@ describe("agencyRankingService.getAgencyPublicProfile", () => {
       publicId: 34216592n,
       defaultPublicId: 34216592n,
       currentVipPublicId: null,
+      username: "drstrange",
+      firstName: "Stephen",
+      lastName: "Strange",
       gender: "male",
       dateOfBirth: null,
       avatarUrl: null,
     });
     kycFindUnique.mockResolvedValue({ contactPhone: "+91111" });
+    coinsellerFindMany.mockResolvedValue([]);
 
     const result = await agencyRankingService.getAgencyPublicProfile("34216592");
 
     expect(result?.agencyUserId).toBe("owner-1");
     expect(result?.wealthLevel).toBe(5);
     expect(result?.agencyContactNumber).toBe("+91111");
+    expect(result?.name).toBe("Stephen Strange");
   });
 });
