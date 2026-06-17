@@ -1,4 +1,4 @@
-import { AGENCY_RANKING_CACHE_TTL, getRedisForRead, RedisKeys, redisClient } from '../config/redis'
+import { AGENCY_RANKING_CACHE_TTL, RedisKeys, redisClient } from '../config/redis'
 import { prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { agencyRepository } from '../repositories/agency.repository'
@@ -195,8 +195,7 @@ export const agencyRankingService = {
       }
     }
     try {
-      const redis = getRedisForRead()
-      const cached = await redis.get(cacheKey)
+      const cached = await redisClient.get(cacheKey)
       if (cached) {
         return JSON.parse(cached) as {
           period: AgencyRankingPeriod

@@ -1,4 +1,4 @@
-import { COINSELLER_SETTINGS_TTL, getRedisForRead, RedisKeys, redisClient } from '../config/redis'
+import { COINSELLER_SETTINGS_TTL, RedisKeys, redisClient } from '../config/redis'
 import { s3Bucket } from '../config/s3'
 import {
   agencyCoinsellerRepository,
@@ -14,9 +14,8 @@ const pendingImageKey = (userId: string) => `agency:coinseller:pending-image:${u
 
 export const agencyCoinsellerService = {
   async getSettings(agencyUserId: string) {
-    const redis = getRedisForRead()
     const cacheKey = RedisKeys.coinsellerSettings(agencyUserId)
-    const cached = await redis.get(cacheKey)
+    const cached = await redisClient.get(cacheKey)
     if (cached) return JSON.parse(cached)
 
     const row = await agencyCoinsellerRepository.findByAgencyUserId(agencyUserId)

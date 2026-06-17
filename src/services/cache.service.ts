@@ -5,7 +5,6 @@
 
 import {
   redisClient,
-  getRedisForRead,
   RedisKeys,
   AUTH_IDENTIFIERS_CACHE_TTL,
   USER_DEVICES_CACHE_TTL,
@@ -27,7 +26,7 @@ export const cacheService = {
   async getUserAuthIdentifiers(userId: string): Promise<string | null> {
     if (redisCircuitBreaker.shouldSkip()) return null
     try {
-      const val = await getRedisForRead().get(RedisKeys.userAuthIdentifiers(userId))
+      const val = await redisClient.get(RedisKeys.userAuthIdentifiers(userId))
       redisCircuitBreaker.recordSuccess()
       return val
     } catch {
@@ -57,12 +56,12 @@ export const cacheService = {
   },
 
   /**
-   * Generic get (for device list etc.). Uses read client when REDIS_READ_URL set. Returns null when circuit open.
+   * Generic get (for device list etc.). Uses primary Redis so invalidations are visible immediately.
    */
   async get(key: string): Promise<string | null> {
     if (redisCircuitBreaker.shouldSkip()) return null
     try {
-      const val = await getRedisForRead().get(key)
+      const val = await redisClient.get(key)
       redisCircuitBreaker.recordSuccess()
       return val
     } catch {
@@ -91,7 +90,7 @@ export const cacheService = {
   async getUserDevices(userId: string): Promise<string | null> {
     if (redisCircuitBreaker.shouldSkip()) return null
     try {
-      const val = await getRedisForRead().get(RedisKeys.userDevices(userId))
+      const val = await redisClient.get(RedisKeys.userDevices(userId))
       redisCircuitBreaker.recordSuccess()
       return val
     } catch {

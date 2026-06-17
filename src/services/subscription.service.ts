@@ -2,12 +2,12 @@ import crypto from 'crypto'
 import { CreatorSubscriptionStatus, LevelType, PointTxType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
-  getRedisForRead,
   redisClient,
   RedisKeys,
   SUBSCRIPTION_COUNT_CACHE_TTL,
   SUB_TOP_CREATORS_TTL,
 } from '../config/redis'
+import { cacheRedisService } from './cacheRedis.service'
 import { decodeCursor, encodeCursor } from '../utils/cursor'
 import { postRepository } from '../repositories/post.repository'
 import { assembleUnlockedPostResponse } from './post-response.builder'
@@ -104,9 +104,29 @@ async function invalidateSubscriberCountCache(creatorId: string): Promise<void> 
   }
 }
 
+/** Top-creators leaderboard is cached 300s; bust after subscribe/cancel so counts refresh. */
+async function invalidateTopCreatorsCachesForCreator(creatorId: string): Promise<void> {
+  try {
+    const creator = await prismaRead.user.findUnique({
+      where: { id: creatorId },
+      select: { country: true },
+    })
+    const tasks = [
+      cacheRedisService.del(RedisKeys.subscriptionTopCreatorsGlobal()),
+      cacheRedisService.del(RedisKeys.subscriptionTopCreatorsByPosts()),
+    ]
+    if (creator?.country) {
+      tasks.push(cacheRedisService.del(RedisKeys.subscriptionTopCreators(creator.country)))
+    }
+    await Promise.all(tasks)
+  } catch {
+    // ignore
+  }
+}
+
 async function readThroughActiveSubscriberCount(creatorId: string): Promise<number> {
   const cacheKey = RedisKeys.subscriptionCreatorCount(creatorId)
-  const cached = await getRedisForRead().get(cacheKey)
+  const cached = await redisClient.get(cacheKey)
   if (cached !== null && cached !== '') {
     const n = Number.parseInt(cached, 10)
     if (!Number.isNaN(n)) {
@@ -157,7 +177,7 @@ async function loadTopCreators(
   cacheKey: string,
   loader: () => Promise<TopCreatorQueryRow[]>,
 ): Promise<TopCreatorCard[]> {
-  const cached = await getRedisForRead().get(cacheKey)
+  const cached = await redisClient.get(cacheKey)
   if (cached) {
     return JSON.parse(cached) as TopCreatorCard[]
   }
@@ -321,6 +341,7 @@ export const subscriptionService = {
     await bustAgentCommissionIfNeeded(bustAgentUserId)
     await setSubscriptionAccess(subscriberId, creatorId, row.nextRenewalAt)
     await invalidateSubscriberCountCache(creatorId)
+    await invalidateTopCreatorsCachesForCreator(creatorId)
     await enqueueSubscriptionRenewal(row.id, row.nextRenewalAt)
 
     console.info('[Subscription] created', {
@@ -354,6 +375,7 @@ export const subscriptionService = {
     await redisClient.del(RedisKeys.subscriptionAccess(subscriberId, creatorId))
     await userSubscriberRepository.deletePair(subscriberId, creatorId)
     await invalidateSubscriberCountCache(creatorId)
+    await invalidateTopCreatorsCachesForCreator(creatorId)
 
     console.info('[Subscription] cancelled', { subscriptionId: sub.id, subscriberId, creatorId })
   },
@@ -363,7 +385,7 @@ export const subscriptionService = {
       return true
     }
     const key = RedisKeys.subscriptionAccess(subscriberId, creatorId)
-    const hit = await getRedisForRead().get(key)
+    const hit = await redisClient.get(key)
     if (hit === '1') {
       return true
     }
@@ -603,6 +625,7 @@ export const subscriptionService = {
         await redisClient.del(RedisKeys.subscriptionAccess(sub.subscriberId, sub.creatorId))
         await userSubscriberRepository.deletePair(sub.subscriberId, sub.creatorId)
         await invalidateSubscriberCountCache(sub.creatorId)
+        await invalidateTopCreatorsCachesForCreator(sub.creatorId)
         await cancelSubscriptionGraceJob(sub.id)
 
         console.info('[Subscription grace] expired', { subscriptionId: sub.id })

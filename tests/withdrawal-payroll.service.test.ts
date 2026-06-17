@@ -12,8 +12,8 @@ import {
 
 const defaultConfig: PayrollConfigSnapshot = {
   id: 1,
-  platformFeeRateBp: 600,
-  agentRewardRateBp: 300,
+  platformFeeRateBp: 500,
+  agentRewardRateBp: 6000,
   serviceFeeUsd: 1,
   minWithdrawalUsd: 10,
   maxWithdrawalUsd: 10_000_000,
@@ -27,17 +27,17 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
   it("matches spec at min withdrawal 100k pts", () => {
     const gross = 100_000n;
     const r = calculateWithdrawalAmounts(gross, defaultConfig);
-    expect(r.platformFeePoints).toBe(6000n);
+    expect(r.platformFeePoints).toBe(5000n);
     expect(r.agentRewardPoints).toBe(3000n);
-    expect(r.hostPayoutPoints).toBe(94000n);
-    expect(r.hostPayoutUsd.toString()).toBe("9.4");
+    expect(r.hostPayoutPoints).toBe(95000n);
+    expect(r.hostPayoutUsd.toString()).toBe("9.5");
     expect(r.serviceFeeUsd).toBe(1);
-    expect(r.hostNetUsd).toBeCloseTo(8.4, 5);
+    expect(r.hostNetUsd).toBeCloseTo(8.5, 5);
   });
 
   it("aliases calculateAmounts export", () => {
     expect(calculateAmounts(100_000n, defaultConfig).hostPayoutPoints).toBe(
-      94000n,
+      95000n,
     );
   });
 
@@ -61,10 +61,11 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
   });
 
   it("truncates bp math for odd gross", () => {
-    const cfg = { ...defaultConfig, agentRewardRateBp: 300 };
+    const cfg = { ...defaultConfig, agentRewardRateBp: 6000 };
     const r = calculateWithdrawalAmounts(1_000_001n, cfg);
-    expect((1_000_001n * 300n) / 10000n).toBe(30000n);
-    expect(r.agentRewardPoints).toBe(30000n);
+    const platformFee = (1_000_001n * 500n) / 10000n;
+    expect(platformFee).toBe(50000n);
+    expect(r.agentRewardPoints).toBe((platformFee * 6000n) / 10000n);
   });
 });
 

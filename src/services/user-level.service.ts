@@ -1,5 +1,5 @@
 import { LevelType, Prisma } from '@prisma/client'
-import { redisClient, getRedisForRead } from '../config/redis'
+import { redisClient } from '../config/redis'
 import { RedisKeys, USER_LEVEL_TTL, LEVEL_CONFIG_TTL } from '../config/redis'
 import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
 
@@ -21,8 +21,7 @@ async function getThresholds(levelType: LevelType): Promise<LevelThreshold[]> {
     levelType === LevelType.WEALTH ? RedisKeys.levelConfigWealth() : RedisKeys.levelConfigStream()
 
   try {
-    const redis = getRedisForRead()
-    const cached = await redis.get(redisKey)
+    const cached = await redisClient.get(redisKey)
     if (cached) {
       const parsed = JSON.parse(cached) as { level: number; threshold: string }[]
       return parsed.map((r) => ({

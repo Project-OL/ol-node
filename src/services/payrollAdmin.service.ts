@@ -29,12 +29,11 @@ export const payrollAdminService = {
       throw new AppError(500, 'Payroll config missing', 'CONFIG_ERROR')
     }
 
-    const newPf = updates.platformFeeRateBp ?? current.platformFeeRateBp
     const newAr = updates.agentRewardRateBp ?? current.agentRewardRateBp
-    if (newAr > newPf) {
+    if (newAr > 10000) {
       throw new AppError(
         422,
-        'Agent reward rate cannot exceed platform fee rate',
+        'Agent reward share cannot exceed 100% of platform fee',
         'INVALID_FEE_CONFIG',
       )
     }

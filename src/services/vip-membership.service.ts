@@ -1,7 +1,6 @@
 import { CoinTxType, LevelType, VipMembershipTier } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
-  getRedisForRead,
   RedisKeys,
   VIPM_ACTIVE_INACTIVE_TTL,
   VIPM_ACTIVE_TTL_MAX,
@@ -171,9 +170,8 @@ export const vipMembershipService = {
     const out = new Map<string, boolean>()
     if (userIds.length === 0) return out
 
-    const redis = getRedisForRead()
     const keys = userIds.map(cacheKey)
-    const raw = await redis.mget(...keys)
+    const raw = await redisClient.mget(...keys)
 
     const misses: string[] = []
     for (let i = 0; i < userIds.length; i++) {

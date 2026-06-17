@@ -1,6 +1,5 @@
 import {
   redisClient,
-  getRedisForRead,
   RedisKeys,
   FAN_RANK_DAY_TTL,
   FAN_RANK_WEEK_MONTH_TTL,
@@ -43,8 +42,7 @@ export const fanRankingService = {
     const cacheKey = RedisKeys.fanRanking(params.hostUserId, params.period, periodKey)
 
     try {
-      const redis = getRedisForRead()
-      const raw = await redis.get(cacheKey)
+      const raw = await redisClient.get(cacheKey)
       if (raw) {
         const parsed = JSON.parse(raw) as {
           period: string

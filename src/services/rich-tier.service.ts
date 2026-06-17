@@ -1,7 +1,6 @@
 import { CoinTxType, type Prisma } from '@prisma/client'
 import { prisma } from '../config/database'
 import {
-  getRedisForRead,
   redisClient,
   RedisKeys,
   RICH_CONFIG_TTL,
@@ -91,7 +90,7 @@ async function isUserVipActive(userId: string): Promise<boolean> {
 }
 
 async function loadConfigMap(): Promise<Map<number, string>> {
-  const redis = getRedisForRead()
+  const redis = redisClient
   const key = RedisKeys.richConfig()
   try {
     const cached = await redis.get(key)
@@ -122,10 +121,9 @@ async function getMonthRechargeCoinsCached(
   year: number,
   month: number,
 ): Promise<bigint> {
-  const redis = getRedisForRead()
   const key = RedisKeys.richProgress(userId, year, month)
   try {
-    const hit = await redis.get(key)
+    const hit = await redisClient.get(key)
     if (hit != null) return BigInt(hit)
   } catch {
     /* cold */
@@ -204,10 +202,9 @@ export const richTierService = {
     opts?: { isVip?: boolean },
   ): Promise<RichTierSnapshotDto> {
     const isVip = opts?.isVip ?? (await isUserVipActive(userId))
-    const redis = getRedisForRead()
     const stateKey = RedisKeys.richState(userId)
     try {
-      const cached = await redis.get(stateKey)
+      const cached = await redisClient.get(stateKey)
       if (cached) {
         const parsed = JSON.parse(cached) as RichStateCached
         return {

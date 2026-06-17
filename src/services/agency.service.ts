@@ -57,10 +57,7 @@ export const agencyService = {
   },
 
   async bustRankingCache() {
-    const redis = (await import('../config/redis')).redisClient
-    const pattern = 'agency:ranking:*'
-    const keys = await redis.keys(pattern)
-    if (keys.length > 0) await redis.del(...keys)
+    await cacheRedisService.delByKeyPrefix('agency:ranking:')
   },
 
   /**

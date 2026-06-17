@@ -8,6 +8,8 @@ import {
 } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { redisClient, RedisKeys, PAYROLL_CONFIG_TTL, PAYROLL_SUMMARY_TTL } from '../config/redis'
+import { cacheRedisService } from './cacheRedis.service'
+import { bustAgencyDashboardCaches } from './agencyDashboard.service'
 import {
   resolveCommissionPeriod,
   commissionPeriodToLedgerBounds,
@@ -95,14 +97,10 @@ async function closeDisputeTicketByPublicId(
 }
 
 async function bustPayrollSummaryCache(agencyUserId: string) {
-  await redisClient.del(RedisKeys.payrollSummary(agencyUserId))
-  // Period-scoped summary caches (payroll:summary:{id}:{periodKey}).
-  try {
-    const keys = await redisClient.keys(`${RedisKeys.payrollSummary(agencyUserId)}:*`)
-    if (keys.length > 0) await redisClient.del(...keys)
-  } catch {
-    /* ignore — caches expire within 30s */
-  }
+  await Promise.all([
+    cacheRedisService.delByKeyPrefix(RedisKeys.payrollSummary(agencyUserId)),
+    bustAgencyDashboardCaches(agencyUserId),
+  ])
 }
 
 export type PayrollConfigSnapshot = {
@@ -149,7 +147,9 @@ export function calculateWithdrawalAmounts(
   }
 
   const platformFeePoints = (grossPoints * BigInt(config.platformFeeRateBp)) / 10000n
-  const agentRewardPoints = (grossPoints * BigInt(config.agentRewardRateBp)) / 10000n
+  // agentRewardRateBp = share of platform fee (6000 bp = 60% of platformFeePoints)
+  const agentRewardPoints =
+    (platformFeePoints * BigInt(config.agentRewardRateBp)) / 10000n
   const hostPayoutPoints = grossPoints - platformFeePoints
 
   const hostPayoutUsd = new Prisma.Decimal(hostPayoutPoints.toString()).div(

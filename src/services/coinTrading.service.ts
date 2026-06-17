@@ -12,7 +12,6 @@ import {
   CT_BALANCE_TTL,
   CT_RATES_TTL,
   CT_RECENT_USERS_TTL,
-  getRedisForRead,
 } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { coinTradingRepository } from '../repositories/coinTrading.repository'
@@ -711,9 +710,8 @@ export const coinTradingService = {
   },
 
   async getRecentTransactionUsers(agencyUserId: string) {
-    const redis = getRedisForRead()
     const cacheKey = RedisKeys.ctRecentUsers(agencyUserId)
-    const cached = await redis.get(cacheKey)
+    const cached = await redisClient.get(cacheKey)
     if (cached)
       return JSON.parse(cached) as Awaited<
         ReturnType<typeof coinTradingRepository.getRecentTransactionUsers>

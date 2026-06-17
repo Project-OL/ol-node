@@ -1,6 +1,5 @@
 import { prisma, prismaRead } from '../config/database'
 import {
-  getRedisForRead,
   QUESTIONNAIRE_ACTIVE_TTL,
   QUESTIONNAIRE_USER_STATUS_TTL,
   RedisKeys,
@@ -92,8 +91,8 @@ export function scoreSubmission(
 async function getActiveFromCacheOrDb(key: string) {
   const publicKey = RedisKeys.questionnaireActive(key)
   const internalKey = RedisKeys.questionnaireActiveFull(key)
-  const cachedPublic = await getRedisForRead().get(publicKey)
-  const cachedInternal = await getRedisForRead().get(internalKey)
+  const cachedPublic = await redisClient.get(publicKey)
+  const cachedInternal = await redisClient.get(internalKey)
   if (cachedPublic && cachedInternal) {
     return {
       publicPayload: JSON.parse(cachedPublic),
@@ -137,7 +136,7 @@ export const questionnaireService = {
 
   async getMyStatus(userId: string, key: string) {
     const cacheKey = RedisKeys.questionnaireUserStatus(userId, key)
-    const cached = await getRedisForRead().get(cacheKey)
+    const cached = await redisClient.get(cacheKey)
     if (cached != null) return JSON.parse(cached)
 
     const { internalPayload } = await getActiveFromCacheOrDb(key)

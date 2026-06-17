@@ -7,11 +7,11 @@ import {
 import { resolveDashboardPeriod, type DashboardPeriodQuery } from '../utils/datetime'
 import {
   redisClient,
-  getRedisForRead,
   RedisKeys,
   DASHBOARD_TTL_TODAY,
   DASHBOARD_TTL_PERIOD,
 } from '../config/redis'
+import { cacheRedisService } from './cacheRedis.service'
 import { AppError } from '../middlewares/errorHandler'
 
 function ttlForLabel(label: string): number {
@@ -20,12 +20,21 @@ function ttlForLabel(label: string): number {
 
 async function readCache<T>(key: string): Promise<T | null> {
   try {
-    const hit = await getRedisForRead().get(key)
+    const hit = await redisClient.get(key)
     if (hit) return JSON.parse(hit) as T
   } catch {
     /* cold / parse error */
   }
   return null
+}
+
+/** Invalidate all dashboard period caches for one agent (post commission / payroll credit). */
+export async function bustAgencyDashboardCaches(agencyUserId: string): Promise<void> {
+  await Promise.all([
+    cacheRedisService.del(RedisKeys.agencyDashboardToday(agencyUserId)),
+    cacheRedisService.delByKeyPrefix(`agency:dashboard:earnings:${agencyUserId}`),
+    cacheRedisService.delByKeyPrefix(`agency:dashboard:hosts:${agencyUserId}`),
+  ])
 }
 
 async function writeCache(key: string, ttl: number, value: unknown): Promise<void> {

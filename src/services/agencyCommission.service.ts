@@ -2,13 +2,13 @@ import { randomUUID } from 'crypto'
 import { PointTxType, Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
-  getRedisForRead,
   redisClient,
   RedisKeys,
   AGENCY_COMMISSION_ME_CACHE_TTL,
   AGENCY_LEVEL_CONFIG_CACHE_TTL,
   AGENCY_RATE_CACHE_TTL,
 } from '../config/redis'
+import { bustAgencyDashboardCaches } from './agencyDashboard.service'
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyPointTransferRepository } from '../repositories/agencyPointTransfer.repository'
 import { pointWalletService } from './point-wallet.service'
@@ -180,22 +180,15 @@ export const agencyCommissionService = {
 
   async bustAgentCommissionCaches(agencyUserId: string): Promise<void> {
     try {
-      await redisClient.del(RedisKeys.agencyRate(agencyUserId))
-      await bustAgencyCommissionMeKeys(agencyUserId)
-      await cacheRedisService.del(RedisKeys.agencyMe(agencyUserId))
+      await Promise.all([
+        redisClient.del(RedisKeys.agencyRate(agencyUserId)),
+        cacheRedisService.del(RedisKeys.agencyMe(agencyUserId)),
+        cacheRedisService.delByKeyPrefix(RedisKeys.agencyCommissionMe(agencyUserId)),
+        bustAgencyDashboardCaches(agencyUserId),
+      ])
     } catch {
       /* ignore */
     }
-    // Non-blocking refresh of the dashboard "today" surfaces so the live
-    // "earned today" figure updates within seconds of a commission credit
-    // rather than waiting for the 30s TTL. Best-effort only.
-    void Promise.all([
-      redisClient.del(RedisKeys.agencyDashboardToday(agencyUserId)),
-      redisClient.del(RedisKeys.agencyDashboardEarnings(agencyUserId, 'TODAY')),
-      redisClient.del(RedisKeys.agencyDashboardHostSummary(agencyUserId, 'TODAY')),
-    ]).catch(() => {
-      /* non-fatal */
-    })
   },
 
   async buildMeAgentCommissionSummary(agentUserId: string) {
@@ -219,10 +212,9 @@ export const agencyCommissionService = {
       sortOrder: number
     }>
   > {
-    const redis = getRedisForRead()
     const key = RedisKeys.agencyLevelConfig()
     try {
-      const hit = await redis.get(key)
+      const hit = await redisClient.get(key)
       if (hit) {
         return JSON.parse(hit) as Array<{
           level: string
@@ -255,10 +247,9 @@ export const agencyCommissionService = {
     agencyUserId: string,
     category: CommissionCategory,
   ): Promise<{ level: string; rateBp: number }> {
-    const redis = getRedisForRead()
     const key = RedisKeys.agencyRate(agencyUserId)
     try {
-      const hit = await redis.get(key)
+      const hit = await redisClient.get(key)
       if (hit) {
         const parsed = JSON.parse(hit) as {
           level: string
@@ -351,9 +342,7 @@ export const agencyCommissionService = {
       },
     )
 
-    await redisClient.del(RedisKeys.agencyRate(agencyUserId))
-    await bustAgencyCommissionMeKeys(agencyUserId)
-    await cacheRedisService.del(RedisKeys.agencyMe(agencyUserId))
+    await this.bustAgentCommissionCaches(agencyUserId)
   },
 
   async enqueueDailyRecomputeMaster(opts?: { utcDate?: string; force?: boolean }): Promise<void> {
@@ -391,7 +380,7 @@ export const agencyCommissionService = {
     const periodKey = commissionCacheKey(periodParams)
     const key = RedisKeys.agencyCommissionMe(agencyUserId, periodKey)
     try {
-      const hit = await getRedisForRead().get(key)
+      const hit = await redisClient.get(key)
       if (hit) return JSON.parse(hit) as never
     } catch {
       /* miss */
@@ -672,14 +661,4 @@ export const agencyCommissionService = {
 
     return { transferId }
   },
-}
-
-async function bustAgencyCommissionMeKeys(agencyUserId: string): Promise<void> {
-  try {
-    const pattern = `agency:commission:me:${agencyUserId}*`
-    const keys = await redisClient.keys(pattern)
-    if (keys.length > 0) await redisClient.del(...keys)
-  } catch {
-    /* ignore */
-  }
 }

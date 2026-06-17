@@ -1,5 +1,5 @@
 import { PrismaClientInitializationError } from '@prisma/client/runtime/library'
-import { redisClient, getRedisForRead } from '../config/redis'
+import { redisClient } from '../config/redis'
 import { walletRepository } from '../repositories/wallet.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
 import { pointLedgerRepository } from '../repositories/point-ledger.repository'
@@ -28,8 +28,7 @@ export const walletService = {
   async getCoinBalance(userId: string): Promise<bigint> {
     const key = RedisKeys.walletCoinBalance(userId)
     try {
-      const redis = getRedisForRead()
-      const cached = await redis.get(key)
+      const cached = await redisClient.get(key)
       if (cached !== null) return BigInt(cached)
     } catch {
       // Redis unavailable — fall through to Postgres
@@ -58,8 +57,7 @@ export const walletService = {
   async getPointBalance(userId: string): Promise<bigint> {
     const key = RedisKeys.walletPointBalance(userId)
     try {
-      const redis = getRedisForRead()
-      const cached = await redis.get(key)
+      const cached = await redisClient.get(key)
       if (cached !== null) return BigInt(cached)
     } catch {
       // Redis unavailable — fall through to Postgres
