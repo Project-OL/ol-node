@@ -1,4 +1,4 @@
-import { CoinTxType, VipMembershipTier } from '@prisma/client'
+import { CoinTxType, LevelType, VipMembershipTier } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
   getRedisForRead,
@@ -28,6 +28,7 @@ import {
   VIP_DAILY_GRANT_COINS,
   VIP_DURATION_CAP_DAYS,
 } from './vip-membership.helpers'
+import { syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
@@ -359,6 +360,7 @@ export const vipMembershipService = {
   }> {
     const { periodDays, coinCost } = this.tierConfig(tier)
 
+    let buyerWealthResult: LevelApplyResult | null = null
     const { proposedExpiresAt } = await prisma.$transaction(
       async (tx) => {
         const u = await tx.user.findUnique({
@@ -380,7 +382,7 @@ export const vipMembershipService = {
         })
         assertWithinCap(proposed, now, VIP_DURATION_CAP_DAYS)
 
-        const { ledgerEntryId } = await coinWalletService.debit(
+        const { ledgerEntryId, wealthLevelResult } = await coinWalletService.debit(
           userId,
           coinCost,
           CoinTxType.VIP_MEMBERSHIP_PURCHASE,
@@ -392,6 +394,7 @@ export const vipMembershipService = {
             applyWealthXp: true,
           },
         )
+        buyerWealthResult = wealthLevelResult
 
         const existing = await vipMembershipRepository.findPurchaseByLedgerEntryId(
           ledgerEntryId,
@@ -433,6 +436,7 @@ export const vipMembershipService = {
     )
 
     await walletService.adjustCoinBalanceCache(userId, coinCost)
+    await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, buyerWealthResult)
     await this.refreshCache(userId)
     await removeVipMembershipExpiry(userId)
     await enqueueVipMembershipExpiry(userId, proposedExpiresAt)

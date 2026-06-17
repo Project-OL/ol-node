@@ -437,6 +437,7 @@ export const pointWalletService = {
     ledgerEntryId: string
     balanceAfter: bigint
     bustAgentUserId: string | null
+    livestreamLevelResult: Awaited<ReturnType<typeof walletLevelService.applyCredit>> | null
   }> {
     const existing = await pointLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
@@ -444,6 +445,7 @@ export const pointWalletService = {
         ledgerEntryId: existing.id,
         balanceAfter: existing.balanceAfter,
         bustAgentUserId: null,
+        livestreamLevelResult: null,
       }
     }
 
@@ -503,18 +505,26 @@ export const pointWalletService = {
     }
 
     const applyXp = options.applyLivestreamLevel === true
+    let livestreamLevelResult: Awaited<ReturnType<typeof walletLevelService.applyCredit>> | null =
+      null
     if (
       applyXp &&
       txType !== PointTxType.AGENT_COMMISSION &&
       txType !== PointTxType.AGENT_POINT_TRANSFER
     ) {
-      await walletLevelService.applyCredit(tx, userId, LevelType.LIVESTREAM, amount)
+      livestreamLevelResult = await walletLevelService.applyCredit(
+        tx,
+        userId,
+        LevelType.LIVESTREAM,
+        amount,
+      )
     }
 
     return {
       ledgerEntryId: entry.id,
       balanceAfter: entry.balanceAfter,
       bustAgentUserId,
+      livestreamLevelResult,
     }
   },
 

@@ -8,7 +8,7 @@ import { walletRepository } from '../repositories/wallet.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
 import { pointLedgerRepository } from '../repositories/point-ledger.repository'
 import { walletService } from './wallet.service'
-import { walletLevelService } from './user-level.service'
+import { walletLevelService, syncLevelCacheFromApplyResult } from './user-level.service'
 import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
 import { userRepository } from '../repositories/user.repository'
 import { auditService } from './audit.service'
@@ -212,6 +212,9 @@ export const videoCallSessionService = {
     )
 
     let bustAgentUserId: string | null = null
+    let callerWealthResult: Awaited<ReturnType<typeof walletLevelService.applyCredit>> | null = null
+    let creatorLivestreamResult: Awaited<ReturnType<typeof walletLevelService.applyCredit>> | null =
+      null
 
     await prisma.$transaction(
       async (tx) => {
@@ -242,7 +245,7 @@ export const videoCallSessionService = {
         await walletRepository.bumpVersion(tx, callerCoinWallet.id)
 
         // Wealth XP tracks coin SPEND: the caller's full coin debit for the minute.
-        await walletLevelService.applyCredit(
+        callerWealthResult = await walletLevelService.applyCredit(
           tx,
           session.callerId,
           LevelType.WEALTH,
@@ -286,17 +289,21 @@ export const videoCallSessionService = {
         bustAgentUserId = ac.bustAgentUserId
 
         // Livestream XP tracks host earnings: the host's point credit (their set price).
-        const levelResult = await walletLevelService.applyCredit(
+        creatorLivestreamResult = await walletLevelService.applyCredit(
           tx,
           session.creatorId,
           LevelType.LIVESTREAM,
           hostPricePerMin,
         )
-
-        // Store levelResult on the outer scope for cache refresh after commit
-        ;(tx as unknown as { _lvl: typeof levelResult })._lvl = levelResult
       },
       { isolationLevel: 'Serializable' },
+    )
+
+    await syncLevelCacheFromApplyResult(session.callerId, LevelType.WEALTH, callerWealthResult)
+    await syncLevelCacheFromApplyResult(
+      session.creatorId,
+      LevelType.LIVESTREAM,
+      creatorLivestreamResult,
     )
 
     if (bustAgentUserId) {

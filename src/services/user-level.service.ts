@@ -99,6 +99,33 @@ function buildSnapshot(
   }
 }
 
+export type LevelApplyResult = {
+  newLevel: number
+  previousLevel: number
+  newCumulative: bigint
+}
+
+/** Write fresh snapshot to Redis after a successful applyCredit (call post-commit). */
+export async function syncLevelCacheFromApplyResult(
+  userId: string,
+  levelType: LevelType,
+  result: LevelApplyResult | null | undefined,
+): Promise<void> {
+  if (!result) return
+  await walletLevelService.refreshCache(
+    userId,
+    levelType,
+    result.newCumulative,
+    result.newLevel,
+    result.previousLevel,
+  )
+}
+
+/** Drop cached snapshot so the next read reloads from DB (call post-commit). */
+export async function bustLevelSnapshotCache(userId: string, levelType: LevelType): Promise<void> {
+  await walletLevelService.invalidateCache(userId, levelType)
+}
+
 export const walletLevelService = {
   async getSnapshot(userId: string, levelType: LevelType): Promise<LevelSnapshot> {
     const redisKey =
@@ -107,8 +134,7 @@ export const walletLevelService = {
         : RedisKeys.userLivestreamLevel(userId)
 
     try {
-      const redis = getRedisForRead()
-      const cached = await redis.get(redisKey)
+      const cached = await redisClient.get(redisKey)
       if (cached) {
         return JSON.parse(cached) as LevelSnapshot
       }
@@ -224,7 +250,7 @@ export const walletLevelService = {
     const map = new Map<string, { wealthLevel: number; livestreamLevel: number }>()
     if (unique.length === 0) return map
 
-    const redis = getRedisForRead()
+    const redis = redisClient
     const pipe = redis.pipeline()
     for (const id of unique) {
       pipe.get(RedisKeys.userWealthLevel(id))

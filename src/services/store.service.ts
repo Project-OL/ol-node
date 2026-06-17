@@ -1,4 +1,4 @@
-import { Prisma, StoreItemCategory } from '@prisma/client'
+import { Prisma, StoreItemCategory, LevelType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
   redisClient,
@@ -17,6 +17,7 @@ import { vipAssignmentRepository } from '../repositories/vip-assignment.reposito
 import { followRepository } from '../repositories/follow.repository'
 import { coinWalletService } from './coin-wallet.service'
 import { walletService } from './wallet.service'
+import { syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
 import {
   enqueueRareIdAssignmentExpiry,
   enqueueStoreItemExpiry,
@@ -200,9 +201,10 @@ export const storeService = {
     }
 
     const expiresAt = new Date(Date.now() + item.validityDays * 24 * 60 * 60 * 1000)
+    let buyerWealthResult: LevelApplyResult | null = null
     const created = await prisma.$transaction(
       async (tx) => {
-        await coinWalletService.debitForStoreItemPurchase(
+        buyerWealthResult = await coinWalletService.debitForStoreItemPurchase(
           params.buyerId,
           BigInt(item.coinCost),
           {
@@ -262,6 +264,7 @@ export const storeService = {
     )
 
     await walletService.adjustCoinBalanceCache(params.buyerId, BigInt(item.coinCost))
+    await syncLevelCacheFromApplyResult(params.buyerId, LevelType.WEALTH, buyerWealthResult)
     await enqueueStoreItemExpiry(created.id, expiresAt)
     await Promise.all([
       cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.recipientId)),
@@ -326,9 +329,10 @@ export const storeService = {
     }
 
     const expiresAt = new Date(Date.now() + env.STORE_RARE_ID_DURATION_DAYS * 24 * 60 * 60 * 1000)
+    let buyerWealthResult: LevelApplyResult | null = null
     const createdAssignment = await prisma.$transaction(
       async (tx) => {
-        await coinWalletService.debitForVipPurchase(
+        buyerWealthResult = await coinWalletService.debitForVipPurchase(
           params.buyerId,
           BigInt(row.priceCredits!),
           {
@@ -377,6 +381,7 @@ export const storeService = {
     )
 
     await walletService.adjustCoinBalanceCache(params.buyerId, BigInt(row.priceCredits!))
+    await syncLevelCacheFromApplyResult(params.buyerId, LevelType.WEALTH, buyerWealthResult)
     await enqueueRareIdAssignmentExpiry(createdAssignment.id, createdAssignment.expiresAt)
     await Promise.all([
       cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.recipientId)),

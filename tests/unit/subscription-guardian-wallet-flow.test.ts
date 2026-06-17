@@ -63,6 +63,7 @@ const creditInTransaction = vi.fn(
       ledgerEntryId: `point-ledger-${pointCredits.length}`,
       balanceAfter: creatorPointBalance,
       bustAgentUserId: null,
+      livestreamLevelResult: null,
     }
   },
 )
@@ -201,6 +202,7 @@ vi.mock('../../src/services/user-level.service', () => ({
   walletLevelService: {
     getDisplayLevelsForUsers: vi.fn(),
   },
+  syncLevelCacheFromApplyResult: vi.fn().mockResolvedValue(undefined),
 }))
 
 const { subscriptionService } = await import('../../src/services/subscription.service')

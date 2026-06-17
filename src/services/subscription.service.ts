@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { CreatorSubscriptionStatus, PointTxType } from '@prisma/client'
+import { CreatorSubscriptionStatus, LevelType, PointTxType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
   getRedisForRead,
@@ -35,6 +35,7 @@ import { ledgerHostPointsKey } from '../utils/ledger-idempotency'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { walletService } from './wallet.service'
+import { syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
 
 async function bustAgentCommissionIfNeeded(agentUserId: string | null): Promise<void> {
   if (!agentUserId) return
@@ -52,13 +53,17 @@ async function creditCreatorSubscriptionPoints(
     idempotencyKey: string
     description: string
   },
-): Promise<{ hostPoints: bigint; bustAgentUserId: string | null }> {
+): Promise<{
+  hostPoints: bigint
+  bustAgentUserId: string | null
+  livestreamLevelResult: LevelApplyResult | null
+}> {
   const hostPoints = hostPointsFromSubscription(params.coinsPaid)
   if (hostPoints <= 0n) {
-    return { hostPoints: 0n, bustAgentUserId: null }
+    return { hostPoints: 0n, bustAgentUserId: null, livestreamLevelResult: null }
   }
 
-  const { bustAgentUserId } = await pointWalletService.creditInTransaction(
+  const { bustAgentUserId, livestreamLevelResult } = await pointWalletService.creditInTransaction(
     params.creatorId,
     hostPoints,
     PointTxType.SUBSCRIPTION,
@@ -75,7 +80,7 @@ async function creditCreatorSubscriptionPoints(
       applyLivestreamLevel: true,
     },
   )
-  return { hostPoints, bustAgentUserId }
+  return { hostPoints, bustAgentUserId, livestreamLevelResult }
 }
 
 function accessTtlSeconds(nextRenewalAt: Date): number {
@@ -265,9 +270,11 @@ export const subscriptionService = {
     const idempotencyKey = `sub:create:${subscriberId}:${creatorId}:${crypto.randomUUID()}`
 
     let bustAgentUserId: string | null = null
+    let subscriberWealthResult: LevelApplyResult | null = null
+    let creatorLivestreamResult: LevelApplyResult | null = null
     const row = await prisma.$transaction(
       async (tx) => {
-        await coinWalletService.debitForCreatorSubscription(
+        subscriberWealthResult = await coinWalletService.debitForCreatorSubscription(
           subscriberId,
           SUBSCRIPTION_COIN_COST,
           {
@@ -297,6 +304,7 @@ export const subscriptionService = {
           description: 'Creator subscription revenue (75%)',
         })
         bustAgentUserId = credited.bustAgentUserId
+        creatorLivestreamResult = credited.livestreamLevelResult
 
         return created
       },
@@ -304,6 +312,8 @@ export const subscriptionService = {
     )
 
     await walletService.adjustCoinBalanceCache(subscriberId, SUBSCRIPTION_COIN_COST)
+    await syncLevelCacheFromApplyResult(subscriberId, LevelType.WEALTH, subscriberWealthResult)
+    await syncLevelCacheFromApplyResult(creatorId, LevelType.LIVESTREAM, creatorLivestreamResult)
     const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
     if (creatorPoints > 0n) {
       await walletService.adjustPointBalanceCache(creatorId, creatorPoints)
@@ -435,9 +445,11 @@ export const subscriptionService = {
 
     try {
       let bustAgentUserId: string | null = null
+      let subscriberWealthResult: LevelApplyResult | null = null
+      let creatorLivestreamResult: LevelApplyResult | null = null
       await prisma.$transaction(
         async (tx) => {
-          await coinWalletService.debitForCreatorSubscription(
+          subscriberWealthResult = await coinWalletService.debitForCreatorSubscription(
             sub.subscriberId,
             SUBSCRIPTION_COIN_COST,
             {
@@ -458,11 +470,18 @@ export const subscriptionService = {
             description: 'Creator subscription renewal revenue (75%)',
           })
           bustAgentUserId = credited.bustAgentUserId
+          creatorLivestreamResult = credited.livestreamLevelResult
         },
         { isolationLevel: 'Serializable' },
       )
 
       await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
+      await syncLevelCacheFromApplyResult(sub.subscriberId, LevelType.WEALTH, subscriberWealthResult)
+      await syncLevelCacheFromApplyResult(
+        sub.creatorId,
+        LevelType.LIVESTREAM,
+        creatorLivestreamResult,
+      )
       const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
       if (creatorPoints > 0n) {
         await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
@@ -518,9 +537,11 @@ export const subscriptionService = {
 
     try {
       let bustAgentUserId: string | null = null
+      let subscriberWealthResult: LevelApplyResult | null = null
+      let creatorLivestreamResult: LevelApplyResult | null = null
       await prisma.$transaction(
         async (tx) => {
-          await coinWalletService.debitForCreatorSubscription(
+          subscriberWealthResult = await coinWalletService.debitForCreatorSubscription(
             sub.subscriberId,
             SUBSCRIPTION_COIN_COST,
             {
@@ -541,11 +562,18 @@ export const subscriptionService = {
             description: 'Creator subscription grace recovery revenue (75%)',
           })
           bustAgentUserId = credited.bustAgentUserId
+          creatorLivestreamResult = credited.livestreamLevelResult
         },
         { isolationLevel: 'Serializable' },
       )
 
       await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
+      await syncLevelCacheFromApplyResult(sub.subscriberId, LevelType.WEALTH, subscriberWealthResult)
+      await syncLevelCacheFromApplyResult(
+        sub.creatorId,
+        LevelType.LIVESTREAM,
+        creatorLivestreamResult,
+      )
       const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
       if (creatorPoints > 0n) {
         await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)

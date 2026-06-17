@@ -12,13 +12,27 @@ import {
   LevelType,
   type Prisma,
 } from '@prisma/client'
-import { walletLevelService } from './user-level.service'
+import {
+  walletLevelService,
+  syncLevelCacheFromApplyResult,
+  type LevelApplyResult,
+} from './user-level.service'
 import { RECHARGE_TX_TYPES, richTierService } from './rich-tier.service'
 import { epayClient } from '../lib/epay.client'
 
 /** Coins debited when changing display name via PATCH /users/me (`name` field). */
 export const USERNAME_CHANGE_COIN_COST = 10_000n
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
+
+async function applyWealthSpendXp(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  amount: bigint,
+  applyWealthXp?: boolean,
+): Promise<LevelApplyResult | null> {
+  if (!applyWealthXp) return null
+  return walletLevelService.applyCredit(tx, userId, LevelType.WEALTH, amount)
+}
 
 export const coinWalletService = {
   /**
@@ -250,7 +264,8 @@ export const coinWalletService = {
       applyWealthXp?: boolean
     },
     tx?: Prisma.TransactionClient,
-  ): Promise<void> {
+  ): Promise<LevelApplyResult | null> {
+    let wealthLevelResult: LevelApplyResult | null = null
     const run = async (inner: Prisma.TransactionClient) => {
       const wallet = await inner.wallet.upsert({
         where: {
@@ -290,14 +305,12 @@ export const coinWalletService = {
         idempotencyKey: options.idempotencyKey,
       })
       await walletRepository.bumpVersion(inner, wallet.id)
-      if (options.applyWealthXp) {
-        await walletLevelService.applyCredit(inner, userId, LevelType.WEALTH, amount)
-      }
+      wealthLevelResult = await applyWealthSpendXp(inner, userId, amount, options.applyWealthXp)
     }
 
     if (tx) {
       await run(tx)
-      return
+      return wealthLevelResult
     }
     await prisma.$transaction(
       async (inner) => {
@@ -306,6 +319,8 @@ export const coinWalletService = {
       { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
     await walletService.adjustCoinBalanceCache(userId, amount)
+    await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, wealthLevelResult)
+    return wealthLevelResult
   },
 
   /**
@@ -323,7 +338,8 @@ export const coinWalletService = {
       applyWealthXp?: boolean
     },
     tx?: Prisma.TransactionClient,
-  ): Promise<void> {
+  ): Promise<LevelApplyResult | null> {
+    let wealthLevelResult: LevelApplyResult | null = null
     const run = async (inner: Prisma.TransactionClient) => {
       const wallet = await inner.wallet.upsert({
         where: {
@@ -360,14 +376,12 @@ export const coinWalletService = {
         idempotencyKey: options.idempotencyKey,
       })
       await walletRepository.bumpVersion(inner, wallet.id)
-      if (options.applyWealthXp) {
-        await walletLevelService.applyCredit(inner, userId, LevelType.WEALTH, amount)
-      }
+      wealthLevelResult = await applyWealthSpendXp(inner, userId, amount, options.applyWealthXp)
     }
 
     if (tx) {
       await run(tx)
-      return
+      return wealthLevelResult
     }
     await prisma.$transaction(
       async (inner) => {
@@ -376,6 +390,8 @@ export const coinWalletService = {
       { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
     await walletService.adjustCoinBalanceCache(userId, amount)
+    await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, wealthLevelResult)
+    return wealthLevelResult
   },
 
   async debitForStoreItemPurchase(
@@ -390,7 +406,8 @@ export const coinWalletService = {
       applyWealthXp?: boolean
     },
     tx?: Prisma.TransactionClient,
-  ): Promise<void> {
+  ): Promise<LevelApplyResult | null> {
+    let wealthLevelResult: LevelApplyResult | null = null
     const run = async (inner: Prisma.TransactionClient) => {
       const wallet = await inner.wallet.upsert({
         where: {
@@ -430,16 +447,19 @@ export const coinWalletService = {
         idempotencyKey: options.idempotencyKey,
       })
       await walletRepository.bumpVersion(inner, wallet.id)
-      if (options.applyWealthXp) {
-        await walletLevelService.applyCredit(inner, userId, LevelType.WEALTH, amount)
-      }
+      wealthLevelResult = await applyWealthSpendXp(inner, userId, amount, options.applyWealthXp)
     }
-    if (tx) return run(tx)
+    if (tx) {
+      await run(tx)
+      return wealthLevelResult
+    }
     await prisma.$transaction(async (inner) => run(inner), {
       isolationLevel: 'Serializable',
       timeout: INTERACTIVE_TX_TIMEOUT_MS,
     })
     await walletService.adjustCoinBalanceCache(userId, amount)
+    await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, wealthLevelResult)
+    return wealthLevelResult
   },
 
   async debitForVipPurchase(
@@ -454,7 +474,8 @@ export const coinWalletService = {
       applyWealthXp?: boolean
     },
     tx?: Prisma.TransactionClient,
-  ): Promise<void> {
+  ): Promise<LevelApplyResult | null> {
+    let wealthLevelResult: LevelApplyResult | null = null
     const run = async (inner: Prisma.TransactionClient) => {
       const wallet = await inner.wallet.upsert({
         where: {
@@ -494,16 +515,19 @@ export const coinWalletService = {
         idempotencyKey: options.idempotencyKey,
       })
       await walletRepository.bumpVersion(inner, wallet.id)
-      if (options.applyWealthXp) {
-        await walletLevelService.applyCredit(inner, userId, LevelType.WEALTH, amount)
-      }
+      wealthLevelResult = await applyWealthSpendXp(inner, userId, amount, options.applyWealthXp)
     }
-    if (tx) return run(tx)
+    if (tx) {
+      await run(tx)
+      return wealthLevelResult
+    }
     await prisma.$transaction(async (inner) => run(inner), {
       isolationLevel: 'Serializable',
       timeout: INTERACTIVE_TX_TIMEOUT_MS,
     })
     await walletService.adjustCoinBalanceCache(userId, amount)
+    await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, wealthLevelResult)
+    return wealthLevelResult
   },
 
   /**
@@ -529,12 +553,17 @@ export const coinWalletService = {
        */
       applyWealthXp?: boolean
     },
-  ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
+  ): Promise<{
+    ledgerEntryId: string
+    balanceAfter: bigint
+    wealthLevelResult: LevelApplyResult | null
+  }> {
     const existing = await coinLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
       return {
         ledgerEntryId: existing.id,
         balanceAfter: existing.balanceAfter,
+        wealthLevelResult: null,
       }
     }
 
@@ -586,11 +615,14 @@ export const coinWalletService = {
     })
     await walletRepository.bumpVersion(tx, wallet.id)
 
-    if (options.applyWealthXp && currencyType === WalletCurrencyType.COIN) {
-      await walletLevelService.applyCredit(tx, userId, LevelType.WEALTH, amount)
-    }
+    const wealthLevelResult = await applyWealthSpendXp(
+      tx,
+      userId,
+      amount,
+      options.applyWealthXp && currencyType === WalletCurrencyType.COIN,
+    )
 
-    return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter }
+    return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter, wealthLevelResult }
   },
 
   /**
