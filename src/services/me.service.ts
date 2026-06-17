@@ -41,7 +41,7 @@ const displayNameSchema = z
   .string()
   .min(2)
   .max(50)
-  .regex(/^[\p{L}\p{N} ]+$/u, 'Name may only contain letters, numbers, and spaces')
+  .refine((s) => !/[\p{Cc}]/u.test(s), 'Name cannot contain control characters')
 
 const dobSchema = z
   .string()

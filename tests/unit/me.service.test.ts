@@ -408,6 +408,20 @@ describe('meService', () => {
     expect(payload.name).toBe('New Name')
   })
 
+  it('patchMe accepts unicode display name with emoji and symbols', async () => {
+    findForMe.mockResolvedValueOnce(baseRow())
+    debitForDisplayNameChange.mockResolvedValue(undefined)
+    findForMe.mockResolvedValueOnce(
+      baseRow({
+        firstName: '🎮★राज',
+        lastName: null,
+      }),
+    )
+    const out = await meService.patchMe('user-1', { name: '🎮★राज' }, null, {})
+    expect(out.user.name).toBe('🎮★राज')
+    expect(debitForDisplayNameChange).toHaveBeenCalledWith('user-1', '🎮★राज', null)
+  })
+
   it('patchMe name rejects when wallet debit fails (insufficient coins)', async () => {
     findForMe.mockResolvedValueOnce(baseRow())
     debitForDisplayNameChange.mockRejectedValueOnce(
