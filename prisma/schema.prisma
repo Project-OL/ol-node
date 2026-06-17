@@ -1425,7 +1425,7 @@ model WithdrawalPayrollAssignment {
 
 model PayrollConfig {
   id                    Int      @id @default(1)
-  platformFeeRateBp     Int      @default(500) @map("platform_fee_rate_bp")
+  platformFeeRateBp     Int      @default(500) @map("platform_fee_rate_bp") // legacy; tiers in resolvePlatformFeeRateBp()
   agentRewardRateBp     Int      @default(6000) @map("agent_reward_rate_bp")
   serviceFeeUsd         Decimal  @default(1.00) @map("service_fee_usd") @db.Decimal(8, 2)
   minWithdrawalUsd      Decimal  @default(10.00) @map("min_withdrawal_usd") @db.Decimal(12, 2)

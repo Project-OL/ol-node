@@ -6,19 +6,31 @@
 /** Minimum payroll withdrawal (100,000 points). */
 export const MIN_PAYROLL_POINTS = 100_000n
 
+/** 1 lakh = 100_000 points (2L = 200k, 10L = 1M). */
+export const WITHDRAWAL_LAKH_POINTS = 100_000n
+
+const TWO_LAKH = 2n * WITHDRAWAL_LAKH_POINTS
+const TEN_LAKH = 10n * WITHDRAWAL_LAKH_POINTS
+
+/**
+ * Platform fee rate (basis points) by gross withdrawal points.
+ *
+ * | Gross points      | Platform fee |
+ * |-------------------|--------------|
+ * | 0 – under 2L      | 5% (500 bp)  |
+ * | 2L – under 10L    | 3% (300 bp)  |
+ * | 10L and above     | 2% (200 bp)  |
+ */
+export function resolvePlatformFeeRateBp(grossPoints: bigint): number {
+  if (grossPoints < TWO_LAKH) return 500
+  if (grossPoints < TEN_LAKH) return 300
+  return 200
+}
+
 /**
  * Calculate tiered platform fee for host withdrawals.
- * Tier rules:
- * - 0–199,999 points: 5%
- * - 200,000–999,999 points: 3%
- * - ≥1,000,000 points: 2%
  */
 export function calculateTieredPlatformFee(grossPoints: bigint): bigint {
-  if (grossPoints < 200_000n) {
-    return (grossPoints * 500n) / 10_000n // 5%
-  } else if (grossPoints < 1_000_000n) {
-    return (grossPoints * 300n) / 10_000n // 3%
-  } else {
-    return (grossPoints * 200n) / 10_000n // 2%
-  }
+  const rateBp = resolvePlatformFeeRateBp(grossPoints)
+  return (grossPoints * BigInt(rateBp)) / 10_000n
 }

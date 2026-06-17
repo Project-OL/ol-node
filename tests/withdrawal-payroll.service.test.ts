@@ -60,11 +60,11 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
     expect(r.hostPayoutPoints).toBeGreaterThan(0n);
   });
 
-  it("truncates bp math for odd gross", () => {
+  it("truncates bp math for odd gross at 10L+ tier (2%)", () => {
     const cfg = { ...defaultConfig, agentRewardRateBp: 6000 };
     const r = calculateWithdrawalAmounts(1_000_001n, cfg);
-    const platformFee = (1_000_001n * 500n) / 10000n;
-    expect(platformFee).toBe(50000n);
+    const platformFee = (1_000_001n * 200n) / 10000n;
+    expect(platformFee).toBe(20000n);
     expect(r.agentRewardPoints).toBe((platformFee * 6000n) / 10000n);
   });
 });

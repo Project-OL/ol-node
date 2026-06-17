@@ -39,6 +39,7 @@ import {
   mapPaymentMethodMaskedForHost,
 } from '../utils/payment-method-mask'
 import { formatDuration } from '../utils/withdrawal-formatters'
+import { resolvePlatformFeeRateBp } from '../utils/payroll-fee'
 import type { DisputeWithdrawalInput } from '../models/withdrawal.schemas'
 import type { InboxAssignmentRow } from '../repositories/payrollAssignment.repository'
 import type { AssignmentListCursor } from '../repositories/payrollAssignment.repository'
@@ -127,6 +128,7 @@ export function calculateWithdrawalAmounts(
   grossPoints: bigint,
   config: PayrollConfigSnapshot,
 ): {
+  platformFeeRateBp: number
   platformFeePoints: bigint
   agentRewardPoints: bigint
   hostPayoutPoints: bigint
@@ -146,7 +148,8 @@ export function calculateWithdrawalAmounts(
     throw new AppError(400, 'Above maximum withdrawal amount', 'ABOVE_MAX_WITHDRAWAL')
   }
 
-  const platformFeePoints = (grossPoints * BigInt(config.platformFeeRateBp)) / 10000n
+  const platformFeeRateBp = resolvePlatformFeeRateBp(grossPoints)
+  const platformFeePoints = (grossPoints * BigInt(platformFeeRateBp)) / 10000n
   // agentRewardRateBp = share of platform fee (6000 bp = 60% of platformFeePoints)
   const agentRewardPoints =
     (platformFeePoints * BigInt(config.agentRewardRateBp)) / 10000n
@@ -160,6 +163,7 @@ export function calculateWithdrawalAmounts(
   const hostNetUsd = hostPayoutUsd.toNumber() - serviceFeeUsd
 
   return {
+    platformFeeRateBp,
     platformFeePoints,
     agentRewardPoints,
     hostPayoutPoints,
@@ -171,6 +175,8 @@ export function calculateWithdrawalAmounts(
 
 /** Alias for tests / PR checklist naming. */
 export const calculateAmounts = calculateWithdrawalAmounts
+
+export { resolvePlatformFeeRateBp, calculateTieredPlatformFee } from '../utils/payroll-fee'
 
 async function loadPayrollConfigRow(): Promise<PayrollConfigSnapshot> {
   const row = await prismaRead.payrollConfig.findUnique({ where: { id: 1 } })

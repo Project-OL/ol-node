@@ -39,6 +39,7 @@ export const payrollAdminService = {
     }
 
     const data: Prisma.PayrollConfigUpdateInput = {}
+    // platformFeeRateBp is stored for legacy/admin display; runtime fees use tiered rates in resolvePlatformFeeRateBp().
     if (updates.platformFeeRateBp != null) data.platformFeeRateBp = updates.platformFeeRateBp
     if (updates.agentRewardRateBp != null) data.agentRewardRateBp = updates.agentRewardRateBp
     if (updates.serviceFeeUsd != null)

@@ -28,6 +28,18 @@ function toBool(count: number): boolean {
   return count > 0
 }
 
+/** Mutual follow: userId follows `following`, and `following` follows userId back. */
+function mutualFriendsWhere(userId: string) {
+  return {
+    followerId: userId,
+    following: {
+      following: {
+        some: { followingId: userId },
+      },
+    },
+  }
+}
+
 export const followRepository = {
   async upsertFollow(followerId: string, followingId: string): Promise<UserFollow> {
     return prisma.userFollow.upsert({
@@ -68,7 +80,7 @@ export const followRepository = {
   },
 
   async existsFollow(followerId: string, followingId: string): Promise<boolean> {
-    const count = await prismaRead.userFollow.count({
+    const count = await prisma.userFollow.count({
       where: { followerId, followingId },
     })
     return toBool(count)
@@ -111,7 +123,7 @@ export const followRepository = {
       },
     })
 
-    const total = await prismaRead.userFollow.count({ where })
+    const total = await prisma.userFollow.count({ where })
 
     const userIds = follows.map((f) => f.followerId)
     const relations = await prismaRead.userFollow.findMany({
@@ -183,7 +195,7 @@ export const followRepository = {
       },
     })
 
-    const total = await prismaRead.userFollow.count({ where })
+    const total = await prisma.userFollow.count({ where })
 
     const userIds = follows.map((f) => f.followingId)
     const relations = await prismaRead.userFollow.findMany({
@@ -225,14 +237,7 @@ export const followRepository = {
     limit: number,
   ): Promise<{ items: FollowWithUser[]; nextCursor: string | null; total: number }> {
     const follows = await prismaRead.userFollow.findMany({
-      where: {
-        followerId: userId,
-        following: {
-          followers: {
-            some: { followerId: { equals: userId } },
-          },
-        },
-      },
+      where: mutualFriendsWhere(userId),
       orderBy: { createdAt: 'desc' },
       ...(cursor
         ? {
@@ -261,15 +266,7 @@ export const followRepository = {
       },
     })
 
-    const whereFriends = {
-      followerId: userId,
-      following: {
-        followers: {
-          some: { followerId: { equals: userId } },
-        },
-      },
-    }
-    const total = await prismaRead.userFollow.count({ where: whereFriends })
+    const total = await prisma.userFollow.count({ where: mutualFriendsWhere(userId) })
 
     const userIds = follows.map((f) => f.followingId)
     const relations = await prismaRead.userFollow.findMany({
@@ -304,11 +301,11 @@ export const followRepository = {
   },
 
   async countFollowers(userId: string): Promise<number> {
-    return prismaRead.userFollow.count({ where: { followingId: userId } })
+    return prisma.userFollow.count({ where: { followingId: userId } })
   },
 
   async countFollowing(userId: string): Promise<number> {
-    return prismaRead.userFollow.count({ where: { followerId: userId } })
+    return prisma.userFollow.count({ where: { followerId: userId } })
   },
 
   /** Lightweight: IDs only, for messaging privacy checks. Cap at 500. */
@@ -324,12 +321,7 @@ export const followRepository = {
   /** Lightweight: mutual friend IDs only, for messaging privacy checks. Cap at 500. */
   async getFriendIds(userId: string, limit = 500): Promise<string[]> {
     const rows = await prismaRead.userFollow.findMany({
-      where: {
-        followerId: userId,
-        following: {
-          followers: { some: { followerId: userId } },
-        },
-      },
+      where: mutualFriendsWhere(userId),
       select: { followingId: true },
       take: limit,
     })
@@ -337,19 +329,7 @@ export const followRepository = {
   },
 
   async countFriends(userId: string): Promise<number> {
-    const friends = await prismaRead.userFollow.findMany({
-      where: {
-        followerId: userId,
-        following: {
-          followers: {
-            some: { followerId: { equals: userId } },
-          },
-        },
-      },
-      select: { followingId: true },
-    })
-    const friendIds = new Set(friends.map((f) => f.followingId))
-    return friendIds.size
+    return prisma.userFollow.count({ where: mutualFriendsWhere(userId) })
   },
 
   async searchFollowing(followerId: string, query: string, limit: number): Promise<TaggedUser[]> {

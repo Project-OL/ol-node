@@ -105,7 +105,12 @@ async function toUserCards(
 /** Bust cached followers/following/friends for one or more users (primary Redis). */
 export async function invalidateSocialCountsCache(...userIds: string[]): Promise<void> {
   const unique = [...new Set(userIds.filter(Boolean))]
-  await Promise.all(unique.map((id) => cacheService.delete(RedisKeys.socialCounts(id))))
+  await Promise.all(
+    unique.flatMap((id) => [
+      cacheService.delete(RedisKeys.socialCounts(id)),
+      redisClient.del(`dm-contacts:${id}`),
+    ]),
+  )
 }
 
 export const followService = {
@@ -249,8 +254,8 @@ export const followService = {
     const cards = await toUserCards(
       items.map((i) => ({
         user: i.user,
-        isFollowing: i.isFollowing,
-        isFollowedBy: i.isFollowedBy,
+        isFollowing: userId === requesterId ? true : i.isFollowing,
+        isFollowedBy: userId === requesterId ? true : i.isFollowedBy,
       })),
       levels,
       subscriberCounts,

@@ -128,6 +128,8 @@ describe('followService', () => {
     expect(upsertFollow).toHaveBeenCalledWith(followerId, targetUserId)
     expect(cacheDelete).toHaveBeenCalledWith('social:counts:user-1')
     expect(cacheDelete).toHaveBeenCalledWith('social:counts:user-2')
+    expect(redisDel).toHaveBeenCalledWith('dm-contacts:user-1')
+    expect(redisDel).toHaveBeenCalledWith('dm-contacts:user-2')
     expect(result.following).toBe(true)
     expect(result.isFriend).toBe(true)
     expect(auditLog).toHaveBeenCalledWith(
