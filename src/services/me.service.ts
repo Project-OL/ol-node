@@ -6,7 +6,7 @@ import { userRepository } from '../repositories/user.repository'
 import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
 import { vipAssignmentRepository } from '../repositories/vip-assignment.repository'
 import { walletService } from './wallet.service'
-import { coinWalletService, USERNAME_CHANGE_COIN_COST } from './coin-wallet.service'
+import { coinWalletService } from './coin-wallet.service'
 import { cacheRedisService } from './cacheRedis.service'
 import { redisClient, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
@@ -19,6 +19,10 @@ import {
   splitDisplayName,
 } from '../utils/profileDisplay'
 import { detectImageMimeFromBuffer, extensionForImageMime } from '../utils/imageMagic'
+import {
+  freeUsernameChangeEligibility,
+  isFreeUsernameChangeAvailable,
+} from '../utils/monthThrottle'
 import type {
   GalleryCompletionDto,
   MeProfileCache,
@@ -78,6 +82,8 @@ function toProfileCache(
 ): MeProfileCache {
   const name = displayNameFromUser(row)
   const displayPublicId = (row.currentVipPublicId ?? row.defaultPublicId ?? row.publicId).toString()
+  const usernameUpdatedAt = row.usernameUpdatedAt?.toISOString() ?? null
+  const usernameEligibility = freeUsernameChangeEligibility(row.usernameUpdatedAt)
   return {
     userId: row.id,
     publicId: row.publicId.toString(),
@@ -89,9 +95,9 @@ function toProfileCache(
     bio: row.bio,
     dateOfBirth: row.dateOfBirth != null ? formatDateOfBirthUtc(row.dateOfBirth) : null,
     gender: normalizeGenderStored(row.gender),
-    // Authoritative `canChangeUsername` is set in `buildMeResponse` from live coin balance.
-    canChangeUsername: true,
-    usernameNextChangeAt: null,
+    usernameUpdatedAt,
+    canChangeUsername: usernameEligibility.canChangeUsername,
+    usernameNextChangeAt: usernameEligibility.usernameNextChangeAt,
     adminTags: row.adminTags ?? [],
   }
 }
@@ -111,6 +117,7 @@ function buildMeResponse(
     faceVerified: boolean
   },
 ): MeResponseDto {
+  const usernameEligibility = freeUsernameChangeEligibility(profile.usernameUpdatedAt)
   return {
     ...profile,
     ...walletData,
@@ -123,8 +130,8 @@ function buildMeResponse(
     livePhoto: extras.livePhoto,
     faceVerified: extras.faceVerified,
     vipMembership: extras.vipMembership,
-    canChangeUsername: BigInt(walletData.coinsBalance) >= USERNAME_CHANGE_COIN_COST,
-    usernameNextChangeAt: null,
+    canChangeUsername: usernameEligibility.canChangeUsername,
+    usernameNextChangeAt: usernameEligibility.usernameNextChangeAt,
   }
 }
 
@@ -176,7 +183,8 @@ export const meService = {
       cached != null &&
       typeof cached === 'object' &&
       'dateOfBirth' in cached &&
-      'adminTags' in cached
+      'adminTags' in cached &&
+      'usernameUpdatedAt' in cached
 
     let profile: MeProfileCache
     let cacheResult: 'HIT' | 'MISS'
@@ -187,6 +195,7 @@ export const meService = {
         ...cached,
         dateOfBirth: cached.dateOfBirth ?? null,
         adminTags: cached.adminTags ?? [],
+        usernameUpdatedAt: cached.usernameUpdatedAt ?? null,
         // Backward compatibility for cached payloads written before displayPublicId existed.
         displayPublicId: (cached as MeProfileCache).displayPublicId ?? cached.publicId,
       }
@@ -295,6 +304,12 @@ export const meService = {
       const sameAsCurrent = prevFirst === firstName.trim() && prevLast === nextLast
       if (sameAsCurrent) {
         noopDuplicateDisplayName = true
+      } else if (isFreeUsernameChangeAvailable(row.usernameUpdatedAt)) {
+        updatePayload.firstName = firstName
+        updatePayload.lastName = lastName
+        updatePayload.usernameUpdatedAt = new Date()
+        touchedName = true
+        meEndpointMetrics.bumpProfileField('name')
       } else {
         await coinWalletService.debitForDisplayNameChange(userId, firstName, lastName)
         touchedName = true

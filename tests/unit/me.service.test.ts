@@ -326,6 +326,7 @@ describe('meService', () => {
       bio: null,
       dateOfBirth: null,
       gender: 'female' as const,
+      usernameUpdatedAt: null,
       canChangeUsername: true,
       usernameNextChangeAt: null,
       adminTags: [],
@@ -363,6 +364,16 @@ describe('meService', () => {
     expect(out.data.faceVerified).toBe(true)
   })
 
+  it('getMe shows free username change unavailable after change this month', async () => {
+    cacheGet.mockResolvedValueOnce(null)
+    findForMe.mockResolvedValueOnce(
+      baseRow({ usernameUpdatedAt: new Date(Date.UTC(2026, 5, 10)) }),
+    )
+    const out = await meService.getMe('user-1')
+    expect(out.data.canChangeUsername).toBe(false)
+    expect(out.data.usernameNextChangeAt).toBe('2026-07-01T00:00:00.000Z')
+  })
+
   it('getMe ignores legacy Redis payload without dateOfBirth key (refetch + bust cache)', async () => {
     const legacy = {
       userId: 'user-1',
@@ -388,8 +399,40 @@ describe('meService', () => {
     expect(cacheSet).toHaveBeenCalled()
   })
 
-  it('patchMe name update debits coins and updates name via wallet transaction', async () => {
+  it('patchMe name update is free when monthly allowance unused', async () => {
     findForMe.mockResolvedValueOnce(baseRow())
+    updateProfile.mockResolvedValue(undefined as never)
+    findForMe.mockResolvedValueOnce(
+      baseRow({
+        firstName: 'New',
+        lastName: 'Name',
+        usernameUpdatedAt: new Date(),
+      }),
+    )
+    const out = await meService.patchMe(
+      'user-1',
+      { name: 'New Name' },
+      null,
+      { tokenVersion: 0, sessionId: '550e8400-e29b-41d4-a716-446655440000', sessionTokenVersion: 0 },
+    )
+    expect(out.user.name).toBe('New Name')
+    expect(updateProfile).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        firstName: 'New',
+        lastName: 'Name',
+        usernameUpdatedAt: expect.any(Date),
+      }),
+    )
+    expect(debitForDisplayNameChange).not.toHaveBeenCalled()
+    const payload = verifyAccess(out.accessToken)
+    expect(payload.name).toBe('New Name')
+  })
+
+  it('patchMe name update debits coins when free change already used this month', async () => {
+    findForMe.mockResolvedValueOnce(
+      baseRow({ usernameUpdatedAt: new Date(Date.UTC(2026, 5, 1)) }),
+    )
     debitForDisplayNameChange.mockResolvedValue(undefined)
     findForMe.mockResolvedValueOnce(
       baseRow({
@@ -413,7 +456,7 @@ describe('meService', () => {
 
   it('patchMe accepts unicode display name with emoji and symbols', async () => {
     findForMe.mockResolvedValueOnce(baseRow())
-    debitForDisplayNameChange.mockResolvedValue(undefined)
+    updateProfile.mockResolvedValue(undefined as never)
     findForMe.mockResolvedValueOnce(
       baseRow({
         firstName: '🎮★राज',
@@ -422,11 +465,17 @@ describe('meService', () => {
     )
     const out = await meService.patchMe('user-1', { name: '🎮★राज' }, null, {})
     expect(out.user.name).toBe('🎮★राज')
-    expect(debitForDisplayNameChange).toHaveBeenCalledWith('user-1', '🎮★राज', null)
+    expect(updateProfile).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ firstName: '🎮★राज', lastName: null }),
+    )
+    expect(debitForDisplayNameChange).not.toHaveBeenCalled()
   })
 
   it('patchMe name rejects when wallet debit fails (insufficient coins)', async () => {
-    findForMe.mockResolvedValueOnce(baseRow())
+    findForMe.mockResolvedValueOnce(
+      baseRow({ usernameUpdatedAt: new Date(Date.UTC(2026, 5, 1)) }),
+    )
     debitForDisplayNameChange.mockRejectedValueOnce(
       new AppError(402, 'Not enough coins to change display name', 'INSUFFICIENT_COINS', {
         required: '10000',

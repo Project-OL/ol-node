@@ -38,6 +38,8 @@ export interface MeProfileCache {
   /** Calendar date in UTC, `YYYY-MM-DD`, or `null` if unset. */
   dateOfBirth: string | null
   gender: MeGender | null
+  /** ISO timestamp of last display-name change; drives monthly free-change eligibility. */
+  usernameUpdatedAt: string | null
   canChangeUsername: boolean
   usernameNextChangeAt: string | null
   /** Platform-admin labels; empty when none assigned. */
