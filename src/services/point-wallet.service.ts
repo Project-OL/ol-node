@@ -23,15 +23,16 @@ import {
   sumCreditsByCategory,
 } from '../config/point-earnings-categories'
 import { withdrawalService } from './withdrawal.service'
+import { getTransactionName } from '../config/transaction-display-names'
+import {
+  buildCounterpartyDetailsMap,
+  COUNTERPARTY_USER_SELECT,
+} from '../utils/ledger-transaction-enrichment'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
 const LEDGER_USER_SELECT = {
-  id: true,
-  username: true,
-  firstName: true,
-  lastName: true,
-  avatarUrl: true,
+  ...COUNTERPARTY_USER_SELECT,
 } as const
 
 type LedgerUserRow = {
@@ -40,6 +41,7 @@ type LedgerUserRow = {
   firstName: string | null
   lastName: string | null
   avatarUrl: string | null
+  publicId: bigint
 }
 
 function ledgerUserDisplayName(user: LedgerUserRow): string {
@@ -56,6 +58,7 @@ function mapLedgerParticipant(user: LedgerUserRow) {
     userId: user.id,
     username: user.username,
     displayName: ledgerUserDisplayName(user),
+    publicId: user.publicId.toString(),
     avatarUrl: user.avatarUrl,
   }
 }
@@ -91,10 +94,28 @@ async function buildPointTransactionDetail(
     inrPerUsd,
   )
 
+  const counterpartyDetailsMap = await buildCounterpartyDetailsMap(
+    [
+      {
+        id: entry.id,
+        direction: entry.direction,
+        txType: entry.txType,
+        amount: entry.amount,
+        refId: entry.refId,
+        counterpartyId: entry.counterpartyId,
+        metadata: entry.metadata,
+        createdAt: entry.createdAt,
+      },
+    ],
+    'POINT',
+    selfRow.id,
+  )
+
   return {
     id: entry.id,
     direction: entry.direction,
     txType: entry.txType,
+    transactionName: getTransactionName('POINT', entry.txType, entry.direction),
     amount: entry.amount.toString(),
     balanceAfter: entry.balanceAfter.toString(),
     refId,
@@ -108,6 +129,7 @@ async function buildPointTransactionDetail(
     earningsCategory: earningsCategoryForTxType(entry.txType),
     self: mapLedgerParticipant(selfRow),
     counterparty: counterpartyRow ? mapLedgerParticipant(counterpartyRow) : null,
+    counterpartyDetails: counterpartyDetailsMap.get(entry.id) ?? null,
   }
 }
 
@@ -312,23 +334,41 @@ export const pointWalletService = {
     const page = hasMore ? entries.slice(0, filter.limit) : entries
     const nextCursor = hasMore ? page[page.length - 1]?.id : undefined
 
+    const baseEntries = page.map((e) => {
+      const refId = resolvePointLedgerRefId(e.refId, e.metadata)
+      return {
+        id: e.id,
+        direction: e.direction,
+        txType: e.txType,
+        amount: e.amount,
+        balanceAfter: e.balanceAfter.toString(),
+        refId,
+        usdAmount: formatPointsAsUsd(e.amount),
+        counterpartyId: e.counterpartyId,
+        description: e.description,
+        metadata: e.metadata,
+        createdAt: e.createdAt,
+      }
+    })
+
+    const counterpartyMap = await buildCounterpartyDetailsMap(baseEntries, 'POINT', userId)
+
     return {
-      entries: page.map((e) => {
-        const refId = resolvePointLedgerRefId(e.refId, e.metadata)
-        return {
-          id: e.id,
-          direction: e.direction,
-          txType: e.txType,
-          amount: e.amount.toString(),
-          balanceAfter: e.balanceAfter.toString(),
-          refId,
-          usdAmount: formatPointsAsUsd(e.amount),
-          counterpartyId: e.counterpartyId,
-          description: e.description,
-          metadata: e.metadata,
-          createdAt: e.createdAt,
-        }
-      }),
+      entries: baseEntries.map((e) => ({
+        id: e.id,
+        direction: e.direction,
+        txType: e.txType,
+        transactionName: getTransactionName('POINT', e.txType, e.direction),
+        amount: e.amount.toString(),
+        balanceAfter: e.balanceAfter,
+        refId: e.refId,
+        usdAmount: e.usdAmount,
+        counterpartyId: e.counterpartyId,
+        counterpartyDetails: counterpartyMap.get(e.id) ?? null,
+        description: e.description,
+        metadata: e.metadata,
+        createdAt: e.createdAt,
+      })),
       nextCursor,
       hasMore,
     }

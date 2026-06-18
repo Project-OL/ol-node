@@ -171,6 +171,27 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
   )
 
   app.get(
+    '/transactions',
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = ListHistoryQuerySchema.parse(request.query ?? {})
+      const types = parsed.types
+        ?.split(',')
+        .map((t) => t.trim())
+        .filter(Boolean) as CoinTxType[] | undefined
+      const result = await coinTradingService.listAllTradingTransactions(request.userId!, {
+        direction: parsed.direction,
+        types,
+        fromDate: parsed.fromDate ? new Date(parsed.fromDate) : undefined,
+        toDate: parsed.toDate ? new Date(parsed.toDate) : undefined,
+        limit: parsed.limit,
+        cursor: parsed.cursor,
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.get(
     '/history',
     { preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {

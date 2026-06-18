@@ -24,13 +24,158 @@ import { walletService } from './wallet.service'
 import { agencyService } from './agency.service'
 import { userRepository } from '../repositories/user.repository'
 import { epayClient } from '../lib/epay.client'
-import { prisma, prismaRead } from '../config/database'
+import { prisma } from '../config/database'
 import {
   PERSONAL_COIN_EXCHANGE_RATES,
   type RateTierUsd,
 } from '../config/coin-trading-rates.defaults'
+import { enrichLedgerEntries } from '../utils/ledger-transaction-enrichment'
 
 const TX_TIMEOUT_MS = 20_000
+
+const TRADING_COIN_TX_TYPES: CoinTxType[] = [
+  CoinTxType.TRADING_TOPUP,
+  CoinTxType.TRADING_EXCHANGE_FROM_POINTS,
+  CoinTxType.TRADING_TRANSFER_IN,
+  CoinTxType.TRADING_TRANSFER_OUT,
+  CoinTxType.TRADING_TRANSFER_REVERSAL,
+  CoinTxType.ADJUSTMENT,
+]
+
+async function assertAgentUser(userId: string) {
+  const user = await userRepository.findById(userId)
+  if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
+}
+
+function mapLedgerDirection(direction: LedgerDirection): 'credit' | 'debit' {
+  return direction === LedgerDirection.CREDIT ? 'credit' : 'debit'
+}
+
+async function listEnrichedTradingTransactions(
+  userId: string,
+  opts: {
+    direction?: 'credit' | 'debit'
+    types?: CoinTxType[]
+    fromDate?: Date
+    toDate?: Date
+    limit: number
+    cursor?: string
+    includeTransferFields?: boolean
+    includeLegacyCounterparty?: boolean
+  },
+) {
+  if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
+    throw new AppError(400, 'fromDate must be before or equal to toDate', 'INVALID_DATE_RANGE')
+  }
+  await assertAgentUser(userId)
+
+  const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN)
+  const entries = await coinLedgerRepository.list({
+    walletId: wallet.id,
+    types: opts.types?.length ? opts.types : TRADING_COIN_TX_TYPES,
+    direction:
+      opts.direction === 'credit'
+        ? LedgerDirection.CREDIT
+        : opts.direction === 'debit'
+          ? LedgerDirection.DEBIT
+          : undefined,
+    from: opts.fromDate,
+    to: opts.toDate,
+    cursor: opts.cursor,
+    limit: opts.limit,
+  })
+
+  const hasMore = entries.length > opts.limit
+  const page = hasMore ? entries.slice(0, opts.limit) : entries
+  const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null
+
+  const baseEntries = page.map((e) => ({
+    id: e.id,
+    direction: mapLedgerDirection(e.direction),
+    txType: e.txType,
+    amount: e.amount,
+    balanceAfter: e.balanceAfter.toString(),
+    description: e.description,
+    refId: e.refId,
+    counterpartyId: e.counterpartyId,
+    metadata: e.metadata,
+    createdAt: e.createdAt,
+  }))
+
+  const enriched = await enrichLedgerEntries(baseEntries, 'TRADING_COIN', userId)
+
+  let transferByLedgerId = new Map<string, Awaited<
+    ReturnType<typeof coinTradingRepository.findTransfersByLedgerEntryIds>
+  >[number]>()
+  if (opts.includeTransferFields !== false) {
+    const transferRows = await coinTradingRepository.findTransfersByLedgerEntryIds(
+      page.map((e) => e.id),
+    )
+    transferByLedgerId = new Map<string, (typeof transferRows)[number]>()
+    for (const t of transferRows) {
+      transferByLedgerId.set(t.senderLedgerEntryId, t)
+      transferByLedgerId.set(t.recipientLedgerEntryId, t)
+    }
+  }
+
+  const items = enriched.map((e) => {
+    const amountStr = e.amount.toString()
+    const item: Record<string, unknown> = {
+      id: e.id,
+      direction: e.direction,
+      txType: e.txType,
+      transactionName: e.transactionName,
+      amount: amountStr,
+      balanceAfter: e.balanceAfter,
+      description: e.description,
+      refId: e.refId,
+      counterpartyId: e.counterpartyId,
+      counterpartyDetails: e.counterpartyDetails,
+      createdAt: e.createdAt.toISOString(),
+    }
+
+    if (opts.includeLegacyCounterparty) {
+      const cp = e.counterpartyDetails
+      item.counterparty =
+        cp?.userId && cp.name && cp.publicId
+          ? {
+              id: cp.userId,
+              name: cp.name,
+              avatarUrl: cp.avatarUrl ?? null,
+              publicId: cp.publicId,
+            }
+          : null
+    }
+
+    if (opts.includeTransferFields === false) {
+      return item
+    }
+
+    const isTransferLeg =
+      e.txType === CoinTxType.TRADING_TRANSFER_OUT ||
+      e.txType === CoinTxType.TRADING_TRANSFER_IN
+    if (!isTransferLeg) return item
+
+    const transfer = transferByLedgerId.get(e.id)
+    if (transfer) {
+      return {
+        ...item,
+        transferId: transfer.id,
+        tradingCoinsDebited: transfer.tradingCoinsDebited.toString(),
+        coinsCredited: transfer.coinsCredited.toString(),
+        recipientWalletType: transfer.recipientWalletType,
+      }
+    }
+
+    return {
+      ...item,
+      tradingCoinsDebited: amountStr,
+      coinsCredited: amountStr,
+    }
+  })
+
+  return { items, nextCursor }
+}
 
 function resolveRecipientWalletType(
   recipient: { isAgent: boolean },
@@ -528,6 +673,23 @@ export const coinTradingService = {
         : null,
     }))
   },
+  async listAllTradingTransactions(
+    userId: string,
+    opts: {
+      direction?: 'credit' | 'debit'
+      types?: CoinTxType[]
+      fromDate?: Date
+      toDate?: Date
+      limit: number
+      cursor?: string
+    },
+  ) {
+    return listEnrichedTradingTransactions(userId, {
+      ...opts,
+      includeTransferFields: true,
+      includeLegacyCounterparty: false,
+    })
+  },
   async listTransferHistory(
     userId: string,
     opts: {
@@ -538,113 +700,11 @@ export const coinTradingService = {
       cursor?: string
     },
   ) {
-    if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
-      throw new AppError(400, 'fromDate must be before or equal to toDate', 'INVALID_DATE_RANGE')
-    }
-    const user = await userRepository.findById(userId)
-    if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
-
-    const tradingTxTypes: CoinTxType[] = [
-      CoinTxType.TRADING_TOPUP,
-      CoinTxType.TRADING_EXCHANGE_FROM_POINTS,
-      CoinTxType.TRADING_TRANSFER_IN,
-      CoinTxType.TRADING_TRANSFER_OUT,
-      CoinTxType.TRADING_TRANSFER_REVERSAL,
-      CoinTxType.ADJUSTMENT,
-    ]
-
-    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN)
-    const entries = await coinLedgerRepository.list({
-      walletId: wallet.id,
-      types: tradingTxTypes,
-      direction:
-        opts.direction === 'credit'
-          ? LedgerDirection.CREDIT
-          : opts.direction === 'debit'
-            ? LedgerDirection.DEBIT
-            : undefined,
-      from: opts.fromDate,
-      to: opts.toDate,
-      cursor: opts.cursor,
-      limit: opts.limit,
+    return listEnrichedTradingTransactions(userId, {
+      ...opts,
+      includeTransferFields: true,
+      includeLegacyCounterparty: true,
     })
-
-    const hasMore = entries.length > opts.limit
-    const page = hasMore ? entries.slice(0, opts.limit) : entries
-    const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null
-
-    const counterpartyIds = [
-      ...new Set(page.map((e) => e.counterpartyId).filter((id): id is string => id != null)),
-    ]
-    const counterpartyUsers =
-      counterpartyIds.length > 0
-        ? await prismaRead.user.findMany({
-            where: { id: { in: counterpartyIds } },
-            select: {
-              id: true,
-              username: true,
-              avatarUrl: true,
-              publicId: true,
-            },
-          })
-        : []
-    const counterpartyMap = new Map(counterpartyUsers.map((u) => [u.id, u]))
-
-    const ledgerIds = page.map((e) => e.id)
-    const transferRows = await coinTradingRepository.findTransfersByLedgerEntryIds(ledgerIds)
-    const transferByLedgerId = new Map<string, (typeof transferRows)[number]>()
-    for (const t of transferRows) {
-      transferByLedgerId.set(t.senderLedgerEntryId, t)
-      transferByLedgerId.set(t.recipientLedgerEntryId, t)
-    }
-
-    const items = page.map((e) => {
-      const cp = e.counterpartyId ? counterpartyMap.get(e.counterpartyId) : null
-      const isDebit = e.direction === LedgerDirection.DEBIT
-      const amountStr = e.amount.toString()
-      const base = {
-        id: e.id,
-        direction: isDebit ? ('debit' as const) : ('credit' as const),
-        txType: e.txType,
-        amount: amountStr,
-        balanceAfter: e.balanceAfter.toString(),
-        description: e.description,
-        refId: e.refId,
-        createdAt: e.createdAt.toISOString(),
-        counterparty: cp
-          ? {
-              id: cp.id,
-              name: cp.username,
-              avatarUrl: cp.avatarUrl,
-              publicId: cp.publicId.toString(),
-            }
-          : null,
-      }
-
-      const isTransferLeg =
-        e.txType === CoinTxType.TRADING_TRANSFER_OUT ||
-        e.txType === CoinTxType.TRADING_TRANSFER_IN
-      if (!isTransferLeg) return base
-
-      const transfer = transferByLedgerId.get(e.id)
-      if (transfer) {
-        return {
-          ...base,
-          transferId: transfer.id,
-          tradingCoinsDebited: transfer.tradingCoinsDebited.toString(),
-          coinsCredited: transfer.coinsCredited.toString(),
-          recipientWalletType: transfer.recipientWalletType,
-        }
-      }
-
-      return {
-        ...base,
-        tradingCoinsDebited: amountStr,
-        coinsCredited: amountStr,
-      }
-    })
-
-    return { items, nextCursor }
   },
 
   async listTradingCoinHistory(
@@ -658,55 +718,11 @@ export const coinTradingService = {
       cursor?: string
     },
   ) {
-    if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
-      throw new AppError(400, 'fromDate must be before or equal to toDate', 'INVALID_DATE_RANGE')
-    }
-    const user = await userRepository.findById(userId)
-    if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
-
-    const defaultTypes: CoinTxType[] = [
-      CoinTxType.TRADING_TOPUP,
-      CoinTxType.TRADING_EXCHANGE_FROM_POINTS,
-      CoinTxType.TRADING_TRANSFER_IN,
-      CoinTxType.TRADING_TRANSFER_OUT,
-      CoinTxType.TRADING_TRANSFER_REVERSAL,
-      CoinTxType.ADJUSTMENT,
-    ]
-
-    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN)
-    const entries = await coinLedgerRepository.list({
-      walletId: wallet.id,
-      types: opts.types?.length ? opts.types : defaultTypes,
-      direction:
-        opts.direction === 'credit'
-          ? LedgerDirection.CREDIT
-          : opts.direction === 'debit'
-            ? LedgerDirection.DEBIT
-            : undefined,
-      from: opts.fromDate,
-      to: opts.toDate,
-      cursor: opts.cursor,
-      limit: opts.limit,
+    return listEnrichedTradingTransactions(userId, {
+      ...opts,
+      includeTransferFields: false,
+      includeLegacyCounterparty: false,
     })
-
-    const hasMore = entries.length > opts.limit
-    const page = hasMore ? entries.slice(0, opts.limit) : entries
-    const nextCursor = hasMore && page.length > 0 ? page[page.length - 1]!.id : null
-
-    return {
-      items: page.map((e) => ({
-        id: e.id,
-        direction: e.direction === LedgerDirection.CREDIT ? ('credit' as const) : ('debit' as const),
-        txType: e.txType,
-        amount: e.amount.toString(),
-        balanceAfter: e.balanceAfter.toString(),
-        description: e.description,
-        refId: e.refId,
-        counterpartyId: e.counterpartyId,
-        createdAt: e.createdAt.toISOString(),
-      })),
-      nextCursor,
-    }
   },
 
   async getRecentTransactionUsers(agencyUserId: string) {

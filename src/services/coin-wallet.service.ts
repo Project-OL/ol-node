@@ -4,6 +4,7 @@ import { AppError } from '../middlewares/errorHandler'
 import { walletRepository } from '../repositories/wallet.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
 import { walletService } from './wallet.service'
+import { enrichLedgerEntries } from '../utils/ledger-transaction-enrichment'
 import { auditService } from './audit.service'
 import {
   WalletCurrencyType,
@@ -727,15 +728,32 @@ export const coinWalletService = {
     const page = hasMore ? entries.slice(0, filter.limit) : entries
     const nextCursor = hasMore ? page[page.length - 1]?.id : undefined
 
+    const baseEntries = page.map((e) => ({
+      id: e.id,
+      direction: e.direction,
+      txType: e.txType,
+      amount: e.amount,
+      balanceAfter: e.balanceAfter.toString(),
+      refId: e.refId,
+      counterpartyId: e.counterpartyId,
+      description: e.description,
+      metadata: e.metadata,
+      createdAt: e.createdAt,
+    }))
+
+    const enriched = await enrichLedgerEntries(baseEntries, 'COIN', userId)
+
     return {
-      entries: page.map((e) => ({
+      entries: enriched.map((e) => ({
         id: e.id,
         direction: e.direction,
         txType: e.txType,
+        transactionName: e.transactionName,
         amount: e.amount.toString(),
-        balanceAfter: e.balanceAfter.toString(),
+        balanceAfter: e.balanceAfter,
         refId: e.refId,
         counterpartyId: e.counterpartyId,
+        counterpartyDetails: e.counterpartyDetails,
         description: e.description,
         metadata: e.metadata,
         createdAt: e.createdAt,

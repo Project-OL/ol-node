@@ -162,6 +162,50 @@ function parseRouteFile(fileName: string, prefix: string): EndpointLock[] {
 
 /** Hand-maintained locked field shapes (override / enrich generator output). */
 const FIELD_OVERRIDES: Record<string, Partial<EndpointLock>> = {
+  "coin-trading.transactions.get": {
+    query: {
+      direction: { type: "enum", optional: true, values: ["credit", "debit"] },
+      types: {
+        type: "string",
+        optional: true,
+        description: "Comma-separated CoinTxType; default all trading-coin ledger types",
+      },
+      fromDate: { type: "string", optional: true, description: "ISO-8601 datetime" },
+      toDate: { type: "string", optional: true, description: "ISO-8601 datetime" },
+      limit: { type: "integer", optional: true, description: "1-50, default 20" },
+      cursor: { type: "string", optional: true, description: "UUID ledger entry id" },
+    },
+    response: {
+      items: {
+        type: "array",
+        items: {
+          id: { type: "string", description: "UUID ledger entry id" },
+          direction: { type: "enum", values: ["credit", "debit"] },
+          txType: { type: "string", description: "CoinTxType" },
+          transactionName: {
+            type: "string",
+            description: "Human-readable label for txType+direction",
+          },
+          amount: { type: "string", description: "BigInt serialized" },
+          balanceAfter: { type: "string", description: "BigInt serialized" },
+          description: { type: "string", optional: true },
+          refId: { type: "string", optional: true },
+          counterpartyId: { type: "string", optional: true },
+          counterpartyDetails: {
+            type: "object",
+            optional: true,
+            description: "Peer user, admin, or transfer context; null when N/A",
+          },
+          createdAt: { type: "string", description: "ISO-8601" },
+          transferId: { type: "string", optional: true },
+          tradingCoinsDebited: { type: "string", optional: true },
+          coinsCredited: { type: "string", optional: true },
+          recipientWalletType: { type: "string", optional: true },
+        },
+      },
+      nextCursor: { type: "string", optional: true, description: "UUID or null" },
+    },
+  },
   "coin-trading.transfers.get": {
     query: {
       direction: { type: "enum", optional: true, values: ["credit", "debit"] },
@@ -184,11 +228,13 @@ const FIELD_OVERRIDES: Record<string, Partial<EndpointLock>> = {
           id: { type: "string", description: "UUID ledger entry id" },
           direction: { type: "enum", values: ["credit", "debit"] },
           txType: { type: "string", description: "CoinTxType" },
+          transactionName: { type: "string", description: "Human-readable label" },
           amount: { type: "string", description: "BigInt serialized" },
           balanceAfter: { type: "string", description: "BigInt serialized" },
           description: { type: "string", optional: true },
           refId: { type: "string", optional: true },
           createdAt: { type: "string", description: "ISO-8601" },
+          counterpartyDetails: { type: "object", optional: true },
           counterparty: {
             type: "object",
             optional: true,
@@ -243,11 +289,13 @@ const FIELD_OVERRIDES: Record<string, Partial<EndpointLock>> = {
           id: { type: "string", description: "UUID ledger entry id" },
           direction: { type: "enum", values: ["credit", "debit"] },
           txType: { type: "string", description: "CoinTxType incl. ADJUSTMENT" },
+          transactionName: { type: "string", description: "Human-readable label" },
           amount: { type: "string", description: "BigInt serialized" },
           balanceAfter: { type: "string", description: "BigInt serialized" },
           description: { type: "string", optional: true },
           refId: { type: "string", optional: true },
           counterpartyId: { type: "string", optional: true, description: "UUID or null" },
+          counterpartyDetails: { type: "object", optional: true },
           createdAt: { type: "string", description: "ISO-8601" },
         },
       },

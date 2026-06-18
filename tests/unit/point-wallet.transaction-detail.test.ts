@@ -96,6 +96,7 @@ describe("pointWalletService.getTransactionDetail", () => {
         firstName: "Host",
         lastName: "One",
         avatarUrl: "https://cdn/self.png",
+        publicId: 111n,
       },
       {
         id: OTHER_ID,
@@ -103,6 +104,7 @@ describe("pointWalletService.getTransactionDetail", () => {
         firstName: null,
         lastName: null,
         avatarUrl: null,
+        publicId: 222n,
       },
     ]);
 
@@ -129,13 +131,20 @@ describe("pointWalletService.getTransactionDetail", () => {
       userId: USER_ID,
       username: "host1",
       displayName: "Host One",
+      publicId: "111",
       avatarUrl: "https://cdn/self.png",
     });
     expect(out.counterparty).toEqual({
       userId: OTHER_ID,
-      username: "fan1",
-      displayName: "fan1",
+      username: 'fan1',
+      displayName: 'fan1',
+      publicId: '222',
       avatarUrl: null,
+    });
+    expect(out.transactionName).toBe('Gift received');
+    expect(out.counterpartyDetails).toMatchObject({
+      userId: OTHER_ID,
+      name: 'fan1',
     });
   });
 
@@ -161,6 +170,7 @@ describe("pointWalletService.getTransactionDetail", () => {
         firstName: null,
         lastName: null,
         avatarUrl: null,
+        publicId: 111n,
       },
     ]);
 
@@ -191,6 +201,7 @@ describe("pointWalletService.getTransactionDetail", () => {
         firstName: null,
         lastName: null,
         avatarUrl: null,
+        publicId: 111n,
       },
       {
         id: OTHER_ID,
@@ -198,6 +209,7 @@ describe("pointWalletService.getTransactionDetail", () => {
         firstName: null,
         lastName: null,
         avatarUrl: null,
+        publicId: 333n,
       },
     ]);
 
@@ -232,6 +244,7 @@ describe("pointWalletService.getTransactionsByRefId", () => {
         firstName: null,
         lastName: null,
         avatarUrl: null,
+        publicId: 111n,
       },
     ]);
     withdrawalFindUnique.mockResolvedValue({
