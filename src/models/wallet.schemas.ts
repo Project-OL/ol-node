@@ -96,7 +96,6 @@ export const PointLedgerRefParamsSchema = z.object({
   refId: z.string().min(1).max(255),
 })
 
-import { z } from 'zod'
 import { grossPointsFromUsd } from '../utils/withdrawal-amount'
 
 export const WithdrawInitiateSchema = z

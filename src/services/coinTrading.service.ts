@@ -1,5 +1,10 @@
 import { randomUUID } from 'crypto'
 import {
+  assertPositiveAmountMultiple,
+  POINTS_EXCHANGE_STEP,
+  TRADING_COIN_TRANSFER_STEP,
+} from '../utils/transaction-amount-steps'
+import {
   CoinTxType,
   LedgerDirection,
   PointTxType,
@@ -459,8 +464,10 @@ export const coinTradingService = {
     await walletService.adjustTradingBalanceCache(order.agentUserId)
   },
   async exchangePointsForTradingCoins(userId: string, pointsToExchange: bigint) {
-    if (pointsToExchange < 10_000n)
-      throw new AppError(400, 'Minimum 10,000 points', 'MIN_POINTS_EXCHANGE')
+    assertPositiveAmountMultiple(pointsToExchange, POINTS_EXCHANGE_STEP, {
+      belowMinCode: 'MIN_POINTS_EXCHANGE',
+      unitLabel: 'points to exchange',
+    })
 
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
@@ -531,8 +538,10 @@ export const coinTradingService = {
       idempotencyKey: string
     },
   ) {
-    if (input.tradingCoins < 100n)
-      throw new AppError(400, 'Minimum transfer is 100', 'MIN_TRANSFER')
+    assertPositiveAmountMultiple(input.tradingCoins, TRADING_COIN_TRANSFER_STEP, {
+      belowMinCode: 'MIN_TRANSFER',
+      unitLabel: 'trading coins to transfer',
+    })
     const sender = await userRepository.findById(senderAgentUserId)
     if (!sender?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
     await agencyService.enforcePauseGate(senderAgentUserId)

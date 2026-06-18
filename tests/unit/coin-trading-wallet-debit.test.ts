@@ -311,7 +311,7 @@ describe("coinTradingService transfer/exchange wallet selection", () => {
       { minUsdEquiv: 0, maxUsdEquiv: null, coinsPerUsd: 9200 },
     ] as never);
 
-    await coinTradingService.exchangePointsForTradingCoins("agent-1", 10_000n);
+    await coinTradingService.exchangePointsForTradingCoins("agent-1", 20_000n);
 
     expect(exchangePointDebitKey).toMatch(/^exchange-pts:[0-9a-f-]{36}$/i);
     expect(exchangeTradingCreditKey).toBe(
@@ -326,5 +326,21 @@ describe("coinTradingService transfer/exchange wallet selection", () => {
     expect(walletService.adjustTradingBalanceCache).toHaveBeenCalledWith(
       "agent-1",
     );
+  });
+
+  it("exchangePointsForTradingCoins rejects non-multiple of 10,000 points", async () => {
+    await expect(
+      coinTradingService.exchangePointsForTradingCoins("agent-1", 10_100n),
+    ).rejects.toMatchObject({ code: "INVALID_AMOUNT_STEP" });
+  });
+
+  it("transferTradingCoins rejects non-multiple of 100 trading coins", async () => {
+    await expect(
+      coinTradingService.transferTradingCoins("agent-1", {
+        recipientPublicId: "999",
+        tradingCoins: 150n,
+        idempotencyKey: "idem-bad-step",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_AMOUNT_STEP" });
   });
 });

@@ -15,6 +15,10 @@ import { pointWalletService } from './point-wallet.service'
 import { cacheRedisService } from './cacheRedis.service'
 import { AppError } from '../middlewares/errorHandler'
 import {
+  assertPositiveAmountMultiple,
+  AGENT_POINT_TRANSFER_STEP,
+} from '../utils/transaction-amount-steps'
+import {
   addUtcDays,
   agencyCommissionRollingWindowDays,
   commissionPeriodToLedgerBounds,
@@ -27,7 +31,7 @@ import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from 
 import { walletService } from './wallet.service'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
-export const MIN_AGENT_POINT_TRANSFER = 100_000n
+export const MIN_AGENT_POINT_TRANSFER = AGENT_POINT_TRANSFER_STEP
 
 /**
  * Point tx types that trigger agency commission.
@@ -575,13 +579,10 @@ export const agencyCommissionService = {
     if (senderUserId === recipientAgentUserId) {
       throw new AppError(400, 'Cannot transfer to yourself', 'INVALID_RECIPIENT')
     }
-    if (points < MIN_AGENT_POINT_TRANSFER) {
-      throw new AppError(
-        400,
-        `Minimum transfer is ${MIN_AGENT_POINT_TRANSFER.toString()} points`,
-        'MIN_TRANSFER_VIOLATION',
-      )
-    }
+    assertPositiveAmountMultiple(points, AGENT_POINT_TRANSFER_STEP, {
+      belowMinCode: 'MIN_TRANSFER_VIOLATION',
+      unitLabel: 'points to transfer',
+    })
 
     const recipientAg = await prismaRead.agency.findUnique({
         where: { userId: recipientAgentUserId },

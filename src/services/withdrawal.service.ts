@@ -140,6 +140,7 @@ export function calculateWithdrawalAmounts(
     throw new AppError(400, 'Amount must be positive', 'INVALID_AMOUNT')
   }
 
+  // Withdrawal gross may be any integer ≥ min / ≤ max (not required to be a step multiple).
   const grossUsd = Number(grossPoints) / 10000
   if (grossUsd < config.minWithdrawalUsd - 1e-9) {
     throw new AppError(400, 'Below minimum withdrawal amount', 'BELOW_MIN_WITHDRAWAL')

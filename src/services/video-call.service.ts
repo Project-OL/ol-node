@@ -26,6 +26,10 @@ import {
 } from '../models/call.schemas'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { callerCoinDebitForCall } from '../config/host-revenue-shares'
+import {
+  assertPositiveIntMultiple,
+  VIDEO_CALL_PRICE_STEP,
+} from '../utils/transaction-amount-steps'
 
 // ── LiveKit helpers ───────────────────────────────────────────────────────────
 
@@ -72,6 +76,10 @@ export const videoCallSettingsService = {
 
   async update(userId: string, input: UpdateCallSettingsInput) {
     if (input.pricePerMin !== undefined) {
+      assertPositiveIntMultiple(input.pricePerMin, VIDEO_CALL_PRICE_STEP, {
+        belowMinCode: 'MIN_CALL_PRICE',
+        unitLabel: 'price per minute',
+      })
       // Validate against the creator's current livestream level
       const record = await walletUserLevelRepository.getByUser(userId, LevelType.LIVESTREAM)
       const livestreamLevel = record?.currentLevel ?? 1

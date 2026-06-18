@@ -85,6 +85,18 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
     expect(prismaTransaction).not.toHaveBeenCalled();
   });
 
+  it("rejects amount not multiple of 100,000", async () => {
+    await expect(
+      agencyCommissionService.transferPointsToAgent({
+        senderUserId: "a1",
+        recipientAgentUserId: "a2",
+        points: 150_000n,
+        idempotencyKey: "k1",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_AMOUNT_STEP" });
+    expect(prismaTransaction).not.toHaveBeenCalled();
+  });
+
   it("rejects self-transfer", async () => {
     await expect(
       agencyCommissionService.transferPointsToAgent({
@@ -123,22 +135,22 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
     const out = await agencyCommissionService.transferPointsToAgent({
       senderUserId: "a1",
       recipientAgentUserId: "a2",
-      points: 150_000n,
+      points: 200_000n,
       idempotencyKey: "idem-1",
     });
 
     expect(out.transferId).toEqual(expect.any(String));
     expect(debit).toHaveBeenCalledWith(
       "a1",
-      150_000n,
+      200_000n,
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ idempotencyKey: "idem-1:debit" }),
     );
     expect(creditInTransaction).toHaveBeenCalled();
     expect(insertTransfer).toHaveBeenCalled();
-    expect(adjustPointBalanceCache).toHaveBeenCalledWith("a1", -150_000n);
-    expect(adjustPointBalanceCache).toHaveBeenCalledWith("a2", 150_000n);
+    expect(adjustPointBalanceCache).toHaveBeenCalledWith("a1", -200_000n);
+    expect(adjustPointBalanceCache).toHaveBeenCalledWith("a2", 200_000n);
   });
 
   it("idempotent: existing row returns same transfer id without double debit", async () => {
