@@ -34,6 +34,8 @@ export type UserCard = {
   isFriend: boolean
   /** True when the authenticated user has blocked this profile (e.g. search). */
   blockedByMe?: boolean
+  /** True when this profile has blocked the authenticated user (e.g. search). */
+  userBlockedMe?: boolean
   isSuperHost?: boolean
   activeGuardian?: ActiveGuardianProfileDto | null
   activeStoreItems?: ActiveStoreItemsMap

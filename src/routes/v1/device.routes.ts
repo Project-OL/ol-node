@@ -5,6 +5,7 @@ import {
   getDevicesSchema,
   revokeDeviceParamsSchema,
   logoutAllSchema,
+  flushDeviceSessionsSchema,
   renameDeviceSchema,
   renameDeviceParamsSchema,
 } from '../../models/device.schemas'
@@ -115,6 +116,50 @@ export default async function deviceRoutes(app: FastifyInstance) {
         data: {
           ...result,
           message: 'Logged out from all other devices',
+        },
+      })
+    },
+  )
+
+  app.post(
+    '/flush-sessions',
+    {
+      preHandler: [...preAuth, deviceRateLimits.flushSessions],
+      schema: {
+        tags: ['Devices'],
+        description:
+          'Revoke all active sessions and linked accounts on the current physical device (deviceId must match JWT)',
+        body: {
+          type: 'object',
+          required: ['deviceId', 'deviceName'],
+          properties: {
+            deviceId: { type: 'string', minLength: 1, maxLength: 255 },
+            deviceName: { type: 'string', minLength: 1, maxLength: 255 },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const body = flushDeviceSessionsSchema.safeParse(request.body)
+      if (!body.success) {
+        throw new AppError(
+          400,
+          body.error.errors[0]?.message ?? 'Validation failed',
+          'INVALID_REQUEST',
+        )
+      }
+
+      const result = await deviceService.flushDeviceSessions(
+        userId,
+        request.deviceId,
+        body.data.deviceId,
+        body.data.deviceName,
+      )
+      return reply.status(200).send({
+        data: {
+          ...result,
+          message: 'All sessions and linked accounts removed from this device',
         },
       })
     },

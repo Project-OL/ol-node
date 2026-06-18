@@ -9,6 +9,7 @@ import {
   setPinSchema,
   changePinSchema,
   resetPasswordSchema,
+  verifyPinSchema,
 } from '../../models/security-password.schemas'
 
 export default async function securityPasswordRoutes(app: FastifyInstance) {
@@ -52,6 +53,33 @@ export default async function securityPasswordRoutes(app: FastifyInstance) {
       const userId = request.userId!
       const isSet = await securityPasswordService.isSecurityPinSet(userId)
       return reply.status(200).send({ isSet })
+    },
+  )
+
+  app.post(
+    '/password/verify',
+    {
+      preHandler: [...preAuth, securityPasswordRateLimits.verify],
+      schema: {
+        tags: ['Security'],
+        description: 'Verify the current security PIN without changing it',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const body = verifyPinSchema.safeParse(request.body)
+      if (!body.success) {
+        throw new AppError(
+          400,
+          body.error.errors[0]?.message ?? 'Validation failed',
+          'INVALID_REQUEST',
+          {
+            fieldErrors: body.error.flatten().fieldErrors,
+          },
+        )
+      }
+      await securityPasswordService.verifyCurrentPassword(userId, body.data.pin)
+      return reply.status(200).send({ verified: true })
     },
   )
 

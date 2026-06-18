@@ -96,9 +96,36 @@ export const PointLedgerRefParamsSchema = z.object({
   refId: z.string().min(1).max(255),
 })
 
-export const WithdrawInitiateSchema = z.object({
-  amountPoints: z.coerce.bigint().positive(),
-  paymentMethodId: z.string().uuid(),
-  idempotencyKey: z.string().min(8).max(128),
-  notes: z.string().max(500).optional(),
-})
+import { z } from 'zod'
+import { grossPointsFromUsd } from '../utils/withdrawal-amount'
+
+export const WithdrawInitiateSchema = z
+  .object({
+    amountPoints: z.coerce.bigint().positive().optional(),
+    amountUsd: z.coerce.number().positive().optional(),
+    paymentMethodId: z.string().uuid(),
+    idempotencyKey: z.string().min(8).max(128),
+    notes: z.string().max(500).optional(),
+  })
+  .transform((data) => {
+    let grossPoints: bigint
+    if (data.amountUsd != null) {
+      grossPoints = grossPointsFromUsd(data.amountUsd)
+    } else if (data.amountPoints != null) {
+      grossPoints = data.amountPoints
+    } else {
+      throw new z.ZodError([
+        {
+          code: 'custom',
+          message: 'Provide amountUsd or amountPoints',
+          path: ['amountUsd'],
+        },
+      ])
+    }
+    return {
+      grossPoints,
+      paymentMethodId: data.paymentMethodId,
+      idempotencyKey: data.idempotencyKey,
+      notes: data.notes,
+    }
+  })

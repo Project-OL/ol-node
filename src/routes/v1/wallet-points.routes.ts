@@ -52,7 +52,7 @@ export async function walletPointsRoutes(app: FastifyInstance) {
       const body = WithdrawInitiateSchema.parse(request.body)
       const result = await pointWalletService.initiateWithdrawal(
         request.userId!,
-        body.amountPoints,
+        body.grossPoints,
         body.paymentMethodId,
         body.idempotencyKey,
         body.notes,

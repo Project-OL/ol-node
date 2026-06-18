@@ -54,9 +54,15 @@ export const resetPasswordSchema = z.object({
   newPin: securityPinSchema,
 })
 
+/** Verify current security PIN without changing it. */
+export const verifyPinSchema = z.object({
+  pin: securityPinSchema,
+})
+
 export type GetIdentifiersBody = z.infer<typeof getIdentifiersSchema>
 export type SendOtpBody = z.infer<typeof sendOtpSchema>
 export type VerifyOtpBody = z.infer<typeof verifyOtpSchema>
 export type SetPinBody = z.infer<typeof setPinSchema>
 export type ChangePinBody = z.infer<typeof changePinSchema>
 export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>
+export type VerifyPinBody = z.infer<typeof verifyPinSchema>

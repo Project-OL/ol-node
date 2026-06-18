@@ -307,4 +307,82 @@ export const deviceService = {
     await cacheService.set(cacheKey, JSON.stringify(accounts), 1800)
     return accounts
   },
+
+  /**
+   * Revoke every active session and linked account on the given physical device.
+   * Caller must be authenticated from the same `deviceId` (JWT).
+   */
+  async flushDeviceSessions(
+    requestingUserId: string,
+    jwtDeviceId: string | undefined,
+    deviceId: string,
+    deviceName: string,
+  ): Promise<{
+    success: boolean
+    revokedSessionCount: number
+    unlinkedAccountCount: number
+    affectedUserIds: string[]
+  }> {
+    if (!jwtDeviceId || jwtDeviceId !== deviceId) {
+      throw new AppError(
+        403,
+        'Can only flush sessions on the current device',
+        'DEVICE_ID_MISMATCH',
+      )
+    }
+
+    const activeSessions = await sessionRepository.findActiveByDeviceId(deviceId)
+    if (activeSessions.length === 0) {
+      const unlinkedAccountCount = await deviceRepository.deleteAllLinkedAccounts(deviceId)
+      await cacheService.delete(RedisKeys.deviceLinkedAccounts(deviceId))
+      return {
+        success: true,
+        revokedSessionCount: 0,
+        unlinkedAccountCount,
+        affectedUserIds: [],
+      }
+    }
+
+    const sessionOnDevice = activeSessions.find((s) => s.userId === requestingUserId)
+    if (!sessionOnDevice) {
+      throw new AppError(403, 'No active session on this device', 'DEVICE_SESSION_NOT_FOUND')
+    }
+    if (sessionOnDevice.deviceName.trim() !== deviceName.trim()) {
+      throw new AppError(400, 'Device name does not match', 'DEVICE_NAME_MISMATCH')
+    }
+
+    const affectedUserIds = [...new Set(activeSessions.map((s) => s.userId))]
+    const revokedSessionIds = await sessionRepository.revokeAllByDeviceId(deviceId)
+    for (const sessionId of revokedSessionIds) {
+      await redisClient.del(RedisKeys.session(sessionId))
+    }
+
+    const unlinkedAccountCount = await deviceRepository.deleteAllLinkedAccounts(deviceId)
+    await cacheService.delete(RedisKeys.deviceLinkedAccounts(deviceId))
+
+    await Promise.all(
+      affectedUserIds.map((userId) => cacheService.invalidateUserDevicesAndSessions(userId)),
+    )
+
+    await auditService.log({
+      userId: requestingUserId,
+      actionType: 'DEVICE_SESSIONS_FLUSHED',
+      actionStatus: 'success',
+      actionDetails: {
+        deviceId,
+        deviceName,
+        revokedSessionCount: revokedSessionIds.length,
+        unlinkedAccountCount,
+        affectedUserIds,
+      },
+      deviceId,
+    })
+
+    return {
+      success: true,
+      revokedSessionCount: revokedSessionIds.length,
+      unlinkedAccountCount,
+      affectedUserIds,
+    }
+  },
 }

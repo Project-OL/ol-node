@@ -300,6 +300,11 @@ export const securityPasswordRateLimits = {
     max: 10,
     windowMs: 60000,
   }),
+  verify: createSecurityRateLimit({
+    endpoint: 'security.password.verify',
+    max: 10,
+    windowMs: 60000,
+  }),
   reset: createSecurityRateLimit({
     endpoint: 'security.password.reset',
     max: 5,
@@ -350,6 +355,11 @@ export const deviceRateLimits = {
   logoutAll: createDeviceRateLimit({
     endpoint: 'device.logout-all',
     max: 5,
+    windowMs: 60000,
+  }),
+  flushSessions: createDeviceRateLimit({
+    endpoint: 'device.flush-sessions',
+    max: 10,
     windowMs: 60000,
   }),
   rename: createDeviceRateLimit({

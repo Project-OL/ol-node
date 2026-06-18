@@ -232,6 +232,44 @@ export const sessionRepository = {
     })
   },
 
+  async findActiveByDeviceId(deviceId: string) {
+    return prismaRead.session.findMany({
+      where: {
+        deviceId,
+        isActive: true,
+        isRevoked: false,
+        expiresAt: { gt: new Date() },
+      },
+      select: {
+        id: true,
+        userId: true,
+        deviceId: true,
+        deviceName: true,
+        lastActiveAt: true,
+      },
+    })
+  },
+
+  async revokeAllByDeviceId(deviceId: string): Promise<string[]> {
+    const sessions = await prismaRead.session.findMany({
+      where: {
+        deviceId,
+        isActive: true,
+        isRevoked: false,
+      },
+      select: { id: true },
+    })
+    if (sessions.length === 0) {
+      return []
+    }
+    const ids = sessions.map((s) => s.id)
+    await prisma.session.updateMany({
+      where: { id: { in: ids } },
+      data: { isActive: false, isRevoked: true, revokedAt: new Date() },
+    })
+    return ids
+  },
+
   async updateLastActive(id: string) {
     return prisma.session.update({
       where: { id },

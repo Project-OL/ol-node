@@ -11,6 +11,13 @@ export const revokeDeviceParamsSchema = z.object({
   registryId: z.string().uuid('Invalid registry id'),
 })
 
+export const flushDeviceSessionsSchema = z.object({
+  deviceId: z.string().min(1).max(255),
+  deviceName: z.string().min(1).max(255),
+})
+
+export type FlushDeviceSessionsBody = z.infer<typeof flushDeviceSessionsSchema>
+
 export const logoutAllSchema = z.object({
   securityPassword: z.string().min(1, 'Security password required'),
 })
