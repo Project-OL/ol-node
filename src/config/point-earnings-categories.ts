@@ -2,16 +2,21 @@ import { PointTxType } from '@prisma/client'
 
 /** UI / API buckets for points earnings and history filters. */
 export const POINT_EARNINGS_CATEGORIES = {
-  livestream: [PointTxType.LIVESTREAM_GIFT, PointTxType.VIDEO_CALL, PointTxType.GIFT_RECEIVE],
-  commission: [
-    PointTxType.COMMISSION,
-    PointTxType.AGENT_COMMISSION,
-    PointTxType.PAYROLL_PROCESSING_REWARD,
-    PointTxType.PAYROLL_HOST_PAYOUT,
+  livestream: [
+    PointTxType.GIFT_RECEIVE,
+    PointTxType.VIDEO_CALL,
+    PointTxType.ADJUSTMENT,
+    PointTxType.LIVESTREAM_GIFT, // legacy ledger rows
   ],
+  commission: [PointTxType.AGENT_COMMISSION, PointTxType.PAYROLL_HOST_PAYOUT],
+  transfer: [PointTxType.AGENT_POINT_TRANSFER, PointTxType.TRANSFER_OUT],
+  platform_reward: [PointTxType.PAYROLL_PROCESSING_REWARD, PointTxType.PLATFORM_REWARD],
   subscription: [PointTxType.SUBSCRIPTION, PointTxType.GUARDIAN_PURCHASE],
-  platform_reward: [PointTxType.PLATFORM_REWARD],
-  transfer: [PointTxType.TRANSFER_IN, PointTxType.TRANSFER_OUT, PointTxType.AGENT_POINT_TRANSFER],
+  withdraw: [
+    PointTxType.WITHDRAWAL_ESCROW,
+    PointTxType.WITHDRAWAL_ESCROW_SETTLED,
+    PointTxType.WITHDRAWAL_REFUND,
+  ],
 } as const satisfies Record<string, PointTxType[]>
 
 export type PointEarningsCategory = keyof typeof POINT_EARNINGS_CATEGORIES

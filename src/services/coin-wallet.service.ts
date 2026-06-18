@@ -5,6 +5,7 @@ import { walletRepository } from '../repositories/wallet.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
 import { walletService } from './wallet.service'
 import { enrichLedgerEntries } from '../utils/ledger-transaction-enrichment'
+import { resolveCoinHistoryTxTypes } from '../config/coin-earnings-categories'
 import { auditService } from './audit.service'
 import {
   WalletCurrencyType,
@@ -706,18 +707,29 @@ export const coinWalletService = {
   async getHistory(
     userId: string,
     filter: {
-      types?: CoinTxType[]
+      types?: string[]
       from?: string
       to?: string
       cursor?: string
       limit: number
     },
   ) {
+    let ledgerTypes: CoinTxType[] | undefined
+    try {
+      ledgerTypes = resolveCoinHistoryTxTypes(filter.types)
+    } catch (e) {
+      throw new AppError(
+        400,
+        e instanceof Error ? e.message : 'Invalid types filter',
+        'INVALID_REQUEST',
+      )
+    }
+
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
 
     const entries = await coinLedgerRepository.list({
       walletId: wallet.id,
-      types: filter.types,
+      types: ledgerTypes,
       from: filter.from ? new Date(filter.from) : undefined,
       to: filter.to ? new Date(filter.to) : undefined,
       cursor: filter.cursor,

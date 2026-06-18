@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { POINT_HISTORY_FILTER_VALUES } from '../config/point-earnings-categories'
+import { COIN_HISTORY_FILTER_VALUES } from '../config/coin-earnings-categories'
 
 function queryStringArray<T extends z.ZodTypeAny>(itemSchema: T) {
   return z.preprocess((v) => {
@@ -24,6 +25,7 @@ export const DateRangeSchema = z.object({
 
 export const CoinTxTypeEnum = z.enum([
   'TOPUP',
+  'TRADING_TRANSFER_IN',
   'GIFT_SEND',
   'GIFT_REFUND',
   'TRANSFER_OUT',
@@ -37,10 +39,20 @@ export const CoinTxTypeEnum = z.enum([
   'ADJUSTMENT',
   'VIDEO_CALL',
   'USERNAME_CHANGE',
+  'CREATOR_SUBSCRIPTION',
+  'GUARDIAN_PURCHASE',
+  'STORE_ITEM_PURCHASE',
+  'VIP_MEMBERSHIP_PURCHASE',
+  'POINT_EXCHANGE_TO_COINS',
 ])
 
+/** Category aliases (`topup`, `gift`, …) or raw `CoinTxType` values. */
+export const CoinHistoryFilterEnum = z.enum(
+  COIN_HISTORY_FILTER_VALUES as unknown as [string, ...string[]],
+)
+
 export const CoinHistoryQuerySchema = DateRangeSchema.merge(CursorPaginationSchema).extend({
-  types: queryStringArray(CoinTxTypeEnum),
+  types: queryStringArray(CoinHistoryFilterEnum),
 })
 
 export const TopupInitiateSchema = z.object({
@@ -85,6 +97,19 @@ export const PointHistoryFilterEnum = z.enum(
 
 export const PointHistoryQuerySchema = DateRangeSchema.merge(CursorPaginationSchema).extend({
   types: queryStringArray(PointHistoryFilterEnum),
+})
+
+export const PointSummaryPeriodEnum = z.enum([
+  'LAST_30_DAYS',
+  'LAST_7_DAYS',
+  'THIS_MONTH',
+  'LAST_MONTH',
+  'THIS_WEEK',
+  'LAST_WEEK',
+])
+
+export const PointSummaryQuerySchema = z.object({
+  period: PointSummaryPeriodEnum.optional(),
 })
 
 export const PointLedgerEntryParamsSchema = z.object({

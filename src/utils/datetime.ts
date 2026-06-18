@@ -147,6 +147,15 @@ export function endOfUTCDay(d: Date): Date {
 
 export type DashboardPeriod = 'TODAY' | 'YESTERDAY' | 'THIS_WEEK' | 'THIS_MONTH' | 'LAST_30_DAYS'
 
+/** Rolling / calendar windows for `GET /wallet/points/summary` earnings only. */
+export type PointSummaryPeriod =
+  | 'LAST_30_DAYS'
+  | 'LAST_7_DAYS'
+  | 'THIS_MONTH'
+  | 'LAST_MONTH'
+  | 'THIS_WEEK'
+  | 'LAST_WEEK'
+
 export interface DashboardPeriodQuery {
   period?: DashboardPeriod
   from?: string
@@ -228,6 +237,60 @@ export function resolveDashboardPeriod(q: DashboardPeriodQuery): {
     case 'LAST_30_DAYS':
     default: {
       // Inclusive: today + prior 29 UTC days = 30 days total.
+      const startDay = addUtcDays(now, -29)
+      return { start: startOfUTCDay(startDay), end: endOfUTCDay(now), label: 'LAST_30_DAYS' }
+    }
+  }
+}
+
+/**
+ * Resolves a point-summary earnings window (UTC). Balances are always all-time;
+ * only the `earnings` bucket sums use this range when `period` is supplied.
+ */
+export function resolvePointSummaryPeriod(period: PointSummaryPeriod): {
+  start: Date
+  end: Date
+  label: PointSummaryPeriod
+} {
+  const now = utcNow()
+
+  switch (period) {
+    case 'LAST_7_DAYS': {
+      const startDay = addUtcDays(now, -6)
+      return { start: startOfUTCDay(startDay), end: endOfUTCDay(now), label: period }
+    }
+    case 'THIS_WEEK': {
+      const dayOfWeek = now.getUTCDay()
+      const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+      const monday = addUtcDays(now, -daysFromMonday)
+      return { start: startOfUTCDay(monday), end: endOfUTCDay(now), label: period }
+    }
+    case 'LAST_WEEK': {
+      const dayOfWeek = now.getUTCDay()
+      const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+      const thisMonday = addUtcDays(now, -daysFromMonday)
+      const lastMonday = addUtcDays(thisMonday, -7)
+      const lastSunday = addUtcDays(thisMonday, -1)
+      return {
+        start: startOfUTCDay(lastMonday),
+        end: endOfUTCDay(lastSunday),
+        label: period,
+      }
+    }
+    case 'THIS_MONTH': {
+      const firstOfMonth = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+      )
+      return { start: firstOfMonth, end: endOfUTCDay(now), label: period }
+    }
+    case 'LAST_MONTH': {
+      const prev = utcPreviousYearMonth(now)
+      const { start, endExclusive } = utcMonthBoundsExclusive(prev.year, prev.month)
+      const lastDay = addUtcDays(endExclusive, -1)
+      return { start, end: endOfUTCDay(lastDay), label: period }
+    }
+    case 'LAST_30_DAYS':
+    default: {
       const startDay = addUtcDays(now, -29)
       return { start: startOfUTCDay(startDay), end: endOfUTCDay(now), label: 'LAST_30_DAYS' }
     }

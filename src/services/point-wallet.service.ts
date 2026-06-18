@@ -8,7 +8,7 @@ import { walletService } from './wallet.service'
 import { auditService } from './audit.service'
 import { WalletCurrencyType, PointTxType, LedgerDirection, LevelType } from '@prisma/client'
 import { walletLevelService } from './user-level.service'
-import { utcDayFromTimestamp } from '../utils/datetime'
+import { utcDayFromTimestamp, resolvePointSummaryPeriod, type PointSummaryPeriod } from '../utils/datetime'
 import { formatPointsAsUsd } from '../utils/points-currency'
 import {
   buildPointAmountBreakdown,
@@ -126,7 +126,10 @@ async function buildPointTransactionDetail(
     metadata: entry.metadata,
     idempotencyKey: entry.idempotencyKey,
     createdAt: transactionDateTime,
-    earningsCategory: earningsCategoryForTxType(entry.txType),
+    earningsCategory:
+      entry.direction === LedgerDirection.CREDIT
+        ? earningsCategoryForTxType(entry.txType)
+        : null,
     self: mapLedgerParticipant(selfRow),
     counterparty: counterpartyRow ? mapLedgerParticipant(counterpartyRow) : null,
     counterpartyDetails: counterpartyDetailsMap.get(entry.id) ?? null,
@@ -134,15 +137,32 @@ async function buildPointTransactionDetail(
 }
 
 export const pointWalletService = {
-  async getSummary(userId: string) {
+  async getSummary(userId: string, opts?: { period?: PointSummaryPeriod }) {
     const balance = await walletService.getPointBalance(userId)
 
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
     const unconfirmed = wallet.unconfirmedPoints ?? 0n
     const available = balance - unconfirmed
+
+    const earningsWhere: Prisma.PointLedgerEntryWhereInput = {
+      walletId: wallet.id,
+      direction: LedgerDirection.CREDIT,
+    }
+
+    let earningsPeriod: { period: string; from: string; to: string } | undefined
+    if (opts?.period) {
+      const range = resolvePointSummaryPeriod(opts.period)
+      earningsWhere.createdAt = { gte: range.start, lte: range.end }
+      earningsPeriod = {
+        period: range.label,
+        from: range.start.toISOString(),
+        to: range.end.toISOString(),
+      }
+    }
+
     const earnings = await prismaRead.pointLedgerEntry.groupBy({
       by: ['txType'],
-      where: { walletId: wallet.id, direction: LedgerDirection.CREDIT },
+      where: earningsWhere,
       _sum: { amount: true },
     })
 
@@ -156,6 +176,7 @@ export const pointWalletService = {
       availablePoints: available.toString(),
       unconfirmedPoints: unconfirmed.toString(),
       earnings: sumCreditsByCategory(totalsByTxType),
+      ...(earningsPeriod ? { earningsPeriod } : {}),
     }
   },
 

@@ -5,6 +5,7 @@ import { pointWalletService } from '../../services/point-wallet.service'
 import {
   WithdrawInitiateSchema,
   PointHistoryQuerySchema,
+  PointSummaryQuerySchema,
   PointLedgerEntryParamsSchema,
   PointLedgerRefParamsSchema,
 } from '../../models/wallet.schemas'
@@ -14,7 +15,10 @@ export async function walletPointsRoutes(app: FastifyInstance) {
     '/summary',
     { preHandler: [authenticate] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const result = await pointWalletService.getSummary(request.userId!)
+      const query = PointSummaryQuerySchema.parse(request.query ?? {})
+      const result = await pointWalletService.getSummary(request.userId!, {
+        period: query.period,
+      })
       return reply.send(result)
     },
   )
