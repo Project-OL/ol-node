@@ -6,8 +6,9 @@ import {
 } from './face-registration.constants'
 
 const verifyJobOpts = {
-  attempts: 8,
-  backoff: { type: 'exponential' as const, delay: 2000 },
+  /** Rekognition may stay IN_PROGRESS until the client finishes the Face Liveness SDK. */
+  attempts: 15,
+  backoff: { type: 'exponential' as const, delay: 3000 },
   removeOnComplete: 2000,
   removeOnFail: 5000,
 }

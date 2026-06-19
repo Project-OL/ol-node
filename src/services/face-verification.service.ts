@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import type { FaceVerificationDecision } from '@prisma/client'
+import type { FaceVerificationDecision, Prisma } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import { storageService } from './storage.service'
 import { redisClient, RedisKeys } from '../config/redis'
@@ -7,13 +7,15 @@ import { env } from '../config/env'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import {
   deleteFaceFromCollection,
-  detectFacesQuality,
   indexUserFace,
   searchFaceInCollection,
 } from '../lib/rekognition.client'
 import { auditService } from './audit.service'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { faceRegistrationService } from './faceRegistration.service'
+import { faceRegistrationValidationService } from './face-registration/face-registration.validation.service'
+import { FACE_REGISTRATION_ERRORS } from '../constants/face-registration-errors'
+import { buildDuplicateMatchDetails } from './face-registration/face-duplicate-match.service'
 
 const RATE_LIMIT_LUA = `
 local current = redis.call("INCR", KEYS[1])
@@ -63,27 +65,6 @@ function validateUserOwnedS3Key(type: 'register' | 'verify', userId: string, s3K
   }
 }
 
-function parseQuality(
-  face: NonNullable<Awaited<ReturnType<typeof detectFacesQuality>>['FaceDetails']>[number],
-) {
-  const brightness = face.Quality?.Brightness ?? 0
-  const sharpness = face.Quality?.Sharpness ?? 0
-  const confidence = face.Confidence ?? 0
-  if (confidence < env.FACE_MIN_DETECT_CONFIDENCE) {
-    throw new AppError(400, 'Face confidence too low', 'face_quality_rejected')
-  }
-  if ((face.Sunglasses?.Value ?? false) && (face.Sunglasses?.Confidence ?? 0) > 90) {
-    throw new AppError(400, 'Sunglasses are not allowed', 'face_quality_rejected')
-  }
-  if (!(face.EyesOpen?.Value ?? true) && (face.EyesOpen?.Confidence ?? 0) > 90) {
-    throw new AppError(400, 'Eyes must be open', 'face_quality_rejected')
-  }
-  if (brightness < 30 || sharpness < 30) {
-    throw new AppError(400, 'Image quality too low', 'face_quality_rejected')
-  }
-  return (brightness + sharpness) / 2
-}
-
 async function getImageBytes(s3Key: string): Promise<Buffer> {
   return storageService.getObjectBuffer(s3Key)
 }
@@ -126,53 +107,50 @@ export const faceVerificationService = {
 
       validateUserOwnedS3Key('register', userId, body.s3Key)
       const imageBytes = await getImageBytes(body.s3Key)
-      const detectRes = await detectFacesQuality(imageBytes)
-      if ((detectRes.FaceDetails?.length ?? 0) !== 1) {
-        throw new AppError(400, 'Exactly one face required', 'face_quality_rejected')
-      }
-      const qualityScore = parseQuality(detectRes.FaceDetails![0]!)
-      const existingMatch = await searchFaceInCollection({
-        imageBytes,
-        collectionId: env.REKOGNITION_COLLECTION_ID,
-        threshold: Number(env.FACE_MATCH_THRESHOLD_PASS),
-      })
-      if (existingMatch) {
-        const ownerProfile = await faceVerificationRepository.findProfileByRekognitionFaceId(
-          existingMatch.faceId,
-        )
-        const duplicateOfUserId = ownerProfile?.userId ?? null
-        if (!duplicateOfUserId || duplicateOfUserId !== userId) {
+      const validation = await faceRegistrationValidationService.runFullValidationPipeline(
+        new Uint8Array(imageBytes),
+        userId,
+        { checkMinorAge: true, checkDuplicate: true, livenessPassed: false },
+      )
+      if (!validation.isValid) {
+        if (validation.errorCode === FACE_REGISTRATION_ERRORS.FACE_DUPLICATE_IDENTITY) {
           await faceVerificationRepository.markDuplicate({
             userId,
             collectionId: env.REKOGNITION_COLLECTION_ID,
             s3KeyReference: body.s3Key,
-            qualityScore,
-            duplicateOfUserId,
+            qualityScore: validation.qualityScore ?? null,
+            duplicateOfUserId: validation.duplicateMatch?.matchedUserId ?? null,
+            faceMatchSimilarity: validation.duplicateMatch?.matchSimilarity ?? null,
+            moderationLabels: validation.moderationLabels as Prisma.InputJsonValue | null,
+            qualityChecksPassed: validation.qualityChecksPassed as Prisma.InputJsonValue | null,
           })
           auditService.log({
             userId,
             actionType: 'face_register_duplicate_rejected',
             actionStatus: 'failed',
             actionDetails: {
-              similarity: existingMatch.similarity,
-              duplicateOfUserId: duplicateOfUserId ?? 'unknown',
+              similarity: validation.duplicateMatch?.matchSimilarity,
+              duplicateOfUserId: validation.duplicateMatch?.matchedUserId ?? 'unknown',
+              matchedUser: validation.duplicateMatch?.matchedUser,
             },
             ipAddress: extractIp(ctx),
             userAgent: toHeaderString(ctx.headers?.['user-agent']),
           })
-          throw new AppError(
-            409,
-            'A verified face already exists for this identity. Each person may only register once.',
-            'FACE_DUPLICATE_IDENTITY',
-          )
+          throw faceRegistrationValidationService.toAppError(validation)
         }
+        throw faceRegistrationValidationService.toAppError(validation)
       }
+      const qualityScore = validation.qualityScore ?? 0
 
       const profile = await faceVerificationRepository.createPendingProfile({
         userId,
         collectionId: env.REKOGNITION_COLLECTION_ID,
         s3KeyReference: body.s3Key,
         qualityScore,
+        qualityChecksPassed: validation.qualityChecksPassed as Prisma.InputJsonValue | null,
+        detectedGender: validation.detectedGender ?? null,
+        genderUpdatedAt: validation.genderUpdated ? new Date() : null,
+        moderationLabels: validation.moderationLabels as Prisma.InputJsonValue | null,
       })
 
       faceMetrics.indexingQueued += 1
@@ -240,6 +218,47 @@ export const faceVerificationService = {
     let rekognitionRequestId: string | undefined
     try {
       const imageBytes = await getImageBytes(body.s3Key)
+      const validation = await faceRegistrationValidationService.validateImageQuality(
+        new Uint8Array(imageBytes),
+        { checkMinorAge: false, livenessPassed: false },
+      )
+      if (!validation.isValid) {
+        await faceVerificationRepository.recordAttempt({
+          userId,
+          s3Key: body.s3Key,
+          decision: 'QUALITY_REJECTED',
+          reason: validation.failure?.code,
+          latencyMs: Date.now() - startedAt,
+          ipAddress: ip,
+          userAgent: toHeaderString(ctx.headers?.['user-agent']),
+          clientRequestId: body.clientRequestId,
+        })
+        throw faceRegistrationValidationService.toAppError({
+          isValid: false,
+          errorCode: validation.failure?.code,
+          details: validation.failure,
+        })
+      }
+
+      const nudity = await faceRegistrationValidationService.checkForNudity(body.s3Key)
+      if (nudity.isNudityDetected) {
+        await faceVerificationRepository.recordAttempt({
+          userId,
+          s3Key: body.s3Key,
+          decision: 'QUALITY_REJECTED',
+          reason: 'FACE_QUALITY_INDECENT',
+          latencyMs: Date.now() - startedAt,
+          ipAddress: ip,
+          userAgent: toHeaderString(ctx.headers?.['user-agent']),
+          clientRequestId: body.clientRequestId,
+        })
+        throw new AppError(
+          409,
+          'Image does not meet our content guidelines.',
+          'FACE_QUALITY_INDECENT',
+        )
+      }
+
       const top = await searchFaceInCollection({
         imageBytes,
         collectionId: env.REKOGNITION_COLLECTION_ID,
@@ -332,6 +351,14 @@ export const faceVerificationService = {
       }
     }
 
+    let duplicateMatch: Awaited<ReturnType<typeof buildDuplicateMatchDetails>> | null = null
+    if (isDuplicate && profile) {
+      duplicateMatch = await buildDuplicateMatchDetails({
+        matchedUserId: profile.matchedUserId ?? profile.duplicateOfUserId,
+        matchSimilarity: profile.faceMatchSimilarity,
+      })
+    }
+
     return {
       status,
       message: isDuplicate
@@ -342,8 +369,11 @@ export const faceVerificationService = {
       indexedAt: profile?.indexedAt?.toISOString() ?? null,
       lastVerifiedAt: profile?.lastVerifiedAt?.toISOString() ?? null,
       hasReference: Boolean(profile?.s3KeyReference),
-      /** Public URL for the registration image at `s3KeyReference` (same object Rekognition indexed from). */
       referenceImageUrl,
+      detectedGender: profile?.detectedGender ?? null,
+      genderAutoUpdatedAt: profile?.genderUpdatedAt?.toISOString() ?? null,
+      qualityChecksPassed: profile?.qualityChecksPassed ?? null,
+      duplicateMatch: isDuplicate ? duplicateMatch : null,
     }
   },
 
@@ -372,7 +402,7 @@ export const faceVerificationService = {
       region: env.AWS_REGION,
       expiresAtIso: expiresAt.toISOString(),
       message:
-        'Legacy stub. Use POST /api/v1/face-registration/session for Amazon Face Liveness (see docs/flow-md/face-registration-liveness-flow.md).',
+        'Legacy stub. Use POST /api/v1/face-registration/session for Amazon Face Liveness (see docs/flow-md/face-registration-flow.md).',
     }
   },
 
@@ -393,11 +423,17 @@ export const faceVerificationService = {
           preIndexMatch.faceId,
         )
         if (!ownerProfile || ownerProfile.userId !== payload.userId) {
+          const duplicateOfUserId = ownerProfile?.userId ?? null
+          const duplicateDetails = await buildDuplicateMatchDetails({
+            matchedUserId: duplicateOfUserId,
+            matchSimilarity: preIndexMatch.similarity,
+          })
           await faceVerificationRepository.markDuplicate({
             userId: payload.userId,
             collectionId: env.REKOGNITION_COLLECTION_ID,
             s3KeyReference: payload.s3Key,
-            duplicateOfUserId: ownerProfile?.userId ?? null,
+            duplicateOfUserId,
+            faceMatchSimilarity: preIndexMatch.similarity,
           })
           auditService.log({
             userId: payload.userId,
@@ -405,7 +441,8 @@ export const faceVerificationService = {
             actionStatus: 'failed',
             actionDetails: {
               similarity: preIndexMatch.similarity,
-              duplicateOfUserId: ownerProfile?.userId ?? 'unknown',
+              duplicateOfUserId: duplicateOfUserId ?? 'unknown',
+              matchedUser: duplicateDetails.matchedUser,
             },
           })
           return

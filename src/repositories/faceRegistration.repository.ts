@@ -90,6 +90,11 @@ export const faceRegistrationRepository = {
       ipAddress?: string | null
       userAgent?: string | null
       latencyMs?: number | null
+      qualityCheckFailures?: string[]
+      detectedGender?: string | null
+      genderAutoUpdated?: boolean | null
+      duplicateMatchUserId?: string | null
+      contentPolicyViolation?: boolean | null
     },
     tx?: Prisma.TransactionClient,
   ) {
@@ -103,6 +108,11 @@ export const faceRegistrationRepository = {
         ipAddress: input.ipAddress ?? undefined,
         userAgent: input.userAgent ?? undefined,
         latencyMs: input.latencyMs ?? undefined,
+        qualityCheckFailures: input.qualityCheckFailures ?? [],
+        detectedGender: input.detectedGender ?? undefined,
+        genderAutoUpdated: input.genderAutoUpdated ?? undefined,
+        duplicateMatchUserId: input.duplicateMatchUserId ?? undefined,
+        contentPolicyViolation: input.contentPolicyViolation ?? undefined,
       },
     })
   },

@@ -1,18 +1,16 @@
+import type { Prisma } from '@prisma/client'
 import type { Job } from 'bullmq'
-import type { FaceDetail } from '@aws-sdk/client-rekognition'
 import { randomUUID } from 'crypto'
 import { AppError } from '../middlewares/errorHandler'
 import { env } from '../config/env'
 import { s3Bucket } from '../config/s3'
-import {
-  detectFacesQuality,
-  getFaceLivenessSessionResults,
-  searchFaceInCollection,
-} from '../lib/rekognition.client'
+import { getFaceLivenessSessionResults } from '../lib/rekognition.client'
 import { faceRegistrationRepository } from '../repositories/faceRegistration.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { storageService } from '../services/storage.service'
 import { runFaceRegistrationAntispoofHooks } from '../services/face-registration/face-registration-antispoof.hooks'
+import { faceRegistrationValidationService } from '../services/face-registration/face-registration.validation.service'
+import { FACE_REGISTRATION_ERRORS } from '../constants/face-registration-errors'
 import { publishServerFrameToUser } from '../utils/ws-publisher'
 import type { ServerFrame } from '../realtime/types'
 import { FACE_REGISTRATION_VERIFY_JOB } from '../queues/face-registration.constants'
@@ -20,6 +18,23 @@ import { rootLogger } from '../utils/rootLogger'
 import { RedisKeys, redisClient } from '../config/redis'
 
 const log = rootLogger.child({ module: 'face-registration-verify.job' })
+
+/** Thrown when Rekognition liveness is still IN_PROGRESS — BullMQ should retry with backoff. */
+export class FaceLivenessInProgressError extends Error {
+  readonly code = 'face_liveness_in_progress'
+
+  constructor() {
+    super('face_liveness_in_progress')
+    this.name = 'FaceLivenessInProgressError'
+  }
+
+  static is(err: unknown): boolean {
+    return (
+      err instanceof FaceLivenessInProgressError ||
+      (err instanceof Error && err.message === 'face_liveness_in_progress')
+    )
+  }
+}
 
 async function emit(
   userId: string,
@@ -29,25 +44,6 @@ async function emit(
 ): Promise<void> {
   const frame: ServerFrame = { t: 'FACE_REGISTRATION', event, sessionId, detail }
   await publishServerFrameToUser(userId, frame)
-}
-
-function parseFaceQuality(face: FaceDetail): number {
-  const brightness = face.Quality?.Brightness ?? 0
-  const sharpness = face.Quality?.Sharpness ?? 0
-  const confidence = face.Confidence ?? 0
-  if (confidence < env.FACE_MIN_DETECT_CONFIDENCE) {
-    throw new AppError(400, 'Face confidence too low', 'face_quality_rejected')
-  }
-  if ((face.Sunglasses?.Value ?? false) && (face.Sunglasses?.Confidence ?? 0) > 90) {
-    throw new AppError(400, 'Sunglasses are not allowed', 'face_quality_rejected')
-  }
-  if (!(face.EyesOpen?.Value ?? true) && (face.EyesOpen?.Confidence ?? 0) > 90) {
-    throw new AppError(400, 'Eyes must be open', 'face_quality_rejected')
-  }
-  if (brightness < 30 || sharpness < 30) {
-    throw new AppError(400, 'Image quality too low', 'face_quality_rejected')
-  }
-  return (brightness + sharpness) / 2
 }
 
 async function extractReferenceBytes(res: {
@@ -72,10 +68,23 @@ async function failTerminal(
   sessionId: string,
   userId: string,
   reason: string,
-  extra?: { rekognitionRawStatus?: string | null; awsRequestId?: string | null },
+  extra?: {
+    rekognitionRawStatus?: string | null
+    awsRequestId?: string | null
+    status?: 'LIVENESS_FAILED' | 'VALIDATION_FAILED' | 'REJECTED'
+    audit?: {
+      qualityCheckFailures?: string[]
+      detectedGender?: string | null
+      genderAutoUpdated?: boolean
+      duplicateMatchUserId?: string | null
+      contentPolicyViolation?: boolean
+      details?: Record<string, unknown>
+    }
+  },
 ): Promise<void> {
+  const status = extra?.status ?? 'LIVENESS_FAILED'
   await faceRegistrationRepository.updateSession(sessionId, {
-    status: 'LIVENESS_FAILED',
+    status,
     failureReason: reason,
     rekognitionRawStatus: extra?.rekognitionRawStatus ?? null,
     awsRequestId: extra?.awsRequestId ?? null,
@@ -83,10 +92,17 @@ async function failTerminal(
   await faceRegistrationRepository.appendAudit({
     sessionId,
     userId,
-    action: 'liveness_failed',
-    details: { reason, ...extra },
+    action: status === 'VALIDATION_FAILED' ? 'validation_failed' : 'liveness_failed',
+    details: { reason, ...(extra?.audit?.details ?? {}) },
+    qualityCheckFailures: extra?.audit?.qualityCheckFailures,
+    detectedGender: extra?.audit?.detectedGender,
+    genderAutoUpdated: extra?.audit?.genderAutoUpdated,
+    duplicateMatchUserId: extra?.audit?.duplicateMatchUserId,
+    contentPolicyViolation: extra?.audit?.contentPolicyViolation,
   })
-  await emit(userId, 'face.registration.liveness_failed', sessionId, { reason })
+  const event =
+    status === 'REJECTED' ? 'face.registration.rejected' : 'face.registration.liveness_failed'
+  await emit(userId, event, sessionId, { reason, ...(extra?.audit?.details ?? {}) })
 }
 
 export async function processFaceRegistrationVerifyJob(
@@ -156,7 +172,17 @@ export async function processFaceRegistrationVerifyJob(
   const awsRequestId = res.$metadata.requestId ?? null
 
   if (rawStatus === 'IN_PROGRESS' || rawStatus === 'CREATED') {
-    throw new Error('face_liveness_in_progress')
+    log.info(
+      {
+        sessionId,
+        rawStatus,
+        attempt: job.attemptsMade,
+        maxAttempts: job.opts.attempts ?? 8,
+        requestId,
+      },
+      'face_liveness_still_in_progress',
+    )
+    throw new FaceLivenessInProgressError()
   }
 
   if (rawStatus === 'EXPIRED' || rawStatus === 'FAILED') {
@@ -221,55 +247,17 @@ export async function processFaceRegistrationVerifyJob(
     return
   }
 
-  let detect
-  try {
-    detect = await detectFacesQuality(refBytes)
-  } catch (err) {
-    log.error({ err, sessionId, requestId }, 'detect_faces_after_liveness_failed')
-    throw err
-  }
-  const faces = detect.FaceDetails ?? []
-  if (faces.length !== 1) {
-    await failTerminal(
-      sessionId,
-      userId,
-      faces.length === 0 ? 'no_face_in_reference' : 'multiple_faces_in_reference',
-      {
-        rekognitionRawStatus: rawStatus,
-        awsRequestId,
-      },
-    )
-    return
-  }
+  const validation = await faceRegistrationValidationService.runFullValidationPipeline(
+    refBytes,
+    userId,
+    { checkMinorAge: true, checkDuplicate: true, livenessPassed: true },
+  )
 
-  let qualityScore: number
-  try {
-    qualityScore = parseFaceQuality(faces[0]!)
-  } catch (e) {
-    const code = e instanceof AppError ? e.code : 'face_quality_rejected'
-    await failTerminal(sessionId, userId, String(code), {
-      rekognitionRawStatus: rawStatus,
-      awsRequestId,
-    })
-    return
-  }
+  if (!validation.isValid) {
+    const errorCode = validation.errorCode ?? FACE_REGISTRATION_ERRORS.FACE_VALIDATION_FAILED
+    const isDuplicate = errorCode === FACE_REGISTRATION_ERRORS.FACE_DUPLICATE_IDENTITY
 
-  let dup
-  try {
-    dup = await searchFaceInCollection({
-      imageBytes: refBytes,
-      collectionId: env.REKOGNITION_COLLECTION_ID,
-      threshold: Number(env.FACE_MATCH_THRESHOLD_PASS),
-    })
-  } catch (err) {
-    log.error({ err, sessionId, requestId }, 'duplicate_search_failed')
-    throw err
-  }
-
-  if (dup) {
-    const ownerProfile = await faceVerificationRepository.findProfileByRekognitionFaceId(dup.faceId)
-    const duplicateOfUserId = ownerProfile?.userId ?? null
-    if (!duplicateOfUserId || duplicateOfUserId !== userId) {
+    if (isDuplicate) {
       const s3KeyRef = `face/register/${userId}/${randomUUID()}.jpg`
       await storageService.putObjectBuffer({
         key: s3KeyRef,
@@ -281,12 +269,15 @@ export async function processFaceRegistrationVerifyJob(
         userId,
         collectionId: env.REKOGNITION_COLLECTION_ID,
         s3KeyReference: s3KeyRef,
-        qualityScore,
-        duplicateOfUserId,
+        qualityScore: validation.qualityScore ?? null,
+        duplicateOfUserId: validation.duplicateMatch?.matchedUserId ?? null,
+        faceMatchSimilarity: validation.duplicateMatch?.matchSimilarity ?? null,
+        moderationLabels: (validation.moderationLabels ?? null) as Prisma.InputJsonValue | null,
+        qualityChecksPassed: (validation.qualityChecksPassed ?? null) as Prisma.InputJsonValue | null,
       })
       await faceRegistrationRepository.updateSession(sessionId, {
         status: 'REJECTED',
-        failureReason: 'FACE_DUPLICATE_IDENTITY',
+        failureReason: errorCode,
         livenessConfidence: confidence,
         rekognitionRawStatus: rawStatus,
         awsRequestId,
@@ -296,14 +287,38 @@ export async function processFaceRegistrationVerifyJob(
         sessionId,
         userId,
         action: 'duplicate_identity',
-        details: { duplicateOfUserId },
+        details: {
+          duplicateOfUserId: validation.duplicateMatch?.matchedUserId,
+          matchedUser: validation.duplicateMatch?.matchedUser,
+          matchSimilarity: validation.duplicateMatch?.matchSimilarity,
+        },
         latencyMs: Date.now() - t0,
+        qualityCheckFailures: validation.details?.failedChecks,
+        duplicateMatchUserId: validation.duplicateMatch?.matchedUserId,
       })
       await emit(userId, 'face.registration.rejected', sessionId, {
-        reason: 'FACE_DUPLICATE_IDENTITY',
+        reason: errorCode,
+        matchedUser: validation.duplicateMatch?.matchedUser,
+        matchSimilarity: validation.duplicateMatch?.matchSimilarity,
       })
       return
     }
+
+    await failTerminal(sessionId, userId, errorCode, {
+      rekognitionRawStatus: rawStatus,
+      awsRequestId,
+      status: 'VALIDATION_FAILED',
+      audit: {
+        qualityCheckFailures: validation.details?.failedChecks,
+        contentPolicyViolation:
+          errorCode === FACE_REGISTRATION_ERRORS.FACE_QUALITY_CONTENT_POLICY,
+        details: {
+          qualityMetrics: validation.details?.qualityMetrics,
+          recommendation: validation.details?.recommendation,
+        },
+      },
+    })
+    return
   }
 
   const s3KeyRef = `face/register/${userId}/${randomUUID()}.jpg`
@@ -318,8 +333,12 @@ export async function processFaceRegistrationVerifyJob(
     userId,
     collectionId: env.REKOGNITION_COLLECTION_ID,
     s3KeyReference: s3KeyRef,
-    qualityScore,
+    qualityScore: validation.qualityScore ?? null,
     livenessConfidence: confidence,
+    qualityChecksPassed: (validation.qualityChecksPassed ?? null) as Prisma.InputJsonValue | null,
+    detectedGender: validation.detectedGender ?? null,
+    genderUpdatedAt: validation.genderUpdated ? new Date() : null,
+    moderationLabels: (validation.moderationLabels ?? null) as Prisma.InputJsonValue | null,
   })
 
   await faceRegistrationRepository.updateSession(sessionId, {
@@ -335,11 +354,24 @@ export async function processFaceRegistrationVerifyJob(
     sessionId,
     userId,
     action: 'liveness_passed_index_pending',
-    details: { s3KeyReference: s3KeyRef, confidence },
+    details: {
+      s3KeyReference: s3KeyRef,
+      confidence,
+      qualityChecks: validation.qualityChecksPassed,
+      genderUpdated: validation.genderUpdated ?? false,
+    },
     latencyMs: Date.now() - t0,
+    detectedGender: validation.detectedGender,
+    genderAutoUpdated: validation.genderUpdated ?? false,
   })
 
-  await emit(userId, 'face.registration.liveness_passed', sessionId, { confidence })
+  await emit(userId, 'face.registration.liveness_passed', sessionId, {
+    confidence,
+    validationStatus: 'PASSED',
+    qualityChecks: validation.qualityChecksPassed,
+    genderDetected: validation.detectedGender,
+    genderUpdated: validation.genderUpdated ?? false,
+  })
   await emit(userId, 'face.registration.index_pending', sessionId, { s3KeyReference: s3KeyRef })
 
   log.info({ userId, sessionId, confidence, requestId }, 'face_registration_liveness_passed')
@@ -351,4 +383,60 @@ export async function processFaceRegistrationWorkerJob(job: Job): Promise<void> 
       job as Job<{ sessionId: string; userId: string; idempotencyKey: string; requestId?: string }>,
     )
   }
+}
+
+type FaceRegistrationVerifyJobData = {
+  sessionId: string
+  userId: string
+  idempotencyKey: string
+  requestId?: string
+}
+
+/**
+ * BullMQ `failed` handler — suppress noisy logs for expected liveness polling retries;
+ * mark session terminal when the client never completes Face Liveness in time.
+ */
+export async function onFaceRegistrationVerifyJobFailed(
+  job: Job<FaceRegistrationVerifyJobData> | undefined,
+  err: Error,
+): Promise<void> {
+  if (!job || job.name !== FACE_REGISTRATION_VERIFY_JOB) {
+    console.error('[face-rekognition-worker] Face registration job failed:', job?.id, err)
+    return
+  }
+
+  const maxAttempts = typeof job.opts.attempts === 'number' ? job.opts.attempts : 8
+  const willRetry = job.attemptsMade < maxAttempts
+
+  if (FaceLivenessInProgressError.is(err)) {
+    if (willRetry) {
+      log.info(
+        {
+          sessionId: job.data.sessionId,
+          attempt: job.attemptsMade,
+          maxAttempts,
+          jobId: job.id,
+        },
+        'face_liveness_in_progress_retry_scheduled',
+      )
+      return
+    }
+
+    const session = await faceRegistrationRepository.findByIdForUser(
+      job.data.sessionId,
+      job.data.userId,
+    )
+    if (session?.status === 'PROCESSING') {
+      await failTerminal(job.data.sessionId, job.data.userId, 'liveness_not_completed_in_time', {
+        rekognitionRawStatus: 'IN_PROGRESS',
+      })
+    }
+    log.warn(
+      { sessionId: job.data.sessionId, attemptsMade: job.attemptsMade, jobId: job.id },
+      'face_liveness_wait_exhausted',
+    )
+    return
+  }
+
+  console.error('[face-rekognition-worker] Face registration job failed:', job.id, err)
 }

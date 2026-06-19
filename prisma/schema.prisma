@@ -127,6 +127,9 @@ model User {
   livePhotoVerificationAttempts LivePhotoVerificationAttempt[]
   faceRegistrationSessions      FaceRegistrationSession[]
   faceRegistrationAuditLogs     FaceRegistrationAuditLog[]
+  faceProfilesMatchedAsUser     UserFaceProfile[]           @relation("FaceProfileMatchedUser")
+  faceProfileRevocations        FaceProfileRevocation[]     @relation("FaceProfileRevokedUser")
+  faceProfileRevocationsByAdmin FaceProfileRevocation[]     @relation("FaceProfileRevokedBy")
 
   agency                       Agency?
   hostAgencyMembership         AgencyHost?
@@ -2036,13 +2039,22 @@ model UserFaceProfile {
   indexedAt          DateTime?         @map("indexed_at")
   lastVerifiedAt     DateTime?         @map("last_verified_at")
   revokedAt          DateTime?         @map("revoked_at")
+  qualityChecksPassed Json?            @map("quality_checks_passed") @db.JsonB
+  detectedGender     String?            @map("detected_gender") @db.VarChar(50)
+  genderUpdatedAt    DateTime?          @map("gender_updated_at")
+  moderationLabels   Json?              @map("moderation_labels") @db.JsonB
+  faceMatchSimilarity Float?            @map("face_match_similarity")
+  matchedUserId      String?            @map("matched_user_id") @db.Uuid
   createdAt          DateTime          @default(now()) @map("created_at")
   updatedAt          DateTime          @updatedAt @map("updated_at")
 
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matchedUser    User?           @relation("FaceProfileMatchedUser", fields: [matchedUserId], references: [id], onDelete: SetNull)
   livePhotoLinks UserLivePhoto[]
+  revocations    FaceProfileRevocation[]
 
   @@index([status])
+  @@index([matchedUserId])
   @@map("user_face_profiles")
 }
 
@@ -2120,6 +2132,7 @@ enum FaceRegistrationSessionStatus {
   PROCESSING
   LIVENESS_PASSED
   LIVENESS_FAILED
+  VALIDATION_FAILED
   INDEX_PENDING
   INDEXED
   REJECTED
@@ -2161,15 +2174,20 @@ model FaceRegistrationSession {
 }
 
 model FaceRegistrationAuditLog {
-  id        String   @id @default(uuid()) @db.Uuid
-  sessionId String   @map("session_id") @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  action    String   @db.VarChar(64)
-  details   Json?
-  ipAddress String?  @map("ip_address") @db.VarChar(64)
-  userAgent String?  @map("user_agent") @db.Text
-  latencyMs Int?     @map("latency_ms")
-  createdAt DateTime @default(now()) @map("created_at")
+  id                     String   @id @default(uuid()) @db.Uuid
+  sessionId              String   @map("session_id") @db.Uuid
+  userId                 String   @map("user_id") @db.Uuid
+  action                 String   @db.VarChar(64)
+  details                Json?
+  ipAddress              String?  @map("ip_address") @db.VarChar(64)
+  userAgent              String?  @map("user_agent") @db.Text
+  latencyMs              Int?     @map("latency_ms")
+  qualityCheckFailures   String[] @default([]) @map("quality_check_failures")
+  detectedGender         String?  @map("detected_gender") @db.VarChar(50)
+  genderAutoUpdated      Boolean? @map("gender_auto_updated")
+  duplicateMatchUserId   String?  @map("duplicate_match_user_id") @db.Uuid
+  contentPolicyViolation Boolean? @map("content_policy_violation")
+  createdAt              DateTime @default(now()) @map("created_at")
 
   session FaceRegistrationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   user    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -2177,6 +2195,24 @@ model FaceRegistrationAuditLog {
   @@index([sessionId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@map("face_registration_audit_logs")
+}
+
+model FaceProfileRevocation {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  faceProfileId     String?  @map("face_profile_id") @db.Uuid
+  revokedByUserId   String?  @map("revoked_by_user_id") @db.Uuid
+  revokeReason      String?  @map("revoke_reason") @db.Text
+  rekognitionFaceId String?  @map("rekognition_face_id") @db.VarChar(128)
+  revokedAt         DateTime @default(now()) @map("revoked_at")
+
+  user          User             @relation("FaceProfileRevokedUser", fields: [userId], references: [id], onDelete: Cascade)
+  faceProfile   UserFaceProfile? @relation(fields: [faceProfileId], references: [id], onDelete: SetNull)
+  revokedByUser User?            @relation("FaceProfileRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([revokedAt(sort: Desc)])
+  @@map("face_profile_revocations")
 }
 
 model Questionnaire {

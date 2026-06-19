@@ -69,6 +69,27 @@ const envSchema = z
     /** S3 prefix for Rekognition Face Liveness OutputConfig (reference + audit images). */
     FACE_LIVENESS_S3_OUTPUT_PREFIX: z.string().default('face-liveness'),
 
+    /** Rekognition DetectFaces quality thresholds (0–100 scale). */
+    FACE_MIN_BRIGHTNESS: z.coerce.number().min(0).max(100).default(30),
+    FACE_MIN_SHARPNESS: z.coerce.number().min(0).max(100).default(30),
+    /** Missing key landmark count before half-covered rejection. */
+    FACE_MAX_LANDMARKS_MISSING: z.coerce.number().int().min(0).max(10).default(2),
+    /** Landmark confidence floor (0–100). */
+    FACE_LANDMARK_MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(85),
+    /** DetectModerationLabels nudity confidence % to reject. */
+    FACE_MODERATION_NUDITY_THRESHOLD: z.coerce.number().min(0).max(100).default(50),
+    /** When true, reject PARTIAL_NUDITY; else only EXPLICIT_NUDITY. */
+    FACE_MODERATION_STRICT_MODE: z.coerce.boolean().default(false),
+    FACE_MIN_USER_AGE: z.coerce.number().int().min(0).max(120).default(16),
+    FACE_CHECK_MINOR_AGE: z.coerce.boolean().default(true),
+    FACE_GENDER_AUTO_UPDATE_ENABLED: z.coerce.boolean().default(false),
+    FACE_DUPLICATE_CHECK_ENABLED: z.coerce.boolean().default(true),
+    FACE_CONTENT_MODERATION_ENABLED: z.coerce.boolean().default(false),
+    /** HSL saturation in face region above this → garish makeup heuristic. */
+    FACE_GARISH_SATURATION_MAX: z.coerce.number().min(0).max(100).default(85),
+    /** Image histogram avg saturation below this → monochrome. */
+    FACE_MONOCHROME_SATURATION_MAX: z.coerce.number().min(0).max(100).default(10),
+
     LIVE_PHOTO_MATCH_THRESHOLD: z.coerce.number().min(50).max(100).default(95),
     LIVE_PHOTO_MIN_FACE_AREA: z.coerce.number().min(0.0001).max(1).default(0.004),
     LIVE_PHOTO_UPLOAD_URL_EXPIRES_SEC: z.coerce.number().int().positive().default(900),

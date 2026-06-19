@@ -14,7 +14,10 @@ import { prisma } from './config/database'
 import { ensureCollectionExists } from './lib/rekognition.client'
 import { runFaceIndexPollOnce } from './jobs/face-index-poll.job'
 import { processLivePhotoWorkerJob } from './jobs/live-photo-verify.job'
-import { processFaceRegistrationWorkerJob } from './jobs/face-registration-verify.job'
+import {
+  onFaceRegistrationVerifyJobFailed,
+  processFaceRegistrationWorkerJob,
+} from './jobs/face-registration-verify.job'
 import { LIVE_PHOTO_VERIFY_QUEUE } from './queues/live-photo.constants'
 import { FACE_REGISTRATION_QUEUE } from './queues/face-registration.constants'
 import { livePhotoVerifyQueue } from './queues/live-photo.queue'
@@ -55,7 +58,9 @@ async function main() {
     console.error('[face-rekognition-worker] Live photo verify job failed:', job?.id, err)
   })
   faceRegistrationWorker.on('failed', (job, err) => {
-    console.error('[face-rekognition-worker] Face registration job failed:', job?.id, err)
+    void onFaceRegistrationVerifyJobFailed(job, err).catch((handlerErr) => {
+      console.error('[face-rekognition-worker] Face registration failure handler error', handlerErr)
+    })
   })
 
   let running = true

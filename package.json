@@ -78,6 +78,7 @@
         "firebase-admin": "^12.3.0",
         "google-auth-library": "^9.15.1",
         "ioredis": "^5.4.1",
+        "jpeg-js": "^0.4.4",
         "jsonwebtoken": "^9.0.3",
         "libphonenumber-js": "^1.11.6",
         "livekit-server-sdk": "^2.15.0",

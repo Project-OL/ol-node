@@ -33,6 +33,12 @@ export const faceVerificationRepository = {
       qualityScore?: number | null
       /** Set when registration used Amazon Face Liveness (GetFaceLivenessSessionResults confidence). */
       livenessConfidence?: number | null
+      qualityChecksPassed?: Prisma.InputJsonValue | null
+      detectedGender?: string | null
+      genderUpdatedAt?: Date | null
+      moderationLabels?: Prisma.InputJsonValue | null
+      faceMatchSimilarity?: number | null
+      matchedUserId?: string | null
     },
     tx?: Prisma.TransactionClient,
   ) {
@@ -44,6 +50,12 @@ export const faceVerificationRepository = {
         s3KeyReference: input.s3KeyReference,
         imageQualityScore: input.qualityScore ?? null,
         livenessConfidence: input.livenessConfidence ?? null,
+        qualityChecksPassed: input.qualityChecksPassed ?? undefined,
+        detectedGender: input.detectedGender ?? undefined,
+        genderUpdatedAt: input.genderUpdatedAt ?? undefined,
+        moderationLabels: input.moderationLabels ?? undefined,
+        faceMatchSimilarity: input.faceMatchSimilarity ?? undefined,
+        matchedUserId: input.matchedUserId ?? undefined,
         status: 'PENDING_INDEX',
         rekognitionFaceId: null,
         failureReason: null,
@@ -56,6 +68,12 @@ export const faceVerificationRepository = {
         s3KeyReference: input.s3KeyReference,
         imageQualityScore: input.qualityScore ?? null,
         livenessConfidence: input.livenessConfidence ?? null,
+        qualityChecksPassed: input.qualityChecksPassed ?? undefined,
+        detectedGender: input.detectedGender ?? undefined,
+        genderUpdatedAt: input.genderUpdatedAt ?? undefined,
+        moderationLabels: input.moderationLabels ?? undefined,
+        faceMatchSimilarity: input.faceMatchSimilarity ?? undefined,
+        matchedUserId: input.matchedUserId ?? undefined,
         status: 'PENDING_INDEX',
       },
     })
@@ -75,6 +93,9 @@ export const faceVerificationRepository = {
       s3KeyReference: string
       qualityScore?: number | null
       duplicateOfUserId: string | null
+      faceMatchSimilarity?: number | null
+      moderationLabels?: Prisma.InputJsonValue | null
+      qualityChecksPassed?: Prisma.InputJsonValue | null
     },
     tx?: Prisma.TransactionClient,
   ) {
@@ -86,6 +107,10 @@ export const faceVerificationRepository = {
         imageQualityScore: input.qualityScore ?? null,
         status: 'DUPLICATE_FACE',
         duplicateOfUserId: input.duplicateOfUserId,
+        matchedUserId: input.duplicateOfUserId,
+        faceMatchSimilarity: input.faceMatchSimilarity ?? null,
+        moderationLabels: input.moderationLabels ?? undefined,
+        qualityChecksPassed: input.qualityChecksPassed ?? undefined,
         rekognitionFaceId: null,
         failureReason: 'duplicate_face',
       } as any,
@@ -96,6 +121,10 @@ export const faceVerificationRepository = {
         imageQualityScore: input.qualityScore ?? null,
         status: 'DUPLICATE_FACE',
         duplicateOfUserId: input.duplicateOfUserId,
+        matchedUserId: input.duplicateOfUserId,
+        faceMatchSimilarity: input.faceMatchSimilarity ?? null,
+        moderationLabels: input.moderationLabels ?? undefined,
+        qualityChecksPassed: input.qualityChecksPassed ?? undefined,
       } as any,
     })
   },
@@ -129,6 +158,26 @@ export const faceVerificationRepository = {
         status: 'REVOKED',
         rekognitionFaceId: null,
         revokedAt: new Date(),
+        duplicateOfUserId: null,
+        matchedUserId: null,
+        faceMatchSimilarity: null,
+        failureReason: null,
+      },
+    })
+  },
+
+  /** Clears DUPLICATE_FACE block so the user may start a new registration. */
+  clearDuplicateBlock(input: { userId: string }, tx?: Prisma.TransactionClient) {
+    return getDb(tx).userFaceProfile.update({
+      where: { userId: input.userId },
+      data: {
+        status: 'REVOKED',
+        rekognitionFaceId: null,
+        revokedAt: new Date(),
+        duplicateOfUserId: null,
+        matchedUserId: null,
+        faceMatchSimilarity: null,
+        failureReason: null,
       },
     })
   },
@@ -210,6 +259,27 @@ export const faceVerificationRepository = {
         createdAt: { gte: since },
       },
       orderBy: { createdAt: 'desc' },
+    })
+  },
+
+  createRevocationRecord(
+    input: {
+      userId: string
+      faceProfileId?: string | null
+      revokedByUserId?: string | null
+      revokeReason?: string | null
+      rekognitionFaceId?: string | null
+    },
+    tx?: Prisma.TransactionClient,
+  ) {
+    return getDb(tx).faceProfileRevocation.create({
+      data: {
+        userId: input.userId,
+        faceProfileId: input.faceProfileId ?? undefined,
+        revokedByUserId: input.revokedByUserId ?? undefined,
+        revokeReason: input.revokeReason ?? undefined,
+        rekognitionFaceId: input.rekognitionFaceId ?? undefined,
+      },
     })
   },
 }

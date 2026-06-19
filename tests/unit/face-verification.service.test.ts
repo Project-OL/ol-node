@@ -9,6 +9,7 @@ vi.mock('../../src/config/env', () => ({
     FACE_MATCH_THRESHOLD_REJECT: 70,
     FACE_MIN_DETECT_CONFIDENCE: 98,
     FACE_LIVENESS_REQUIRED: false,
+    FACE_CONTENT_MODERATION_ENABLED: false,
     LOG_LEVEL: 'silent',
     NODE_ENV: 'test',
   },
@@ -47,15 +48,30 @@ vi.mock('../../src/services/storage.service', () => ({
   },
 }))
 
-const detectFacesQuality = vi.fn()
 const searchFaceInCollection = vi.fn()
 const indexUserFace = vi.fn()
 const deleteFaceFromCollection = vi.fn()
 vi.mock('../../src/lib/rekognition.client', () => ({
-  detectFacesQuality,
   searchFaceInCollection,
   indexUserFace,
   deleteFaceFromCollection,
+}))
+
+const runFullValidationPipeline = vi.fn()
+const validateImageQuality = vi.fn()
+const checkForNudity = vi.fn()
+const toAppError = vi.fn((result: { errorCode?: string }) => {
+  const err = new Error('validation failed') as Error & { code?: string }
+  err.code = result.errorCode
+  throw err
+})
+vi.mock('../../src/services/face-registration/face-registration.validation.service', () => ({
+  faceRegistrationValidationService: {
+    runFullValidationPipeline,
+    validateImageQuality,
+    checkForNudity,
+    toAppError,
+  },
 }))
 
 const repo = {
@@ -92,12 +108,16 @@ describe('faceVerificationService', () => {
     redisGet.mockResolvedValue(null)
     getObjectBuffer.mockResolvedValue(Buffer.from('img'))
     repo.recordAttempt.mockResolvedValue({ id: 'attempt-1' })
+    repo.createPendingProfile.mockResolvedValue({ id: 'profile-1' })
+    checkForNudity.mockResolvedValue({ isNudityDetected: false, labels: [] })
   })
 
-  it('rejects registration quality when brightness/sharpness low', async () => {
+  it('rejects registration when validation pipeline fails', async () => {
     const { faceVerificationService } = await import('../../src/services/face-verification.service')
-    detectFacesQuality.mockResolvedValue({
-      FaceDetails: [{ Confidence: 99, Quality: { Brightness: 20, Sharpness: 20 } }],
+    runFullValidationPipeline.mockResolvedValue({
+      isValid: false,
+      errorCode: 'FACE_QUALITY_BLURRED',
+      details: { failedChecks: ['BLUR'] },
     })
     await expect(
       faceVerificationService.registerFromUploadedKey(
@@ -105,7 +125,7 @@ describe('faceVerificationService', () => {
         { s3Key: 'face/register/u1/a.jpg', clientRequestId: '11111111-1111-1111-1111-111111111111' },
         {},
       ),
-    ).rejects.toMatchObject({ code: 'face_quality_rejected' })
+    ).rejects.toMatchObject({ code: 'FACE_QUALITY_BLURRED' })
   })
 
   it('passes at threshold boundary 90.0 and fails at 89.9', async () => {
@@ -116,6 +136,7 @@ describe('faceVerificationService', () => {
       status: 'INDEXED',
       rekognitionFaceId: 'f1',
     })
+    validateImageQuality.mockResolvedValue({ isValid: true, qualityScore: 80 })
 
     searchFaceInCollection.mockResolvedValueOnce({ faceId: 'f1', similarity: 89.9, requestId: 'r1' })
     const failRes = await faceVerificationService.verifyFromUploadedKey(
@@ -142,6 +163,7 @@ describe('faceVerificationService', () => {
       status: 'INDEXED',
       rekognitionFaceId: 'expected-face',
     })
+    validateImageQuality.mockResolvedValue({ isValid: true })
     searchFaceInCollection.mockResolvedValue({ faceId: 'other-face', similarity: 99, requestId: 'r3' })
     const result = await faceVerificationService.verifyFromUploadedKey(
       'u1',
@@ -177,4 +199,3 @@ describe('faceVerificationService', () => {
     expect(res.hasReference).toBe(false)
   })
 })
-

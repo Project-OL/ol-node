@@ -4,9 +4,11 @@ import {
   CreateFaceLivenessSessionCommand,
   DeleteFacesCommand,
   DetectFacesCommand,
+  DetectModerationLabelsCommand,
   GetFaceLivenessSessionResultsCommand,
   IndexFacesCommand,
   QualityFilter,
+  RecognizeCelebritiesCommand,
   RekognitionClient,
   ResourceAlreadyExistsException,
   SearchFacesByImageCommand,
@@ -85,6 +87,53 @@ export async function detectFacesQuality(imageBytes: Uint8Array) {
       new DetectFacesCommand({
         Attributes: ['ALL'],
         Image: { Bytes: imageBytes },
+      }),
+      { abortSignal },
+    ),
+  )
+}
+
+export async function detectModerationLabels(imageBytes: Uint8Array) {
+  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+    rekognitionClient.send(
+      new DetectModerationLabelsCommand({
+        Image: { Bytes: imageBytes },
+        MinConfidence: 50,
+      }),
+      { abortSignal },
+    ),
+  )
+}
+
+export async function recognizeCelebrities(imageBytes: Uint8Array) {
+  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+    rekognitionClient.send(
+      new RecognizeCelebritiesCommand({
+        Image: { Bytes: imageBytes },
+      }),
+      { abortSignal },
+    ),
+  )
+}
+
+export async function detectModerationLabelsFromS3(bucket: string, key: string) {
+  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+    rekognitionClient.send(
+      new DetectModerationLabelsCommand({
+        Image: { S3Object: { Bucket: bucket, Name: key } },
+        MinConfidence: 50,
+      }),
+      { abortSignal },
+    ),
+  )
+}
+
+export async function detectFacesQualityFromS3(bucket: string, key: string) {
+  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+    rekognitionClient.send(
+      new DetectFacesCommand({
+        Attributes: ['ALL'],
+        Image: { S3Object: { Bucket: bucket, Name: key } },
       }),
       { abortSignal },
     ),

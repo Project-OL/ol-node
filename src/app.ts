@@ -52,6 +52,7 @@ import agencyAdminRoutes from './routes/v1/agency-admin.routes'
 import questionnaireRoutes from './routes/v1/questionnaire.routes'
 import questionnaireAdminRoutes from './routes/v1/questionnaire-admin.routes'
 import userAdminRoutes from './routes/v1/user-admin.routes'
+import faceVerificationAdminRoutes from './routes/v1/face-verification-admin.routes'
 import faceVerificationRoutes from './routes/v1/face-verification.routes'
 import faceRegistrationRoutes from './routes/v1/face-registration.routes'
 import livePhotoRoutes from './routes/v1/live-photo.routes'
@@ -193,6 +194,7 @@ export async function buildApp() {
   await app.register(agencyAdminRoutes, { prefix: `${prefix}/admin/agency` })
   await app.register(questionnaireAdminRoutes, { prefix: `${prefix}/admin/questionnaires` })
   await app.register(userAdminRoutes, { prefix: `${prefix}/admin` })
+  await app.register(faceVerificationAdminRoutes, { prefix: `${prefix}/admin` })
 
   registerRealtimeGateway(app)
 

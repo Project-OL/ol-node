@@ -75,6 +75,17 @@ export async function processLivePhotoVerifyJob(
       return
     }
 
+    if (env.FACE_CONTENT_MODERATION_ENABLED) {
+      const { checkImageForNudity } = await import(
+        '../services/face-registration/face-registration-moderation.service'
+      )
+      const nudity = await checkImageForNudity(s3Key)
+      if (nudity.isNudityDetected) {
+        await failAndAudit(userId, row.id, 'FACE_QUALITY_INDECENT', null, t0, null)
+        return
+      }
+    }
+
     const face = await faceVerificationRepository.getProfileByUserId(userId)
     if (!face || face.status !== 'INDEXED' || !face.s3KeyReference?.trim()) {
       await failAndAudit(userId, row.id, 'face_profile_not_indexed', null, t0, null)
