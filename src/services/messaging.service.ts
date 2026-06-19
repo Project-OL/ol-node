@@ -12,6 +12,7 @@ import { redisClient } from '../config/redis'
 import {
   RedisKeys,
   MSG_HOT_TTL,
+  MSG_HOT_CACHE_SIZE,
   CONV_LIST_TTL,
   CONV_MEMBER_CACHE_TTL_SEC,
   TYPING_THROTTLE_TTL_SEC,
@@ -141,15 +142,49 @@ export function buildAutoReplyClientMessageId(
   return `auto-reply:${conversationId}:${triggerMessageSeq}`
 }
 
-async function pushMessageToHotCache(conversationId: string, msg: MessageWithDetails): Promise<void> {
-  const msgKey = RedisKeys.convMessages(conversationId)
-  const msgJson = JSON.stringify(
+function serializeMessageForHotCache(msg: MessageWithDetails): string {
+  return JSON.stringify(
     { ...msg, createdAt: msg.createdAt.toISOString() },
     (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
   )
-  await redisClient.zadd(msgKey, Number(msg.seq), msgJson)
+}
+
+function trimMessageHotCacheRankEnd(): number {
+  return -(MSG_HOT_CACHE_SIZE + 1)
+}
+
+async function warmMessageHotCache(
+  conversationId: string,
+  messages: MessageWithDetails[],
+): Promise<void> {
+  if (messages.length === 0) return
+  const msgKey = RedisKeys.convMessages(conversationId)
+  const pipeline = redisClient.pipeline()
+  for (const msg of messages) {
+    pipeline.zadd(msgKey, Number(msg.seq), serializeMessageForHotCache(msg))
+  }
+  pipeline.expire(msgKey, MSG_HOT_TTL)
+  pipeline.zremrangebyrank(msgKey, 0, trimMessageHotCacheRankEnd())
+  await pipeline.exec()
+}
+
+async function pushMessageToHotCache(conversationId: string, msg: MessageWithDetails): Promise<void> {
+  const msgKey = RedisKeys.convMessages(conversationId)
+  await redisClient.zadd(msgKey, Number(msg.seq), serializeMessageForHotCache(msg))
   await redisClient.expire(msgKey, MSG_HOT_TTL)
-  await redisClient.zremrangebyrank(msgKey, 0, -101)
+  await redisClient.zremrangebyrank(msgKey, 0, trimMessageHotCacheRankEnd())
+}
+
+function parseHotCacheMessages(raw: string[]): MessageWithDetails[] {
+  const messages: MessageWithDetails[] = []
+  for (let i = 0; i < raw.length; i += 2) {
+    const json = raw[i]
+    if (typeof json !== 'string') continue
+    const parsed = JSON.parse(json) as MessageWithDetails & { createdAt: string }
+    parsed.createdAt = new Date(parsed.createdAt) as any
+    messages.push(parsed as MessageWithDetails)
+  }
+  return messages
 }
 
 async function applyNewMessageSideEffects(params: {
@@ -425,15 +460,9 @@ export const messagingService = {
         limit - 1,
         'WITHSCORES',
       )
-      if (raw.length > 0) {
-        const messages: MessageWithDetails[] = []
-        for (let i = 0; i < raw.length; i += 2) {
-          const json = raw[i]
-          if (typeof json !== 'string') continue
-          const parsed = JSON.parse(json) as MessageWithDetails & { createdAt: string }
-          parsed.createdAt = new Date(parsed.createdAt) as any
-          messages.push(parsed as MessageWithDetails)
-        }
+      const cachedCount = raw.length / 2
+      if (cachedCount >= limit) {
+        const messages = parseHotCacheMessages(raw)
         const nextCursor =
           messages.length > 0
             ? ((messages[messages.length - 1]?.createdAt as Date)?.toISOString() ?? null)
@@ -442,7 +471,31 @@ export const messagingService = {
         return { messages, nextCursor }
       }
     }
-    const result = await messageRepository.listMessages(conversationId, userId, cursor, limit)
+
+    const warmLimit = !cursor && !historyClearedAfter ? Math.max(limit, MSG_HOT_CACHE_SIZE) : limit
+    const result = await messageRepository.listMessages(
+      conversationId,
+      userId,
+      cursor,
+      warmLimit,
+    )
+
+    if (!cursor && !historyClearedAfter && result.messages.length > 0) {
+      await warmMessageHotCache(conversationId, result.messages)
+    }
+
+    if (!cursor && !historyClearedAfter && result.messages.length > limit) {
+      const page = result.messages.slice(0, limit)
+      const hasMore = result.messages.length > limit || result.nextCursor !== null
+      await markConversationReadOnView(userId, conversationId, page)
+      return {
+        messages: page,
+        nextCursor: hasMore
+          ? ((page[page.length - 1]?.createdAt as Date)?.toISOString() ?? null)
+          : null,
+      }
+    }
+
     await markConversationReadOnView(userId, conversationId, result.messages)
     return result
   },

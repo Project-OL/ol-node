@@ -222,6 +222,9 @@ const envSchema = z
     /** Rare public ID purchase duration (store); separate from paid VIP membership. */
     STORE_RARE_ID_DURATION_DAYS: z.coerce.number().default(15),
 
+    /** Max recent messages per conversation in Redis hot sorted set (`conv:{id}:messages`). */
+    MSG_HOT_CACHE_SIZE: z.coerce.number().int().min(10).max(500).default(40),
+
     /** Optional override prices (credits) for rare IDs by tier rank: 1=BRONZE … 4=DIAMOND. */
     VIP_PRICE_TIER_1: z.coerce.number().optional(),
     VIP_PRICE_TIER_2: z.coerce.number().optional(),

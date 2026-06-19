@@ -310,31 +310,52 @@ export const deviceService = {
 
   /**
    * Revoke every active session and linked account on the given physical device.
-   * Caller must be authenticated from the same `deviceId` (JWT).
+   * With JWT: deviceId must match token; deviceName must match caller's session.
+   * Without JWT (factory reset): only deviceId is required — clears all server-side state for that device.
    */
   async flushDeviceSessions(
-    requestingUserId: string,
-    jwtDeviceId: string | undefined,
     deviceId: string,
-    deviceName: string,
+    deviceName: string | undefined,
+    authContext?: {
+      requestingUserId: string
+      jwtDeviceId: string
+    },
   ): Promise<{
     success: boolean
     revokedSessionCount: number
     unlinkedAccountCount: number
     affectedUserIds: string[]
   }> {
-    if (!jwtDeviceId || jwtDeviceId !== deviceId) {
-      throw new AppError(
-        403,
-        'Can only flush sessions on the current device',
-        'DEVICE_ID_MISMATCH',
-      )
+    const isAuthenticated = authContext != null
+
+    if (isAuthenticated) {
+      if (!authContext.jwtDeviceId || authContext.jwtDeviceId !== deviceId) {
+        throw new AppError(
+          403,
+          'Can only flush sessions on the current device',
+          'DEVICE_ID_MISMATCH',
+        )
+      }
     }
 
     const activeSessions = await sessionRepository.findActiveByDeviceId(deviceId)
     if (activeSessions.length === 0) {
       const unlinkedAccountCount = await deviceRepository.deleteAllLinkedAccounts(deviceId)
       await cacheService.delete(RedisKeys.deviceLinkedAccounts(deviceId))
+      await auditService.log({
+        userId: isAuthenticated ? authContext.requestingUserId : null,
+        actionType: 'DEVICE_SESSIONS_FLUSHED',
+        actionStatus: 'success',
+        actionDetails: {
+          deviceId,
+          deviceName,
+          unauthenticated: !isAuthenticated,
+          revokedSessionCount: 0,
+          unlinkedAccountCount,
+          affectedUserIds: [],
+        },
+        deviceId,
+      })
       return {
         success: true,
         revokedSessionCount: 0,
@@ -343,12 +364,17 @@ export const deviceService = {
       }
     }
 
-    const sessionOnDevice = activeSessions.find((s) => s.userId === requestingUserId)
-    if (!sessionOnDevice) {
-      throw new AppError(403, 'No active session on this device', 'DEVICE_SESSION_NOT_FOUND')
-    }
-    if (sessionOnDevice.deviceName.trim() !== deviceName.trim()) {
-      throw new AppError(400, 'Device name does not match', 'DEVICE_NAME_MISMATCH')
+    if (isAuthenticated) {
+      if (!deviceName?.trim()) {
+        throw new AppError(400, 'Device name required', 'DEVICE_NAME_REQUIRED')
+      }
+      const sessionOnDevice = activeSessions.find((s) => s.userId === authContext.requestingUserId)
+      if (!sessionOnDevice) {
+        throw new AppError(403, 'No active session on this device', 'DEVICE_SESSION_NOT_FOUND')
+      }
+      if (sessionOnDevice.deviceName.trim() !== deviceName.trim()) {
+        throw new AppError(400, 'Device name does not match', 'DEVICE_NAME_MISMATCH')
+      }
     }
 
     const affectedUserIds = [...new Set(activeSessions.map((s) => s.userId))]
@@ -365,12 +391,13 @@ export const deviceService = {
     )
 
     await auditService.log({
-      userId: requestingUserId,
+      userId: isAuthenticated ? authContext.requestingUserId : null,
       actionType: 'DEVICE_SESSIONS_FLUSHED',
       actionStatus: 'success',
       actionDetails: {
         deviceId,
         deviceName,
+        unauthenticated: !isAuthenticated,
         revokedSessionCount: revokedSessionIds.length,
         unlinkedAccountCount,
         affectedUserIds,

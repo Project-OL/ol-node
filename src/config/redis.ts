@@ -73,6 +73,8 @@ export const RedisKeys = {
   userSessions: (userId: string) => `user:${userId}:sessions`,
   /** Per-user device endpoint rate limit. */
   deviceRateLimit: (endpoint: string, userId: string) => `ratelimit:device:${endpoint}:${userId}`,
+  /** Unauthenticated device flush: limit by physical deviceId from request body. */
+  deviceFlushRateLimit: (deviceId: string) => `ratelimit:device:flush:${deviceId}`,
   /** Privacy: full settings with descriptions (GET /settings). */
   userPrivacySettings: (userId: string) => `user:${userId}:privacy:settings`,
   /** Privacy: minimal booleans for other services. */
@@ -324,6 +326,8 @@ export const USER_DEVICES_CACHE_TTL = 60
 
 /** Messaging: recent messages sorted set TTL (2h). */
 export const MSG_HOT_TTL = 60 * 60 * 2
+/** Messaging: max messages retained in `conv:{id}:messages` sorted set. */
+export const MSG_HOT_CACHE_SIZE = env.MSG_HOT_CACHE_SIZE
 /** Messaging: conversation list per user TTL (5m). */
 export const CONV_LIST_TTL = 60 * 5
 /** Messaging: online status TTL (30s; DM list cache / legacy). */

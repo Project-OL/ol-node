@@ -59,6 +59,12 @@ vi.mock('../../src/config/redis', () => ({
     zadd: vi.fn(),
     expire: vi.fn(),
     zremrangebyrank: vi.fn(),
+    pipeline: vi.fn(() => ({
+      zadd: vi.fn().mockReturnThis(),
+      expire: vi.fn().mockReturnThis(),
+      zremrangebyrank: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockResolvedValue([]),
+    })),
     incr: vi.fn(),
     get: vi.fn(),
     mget: vi.fn(),
@@ -70,6 +76,7 @@ vi.mock('../../src/config/redis', () => ({
     convMember: (cid: string, uid: string) => `conv:member:${cid}:${uid}`,
   },
   MSG_HOT_TTL: 7200,
+  MSG_HOT_CACHE_SIZE: 40,
   CONV_LIST_TTL: 300,
   CONV_MEMBER_CACHE_TTL_SEC: 60,
   TYPING_THROTTLE_TTL_SEC: 2,
@@ -161,7 +168,7 @@ describe('messaging negative scenarios', () => {
     const convId = 'conv-1'
     const userId = 'user-1'
 
-    it('uses Redis cache when history is not cleared', async () => {
+    it('uses Redis cache when history is not cleared and cache has a full page', async () => {
       mocks.findConversationById.mockResolvedValue({
         id: convId,
         members: [{ userId, deletedAt: null }],
@@ -173,15 +180,48 @@ describe('messaging negative scenarios', () => {
         createdAt: new Date().toISOString(),
         seq: '1',
       }
-      mocks.zrevrange.mockResolvedValue([JSON.stringify(cachedMsg), '1'])
+      const fullPage = Array.from({ length: 30 }, (_, i) => {
+        const idx = 29 - i
+        return [JSON.stringify({ ...cachedMsg, id: `msg-${idx}` }), String(idx + 1)]
+      }).flat()
+      mocks.zrevrange.mockResolvedValue(fullPage)
       mocks.updateReadCursor.mockResolvedValue(true)
 
       const result = await messagingService.listMessages(userId, convId)
 
-      expect(result.messages).toHaveLength(1)
+      expect(result.messages).toHaveLength(30)
       expect(mocks.listMessagesDb).not.toHaveBeenCalled()
-      expect(mocks.updateReadCursor).toHaveBeenCalledWith(convId, userId, 'msg-1')
+      expect(mocks.updateReadCursor).toHaveBeenCalledWith(convId, userId, 'msg-29')
       expect(mocks.markAsRead).not.toHaveBeenCalled()
+    })
+
+    it('falls through to DB and warms cache when Redis has only a partial page', async () => {
+      mocks.findConversationById.mockResolvedValue({
+        id: convId,
+        members: [{ userId, deletedAt: null }],
+      })
+      const cachedMsg = {
+        id: 'msg-new',
+        conversationId: convId,
+        content: 'just sent',
+        createdAt: new Date().toISOString(),
+        seq: '99',
+      }
+      mocks.zrevrange.mockResolvedValue([JSON.stringify(cachedMsg), '99'])
+      const dbMessages = Array.from({ length: 30 }, (_, i) => ({
+        id: `msg-${i}`,
+        conversationId: convId,
+        content: `m${i}`,
+        createdAt: new Date(),
+        seq: BigInt(i + 1),
+      }))
+      mocks.listMessagesDb.mockResolvedValue({ messages: dbMessages, nextCursor: null })
+      mocks.updateReadCursor.mockResolvedValue(true)
+
+      const result = await messagingService.listMessages(userId, convId)
+
+      expect(result.messages).toHaveLength(30)
+      expect(mocks.listMessagesDb).toHaveBeenCalledWith(convId, userId, undefined, 40)
     })
 
     it('skips Redis cache when member has deletedAt (cleared history)', async () => {
@@ -208,7 +248,7 @@ describe('messaging negative scenarios', () => {
 
       await messagingService.listMessages(userId, convId)
 
-      expect(mocks.listMessagesDb).toHaveBeenCalledWith(convId, userId, undefined, 30)
+      expect(mocks.listMessagesDb).toHaveBeenCalledWith(convId, userId, undefined, 40)
     })
 
     it('rejects non-members', async () => {

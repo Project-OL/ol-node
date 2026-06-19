@@ -13,7 +13,8 @@ export const revokeDeviceParamsSchema = z.object({
 
 export const flushDeviceSessionsSchema = z.object({
   deviceId: z.string().min(1).max(255),
-  deviceName: z.string().min(1).max(255),
+  /** Required when JWT is present; optional for factory-reset flush without auth. */
+  deviceName: z.string().min(1).max(255).optional(),
 })
 
 export type FlushDeviceSessionsBody = z.infer<typeof flushDeviceSessionsSchema>

@@ -50,3 +50,45 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
     /* non-fatal */
   })
 }
+
+/**
+ * Best-effort JWT verify: sets user/device context when the token is valid; otherwise continues
+ * without auth (e.g. device factory reset with no stored access token).
+ */
+export async function authenticateOptional(request: FastifyRequest, _reply: FastifyReply) {
+  try {
+    await request.jwtVerify()
+  } catch {
+    return
+  }
+
+  const payload = request.user as JwtAccessPayload
+  const resolvedUserId = payload.userId ?? payload.sub
+  if (!resolvedUserId) {
+    return
+  }
+
+  try {
+    const tvInToken = payload.tokenVersion ?? 0
+    const userTv = await resolveUserTokenVersion(resolvedUserId)
+    if (tvInToken !== userTv) {
+      return
+    }
+
+    if (payload.sessionId != null) {
+      const stv = payload.sessionTokenVersion ?? 0
+      await sessionService.validateAccessSession(payload.sessionId, stv, resolvedUserId)
+    }
+
+    request.userId = resolvedUserId
+    request.jti = payload.jti
+    request.deviceId = payload.deviceId
+    request.sessionId = payload.sessionId
+
+    await lastActiveTracker(request, _reply).catch(() => {
+      /* non-fatal */
+    })
+  } catch {
+    /* invalid or revoked session — treat as unauthenticated for optional routes */
+  }
+}

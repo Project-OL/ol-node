@@ -341,6 +341,48 @@ export function createDeviceRateLimit(config: { endpoint: string; max: number; w
   }
 }
 
+/**
+ * Flush-sessions: per-user limit when JWT present; per-deviceId (or IP fallback) when unauthenticated.
+ */
+export async function deviceFlushSessionsRateLimit(
+  request: FastifyRequest & { userId?: string },
+  _reply: FastifyReply,
+): Promise<void> {
+  const max = 10
+  const windowMs = 60000
+  const windowSec = Math.ceil(windowMs / 1000)
+  const endpoint = 'device.flush-sessions'
+
+  let key: string
+  const userId = request.userId
+  if (userId) {
+    key = RedisKeys.deviceRateLimit(endpoint, userId)
+  } else {
+    const body = request.body as { deviceId?: string } | undefined
+    const deviceId = body?.deviceId?.trim()
+    if (deviceId) {
+      key = RedisKeys.deviceFlushRateLimit(deviceId)
+    } else {
+      const ip =
+        (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+        request.ip ||
+        '0.0.0.0'
+      key = RedisKeys.authRateLimit(endpoint, ip)
+    }
+  }
+
+  const count = await redisClient.incr(key)
+  if (count === 1) await redisClient.expire(key, windowSec)
+  if (count > max) {
+    throw new AppError(
+      429,
+      `Too many attempts. Try again in ${windowSec} seconds.`,
+      'RATE_LIMITED',
+      { retryAfter: windowSec },
+    )
+  }
+}
+
 export const deviceRateLimits = {
   list: createDeviceRateLimit({
     endpoint: 'device.list',
@@ -357,11 +399,7 @@ export const deviceRateLimits = {
     max: 5,
     windowMs: 60000,
   }),
-  flushSessions: createDeviceRateLimit({
-    endpoint: 'device.flush-sessions',
-    max: 10,
-    windowMs: 60000,
-  }),
+  flushSessions: deviceFlushSessionsRateLimit,
   rename: createDeviceRateLimit({
     endpoint: 'device.rename',
     max: 20,

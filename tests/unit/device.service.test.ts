@@ -11,30 +11,37 @@ vi.mock('../../src/config/redis', () => ({
     userDevices: (userId: string) => `user:${userId}:devices`,
     userSessions: (userId: string) => `user:${userId}:sessions`,
     session: (id: string) => `session:${id}`,
+    deviceLinkedAccounts: (deviceId: string) => `device:${deviceId}:linked`,
   },
 }))
 
 const deviceFindById = vi.fn()
 const deviceFindByUserId = vi.fn()
 const deviceUpdate = vi.fn()
+const deviceDeleteAllLinkedAccounts = vi.fn()
 vi.mock('../../src/repositories/device.repository', () => ({
   deviceRepository: {
     findById: (...args: unknown[]) => deviceFindById(...args),
     findByUserId: (...args: unknown[]) => deviceFindByUserId(...args),
     update: (...args: unknown[]) => deviceUpdate(...args),
+    deleteAllLinkedAccounts: (...args: unknown[]) => deviceDeleteAllLinkedAccounts(...args),
   },
 }))
 
 const sessionFindActiveByUserId = vi.fn()
 const sessionFindActiveByUserIdAndDeviceId = vi.fn()
+const sessionFindActiveByDeviceId = vi.fn()
 const sessionRevokeById = vi.fn()
+const sessionRevokeAllByDeviceId = vi.fn()
 const sessionCountActiveByUserId = vi.fn()
 vi.mock('../../src/repositories/session.repository', () => ({
   sessionRepository: {
     findActiveByUserId: (...args: unknown[]) => sessionFindActiveByUserId(...args),
     findActiveByUserIdAndDeviceId: (...args: unknown[]) =>
       sessionFindActiveByUserIdAndDeviceId(...args),
+    findActiveByDeviceId: (...args: unknown[]) => sessionFindActiveByDeviceId(...args),
     revokeById: (...args: unknown[]) => sessionRevokeById(...args),
+    revokeAllByDeviceId: (...args: unknown[]) => sessionRevokeAllByDeviceId(...args),
     countActiveByUserId: (...args: unknown[]) => sessionCountActiveByUserId(...args),
   },
 }))
@@ -49,12 +56,14 @@ vi.mock('../../src/repositories/security-password.repository', () => ({
 const cacheGetUserDevices = vi.fn()
 const cacheSetUserDevices = vi.fn()
 const cacheInvalidateUserDevicesAndSessions = vi.fn()
+const cacheDelete = vi.fn()
 vi.mock('../../src/services/cache.service', () => ({
   cacheService: {
     getUserDevices: (...args: unknown[]) => cacheGetUserDevices(...args),
     setUserDevices: (...args: unknown[]) => cacheSetUserDevices(...args),
     invalidateUserDevicesAndSessions: (...args: unknown[]) =>
       cacheInvalidateUserDevicesAndSessions(...args),
+    delete: (...args: unknown[]) => cacheDelete(...args),
   },
 }))
 
@@ -104,6 +113,7 @@ function makeDevice(overrides: Partial<{
 function makeSession(
   overrides: Partial<{
     id: string
+    userId: string
     deviceId: string
     deviceName: string
     lastActiveAt: Date
@@ -113,6 +123,7 @@ function makeSession(
   const future = new Date(Date.now() + 86400000)
   return {
     id: 'sess-1',
+    userId,
     deviceId: currentDeviceId,
     deviceName: 'iPhone',
     lastActiveAt: new Date(),
@@ -339,6 +350,52 @@ describe('DeviceService', () => {
         code: 'NO_OTHER_DEVICES',
         statusCode: 400,
       })
+    })
+  })
+
+  describe('flushDeviceSessions', () => {
+    it('flushes by deviceId without auth (factory reset)', async () => {
+      sessionFindActiveByDeviceId.mockResolvedValue([
+        makeSession({ id: 's1', userId: 'user-a' }),
+        makeSession({ id: 's2', userId: 'user-b', deviceName: 'Android' }),
+      ])
+      sessionRevokeAllByDeviceId.mockResolvedValue(['s1', 's2'])
+      deviceDeleteAllLinkedAccounts.mockResolvedValue(2)
+
+      const result = await deviceService.flushDeviceSessions(currentDeviceId, undefined)
+
+      expect(result.success).toBe(true)
+      expect(result.revokedSessionCount).toBe(2)
+      expect(result.unlinkedAccountCount).toBe(2)
+      expect(result.affectedUserIds).toEqual(expect.arrayContaining(['user-a', 'user-b']))
+      expect(sessionRevokeAllByDeviceId).toHaveBeenCalledWith(currentDeviceId)
+      expect(cacheInvalidateUserDevicesAndSessions).toHaveBeenCalledTimes(2)
+      expect(auditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: null,
+          actionDetails: expect.objectContaining({ unauthenticated: true }),
+        }),
+      )
+    })
+
+    it('requires deviceName when authenticated with active sessions', async () => {
+      sessionFindActiveByDeviceId.mockResolvedValue([makeSession()])
+
+      await expect(
+        deviceService.flushDeviceSessions(currentDeviceId, undefined, {
+          requestingUserId: userId,
+          jwtDeviceId: currentDeviceId,
+        }),
+      ).rejects.toMatchObject({ code: 'DEVICE_NAME_REQUIRED', statusCode: 400 })
+    })
+
+    it('throws DEVICE_ID_MISMATCH when JWT deviceId differs', async () => {
+      await expect(
+        deviceService.flushDeviceSessions(currentDeviceId, 'iPhone', {
+          requestingUserId: userId,
+          jwtDeviceId: 'other-device',
+        }),
+      ).rejects.toMatchObject({ code: 'DEVICE_ID_MISMATCH', statusCode: 403 })
     })
   })
 

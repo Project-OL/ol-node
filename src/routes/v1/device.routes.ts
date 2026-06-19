@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { authenticate } from '../../middlewares/auth.middleware'
+import { authenticate, authenticateOptional } from '../../middlewares/auth.middleware'
 import { deviceRateLimits } from '../../middlewares/rateLimitAuth'
 import {
   getDevicesSchema,
@@ -124,14 +124,14 @@ export default async function deviceRoutes(app: FastifyInstance) {
   app.post(
     '/flush-sessions',
     {
-      preHandler: [...preAuth, deviceRateLimits.flushSessions],
+      preHandler: [authenticateOptional, deviceRateLimits.flushSessions],
       schema: {
         tags: ['Devices'],
         description:
-          'Revoke all active sessions and linked accounts on the current physical device (deviceId must match JWT)',
+          'Revoke all active sessions and linked accounts on a physical device. JWT optional (factory reset); when present, deviceId must match JWT and deviceName must match caller session.',
         body: {
           type: 'object',
-          required: ['deviceId', 'deviceName'],
+          required: ['deviceId'],
           properties: {
             deviceId: { type: 'string', minLength: 1, maxLength: 255 },
             deviceName: { type: 'string', minLength: 1, maxLength: 255 },
@@ -140,7 +140,6 @@ export default async function deviceRoutes(app: FastifyInstance) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const userId = request.userId!
       const body = flushDeviceSessionsSchema.safeParse(request.body)
       if (!body.success) {
         throw new AppError(
@@ -150,11 +149,15 @@ export default async function deviceRoutes(app: FastifyInstance) {
         )
       }
 
+      const authContext =
+        request.userId && request.deviceId
+          ? { requestingUserId: request.userId, jwtDeviceId: request.deviceId }
+          : undefined
+
       const result = await deviceService.flushDeviceSessions(
-        userId,
-        request.deviceId,
         body.data.deviceId,
         body.data.deviceName,
+        authContext,
       )
       return reply.status(200).send({
         data: {
