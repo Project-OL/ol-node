@@ -13,9 +13,37 @@ import { auditService } from './audit.service'
 import { AppError } from '../middlewares/errorHandler'
 
 const OTP_ELIGIBLE_PROVIDERS = new Set(['email', 'phone'])
-const LOCKOUT_MS = env.SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES * 60 * 1000
+const COOLDOWN_MS = env.SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES * 60 * 1000
 const RESET_TOKEN_TTL = env.SECURITY_PASSWORD_RESET_TOKEN_EXPIRY_SECONDS
 const IDENTIFIERS_CACHE_TTL = 3600
+
+type SecurityPasswordRow = NonNullable<
+  Awaited<ReturnType<typeof securityPasswordRepository.findByUserId>>
+>
+
+/** Cooldown starts after N wrong PINs; expires COOLDOWN_MS after the last wrong attempt. */
+function resolvePinLockout(sec: SecurityPasswordRow): {
+  locked: boolean
+  cooldownExpired: boolean
+  retryAfterSec: number
+} {
+  const limit = env.SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT
+  if (sec.failedAttempts < limit || !sec.lastFailedAttemptAt) {
+    return { locked: false, cooldownExpired: false, retryAfterSec: 0 }
+  }
+
+  const cooldownEndsAt = sec.lastFailedAttemptAt.getTime() + COOLDOWN_MS
+  const remainingMs = cooldownEndsAt - Date.now()
+  if (remainingMs <= 0) {
+    return { locked: false, cooldownExpired: true, retryAfterSec: 0 }
+  }
+
+  return {
+    locked: true,
+    cooldownExpired: false,
+    retryAfterSec: Math.ceil(remainingMs / 1000),
+  }
+}
 
 export interface SecurityIdentifierView {
   id: string
@@ -169,26 +197,36 @@ export const securityPasswordService = {
   },
 
   async verifyCurrentPassword(userId: string, currentPassword: string): Promise<void> {
-    const sec = await securityPasswordRepository.findByUserId(userId)
+    let sec = await securityPasswordRepository.findByUserId(userId)
     if (!sec) {
       throw new AppError(400, 'Security password not set yet', 'SECURITY_PASSWORD_NOT_SET')
     }
-    if (sec.lockedUntil && sec.lockedUntil > new Date()) {
-      const retryAfter = Math.ceil((sec.lockedUntil.getTime() - Date.now()) / 1000)
+
+    const lockout = resolvePinLockout(sec)
+    if (lockout.cooldownExpired) {
+      await securityPasswordRepository.resetFailedAttempts(userId)
+      sec = { ...sec, failedAttempts: 0, lockedUntil: null, lastFailedAttemptAt: null }
+    } else if (lockout.locked) {
       throw new AppError(429, 'Too many failed attempts. Try again later.', 'PASSWORD_LOCKED', {
-        retryAfter,
+        retryAfter: lockout.retryAfterSec,
       })
     }
 
     const match = await passwordService.compare(currentPassword, sec.passwordHash)
     if (!match) {
       const failedAttempts = sec.failedAttempts + 1
-      const update: { failedAttempts: number; lastFailedAttemptAt: Date; lockedUntil?: Date } = {
+      const lastFailedAttemptAt = new Date()
+      const update: {
+        failedAttempts: number
+        lastFailedAttemptAt: Date
+        lockedUntil: Date | null
+      } = {
         failedAttempts,
-        lastFailedAttemptAt: new Date(),
-      }
-      if (failedAttempts >= env.SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT) {
-        update.lockedUntil = new Date(Date.now() + LOCKOUT_MS)
+        lastFailedAttemptAt,
+        lockedUntil:
+          failedAttempts >= env.SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT
+            ? new Date(lastFailedAttemptAt.getTime() + COOLDOWN_MS)
+            : null,
       }
       await securityPasswordRepository.update(userId, update)
 

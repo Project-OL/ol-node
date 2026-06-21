@@ -49,7 +49,7 @@ export const securityPasswordRepository = {
   async resetFailedAttempts(userId: string): Promise<void> {
     await prisma.securityPassword.update({
       where: { userId },
-      data: { failedAttempts: 0, lockedUntil: null },
+      data: { failedAttempts: 0, lockedUntil: null, lastFailedAttemptAt: null },
     })
   },
 

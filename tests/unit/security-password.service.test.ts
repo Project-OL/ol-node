@@ -19,8 +19,8 @@ vi.mock('../../src/config/redis', () => ({
 
 vi.mock('../../src/config/env', () => ({
   env: {
-    SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT: 3,
-    SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES: 60,
+    SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT: 8,
+    SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES: 10,
     SECURITY_PASSWORD_RESET_TOKEN_EXPIRY_SECONDS: 600,
   },
 }))
@@ -272,17 +272,33 @@ describe('securityPasswordService', () => {
       ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_NOT_SET', statusCode: 400 })
     })
 
-    it('throws PASSWORD_LOCKED when lockedUntil in future', async () => {
+    it('throws PASSWORD_LOCKED when cooldown active after limit reached', async () => {
       secFindByUserId.mockResolvedValue({
         userId,
         passwordHash: 'hash',
-        failedAttempts: 3,
-        lockedUntil: new Date(Date.now() + 3600000),
+        failedAttempts: 8,
+        lastFailedAttemptAt: new Date(Date.now() - 60_000),
+        lockedUntil: new Date(Date.now() + 540_000),
       })
 
       await expect(
         securityPasswordService.verifyCurrentPassword(userId, '123456'),
       ).rejects.toMatchObject({ code: 'PASSWORD_LOCKED', statusCode: 429 })
+    })
+
+    it('clears cooldown after 10 minutes from last wrong attempt and accepts correct PIN', async () => {
+      secFindByUserId.mockResolvedValue({
+        userId,
+        passwordHash: 'hash',
+        failedAttempts: 8,
+        lastFailedAttemptAt: new Date(Date.now() - 11 * 60_000),
+        lockedUntil: new Date(Date.now() - 60_000),
+      })
+
+      await securityPasswordService.verifyCurrentPassword(userId, '123456')
+
+      expect(secResetFailedAttempts).toHaveBeenCalledWith(userId)
+      expect(passwordCompare).toHaveBeenCalledWith('123456', 'hash')
     })
 
     it('increments failed attempts and throws SECURITY_PASSWORD_INCORRECT when wrong', async () => {
@@ -304,12 +320,13 @@ describe('securityPasswordService', () => {
       )
     })
 
-    it('sets lockedUntil when failed attempts reach limit', async () => {
+    it('sets cooldown end from last failed attempt when limit reached', async () => {
       secFindByUserId.mockResolvedValue({
         userId,
         passwordHash: 'hash',
-        failedAttempts: 2,
+        failedAttempts: 7,
         lockedUntil: null,
+        lastFailedAttemptAt: null,
       })
       passwordCompare.mockResolvedValue(false)
 
@@ -320,7 +337,8 @@ describe('securityPasswordService', () => {
       expect(secUpdate).toHaveBeenCalledWith(
         userId,
         expect.objectContaining({
-          failedAttempts: 3,
+          failedAttempts: 8,
+          lastFailedAttemptAt: expect.any(Date),
           lockedUntil: expect.any(Date),
         }),
       )

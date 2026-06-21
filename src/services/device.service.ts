@@ -8,7 +8,7 @@ import { deviceRepository } from '../repositories/device.repository'
 import { sessionRepository } from '../repositories/session.repository'
 import { securityPasswordRepository } from '../repositories/security-password.repository'
 import { cacheService } from './cache.service'
-import { passwordService } from './password.service'
+import { securityPasswordService } from './security-password.service'
 import { auditService } from './audit.service'
 import { redisClient, RedisKeys } from '../config/redis'
 import type { LinkedAccountWithUser } from '../repositories/device.repository'
@@ -159,10 +159,7 @@ export const deviceService = {
       throw new AppError(400, 'Security password not set', 'SECURITY_PASSWORD_NOT_SET')
     }
 
-    const verified = await passwordService.compare(securityPassword, secPassword.passwordHash)
-    if (!verified) {
-      throw new AppError(401, 'Wrong security password', 'SECURITY_PASSWORD_INCORRECT')
-    }
+    await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
 
     const sessions = await sessionRepository.findActiveByUserId(userId)
     const otherSessions = sessions.filter((s) => s.deviceId !== currentDeviceId)

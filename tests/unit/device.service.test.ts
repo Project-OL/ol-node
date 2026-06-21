@@ -67,10 +67,10 @@ vi.mock('../../src/services/cache.service', () => ({
   },
 }))
 
-const passwordCompare = vi.fn()
-vi.mock('../../src/services/password.service', () => ({
-  passwordService: {
-    compare: (...args: unknown[]) => passwordCompare(...args),
+const verifyCurrentPassword = vi.fn().mockResolvedValue(undefined)
+vi.mock('../../src/services/security-password.service', () => ({
+  securityPasswordService: {
+    verifyCurrentPassword: (...args: unknown[]) => verifyCurrentPassword(...args),
   },
 }))
 
@@ -287,7 +287,7 @@ describe('DeviceService', () => {
   describe('logoutAllOtherDevices', () => {
     it('revokes all other sessions when password correct', async () => {
       secFindByUserId.mockResolvedValue({ passwordHash: 'hash' })
-      passwordCompare.mockResolvedValue(true)
+      verifyCurrentPassword.mockResolvedValue(undefined)
       sessionFindActiveByUserId.mockResolvedValue([
         makeSession({ deviceId: 'dev-1', id: 's1' }),
         makeSession({ deviceId: 'dev-2', deviceName: 'MacBook', id: 's2' }),
@@ -316,7 +316,12 @@ describe('DeviceService', () => {
 
     it('throws SECURITY_PASSWORD_INCORRECT when password wrong', async () => {
       secFindByUserId.mockResolvedValue({ passwordHash: 'hash' })
-      passwordCompare.mockResolvedValue(false)
+      verifyCurrentPassword.mockRejectedValue(
+        Object.assign(new Error('Incorrect security password'), {
+          code: 'SECURITY_PASSWORD_INCORRECT',
+          statusCode: 401,
+        }),
+      )
 
       await expect(
         deviceService.logoutAllOtherDevices(userId, 'Wrong', currentDeviceId),
@@ -339,7 +344,7 @@ describe('DeviceService', () => {
 
     it('throws NO_OTHER_DEVICES when only current device', async () => {
       secFindByUserId.mockResolvedValue({ passwordHash: 'hash' })
-      passwordCompare.mockResolvedValue(true)
+      verifyCurrentPassword.mockResolvedValue(undefined)
       sessionFindActiveByUserId.mockResolvedValue([
         makeSession({ deviceId: currentDeviceId }),
       ])
