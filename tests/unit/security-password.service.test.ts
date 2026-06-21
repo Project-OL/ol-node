@@ -19,7 +19,7 @@ vi.mock('../../src/config/redis', () => ({
 
 vi.mock('../../src/config/env', () => ({
   env: {
-    SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT: 8,
+    SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT: 6,
     SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES: 10,
     SECURITY_PASSWORD_RESET_TOKEN_EXPIRY_SECONDS: 600,
   },
@@ -276,21 +276,25 @@ describe('securityPasswordService', () => {
       secFindByUserId.mockResolvedValue({
         userId,
         passwordHash: 'hash',
-        failedAttempts: 8,
+        failedAttempts: 6,
         lastFailedAttemptAt: new Date(Date.now() - 60_000),
         lockedUntil: new Date(Date.now() + 540_000),
       })
 
       await expect(
         securityPasswordService.verifyCurrentPassword(userId, '123456'),
-      ).rejects.toMatchObject({ code: 'PASSWORD_LOCKED', statusCode: 429 })
+      ).rejects.toMatchObject({
+        code: 'PASSWORD_LOCKED',
+        statusCode: 429,
+        message: 'Too many failed attempts. Try again after 10 minutes.',
+      })
     })
 
     it('clears cooldown after 10 minutes from last wrong attempt and accepts correct PIN', async () => {
       secFindByUserId.mockResolvedValue({
         userId,
         passwordHash: 'hash',
-        failedAttempts: 8,
+        failedAttempts: 6,
         lastFailedAttemptAt: new Date(Date.now() - 11 * 60_000),
         lockedUntil: new Date(Date.now() - 60_000),
       })
@@ -324,7 +328,7 @@ describe('securityPasswordService', () => {
       secFindByUserId.mockResolvedValue({
         userId,
         passwordHash: 'hash',
-        failedAttempts: 7,
+        failedAttempts: 5,
         lockedUntil: null,
         lastFailedAttemptAt: null,
       })
@@ -337,7 +341,7 @@ describe('securityPasswordService', () => {
       expect(secUpdate).toHaveBeenCalledWith(
         userId,
         expect.objectContaining({
-          failedAttempts: 8,
+          failedAttempts: 6,
           lastFailedAttemptAt: expect.any(Date),
           lockedUntil: expect.any(Date),
         }),

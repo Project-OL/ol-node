@@ -207,9 +207,15 @@ export const securityPasswordService = {
       await securityPasswordRepository.resetFailedAttempts(userId)
       sec = { ...sec, failedAttempts: 0, lockedUntil: null, lastFailedAttemptAt: null }
     } else if (lockout.locked) {
-      throw new AppError(429, 'Too many failed attempts. Try again later.', 'PASSWORD_LOCKED', {
-        retryAfter: lockout.retryAfterSec,
-      })
+      throw new AppError(
+        429,
+        `Too many failed attempts. Try again after ${env.SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES} minutes.`,
+        'PASSWORD_LOCKED',
+        {
+          retryAfter: lockout.retryAfterSec,
+          lockoutMinutes: env.SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES,
+        },
+      )
     }
 
     const match = await passwordService.compare(currentPassword, sec.passwordHash)

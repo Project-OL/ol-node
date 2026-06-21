@@ -149,7 +149,7 @@ const envSchema = z
     AUTH_RATE_LIMIT_TIME_WINDOW: z.coerce.number().default(60000),
 
     SECURITY_PASSWORD_ENABLED: z.coerce.boolean().default(true),
-    SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT: z.coerce.number().default(8),
+    SECURITY_PASSWORD_FAILED_ATTEMPTS_LIMIT: z.coerce.number().default(6),
     SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES: z.coerce.number().default(10),
     SECURITY_PASSWORD_RESET_TOKEN_EXPIRY_SECONDS: z.coerce.number().default(600),
 

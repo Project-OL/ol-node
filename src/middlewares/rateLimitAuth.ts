@@ -102,7 +102,7 @@ export const rateLimitAgencyLeaveApply = buildRateLimit({
 })
 
 export const rateLimitAgencyPointTransfer = buildRateLimit({
-  max: 3,
+  max: 10,
   windowMs: 60_000,
   keyFn: (r) => r.userId ?? '',
   keyBuilder: RedisKeys.ratelimitAgencyPointTransfer,
@@ -269,46 +269,40 @@ export const authRateLimits = {
 }
 
 /** Per-user rate limiters for security password (use after authenticate). */
+const SECURITY_PIN_RATE_LIMIT = { max: 10, windowMs: 60_000 } as const
+
 export const securityPasswordRateLimits = {
   getIdentifiers: createSecurityRateLimit({
     endpoint: 'security.identifiers',
-    max: 60,
-    windowMs: 60000,
+    ...SECURITY_PIN_RATE_LIMIT,
   }),
   pinStatus: createSecurityRateLimit({
     endpoint: 'security.password.status',
-    max: 60,
-    windowMs: 60000,
+    ...SECURITY_PIN_RATE_LIMIT,
   }),
   sendOtp: createSecurityRateLimit({
     endpoint: 'security.password.send_otp',
-    max: 5,
-    windowMs: 60000,
+    ...SECURITY_PIN_RATE_LIMIT,
   }),
   verifyOtp: createSecurityRateLimit({
     endpoint: 'security.password.verify_otp',
-    max: 10,
-    windowMs: 60000,
+    ...SECURITY_PIN_RATE_LIMIT,
   }),
   set: createSecurityRateLimit({
     endpoint: 'security.password.set',
-    max: 5,
-    windowMs: 60000,
+    ...SECURITY_PIN_RATE_LIMIT,
   }),
   change: createSecurityRateLimit({
     endpoint: 'security.password.change',
-    max: 10,
-    windowMs: 60000,
+    ...SECURITY_PIN_RATE_LIMIT,
   }),
   verify: createSecurityRateLimit({
     endpoint: 'security.password.verify',
-    max: 10,
-    windowMs: 60000,
+    ...SECURITY_PIN_RATE_LIMIT,
   }),
   reset: createSecurityRateLimit({
     endpoint: 'security.password.reset',
-    max: 5,
-    windowMs: 60000,
+    ...SECURITY_PIN_RATE_LIMIT,
   }),
 }
 
@@ -396,7 +390,7 @@ export const deviceRateLimits = {
   }),
   logoutAll: createDeviceRateLimit({
     endpoint: 'device.logout-all',
-    max: 5,
+    max: 10,
     windowMs: 60000,
   }),
   flushSessions: deviceFlushSessionsRateLimit,
@@ -576,7 +570,7 @@ export const rateLimitPayrollReject = buildRateLimit({
 })
 
 export const rateLimitPmBind = buildRateLimit({
-  max: 5,
+  max: 10,
   windowMs: 60_000,
   keyFn: (r) => r.userId ?? '',
   keyBuilder: RedisKeys.ratelimitPmBind,
