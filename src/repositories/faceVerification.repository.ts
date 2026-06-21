@@ -1,4 +1,4 @@
-import type { FaceVerificationDecision, Prisma } from '@prisma/client'
+import type { FaceProfileStatus, FaceVerificationDecision, Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 
 function getDb(tx?: Prisma.TransactionClient) {
@@ -83,6 +83,123 @@ export const faceVerificationRepository = {
     return prismaRead.userFaceProfile.findFirst({
       where: { rekognitionFaceId: faceId, status: 'INDEXED' },
       select: { userId: true },
+    })
+  },
+
+  findProfileByRekognitionFaceIdAnyStatus(faceId: string) {
+    return prismaRead.userFaceProfile.findFirst({
+      where: { rekognitionFaceId: faceId },
+    })
+  },
+
+  findProfilesByRekognitionFaceIds(faceIds: string[]) {
+    if (faceIds.length === 0) return Promise.resolve([])
+    return prismaRead.userFaceProfile.findMany({
+      where: { rekognitionFaceId: { in: faceIds } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            currentVipPublicId: true,
+          },
+        },
+      },
+    })
+  },
+
+  findProfilesByUserIds(userIds: string[]) {
+    if (userIds.length === 0) return Promise.resolve([])
+    return prismaRead.userFaceProfile.findMany({
+      where: { userId: { in: userIds } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            currentVipPublicId: true,
+          },
+        },
+        matchedUser: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    })
+  },
+
+  findRelatedProfiles(ownerUserId: string) {
+    return prismaRead.userFaceProfile.findMany({
+      where: {
+        status: { not: 'REVOKED' },
+        OR: [{ matchedUserId: ownerUserId }, { duplicateOfUserId: ownerUserId }],
+        userId: { not: ownerUserId },
+      },
+      select: { userId: true, status: true },
+    })
+  },
+
+  async listProfilesForAdmin(input: {
+    page: number
+    limit: number
+    status?: FaceProfileStatus
+    includeRevoked?: boolean
+  }) {
+    const where: Prisma.UserFaceProfileWhereInput = {}
+    if (input.status) {
+      where.status = input.status
+    } else if (!input.includeRevoked) {
+      where.status = { not: 'REVOKED' }
+    }
+
+    const skip = (input.page - 1) * input.limit
+    const [items, total] = await Promise.all([
+      prismaRead.userFaceProfile.findMany({
+        where,
+        skip,
+        take: input.limit,
+        orderBy: { updatedAt: 'desc' },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              firstName: true,
+              lastName: true,
+              publicId: true,
+              currentVipPublicId: true,
+            },
+          },
+          matchedUser: {
+            select: {
+              id: true,
+              username: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      }),
+      prismaRead.userFaceProfile.count({ where }),
+    ])
+
+    return { items, total, page: input.page, limit: input.limit }
+  },
+
+  countProfilesByStatus() {
+    return prismaRead.userFaceProfile.groupBy({
+      by: ['status'],
+      _count: { _all: true },
     })
   },
 

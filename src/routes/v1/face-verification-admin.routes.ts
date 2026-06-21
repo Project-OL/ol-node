@@ -1,14 +1,15 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { z } from 'zod'
 import { AppError } from '../../middlewares/errorHandler'
 import { requireAdmin } from '../../middlewares/requireAdmin'
+import {
+  adminListCollectionFacesQuerySchema,
+  adminListFaceProfilesQuerySchema,
+  adminRevokeFaceBodySchema,
+} from '../../models/face-verification.schemas'
 import { faceVerificationAdminService } from '../../services/face-verification-admin.service'
+import { z } from 'zod'
 
 const preAuth = [requireAdmin]
-
-const revokeBodySchema = z.object({
-  reason: z.string().max(500).optional(),
-})
 
 const resolveDuplicateBodySchema = z.object({
   reason: z.string().max(500).optional(),
@@ -17,6 +18,88 @@ const resolveDuplicateBodySchema = z.object({
 })
 
 export default async function faceVerificationAdminRoutes(app: FastifyInstance) {
+  app.get(
+    '/face-verification/profiles',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Paginated list of `user_face_profiles` with user summary and duplicate linkage.',
+        querystring: {
+          type: 'object',
+          properties: {
+            page: { type: 'integer', minimum: 1 },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+            status: {
+              type: 'string',
+              enum: ['PENDING_INDEX', 'INDEXED', 'FAILED', 'REVOKED', 'DUPLICATE_FACE'],
+            },
+            includeRevoked: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = adminListFaceProfilesQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await faceVerificationAdminService.listDbProfiles(parsed.data)
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/face-verification/collection',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Paginated Rekognition collection faces with DB linkage (`linked`, `db_mismatch`, `orphaned_in_collection`).',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 4096 },
+            nextToken: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = adminListCollectionFacesQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await faceVerificationAdminService.listCollectionFaces(parsed.data)
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/face-verification/inventory/summary',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description: 'DB profile counts by status + Rekognition collection face count.',
+      },
+    },
+    async (_request: FastifyRequest, reply: FastifyReply) => {
+      const result = await faceVerificationAdminService.getInventorySummary()
+      return reply.send(result)
+    },
+  )
+
   app.delete<{ Params: { userId: string } }>(
     '/face-verification/:userId',
     {
@@ -24,7 +107,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       schema: {
         tags: ['Admin', 'Face verification'],
         description:
-          'Revoke face profile (INDEXED, DUPLICATE_FACE, FAILED, PENDING_INDEX): DeleteFaces when indexed, mark REVOKED, audit. User may register again.',
+          'Revoke face profile (INDEXED, DUPLICATE_FACE, FAILED, PENDING_INDEX): DeleteFaces when indexed, mark REVOKED, audit. By default also revokes related DUPLICATE_FACE profiles.',
         params: {
           type: 'object',
           required: ['userId'],
@@ -32,12 +115,15 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
         },
         body: {
           type: 'object',
-          properties: { reason: { type: 'string', maxLength: 500 } },
+          properties: {
+            reason: { type: 'string', maxLength: 500 },
+            revokeRelated: { type: 'boolean', default: true },
+          },
         },
       },
     },
     async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
-      const parsed = revokeBodySchema.safeParse(request.body ?? {})
+      const parsed = adminRevokeFaceBodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
         throw new AppError(
           400,
@@ -51,6 +137,50 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
         request.params.userId,
         adminId,
         parsed.data.reason,
+        { revokeRelated: parsed.data.revokeRelated },
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.delete<{ Params: { faceId: string } }>(
+    '/face-verification/collection/:faceId',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Revoke by Rekognition FaceId: delete from collection and revoke linked DB profile(s) + related duplicates.',
+        params: {
+          type: 'object',
+          required: ['faceId'],
+          properties: { faceId: { type: 'string', minLength: 1 } },
+        },
+        body: {
+          type: 'object',
+          properties: {
+            reason: { type: 'string', maxLength: 500 },
+            revokeRelated: { type: 'boolean', default: true },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { faceId: string } }>, reply: FastifyReply) => {
+      const parsed = adminRevokeFaceBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const adminId = request.userId
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.revokeByRekognitionFaceId(
+        request.params.faceId,
+        adminId,
+        parsed.data.reason,
+        { revokeRelated: parsed.data.revokeRelated },
       )
       return reply.send(result)
     },

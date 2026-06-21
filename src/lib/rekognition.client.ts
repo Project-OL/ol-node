@@ -3,10 +3,12 @@ import {
   CreateCollectionCommand,
   CreateFaceLivenessSessionCommand,
   DeleteFacesCommand,
+  DescribeCollectionCommand,
   DetectFacesCommand,
   DetectModerationLabelsCommand,
   GetFaceLivenessSessionResultsCommand,
   IndexFacesCommand,
+  ListFacesCommand,
   QualityFilter,
   RecognizeCelebritiesCommand,
   RekognitionClient,
@@ -242,6 +244,38 @@ export async function deleteFaceFromCollection(faceId: string) {
       { abortSignal },
     ),
   )
+}
+
+export async function describeFaceCollection() {
+  return withTimeout(env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
+    rekognitionClient.send(
+      new DescribeCollectionCommand({
+        CollectionId: env.REKOGNITION_COLLECTION_ID,
+      }),
+      { abortSignal },
+    ),
+  )
+}
+
+export async function listFacesInCollection(params: {
+  maxResults?: number
+  nextToken?: string
+}) {
+  return withTimeout(env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
+    rekognitionClient.send(
+      new ListFacesCommand({
+        CollectionId: env.REKOGNITION_COLLECTION_ID,
+        MaxResults: Math.min(4096, Math.max(1, params.maxResults ?? 100)),
+        NextToken: params.nextToken,
+      }),
+      { abortSignal },
+    ),
+  )
+}
+
+/** Reverse of `indexUserFace` external id sanitization (UUIDs are unchanged). */
+export function externalImageIdToUserId(externalImageId: string): string {
+  return externalImageId.trim()
 }
 
 export async function createFaceLivenessSession(params: {

@@ -124,7 +124,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
   app.post(
     '/flush-sessions',
     {
-      preHandler: [authenticateOptional, deviceRateLimits.flushSessions],
+      preHandler: [deviceRateLimits.flushSessions],
       schema: {
         tags: ['Devices'],
         description:
@@ -148,6 +148,9 @@ export default async function deviceRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
+
+      // Optional JWT: only when a non-empty Bearer token verifies cleanly (factory reset has none).
+      await authenticateOptional(request, reply)
 
       const authContext =
         request.userId && request.deviceId
