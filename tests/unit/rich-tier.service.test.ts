@@ -6,6 +6,7 @@ import { RECHARGE_TX_TYPES } from "../../src/services/rich-tier.service";
 const historyExists = vi.fn();
 const upsertUserRichTier = vi.fn();
 const upsertMonthlyAggregate = vi.fn();
+const getMonthlyAggregateInTx = vi.fn();
 const insertHistory = vi.fn();
 const getUserRichTier = vi.fn();
 const getMonthlyAggregate = vi.fn();
@@ -15,6 +16,7 @@ const listHistory = vi.fn();
 vi.mock("../../src/repositories/richTier.repository", () => ({
   richTierRepository: {
     upsertMonthlyAggregate: (...a: unknown[]) => upsertMonthlyAggregate(...a),
+    getMonthlyAggregateInTx: (...a: unknown[]) => getMonthlyAggregateInTx(...a),
     getMonthlyAggregate: (...a: unknown[]) => getMonthlyAggregate(...a),
     getUserRichTier: (...a: unknown[]) => getUserRichTier(...a),
     upsertUserRichTier: (...a: unknown[]) => upsertUserRichTier(...a),
@@ -54,16 +56,10 @@ vi.mock("../../src/config/redis", async () => {
 });
 
 const $transaction = vi.fn();
-const userRichTierUpsert = vi.fn();
-const userRichTierUpdate = vi.fn();
 
 vi.mock("../../src/config/database", () => ({
   prisma: {
     $transaction: (...a: unknown[]) => $transaction(...a),
-    userRichTier: {
-      upsert: (...a: unknown[]) => userRichTierUpsert(...a),
-      update: (...a: unknown[]) => userRichTierUpdate(...a),
-    },
   },
   prismaRead: {},
 }));
@@ -77,6 +73,7 @@ describe("richTierService", () => {
     getConfig.mockResolvedValue([
       { tier: 1, minRechargeCoins: 3_000_000n, displayName: "RICH I" },
       { tier: 2, minRechargeCoins: 5_000_000n, displayName: "RICH II" },
+      { tier: 3, minRechargeCoins: 10_000_000n, displayName: "RICH III" },
     ]);
     findMostRecent.mockResolvedValue(null);
   });
@@ -122,23 +119,82 @@ describe("richTierService", () => {
     expect(out.badgeVisible).toBe(true);
   });
 
-  it("applyRecharge only upserts monthly aggregate and never writes user_rich_tier", async () => {
-    const tx = {} as Prisma.TransactionClient;
+  it("applyRecharge writes live badge tier when recharge crosses threshold", async () => {
+    const userRichTierUpsert = vi.fn();
+    const tx = {
+      userRichTier: {
+        findUnique: vi.fn().mockResolvedValue({ currentTier: 0, carryoverCoins: 0n }),
+        upsert: userRichTierUpsert,
+      },
+    } as unknown as Prisma.TransactionClient;
+
     upsertMonthlyAggregate.mockResolvedValue(undefined);
-    await richTierService.applyRecharge("u1", 1000n, tx);
-    expect(upsertMonthlyAggregate).toHaveBeenCalledWith(
+    getMonthlyAggregateInTx.mockResolvedValue({
+      totalRechargeCoins: 3_000_000n,
+      rechargeCount: 1,
+      lastRechargeAt: new Date(),
+    });
+
+    await richTierService.applyRecharge("u1", 3_000_000n, tx);
+
+    expect(upsertMonthlyAggregate).toHaveBeenCalled();
+    expect(userRichTierUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: "u1",
-        deltaCoins: 1000n,
+        where: { userId: "u1" },
+        create: expect.objectContaining({ currentTier: 1, carryoverCoins: 0n }),
+        update: { currentTier: 1 },
       }),
-      tx,
     );
-    expect(upsertUserRichTier).not.toHaveBeenCalled();
-    expect(userRichTierUpsert).not.toHaveBeenCalled();
-    expect(userRichTierUpdate).not.toHaveBeenCalled();
   });
 
-  it("getCurrentTierForUser returns user_rich_tier.currentTier for badge, not live-computed tier", async () => {
+  it("applyRecharge skips user_rich_tier write when tier unchanged", async () => {
+    const userRichTierUpsert = vi.fn();
+    const tx = {
+      userRichTier: {
+        findUnique: vi.fn().mockResolvedValue({ currentTier: 2, carryoverCoins: 0n }),
+        upsert: userRichTierUpsert,
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    upsertMonthlyAggregate.mockResolvedValue(undefined);
+    getMonthlyAggregateInTx.mockResolvedValue({
+      totalRechargeCoins: 6_000_000n,
+      rechargeCount: 2,
+      lastRechargeAt: new Date(),
+    });
+
+    await richTierService.applyRecharge("u1", 1_000_000n, tx);
+
+    expect(userRichTierUpsert).not.toHaveBeenCalled();
+  });
+
+  it("applyRecharge can jump multiple tiers in one recharge", async () => {
+    const userRichTierUpsert = vi.fn();
+    const tx = {
+      userRichTier: {
+        findUnique: vi.fn().mockResolvedValue({ currentTier: 0, carryoverCoins: 0n }),
+        upsert: userRichTierUpsert,
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    upsertMonthlyAggregate.mockResolvedValue(undefined);
+    getMonthlyAggregateInTx.mockResolvedValue({
+      totalRechargeCoins: 11_000_000n,
+      rechargeCount: 1,
+      lastRechargeAt: new Date(),
+    });
+
+    await richTierService.applyRecharge("u1", 11_000_000n, tx);
+
+    expect(userRichTierUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ currentTier: 3 }),
+        update: { currentTier: 3 },
+      }),
+    );
+  });
+
+  it("getCurrentTierForUser returns persisted currentTier for badge", async () => {
     getUserRichTier.mockResolvedValue({
       userId: "u1",
       currentTier: 3,
@@ -189,11 +245,12 @@ describe("richTierService", () => {
     expect(upsertUserRichTier).toHaveBeenCalledTimes(1);
   });
 
-  it("processMonthlyRolloverForUser applies carryover + pure recharges (Rich VIII carryover + new → tier 6)", async () => {
+  it("processMonthlyRolloverForUser preserves live badge tier and applies carryover", async () => {
     const txMock = {
       userRichTier: {
         findUnique: vi.fn().mockResolvedValue({
           userId: "u1",
+          currentTier: 6,
           carryoverCoins: 15_000_000n,
         }),
       },
@@ -223,6 +280,13 @@ describe("richTierService", () => {
       }),
       txMock,
     );
+    expect(insertHistory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tier: 6,
+        carryoverApplied: 10_000_000n,
+      }),
+      txMock,
+    );
   });
 
   it("rollover with zero recharge yields tier 0 and carryover 0 when no carry-in", async () => {
@@ -246,11 +310,41 @@ describe("richTierService", () => {
     );
   });
 
-  it("tier-1 user with no recharge rolls to tier 0 with carryover 0", async () => {
+  it("rollover downgrades badge when closed-month progress is insufficient", async () => {
     const txMock = {
       userRichTier: {
         findUnique: vi.fn().mockResolvedValue({
           userId: "u1",
+          currentTier: 3,
+          carryoverCoins: 1_500_000n,
+        }),
+      },
+      monthlyRechargeAggregate: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+    };
+    historyExists.mockResolvedValue(false);
+    $transaction.mockImplementation(
+      async (fn: (tx: typeof txMock) => Promise<void>) => {
+        await fn(txMock);
+      },
+    );
+    await richTierService.processMonthlyRolloverForUser("u1", 2026, 4);
+    expect(upsertUserRichTier).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentTier: 0,
+        carryoverCoins: 0n,
+      }),
+      txMock,
+    );
+  });
+
+  it("rollover with tier-1 progress keeps tier 1 and zero carryover", async () => {
+    const txMock = {
+      userRichTier: {
+        findUnique: vi.fn().mockResolvedValue({
+          userId: "u1",
+          currentTier: 1,
           carryoverCoins: 0n,
         }),
       },

@@ -141,7 +141,7 @@ async function getMonthRechargeCoinsCached(
 }
 
 function buildSnapshotCore(params: {
-  /** Persisted badge tier from `user_rich_tier.currentTier` (rollover job only). */
+  /** Persisted badge tier from `user_rich_tier.currentTier` (live on recharge; rollover may correct down). */
   badgeTier: number
   displayMap: Map<number, string>
   evaluatedFromYear: number
@@ -184,6 +184,35 @@ export const richTierService = {
       { userId, year, month, deltaCoins: amountCoins },
       tx,
     )
+
+    const agg = await richTierRepository.getMonthlyAggregateInTx(userId, year, month, tx)
+    const monthTotal = agg?.totalRechargeCoins ?? amountCoins
+
+    const richTierRow = await tx.userRichTier.findUnique({
+      where: { userId },
+      select: { currentTier: true, carryoverCoins: true },
+    })
+    const carryover = richTierRow?.carryoverCoins ?? 0n
+    const previousTier = richTierRow?.currentTier ?? 0
+    const liveProgress = carryover + monthTotal
+    const liveTier = computeTier(liveProgress)
+
+    if (liveTier !== previousTier) {
+      await tx.userRichTier.upsert({
+        where: { userId },
+        create: {
+          userId,
+          currentTier: liveTier,
+          carryoverCoins: carryover,
+          evaluatedFromYear: year,
+          evaluatedFromMonth: month,
+        },
+        update: {
+          currentTier: liveTier,
+        },
+      })
+    }
+
     return { year, month }
   },
 
@@ -272,13 +301,15 @@ export const richTierService = {
         })
         const pure = aggRow?.totalRechargeCoins ?? 0n
         const progressTotal = carryIn + pure
-        const newTier = computeTier(progressTotal)
-        const newCarryover = applyRetentionRule(newTier)
+        const currentTier = prevRow?.currentTier ?? 0
+        const tierFromProgress = computeTier(progressTotal)
+        const effectiveTier = tierFromProgress
+        const newCarryover = applyRetentionRule(effectiveTier)
         const rolledAt = new Date()
         await richTierRepository.upsertUserRichTier(
           {
             userId,
-            currentTier: newTier,
+            currentTier: effectiveTier,
             evaluatedFromYear: prevYear,
             evaluatedFromMonth: prevMonth,
             evaluatedRechargeCoins: progressTotal,
@@ -292,7 +323,7 @@ export const richTierService = {
             userId,
             year: prevYear,
             month: prevMonth,
-            tier: newTier,
+            tier: effectiveTier,
             totalProgressCoins: progressTotal,
             carryoverApplied: newCarryover,
             pureRechargeCoins: pure,

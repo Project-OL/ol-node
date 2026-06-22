@@ -61,7 +61,20 @@ export const richTierRepository = {
     rechargeCount: number
     lastRechargeAt: Date
   } | null> {
-    const rows = await prismaRead.$queryRaw<
+    return richTierRepository.getMonthlyAggregateInTx(userId, year, month, prismaRead)
+  },
+
+  async getMonthlyAggregateInTx(
+    userId: string,
+    year: number,
+    month: number,
+    db: Prisma.TransactionClient | typeof prismaRead,
+  ): Promise<{
+    totalRechargeCoins: bigint
+    rechargeCount: number
+    lastRechargeAt: Date
+  } | null> {
+    const rows = await db.$queryRaw<
       {
         total_recharge_coins: bigint
         recharge_count: number
