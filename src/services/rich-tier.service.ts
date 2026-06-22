@@ -301,9 +301,7 @@ export const richTierService = {
         })
         const pure = aggRow?.totalRechargeCoins ?? 0n
         const progressTotal = carryIn + pure
-        const currentTier = prevRow?.currentTier ?? 0
-        const tierFromProgress = computeTier(progressTotal)
-        const effectiveTier = tierFromProgress
+        const effectiveTier = computeTier(progressTotal)
         const newCarryover = applyRetentionRule(effectiveTier)
         const rolledAt = new Date()
         await richTierRepository.upsertUserRichTier(
