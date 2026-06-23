@@ -41,6 +41,7 @@ import giftGalleryRoutes from './routes/v1/gift-gallery.routes'
 import fanRankingRoutes from './routes/v1/fan-ranking.routes'
 import subscriptionRoutes from './routes/v1/subscription.routes'
 import guardianRoutes from './routes/v1/guardian.routes'
+import { registerAdminAuthRoutes } from './routes/v1/admin-auth.routes'
 import superHostRoutes from './routes/v1/super-host.routes'
 import { supportRoutes } from './routes/v1/support.routes'
 import storeRoutes from './routes/v1/store.routes'
@@ -52,6 +53,9 @@ import agencyAdminRoutes from './routes/v1/agency-admin.routes'
 import questionnaireRoutes from './routes/v1/questionnaire.routes'
 import questionnaireAdminRoutes from './routes/v1/questionnaire-admin.routes'
 import userAdminRoutes from './routes/v1/user-admin.routes'
+import adminUserWalletRoutes from './routes/v1/admin-user-wallet.routes'
+import adminUserModerationRoutes from './routes/v1/admin-user-moderation.routes'
+import postAdminRoutes from './routes/v1/post-admin.routes'
 import faceVerificationAdminRoutes from './routes/v1/face-verification-admin.routes'
 import faceVerificationRoutes from './routes/v1/face-verification.routes'
 import faceRegistrationRoutes from './routes/v1/face-registration.routes'
@@ -174,8 +178,21 @@ export async function buildApp() {
   await app.register(fanRankingRoutes, { prefix: `${prefix}/fan-ranking` })
   await app.register(subscriptionRoutes, { prefix: `${prefix}/subscriptions` })
   await app.register(guardianRoutes, { prefix: `${prefix}/guardian` })
-  await app.register(superHostRoutes, { prefix: `${prefix}/admin` })
-  await app.register(storeAdminRoutes, { prefix: `${prefix}/admin` })
+  await app.register(
+    async (adminApp) => {
+      await registerAdminAuthRoutes(adminApp)
+      await adminApp.register(superHostRoutes)
+      await adminApp.register(storeAdminRoutes)
+      await adminApp.register(adminUserWalletRoutes)
+      await adminApp.register(adminUserModerationRoutes)
+      await adminApp.register(userAdminRoutes)
+      await adminApp.register(postAdminRoutes)
+      await adminApp.register(faceVerificationAdminRoutes)
+      await adminApp.register(agencyAdminRoutes, { prefix: '/agency' })
+      await adminApp.register(questionnaireAdminRoutes, { prefix: '/questionnaires' })
+    },
+    { prefix: `${prefix}/admin` },
+  )
   await app.register(supportRoutes, { prefix: `${prefix}/support` })
   await app.register(storeRoutes, { prefix: `${prefix}/store` })
   await app.register(richTierRoutes, { prefix: `${prefix}/rich-tier` })
@@ -191,10 +208,6 @@ export async function buildApp() {
   await app.register(faceVerificationRoutes, { prefix: `${prefix}/face-verification` })
   await app.register(faceRegistrationRoutes, { prefix: `${prefix}/face-registration` })
   await app.register(livePhotoRoutes, { prefix: `${prefix}/live-photo` })
-  await app.register(agencyAdminRoutes, { prefix: `${prefix}/admin/agency` })
-  await app.register(questionnaireAdminRoutes, { prefix: `${prefix}/admin/questionnaires` })
-  await app.register(userAdminRoutes, { prefix: `${prefix}/admin` })
-  await app.register(faceVerificationAdminRoutes, { prefix: `${prefix}/admin` })
 
   registerRealtimeGateway(app)
 

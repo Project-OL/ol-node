@@ -269,7 +269,16 @@ function mapToMessageWithDetails(
     isAutoReply: boolean
     createdAt: Date
     updatedAt: Date
-    sender: { id: string; username: string; firstName: string | null; lastName: string | null; publicId: bigint; defaultPublicId: bigint; currentVipPublicId: bigint | null; avatarUrl: string | null }
+    sender: {
+      id: string
+      username: string
+      firstName: string | null
+      lastName: string | null
+      publicId: bigint
+      defaultPublicId: bigint
+      currentVipPublicId: bigint | null
+      avatarUrl: string | null
+    }
     mediaItems: Array<{
       id: string
       messageId: string

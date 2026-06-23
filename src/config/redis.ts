@@ -51,6 +51,7 @@ export const RedisKeys = {
   /** Single-flight lock for refresh rotation per session. */
   refreshLock: (sessionId: string) => `lock:refresh:${sessionId}`,
   deviceLastActive: (deviceId: string) => `device:${deviceId}:lastActive`,
+  deviceBanned: (deviceId: string) => `device:${deviceId}:banned`,
   rateLimitLogin: (identifier: string, ip: string) => `ratelimit:login:${identifier}:${ip}`,
   signupVerified: (provider: string, identifier: string) =>
     `signup:verified:${provider}:${identifier}`,
@@ -315,6 +316,8 @@ export const RedisKeys = {
   liveActiveSession: (hostUserId: string) => `live:active:${hostUserId}`,
   /** Reserved for future rate limiting on session start. */
   liveStartRateLimit: (hostUserId: string) => `live:rl:start:${hostUserId}`,
+  /** Short-lived flag set on admin logout; TTL matches ADMIN_JWT_ACCESS_EXPIRES_IN. */
+  adminTokenRevoked: (adminId: string) => `admin:revoked:${adminId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */

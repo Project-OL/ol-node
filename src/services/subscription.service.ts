@@ -506,7 +506,11 @@ export const subscriptionService = {
       )
 
       await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
-      await syncLevelCacheFromApplyResult(sub.subscriberId, LevelType.WEALTH, subscriberWealthResult)
+      await syncLevelCacheFromApplyResult(
+        sub.subscriberId,
+        LevelType.WEALTH,
+        subscriberWealthResult,
+      )
       await syncLevelCacheFromApplyResult(
         sub.creatorId,
         LevelType.LIVESTREAM,
@@ -598,7 +602,11 @@ export const subscriptionService = {
       )
 
       await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
-      await syncLevelCacheFromApplyResult(sub.subscriberId, LevelType.WEALTH, subscriberWealthResult)
+      await syncLevelCacheFromApplyResult(
+        sub.subscriberId,
+        LevelType.WEALTH,
+        subscriberWealthResult,
+      )
       await syncLevelCacheFromApplyResult(
         sub.creatorId,
         LevelType.LIVESTREAM,

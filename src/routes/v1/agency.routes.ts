@@ -133,28 +133,32 @@ export default async function agencyRoutes(app: FastifyInstance) {
     })
   })
 
-  app.get('/ranking', { preHandler: preAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const userId = request.userId!
-    const q = request.query as Record<string, string | undefined>
-    const periodRaw = (q.period ?? 'ALL_TIME').toUpperCase()
-    const period =
-      periodRaw === 'DAILY' ||
-      periodRaw === 'WEEKLY' ||
-      periodRaw === 'MONTHLY' ||
-      periodRaw === 'ALL_TIME'
-        ? periodRaw
-        : 'ALL_TIME'
-    const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
-    const cursor = q.cursor ?? undefined
-    const viewer = await userRepository.findById(userId)
-    const result = await agencyRankingService.getRanking({
-      period,
-      limit,
-      cursor,
-      country: viewer?.country ?? null,
-    })
-    return reply.send(result)
-  })
+  app.get(
+    '/ranking',
+    { preHandler: preAuth },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const q = request.query as Record<string, string | undefined>
+      const periodRaw = (q.period ?? 'ALL_TIME').toUpperCase()
+      const period =
+        periodRaw === 'DAILY' ||
+        periodRaw === 'WEEKLY' ||
+        periodRaw === 'MONTHLY' ||
+        periodRaw === 'ALL_TIME'
+          ? periodRaw
+          : 'ALL_TIME'
+      const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
+      const cursor = q.cursor ?? undefined
+      const viewer = await userRepository.findById(userId)
+      const result = await agencyRankingService.getRanking({
+        period,
+        limit,
+        cursor,
+        country: viewer?.country ?? null,
+      })
+      return reply.send(result)
+    },
+  )
 
   app.post(
     '/applications',

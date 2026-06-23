@@ -1,9 +1,6 @@
 import { env } from '../../config/env'
 import { s3Bucket } from '../../config/s3'
-import {
-  detectModerationLabels,
-  detectModerationLabelsFromS3,
-} from '../../lib/rekognition.client'
+import { detectModerationLabels, detectModerationLabelsFromS3 } from '../../lib/rekognition.client'
 import { storageService } from '../storage.service'
 
 export type ModerationLabelHit = { label: string; confidence: number }

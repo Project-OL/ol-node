@@ -222,11 +222,7 @@ export const agencyHostService = {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     }
     if (!countriesMatch(hostUser.country, agencyOwner?.country)) {
-      throw new AppError(
-        403,
-        'Agency is not available in your country',
-        'COUNTRY_MISMATCH',
-      )
+      throw new AppError(403, 'Agency is not available in your country', 'COUNTRY_MISMATCH')
     }
     if (hostUser.isAgent) {
       throw new AppError(403, 'Agents cannot apply as hosts', 'INVALID_APPLICANT')
@@ -616,6 +612,32 @@ export const agencyHostService = {
     )
     await agencyService.onAgencyMutation(agentUserId)
     return { ok: true as const }
+  },
+
+  async adminRemoveHostFromAgency(hostUserId: string, adminUserId: string) {
+    const membership = await agencyHostRepository.getHost(hostUserId)
+    if (!membership) {
+      throw new AppError(404, 'User is not in an agency', 'NOT_IN_AGENCY')
+    }
+
+    const agencyUserId = membership.agencyUserId
+    await prisma.$transaction(
+      async (tx) => {
+        await finalizeAgencyHostExit(
+          agencyUserId,
+          hostUserId,
+          'ADMIN_FORCE_EXIT' as import('@prisma/client').AgencyHostHistoryReason,
+          tx,
+          {
+            adminUserId,
+            source: 'admin_user_moderation',
+          },
+        )
+      },
+      { isolationLevel: 'Serializable', timeout: TX_MS },
+    )
+    await agencyService.onAgencyMutation(agencyUserId)
+    return { ok: true as const, userId: hostUserId, agencyUserId }
   },
 
   async forceExitFromCS(params: {

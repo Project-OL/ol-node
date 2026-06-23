@@ -3,13 +3,16 @@ import { AppError } from '../middlewares/errorHandler'
 import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 
-function buildKycReviewStatus(kyc: {
-  govtIdSubmittedAt: Date | null
-  contactSubmittedAt: Date | null
-  faceVerified: boolean
-  contactPhone: string | null
-  contactEmail: string | null
-} | null, faceIndexed: boolean) {
+function buildKycReviewStatus(
+  kyc: {
+    govtIdSubmittedAt: Date | null
+    contactSubmittedAt: Date | null
+    faceVerified: boolean
+    contactPhone: string | null
+    contactEmail: string | null
+  } | null,
+  faceIndexed: boolean,
+) {
   const faceOk = Boolean(kyc?.faceVerified) || faceIndexed
   return {
     govtIdUploaded: Boolean(kyc?.govtIdSubmittedAt),
@@ -17,8 +20,7 @@ function buildKycReviewStatus(kyc: {
     faceVerified: faceOk,
     contactPhone: kyc?.contactPhone ?? null,
     contactEmail: kyc?.contactEmail ?? null,
-    isComplete:
-      Boolean(kyc?.govtIdSubmittedAt) && Boolean(kyc?.contactSubmittedAt) && faceOk,
+    isComplete: Boolean(kyc?.govtIdSubmittedAt) && Boolean(kyc?.contactSubmittedAt) && faceOk,
   }
 }
 

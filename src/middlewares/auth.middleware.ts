@@ -3,6 +3,7 @@ import { AppError } from './errorHandler'
 import { lastActiveTracker } from './lastActiveTracker.middleware'
 import type { JwtAccessPayload } from '../models/types'
 import { resolveUserTokenVersion, sessionService } from '../services/session.service'
+import { deviceBanService } from '../services/device-ban.service'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -46,6 +47,8 @@ async function applyVerifiedAccessPayload(
   request.jti = payload.jti
   request.deviceId = payload.deviceId
   request.sessionId = payload.sessionId
+
+  await deviceBanService.assertDeviceNotBanned(payload.deviceId)
 
   await lastActiveTracker(request, reply).catch(() => {
     /* non-fatal */

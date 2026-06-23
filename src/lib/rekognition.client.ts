@@ -257,10 +257,7 @@ export async function describeFaceCollection() {
   )
 }
 
-export async function listFacesInCollection(params: {
-  maxResults?: number
-  nextToken?: string
-}) {
+export async function listFacesInCollection(params: { maxResults?: number; nextToken?: string }) {
   return withTimeout(env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new ListFacesCommand({

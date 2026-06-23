@@ -37,7 +37,14 @@ export const OTP_PURPOSES = [
 ] as const
 export type OtpPurpose = (typeof OTP_PURPOSES)[number]
 
-export const USER_STATUSES = ['new', 'active', 'suspended', 'deactivating', 'deleted'] as const
+export const USER_STATUSES = [
+  'new',
+  'active',
+  'suspended',
+  'banned',
+  'deactivating',
+  'deleted',
+] as const
 export type UserStatus = (typeof USER_STATUSES)[number]
 
 export interface JwtAccessPayload {

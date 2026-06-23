@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { AppError } from '../../middlewares/errorHandler'
-import { requireAdmin } from '../../middlewares/requireAdmin'
+import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import {
   adminListCollectionFacesQuerySchema,
   adminListFaceProfilesQuerySchema,
@@ -9,7 +9,7 @@ import {
 import { faceVerificationAdminService } from '../../services/face-verification-admin.service'
 import { z } from 'zod'
 
-const preAuth = [requireAdmin]
+const preAuth = [authenticateAdmin]
 
 const resolveDuplicateBodySchema = z.object({
   reason: z.string().max(500).optional(),
@@ -131,7 +131,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
           'INVALID_REQUEST',
         )
       }
-      const adminId = request.userId
+      const adminId = request.adminUser?.id
       if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const result = await faceVerificationAdminService.revokeUserFaceProfile(
         request.params.userId,
@@ -174,7 +174,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
           'INVALID_REQUEST',
         )
       }
-      const adminId = request.userId
+      const adminId = request.adminUser?.id
       if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const result = await faceVerificationAdminService.revokeByRekognitionFaceId(
         request.params.faceId,
@@ -217,7 +217,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
           'INVALID_REQUEST',
         )
       }
-      const adminId = request.userId
+      const adminId = request.adminUser?.id
       if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const result = await faceVerificationAdminService.resolveDuplicateIdentity(
         request.params.userId,
@@ -245,7 +245,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       },
     },
     async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
-      const adminId = request.userId
+      const adminId = request.adminUser?.id
       if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const result = await faceVerificationAdminService.deleteFromCollectionOnly(
         request.params.userId,

@@ -27,6 +27,13 @@ const envSchema = z
     JWT_ACCESS_EXPIRES_IN: z.string().default('8m'),
     JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
     JWT_REFRESH_SECRET: z.string().min(32).optional(), // if not set, uses JWT_ACCESS_SECRET (not recommended for prod)
+
+    ADMIN_JWT_SECRET: z.string().min(32),
+    ADMIN_JWT_REFRESH_SECRET: z.string().min(32),
+    ADMIN_JWT_ACCESS_EXPIRES_IN: z.string().default('35m'),
+    ADMIN_JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+    ADMIN_INITIAL_EMAIL: z.string().email().optional(),
+    ADMIN_INITIAL_PASSWORD: z.string().min(12).optional(),
     /** HMAC key for device binding fingerprint. Min 32 chars. Required in production. */
     DEVICE_FINGERPRINT_SECRET: z.string().min(32).optional(),
 

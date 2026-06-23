@@ -48,6 +48,14 @@ export const userRepository = {
     return row?.isAgent === true
   },
 
+  async findFirstSupportUser() {
+    return prismaRead.user.findFirst({
+      where: { isSupport: true, status: 'active' },
+      select: { id: true, publicId: true },
+      orderBy: { createdAt: 'asc' },
+    })
+  },
+
   /**
    * Resolve a user by any externally visible numeric ID:
    * - users.public_id (base)
@@ -99,8 +107,8 @@ export const userRepository = {
       firstName?: string
       lastName?: string | null
       dateOfBirth?: Date | null
-      country?: string
-      gender?: string
+      country?: string | null
+      gender?: string | null
       avatarUrl?: string | null
       bio?: string | null
       usernameUpdatedAt?: Date | null
@@ -159,6 +167,8 @@ export const userRepository = {
       privacyInvisibleOnline?: boolean
       privacyUpdatedAt?: Date | null
       status?: string
+      suspendedUntil?: Date | null
+      username?: string
       firstName?: string | null
       lastName?: string | null
       dateOfBirth?: Date | null

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
 import { StoreItemCategory } from '@prisma/client'
-import { requireAdmin } from '../../middlewares/requireAdmin'
+import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import { storeService } from '../../services/store.service'
 import { env } from '../../config/env'
@@ -141,7 +141,7 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
 
   app.post(
     '/store/items',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const ct = String(request.headers['content-type'] ?? '')
 
@@ -212,7 +212,7 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { id: string } }>(
     '/store/items/:id',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const ct = String(request.headers['content-type'] ?? '')
 
@@ -291,7 +291,7 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { id: string } }>(
     '/store/items/:id',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       await storeService.softDeleteStoreItem(request.params.id)
       return reply.status(204).send()

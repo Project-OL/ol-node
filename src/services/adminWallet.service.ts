@@ -9,6 +9,7 @@ import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { richTierService } from './rich-tier.service'
 import { walletService } from './wallet.service'
+import { getUserWalletFreezeFlags } from './wallet-freeze.service'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -39,6 +40,8 @@ export const adminWalletService = {
     tradingCoins?: bigint
     description?: string
     idempotencyKey?: string
+    /** When true, credits trading coins even if the user is not an agency agent. */
+    forceTradingCredit?: boolean
   }): Promise<AdminWalletCreditResult> {
     const hasCoins = params.coins != null && params.coins > 0n
     const hasPoints = params.points != null && params.points > 0n
@@ -51,8 +54,7 @@ export const adminWalletService = {
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
     const baseKey =
-      params.idempotencyKey?.trim() ||
-      `admin-wallet-credit:${params.adminUserId}:${randomUUID()}`
+      params.idempotencyKey?.trim() || `admin-wallet-credit:${params.adminUserId}:${randomUUID()}`
     const description = params.description?.trim() || 'Admin wallet adjustment'
     const metadata = { adminUserId: params.adminUserId, source: 'admin_wallet_credit' }
 
@@ -117,25 +119,19 @@ export const adminWalletService = {
 
     if (hasTrading) {
       const agency = await agencyRepository.getAgencyByUserId(params.targetUserId)
-      if (!agency) {
+      if (!agency && !params.forceTradingCredit) {
         skipped.tradingCoins = 'NO_AGENCY'
       } else {
         const tradingCoins = params.tradingCoins!
         const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
           async (tx) =>
-            coinWalletService.credit(
-              params.targetUserId,
-              tradingCoins,
-              CoinTxType.ADJUSTMENT,
-              tx,
-              {
-                idempotencyKey: `${baseKey}:trading`,
-                description: description || 'Admin trading coin credit',
-                metadata,
-                applyWealthCredit: false,
-                currencyType: WalletCurrencyType.TRADING_COIN,
-              },
-            ),
+            coinWalletService.credit(params.targetUserId, tradingCoins, CoinTxType.ADJUSTMENT, tx, {
+              idempotencyKey: `${baseKey}:trading`,
+              description: description || 'Admin trading coin credit',
+              metadata,
+              applyWealthCredit: false,
+              currencyType: WalletCurrencyType.TRADING_COIN,
+            }),
           { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
         )
         await walletService.adjustTradingBalanceCache(params.targetUserId)
@@ -167,5 +163,199 @@ export const adminWalletService = {
       balances,
       ...(Object.keys(skipped).length > 0 ? { skipped } : {}),
     }
+  },
+
+  async debitPersonalCoins(params: {
+    adminUserId: string
+    targetUserId: string
+    amount: bigint
+    description?: string
+    idempotencyKey?: string
+  }) {
+    if (params.amount <= 0n) {
+      throw new AppError(400, 'Amount must be positive', 'INVALID_REQUEST')
+    }
+    const user = await userRepository.findById(params.targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const baseKey =
+      params.idempotencyKey?.trim() ||
+      `admin-wallet-debit-coins:${params.adminUserId}:${randomUUID()}`
+    const description = params.description?.trim() || 'Admin personal coin deduction'
+    const metadata = { adminUserId: params.adminUserId, source: 'admin_wallet_debit' }
+
+    const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
+      async (tx) =>
+        coinWalletService.debit(params.targetUserId, params.amount, CoinTxType.ADJUSTMENT, tx, {
+          idempotencyKey: baseKey,
+          description,
+          metadata,
+          currencyType: WalletCurrencyType.COIN,
+        }),
+      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+    )
+    await walletService.adjustCoinBalanceCache(params.targetUserId, -params.amount)
+
+    auditService.log({
+      userId: params.adminUserId,
+      actionType: 'ADMIN_WALLET_DEBIT_COINS',
+      actionStatus: 'success',
+      actionDetails: {
+        targetUserId: params.targetUserId,
+        amount: params.amount.toString(),
+        description,
+        idempotencyKey: baseKey,
+      },
+    })
+
+    return {
+      ok: true as const,
+      userId: params.targetUserId,
+      debited: { coins: params.amount.toString() },
+      balance: { ledgerEntryId, balanceAfter: balanceAfter.toString() },
+    }
+  },
+
+  async debitTradingCoins(params: {
+    adminUserId: string
+    targetUserId: string
+    amount: bigint
+    description?: string
+    idempotencyKey?: string
+  }) {
+    if (params.amount <= 0n) {
+      throw new AppError(400, 'Amount must be positive', 'INVALID_REQUEST')
+    }
+    const user = await userRepository.findById(params.targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const baseKey =
+      params.idempotencyKey?.trim() ||
+      `admin-wallet-debit-trading:${params.adminUserId}:${randomUUID()}`
+    const description = params.description?.trim() || 'Admin trading coin deduction'
+    const metadata = { adminUserId: params.adminUserId, source: 'admin_wallet_debit' }
+
+    const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
+      async (tx) =>
+        coinWalletService.debit(params.targetUserId, params.amount, CoinTxType.ADJUSTMENT, tx, {
+          idempotencyKey: baseKey,
+          description,
+          metadata,
+          currencyType: WalletCurrencyType.TRADING_COIN,
+        }),
+      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+    )
+    await walletService.adjustTradingBalanceCache(params.targetUserId)
+
+    auditService.log({
+      userId: params.adminUserId,
+      actionType: 'ADMIN_WALLET_DEBIT_TRADING',
+      actionStatus: 'success',
+      actionDetails: {
+        targetUserId: params.targetUserId,
+        amount: params.amount.toString(),
+        description,
+        idempotencyKey: baseKey,
+      },
+    })
+
+    return {
+      ok: true as const,
+      userId: params.targetUserId,
+      debited: { tradingCoins: params.amount.toString() },
+      balance: { ledgerEntryId, balanceAfter: balanceAfter.toString() },
+    }
+  },
+
+  async debitPoints(params: {
+    adminUserId: string
+    targetUserId: string
+    amount: bigint
+    description?: string
+    idempotencyKey?: string
+  }) {
+    if (params.amount <= 0n) {
+      throw new AppError(400, 'Amount must be positive', 'INVALID_REQUEST')
+    }
+    const user = await userRepository.findById(params.targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const baseKey =
+      params.idempotencyKey?.trim() ||
+      `admin-wallet-debit-points:${params.adminUserId}:${randomUUID()}`
+    const description = params.description?.trim() || 'Admin point deduction'
+    const metadata = { adminUserId: params.adminUserId, source: 'admin_wallet_debit' }
+
+    const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
+      async (tx) =>
+        pointWalletService.debit(params.targetUserId, params.amount, PointTxType.ADJUSTMENT, tx, {
+          idempotencyKey: baseKey,
+          description,
+          metadata,
+        }),
+      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+    )
+
+    auditService.log({
+      userId: params.adminUserId,
+      actionType: 'ADMIN_WALLET_DEBIT_POINTS',
+      actionStatus: 'success',
+      actionDetails: {
+        targetUserId: params.targetUserId,
+        amount: params.amount.toString(),
+        description,
+        idempotencyKey: baseKey,
+      },
+    })
+
+    return {
+      ok: true as const,
+      userId: params.targetUserId,
+      debited: { points: params.amount.toString() },
+      balance: { ledgerEntryId, balanceAfter: balanceAfter.toString() },
+    }
+  },
+
+  async setPersonalCoinsFrozen(targetUserId: string, frozen: boolean, adminUserId: string) {
+    const user = await userRepository.findById(targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    await userRepository.update(targetUserId, { personalCoinsFrozen: frozen })
+    auditService.log({
+      userId: adminUserId,
+      actionType: frozen ? 'ADMIN_FREEZE_PERSONAL_COINS' : 'ADMIN_UNFREEZE_PERSONAL_COINS',
+      actionStatus: 'success',
+      actionDetails: { targetUserId, frozen },
+    })
+    return { ok: true as const, userId: targetUserId, personalCoinsFrozen: frozen }
+  },
+
+  async setTradingCoinsFrozen(targetUserId: string, frozen: boolean, adminUserId: string) {
+    const user = await userRepository.findById(targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    await userRepository.update(targetUserId, { tradingCoinsFrozen: frozen })
+    auditService.log({
+      userId: adminUserId,
+      actionType: frozen ? 'ADMIN_FREEZE_TRADING_COINS' : 'ADMIN_UNFREEZE_TRADING_COINS',
+      actionStatus: 'success',
+      actionDetails: { targetUserId, frozen },
+    })
+    return { ok: true as const, userId: targetUserId, tradingCoinsFrozen: frozen }
+  },
+
+  async setPointsFrozen(targetUserId: string, frozen: boolean, adminUserId: string) {
+    const user = await userRepository.findById(targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    await userRepository.update(targetUserId, { pointsFrozen: frozen })
+    auditService.log({
+      userId: adminUserId,
+      actionType: frozen ? 'ADMIN_FREEZE_POINTS' : 'ADMIN_UNFREEZE_POINTS',
+      actionStatus: 'success',
+      actionDetails: { targetUserId, frozen },
+    })
+    return { ok: true as const, userId: targetUserId, pointsFrozen: frozen }
+  },
+
+  async getFreezeState(targetUserId: string) {
+    return getUserWalletFreezeFlags(targetUserId)
   },
 }

@@ -1,10 +1,6 @@
 import { CoinTxType, LevelType, VipMembershipTier } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
-import {
-  RedisKeys,
-  VIPM_ACTIVE_INACTIVE_TTL,
-  VIPM_ACTIVE_TTL_MAX,
-} from '../config/redis'
+import { RedisKeys, VIPM_ACTIVE_INACTIVE_TTL, VIPM_ACTIVE_TTL_MAX } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { coinWalletService } from './coin-wallet.service'
 import { walletService } from './wallet.service'

@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { requireAdmin } from '../../middlewares/requireAdmin'
+import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import { questionnaireAdminRateLimit } from '../../middlewares/rateLimitAuth'
 import {
@@ -9,7 +9,7 @@ import {
 import { questionnaireService } from '../../services/questionnaire.service'
 
 export default async function questionnaireAdminRoutes(app: FastifyInstance) {
-  const preAdmin = [requireAdmin, questionnaireAdminRateLimit]
+  const preAdmin = [authenticateAdmin, questionnaireAdminRateLimit]
 
   app.get('/', { preHandler: preAdmin }, async (_request, reply) => {
     return reply.send(await questionnaireService.adminList())
@@ -30,7 +30,7 @@ export default async function questionnaireAdminRoutes(app: FastifyInstance) {
           parsed.error.errors[0]?.message ?? 'Invalid payload',
           'invalid_payload',
         )
-      const created = await questionnaireService.adminCreate(request.userId!, parsed.data)
+      const created = await questionnaireService.adminCreate(request.adminUser!.id, parsed.data)
       return reply.status(201).send(created)
     },
   )
@@ -50,7 +50,11 @@ export default async function questionnaireAdminRoutes(app: FastifyInstance) {
           'invalid_payload',
         )
       return reply.send(
-        await questionnaireService.adminPatchMeta(request.userId!, request.params.id, parsed.data),
+        await questionnaireService.adminPatchMeta(
+          request.adminUser!.id,
+          request.params.id,
+          parsed.data,
+        ),
       )
     },
   )
@@ -60,7 +64,7 @@ export default async function questionnaireAdminRoutes(app: FastifyInstance) {
     { preHandler: preAdmin },
     async (request, reply) => {
       return reply.send(
-        await questionnaireService.adminDeactivate(request.userId!, request.params.id),
+        await questionnaireService.adminDeactivate(request.adminUser!.id, request.params.id),
       )
     },
   )
@@ -70,7 +74,7 @@ export default async function questionnaireAdminRoutes(app: FastifyInstance) {
     { preHandler: preAdmin },
     async (request, reply) => {
       return reply.send(
-        await questionnaireService.adminActivate(request.userId!, request.params.id),
+        await questionnaireService.adminActivate(request.adminUser!.id, request.params.id),
       )
     },
   )

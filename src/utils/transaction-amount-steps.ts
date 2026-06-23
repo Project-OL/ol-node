@@ -22,12 +22,10 @@ export function assertPositiveAmountMultiple(
   opts: { belowMinCode: string; unitLabel: string },
 ): void {
   if (amount < step) {
-    throw new AppError(
-      400,
-      `Minimum ${opts.unitLabel} is ${step.toString()}`,
-      opts.belowMinCode,
-      { step: step.toString(), minimum: step.toString() },
-    )
+    throw new AppError(400, `Minimum ${opts.unitLabel} is ${step.toString()}`, opts.belowMinCode, {
+      step: step.toString(),
+      minimum: step.toString(),
+    })
   }
   if (amount % step !== 0n) {
     throw new AppError(
@@ -45,12 +43,10 @@ export function assertPositiveIntMultiple(
   opts: { belowMinCode: string; unitLabel: string },
 ): void {
   if (!Number.isInteger(amount) || amount < step) {
-    throw new AppError(
-      400,
-      `Minimum ${opts.unitLabel} is ${step}`,
-      opts.belowMinCode,
-      { step: String(step), minimum: String(step) },
-    )
+    throw new AppError(400, `Minimum ${opts.unitLabel} is ${step}`, opts.belowMinCode, {
+      step: String(step),
+      minimum: String(step),
+    })
   }
   if (amount % step !== 0) {
     throw new AppError(

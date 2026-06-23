@@ -33,6 +33,7 @@ import { emailSchema, phoneSchema } from '../models/schemas'
 import type { AuthProvider, CheckAvailabilityResult, JwtAccessPayload } from '../models/types'
 import { deviceService } from './device.service'
 import { displayNameFromUser } from '../utils/profileDisplay'
+import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 const SIGNUP_VERIFIED_TTL = 300
 
@@ -233,8 +234,7 @@ export const authV2Service = {
       throw new AppError(409, 'Profile already completed', 'PROFILE_ALREADY_COMPLETE')
     const dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : undefined
     const lastName = data.lastName && data.lastName.trim() !== '' ? data.lastName : null
-    const avatarUrl =
-      data.avatarUrl && data.avatarUrl.trim() !== '' ? data.avatarUrl.trim() : null
+    const avatarUrl = data.avatarUrl && data.avatarUrl.trim() !== '' ? data.avatarUrl.trim() : null
     await userRepository.updateProfile(userId, {
       firstName: data.firstName,
       lastName,
@@ -309,19 +309,7 @@ export const authV2Service = {
     })
     if (!valid) throw new AppError(400, 'OTP invalid or expired', 'OTP_INVALID')
     const user = auth.user
-    if (user.status === 'deactivating') {
-      throw new AppError(
-        403,
-        'Account scheduled for deletion. You can reactivate it in account settings.',
-        'ACCOUNT_DEACTIVATING',
-        { canReactivate: true },
-      )
-    }
-    if (user.status === 'deleted') {
-      throw new AppError(403, 'Account has been permanently deleted.', 'ACCOUNT_DELETED')
-    }
-    if (user.status === 'suspended')
-      throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
+    await ensureUserMayAuthenticate(user)
     const publicId = Number(user.publicId)
 
     await deviceService.linkAccountToDevice(deviceId, user.id)
@@ -384,19 +372,7 @@ export const authV2Service = {
       user = auth.user
     }
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
-    if (user.status === 'deactivating') {
-      throw new AppError(
-        403,
-        'Account scheduled for deletion. You can reactivate it in account settings.',
-        'ACCOUNT_DEACTIVATING',
-        { canReactivate: true },
-      )
-    }
-    if (user.status === 'deleted') {
-      throw new AppError(403, 'Account has been permanently deleted.', 'ACCOUNT_DELETED')
-    }
-    if (user.status === 'suspended')
-      throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
+    await ensureUserMayAuthenticate(user)
     const pw = await prisma.authPassword.findUnique({
       where: { userId: user.id },
       include: { user: { select: { id: true, publicId: true, passwordSet: true, status: true } } },

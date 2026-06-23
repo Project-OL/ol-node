@@ -29,7 +29,10 @@ import { prismaRead } from '../config/database'
 import { rootLogger } from '../utils/rootLogger'
 import type { SendMessageInput } from '../models/messaging.schemas'
 import { s3Bucket } from '../config/s3'
-import type { MediaItemInput, SendMessageWithOutboxResult } from '../repositories/message.repository'
+import type {
+  MediaItemInput,
+  SendMessageWithOutboxResult,
+} from '../repositories/message.repository'
 import {
   assertMessageTypeMediaAlignment,
   prepareMediaItemsForSend,
@@ -143,9 +146,8 @@ export function buildAutoReplyClientMessageId(
 }
 
 function serializeMessageForHotCache(msg: MessageWithDetails): string {
-  return JSON.stringify(
-    { ...msg, createdAt: msg.createdAt.toISOString() },
-    (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+  return JSON.stringify({ ...msg, createdAt: msg.createdAt.toISOString() }, (_key, value) =>
+    typeof value === 'bigint' ? value.toString() : value,
   )
 }
 
@@ -168,7 +170,10 @@ async function warmMessageHotCache(
   await pipeline.exec()
 }
 
-async function pushMessageToHotCache(conversationId: string, msg: MessageWithDetails): Promise<void> {
+async function pushMessageToHotCache(
+  conversationId: string,
+  msg: MessageWithDetails,
+): Promise<void> {
   const msgKey = RedisKeys.convMessages(conversationId)
   await redisClient.zadd(msgKey, Number(msg.seq), serializeMessageForHotCache(msg))
   await redisClient.expire(msgKey, MSG_HOT_TTL)
@@ -473,12 +478,7 @@ export const messagingService = {
     }
 
     const warmLimit = !cursor && !historyClearedAfter ? Math.max(limit, MSG_HOT_CACHE_SIZE) : limit
-    const result = await messageRepository.listMessages(
-      conversationId,
-      userId,
-      cursor,
-      warmLimit,
-    )
+    const result = await messageRepository.listMessages(conversationId, userId, cursor, warmLimit)
 
     if (!cursor && !historyClearedAfter && result.messages.length > 0) {
       await warmMessageHotCache(conversationId, result.messages)

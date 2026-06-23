@@ -297,9 +297,8 @@ export const faceVerificationAdminService = {
     reason?: string,
     options?: { revokeRelated?: boolean },
   ) {
-    const profile = await faceVerificationRepository.findProfileByRekognitionFaceIdAnyStatus(
-      rekognitionFaceId,
-    )
+    const profile =
+      await faceVerificationRepository.findProfileByRekognitionFaceIdAnyStatus(rekognitionFaceId)
 
     if (profile) {
       return this.revokeUserFaceProfile(profile.userId, adminUserId, reason, options)
@@ -374,8 +373,7 @@ export const faceVerificationAdminService = {
       throw new AppError(404, 'No face profile found for blocked user', 'FACE_PROFILE_NOT_FOUND')
     }
 
-    const ownerUserId =
-      blockedProfile.matchedUserId ?? blockedProfile.duplicateOfUserId ?? null
+    const ownerUserId = blockedProfile.matchedUserId ?? blockedProfile.duplicateOfUserId ?? null
 
     let indexedOwner: {
       userId: string

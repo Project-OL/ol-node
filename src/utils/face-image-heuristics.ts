@@ -2,19 +2,13 @@ import type { BoundingBox, FaceDetail, Landmark } from '@aws-sdk/client-rekognit
 import { decode as decodeJpeg } from 'jpeg-js'
 import { env } from '../config/env'
 
-const KEY_LANDMARK_TYPES = new Set([
-  'eyeLeft',
-  'eyeRight',
-  'nose',
-  'mouthLeft',
-  'mouthRight',
-])
+const KEY_LANDMARK_TYPES = new Set(['eyeLeft', 'eyeRight', 'nose', 'mouthLeft', 'mouthRight'])
 
 type RgbImage = { width: number; height: number; data: Uint8Array }
 
 function tryDecodeImage(imageBytes: Uint8Array): RgbImage | null {
   try {
-  if (imageBytes[0] === 0xff && imageBytes[1] === 0xd8) {
+    if (imageBytes[0] === 0xff && imageBytes[1] === 0xd8) {
       const decoded = decodeJpeg(imageBytes, { useTArray: true, formatAsRGBA: true })
       return { width: decoded.width, height: decoded.height, data: decoded.data }
     }
@@ -37,11 +31,7 @@ function rgbToHsl(r: number, g: number, b: number): { s: number } {
   return { s: s * 100 }
 }
 
-function sampleRegionSaturation(
-  img: RgbImage,
-  box: BoundingBox,
-  samples = 120,
-): number {
+function sampleRegionSaturation(img: RgbImage, box: BoundingBox, samples = 120): number {
   const left = Math.max(0, Math.floor((box.Left ?? 0) * img.width))
   const top = Math.max(0, Math.floor((box.Top ?? 0) * img.height))
   const w = Math.max(1, Math.floor((box.Width ?? 0) * img.width))

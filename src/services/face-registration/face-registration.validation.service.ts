@@ -222,11 +222,7 @@ export const faceRegistrationValidationService = {
     if (heuristics.hasBorders) {
       return {
         isValid: false,
-        failure: failure(
-          FACE_REGISTRATION_ERRORS.FACE_QUALITY_BORDERS_DETECTED,
-          ['BORDERS'],
-          face,
-        ),
+        failure: failure(FACE_REGISTRATION_ERRORS.FACE_QUALITY_BORDERS_DETECTED, ['BORDERS'], face),
         face,
       }
     }
@@ -338,7 +334,9 @@ export const faceRegistrationValidationService = {
     })
     if (!match) return null
 
-    const ownerProfile = await faceVerificationRepository.findProfileByRekognitionFaceId(match.faceId)
+    const ownerProfile = await faceVerificationRepository.findProfileByRekognitionFaceId(
+      match.faceId,
+    )
     const matchedUserId = ownerProfile?.userId ?? null
     const isSameUser = matchedUserId === userId
 
@@ -419,9 +417,7 @@ export const faceRegistrationValidationService = {
     }
 
     const duplicate =
-      options?.checkDuplicate !== false
-        ? await this.checkDuplicateFace(s3KeyOrBytes, userId)
-        : null
+      options?.checkDuplicate !== false ? await this.checkDuplicateFace(s3KeyOrBytes, userId) : null
 
     if (duplicate?.isDuplicate && !duplicate.isSameUser) {
       return {

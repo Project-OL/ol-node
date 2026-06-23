@@ -67,12 +67,15 @@ async function listEnrichedTradingTransactions(
     cursor?: string
     includeTransferFields?: boolean
     includeLegacyCounterparty?: boolean
+    requireAgent?: boolean
   },
 ) {
   if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
     throw new AppError(400, 'fromDate must be before or equal to toDate', 'INVALID_DATE_RANGE')
   }
-  await assertAgentUser(userId)
+  if (opts.requireAgent !== false) {
+    await assertAgentUser(userId)
+  }
 
   const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN)
   const entries = await coinLedgerRepository.list({
@@ -109,9 +112,10 @@ async function listEnrichedTradingTransactions(
 
   const enriched = await enrichLedgerEntries(baseEntries, 'TRADING_COIN', userId)
 
-  let transferByLedgerId = new Map<string, Awaited<
-    ReturnType<typeof coinTradingRepository.findTransfersByLedgerEntryIds>
-  >[number]>()
+  let transferByLedgerId = new Map<
+    string,
+    Awaited<ReturnType<typeof coinTradingRepository.findTransfersByLedgerEntryIds>>[number]
+  >()
   if (opts.includeTransferFields !== false) {
     const transferRows = await coinTradingRepository.findTransfersByLedgerEntryIds(
       page.map((e) => e.id),
@@ -157,8 +161,7 @@ async function listEnrichedTradingTransactions(
     }
 
     const isTransferLeg =
-      e.txType === CoinTxType.TRADING_TRANSFER_OUT ||
-      e.txType === CoinTxType.TRADING_TRANSFER_IN
+      e.txType === CoinTxType.TRADING_TRANSFER_OUT || e.txType === CoinTxType.TRADING_TRANSFER_IN
     if (!isTransferLeg) return item
 
     const transfer = transferByLedgerId.get(e.id)
@@ -215,7 +218,11 @@ function parseUsd(v: Prisma.Decimal): number {
   return Number(v.toString())
 }
 
-type DbExchangeTier = { minUsdEquiv: Prisma.Decimal; maxUsdEquiv: Prisma.Decimal | null; coinsPerUsd: number }
+type DbExchangeTier = {
+  minUsdEquiv: Prisma.Decimal
+  maxUsdEquiv: Prisma.Decimal | null
+  coinsPerUsd: number
+}
 
 /**
  * Resolve `coinsPerUsd` for a USD-equivalent amount across either DB exchange-rate rows
@@ -228,7 +235,12 @@ function lookupExchangeCoinsPerUsd(
   const tier = (rates as Array<DbExchangeTier | RateTierUsd>).find((r) => {
     const min = 'minUsdEquiv' in r ? parseUsd(r.minUsdEquiv) : r.minUsd
     const rawMax = 'maxUsdEquiv' in r ? r.maxUsdEquiv : r.maxUsd
-    const max = rawMax == null ? null : 'maxUsdEquiv' in r ? parseUsd(r.maxUsdEquiv as Prisma.Decimal) : (rawMax as number)
+    const max =
+      rawMax == null
+        ? null
+        : 'maxUsdEquiv' in r
+          ? parseUsd(r.maxUsdEquiv as Prisma.Decimal)
+          : (rawMax as number)
     return usdEquiv >= min && (max == null || usdEquiv < max)
   })
   if (!tier) throw new AppError(400, 'No rate tier', 'RATE_NOT_FOUND')
@@ -508,7 +520,9 @@ export const coinTradingService = {
           idempotencyKey: user.isAgent
             ? `exchange-ct:${exchangeRefId}`
             : `exchange-coin:${exchangeRefId}`,
-          description: user.isAgent ? 'Trading coins from points exchange' : 'Coins from points exchange',
+          description: user.isAgent
+            ? 'Trading coins from points exchange'
+            : 'Coins from points exchange',
           applyWealthCredit: false,
           currencyType: targetWalletType,
         })
@@ -731,6 +745,25 @@ export const coinTradingService = {
       ...opts,
       includeTransferFields: false,
       includeLegacyCounterparty: false,
+    })
+  },
+
+  async listAdminTradingCoinHistory(
+    userId: string,
+    opts: {
+      direction?: 'credit' | 'debit'
+      types?: CoinTxType[]
+      fromDate?: Date
+      toDate?: Date
+      limit: number
+      cursor?: string
+    },
+  ) {
+    return listEnrichedTradingTransactions(userId, {
+      ...opts,
+      includeTransferFields: true,
+      includeLegacyCounterparty: false,
+      requireAgent: false,
     })
   },
 

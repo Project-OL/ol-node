@@ -1,7 +1,7 @@
 import type { AgencyAgentApplicationStatus } from '@prisma/client'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { requireAdmin } from '../../middlewares/requireAdmin'
+import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import { agencyAgentApplicationRepository } from '../../repositories/agencyAgentApplication.repository'
 import { agencyAgentApplicationService } from '../../services/agencyAgentApplication.service'
@@ -52,10 +52,9 @@ const adminWalletCreditBodySchema = z
     description: z.string().min(1).max(500).optional(),
     idempotencyKey: z.string().min(8).max(128).optional(),
   })
-  .refine(
-    (body) => body.coins != null || body.points != null || body.tradingCoins != null,
-    { message: 'At least one of coins, points, or tradingCoins is required' },
-  )
+  .refine((body) => body.coins != null || body.points != null || body.tradingCoins != null, {
+    message: 'At least one of coins, points, or tradingCoins is required',
+  })
 
 const agentApplicationStatusPatchSchema = z.object({
   status: z.enum(['UNDER_REVIEW', 'MORE_DOCS_REQUIRED', 'REJECTED']),
@@ -111,7 +110,7 @@ const HostTagSchema = z.object({
 export default async function agencyAdminRoutes(app: FastifyInstance) {
   app.get(
     '/applications',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const q = listAgentApplicationsQuerySchema.parse(request.query ?? {})
       const forReview = q.forReview ?? true
@@ -131,9 +130,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { userId: string } }>(
     '/users/:userId/wallet/credit',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = adminWalletCreditBodySchema.parse(request.body ?? {})
       const result = await adminWalletService.creditUserWallets({
@@ -151,9 +150,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { applicationId: string } }>(
     '/applications/:applicationId/status',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { applicationId: string } }>, reply: FastifyReply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = agentApplicationStatusPatchSchema.parse(request.body ?? {})
       await agencyAgentApplicationRepository.updateStatus(request.params.applicationId, {
@@ -168,9 +167,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { userId: string } }>(
     '/:userId/approve',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const parsed = ApproveSchema.safeParse(request.body ?? {})
       if (!parsed.success) {
@@ -195,7 +194,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { userId: string } }>(
     '/:userId/unpause',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
       await agencyService.unpauseAgency(request.params.userId)
       return reply.send({ ok: true })
@@ -204,7 +203,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { hostUserId: string } }>(
     '/host/:hostUserId/tag',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { hostUserId: string } }>, reply: FastifyReply) => {
       const parsed = HostTagSchema.safeParse(request.body ?? {})
       if (!parsed.success) {
@@ -224,9 +223,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { hostUserId: string } }>(
     '/cs/host/:hostUserId/force-exit',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { hostUserId: string } }>, reply: FastifyReply) => {
-      const csUserId = request.userId
+      const csUserId = request.adminUser?.id
       if (!csUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const parsed = ForceExitSchema.safeParse(request.body ?? {})
       if (!parsed.success) {
@@ -263,7 +262,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { agencyUserId: string } }>(
     '/recompute/:agencyUserId',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { agencyUserId: string } }>, reply: FastifyReply) => {
       await agencyCommissionService.recomputeAgencyLevel(request.params.agencyUserId, {
         skipDailyDedupe: true,
@@ -274,7 +273,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post(
     '/recompute-master',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const q = request.query as Record<string, string | undefined>
       const utcDate = q.utcDate?.trim() || undefined
@@ -288,7 +287,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { userId: string } }>(
     '/applications/:userId/kyc',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const status = await agencyKycService.getKycStatusForAdmin(request.params.userId)
       return reply.send(status)
@@ -297,11 +296,11 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { transferId: string } }>(
     '/coin-trading/reverse/:transferId',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const parsed = ReverseSchema.parse(request.body ?? {})
       await coinTradingService.reverseTransfer(
-        request.userId!,
+        request.adminUser!.id,
         request.params.transferId,
         parsed.reason,
       )
@@ -311,37 +310,41 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { userId: string } }>(
     '/coin-trading/unlock/:userId',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       await agencyService.unpauseAgency(request.params.userId)
       return reply.send({ ok: true })
     },
   )
 
-  app.put('/coin-trading/topup-rates', { preHandler: [requireAdmin] }, async (request, reply) => {
-    const body = ReplaceRatesSchema.parse(request.body ?? {})
-    await prisma.$transaction(async (tx) => {
-      await tx.coinTradingTopupRate.updateMany({ data: { isActive: false } })
-      for (let i = 0; i < body.tiers.length; i++) {
-        const tier = body.tiers[i]!
-        await tx.coinTradingTopupRate.create({
-          data: {
-            minUsd: tier.minUsd,
-            maxUsd: tier.maxUsd ?? null,
-            coinsPerUsd: tier.coinsPerUsd,
-            sortOrder: i + 1,
-            isActive: true,
-          },
-        })
-      }
-    })
-    await redisClient.del(RedisKeys.ctTopupRates())
-    return reply.send({ ok: true })
-  })
+  app.put(
+    '/coin-trading/topup-rates',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const body = ReplaceRatesSchema.parse(request.body ?? {})
+      await prisma.$transaction(async (tx) => {
+        await tx.coinTradingTopupRate.updateMany({ data: { isActive: false } })
+        for (let i = 0; i < body.tiers.length; i++) {
+          const tier = body.tiers[i]!
+          await tx.coinTradingTopupRate.create({
+            data: {
+              minUsd: tier.minUsd,
+              maxUsd: tier.maxUsd ?? null,
+              coinsPerUsd: tier.coinsPerUsd,
+              sortOrder: i + 1,
+              isActive: true,
+            },
+          })
+        }
+      })
+      await redisClient.del(RedisKeys.ctTopupRates())
+      return reply.send({ ok: true })
+    },
+  )
 
   app.put(
     '/coin-trading/exchange-rates',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceRatesSchema.parse(request.body ?? {})
       await prisma.$transaction(async (tx) => {
@@ -369,33 +372,41 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     },
   )
 
-  app.get('/payroll/config', { preHandler: [requireAdmin] }, async (_request, reply) => {
+  app.get('/payroll/config', { preHandler: [authenticateAdmin] }, async (_request, reply) => {
     const cfg = await payrollAdminService.getConfig()
     return reply.send(cfg)
   })
 
-  app.put('/payroll/config', { preHandler: [requireAdmin] }, async (request, reply) => {
-    const adminUserId = request.userId
+  app.put('/payroll/config', { preHandler: [authenticateAdmin] }, async (request, reply) => {
+    const adminUserId = request.adminUser?.id
     if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     const body = PayrollConfigUpdateSchema.parse(request.body ?? {})
     await payrollAdminService.updateConfig(adminUserId, body)
     return reply.send({ ok: true })
   })
 
-  app.get('/withdrawal/payout-rails', { preHandler: [requireAdmin] }, async (_request, reply) => {
-    const config = await withdrawalPayoutRailConfigService.getPublicConfig()
-    return reply.send(config)
-  })
+  app.get(
+    '/withdrawal/payout-rails',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      const config = await withdrawalPayoutRailConfigService.getPublicConfig()
+      return reply.send(config)
+    },
+  )
 
-  app.put('/withdrawal/payout-rails', { preHandler: [requireAdmin] }, async (request, reply) => {
-    const adminUserId = request.userId
-    if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
-    const body = PayoutRailConfigUpdateSchema.parse(request.body ?? {})
-    const config = await withdrawalPayoutRailConfigService.updateConfig(adminUserId, body)
-    return reply.send(config)
-  })
+  app.put(
+    '/withdrawal/payout-rails',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = PayoutRailConfigUpdateSchema.parse(request.body ?? {})
+      const config = await withdrawalPayoutRailConfigService.updateConfig(adminUserId, body)
+      return reply.send(config)
+    },
+  )
 
-  app.get('/payroll/disputed', { preHandler: [requireAdmin] }, async (request, reply) => {
+  app.get('/payroll/disputed', { preHandler: [authenticateAdmin] }, async (request, reply) => {
     const q = request.query as { limit?: string; cursor?: string }
     const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
     const result = await payrollAdminService.getDisputedPayrolls({
@@ -405,21 +416,25 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     return reply.send(result)
   })
 
-  app.get('/payroll/pending-platform', { preHandler: [requireAdmin] }, async (request, reply) => {
-    const q = request.query as { limit?: string; cursor?: string }
-    const limit = Math.min(50, Math.max(1, Number(q.limit ?? '20') || 20))
-    const result = await payrollAdminService.listPendingPlatformWithdrawals({
-      limit,
-      cursor: q.cursor,
-    })
-    return reply.send(result)
-  })
+  app.get(
+    '/payroll/pending-platform',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const q = request.query as { limit?: string; cursor?: string }
+      const limit = Math.min(50, Math.max(1, Number(q.limit ?? '20') || 20))
+      const result = await payrollAdminService.listPendingPlatformWithdrawals({
+        limit,
+        cursor: q.cursor,
+      })
+      return reply.send(result)
+    },
+  )
 
   app.post<{ Params: { id: string } }>(
     '/withdrawal/:id/reverse',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request, reply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const parsed = ReverseSchema.parse(request.body ?? {})
       const row = await withdrawalService.adminReverseWithdrawal(
@@ -433,9 +448,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string } }>(
     '/withdrawal/:id/assign',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request, reply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = WithdrawalAssignSchema.parse(request.body ?? {})
       await payrollAdminService.manuallyAssignWithdrawal(
@@ -449,9 +464,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string } }>(
     '/withdrawal/:id/resolve-dispute/favour-agent',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request, reply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = DisputeResolveSchema.parse(request.body ?? {})
       await withdrawalService.adminResolveDisputeFavourAgent(
@@ -465,9 +480,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string } }>(
     '/withdrawal/:id/resolve-dispute/favour-host',
-    { preHandler: [requireAdmin] },
+    { preHandler: [authenticateAdmin] },
     async (request, reply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = DisputeResolveSchema.parse(request.body ?? {})
       await withdrawalService.adminResolveDisputeFavourHost(

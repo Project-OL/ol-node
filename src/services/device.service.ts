@@ -42,6 +42,8 @@ function formatTimeAgo(date: Date): string {
   return `${Math.floor(days / 30)}mo ago`
 }
 
+import { deviceBanService } from './device-ban.service'
+
 export const deviceService = {
   /**
    * Get all active devices for user (with active session). Cache-aside, TTL 5 min.
@@ -235,6 +237,8 @@ export const deviceService = {
     if (!deviceId) {
       return
     }
+
+    await deviceBanService.assertDeviceNotBanned(deviceId)
 
     const existingCount = await deviceRepository.countLinkedAccounts(deviceId)
     if (existingCount >= 3) {

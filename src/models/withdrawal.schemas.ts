@@ -9,10 +9,7 @@ const withdrawalAmountFields = {
   notes: z.string().max(500).optional(),
 }
 
-function resolveGrossPoints(data: {
-  grossPoints?: bigint
-  amountUsd?: number
-}): bigint {
+function resolveGrossPoints(data: { grossPoints?: bigint; amountUsd?: number }): bigint {
   if (data.amountUsd != null) {
     return grossPointsFromUsd(data.amountUsd)
   }
@@ -28,14 +25,12 @@ function resolveGrossPoints(data: {
   ])
 }
 
-export const CreateWithdrawalSchema = z
-  .object(withdrawalAmountFields)
-  .transform((data) => ({
-    grossPoints: resolveGrossPoints(data),
-    paymentMethodId: data.paymentMethodId,
-    idempotencyKey: data.idempotencyKey,
-    notes: data.notes,
-  }))
+export const CreateWithdrawalSchema = z.object(withdrawalAmountFields).transform((data) => ({
+  grossPoints: resolveGrossPoints(data),
+  paymentMethodId: data.paymentMethodId,
+  idempotencyKey: data.idempotencyKey,
+  notes: data.notes,
+}))
 
 export const DisputeWithdrawalSchema = z.object({
   description: z.string().min(10).max(2000),

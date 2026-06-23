@@ -27,7 +27,9 @@ model User {
   // Last time display name (PATCH /me `name`) changed — monthly throttle.
   usernameUpdatedAt DateTime? @map("username_updated_at")
 
-  status             String    @default("new") @db.VarChar(50) // new, active, suspended, deactivating, deleted
+  status             String    @default("new") @db.VarChar(50) // new, active, suspended, banned, deactivating, deleted
+  /// When set with `status = suspended`, login is blocked until this instant (UTC); then auto-reactivates on next auth attempt.
+  suspendedUntil     DateTime? @map("suspended_until")
   passwordSet        Boolean   @default(false) @map("password_set")
   profileCompletedAt DateTime? @map("profile_completed_at")
 
@@ -55,6 +57,11 @@ model User {
   /// Platform-admin labels (e.g. VIP, risk). Visible on GET /users/me and user search.
   adminTags       String[]  @default([]) @map("admin_tags")
   lastActiveAt    DateTime? @map("last_active_at")
+  personalCoinsFrozen   Boolean   @default(false) @map("personal_coins_frozen")
+  tradingCoinsFrozen    Boolean   @default(false) @map("trading_coins_frozen")
+  pointsFrozen          Boolean   @default(false) @map("points_frozen")
+  postingSuspendedUntil DateTime? @map("posting_suspended_until")
+  postingBanned         Boolean   @default(false) @map("posting_banned")
   currentAgencyId String?   @map("current_agency_id") @db.Uuid
 
   lastIpAddress String?  @map("last_ip_address") @db.VarChar(45)
@@ -315,6 +322,18 @@ model DeviceLinkedAccount {
   @@index([deviceId])
   @@index([userId])
   @@map("device_linked_accounts")
+}
+
+/// Platform-banned physical device ids — blocks login, signup, and authenticated API use.
+model BannedDevice {
+  deviceId      String   @id @map("device_id") @db.VarChar(255)
+  reason        String?  @db.VarChar(500)
+  bannedByAdminId String? @map("banned_by_admin_id") @db.Uuid
+  relatedUserId String?  @map("related_user_id") @db.Uuid
+  bannedAt      DateTime @default(now()) @map("banned_at")
+
+  @@index([relatedUserId])
+  @@map("banned_devices")
 }
 
 // ─── 7. VIP_PUBLIC_IDS (reserved patterns) ───
@@ -1724,6 +1743,7 @@ enum AgencyHostHistoryReason {
   REMOVED_INACTIVE
   REMOVED_SUSPENDED
   CS_FORCE_EXIT
+  ADMIN_FORCE_EXIT
   AGENT_DELETED
   HOST_DELETED
 }
@@ -2297,4 +2317,44 @@ model UserQuestionnaireAnswer {
 
   @@unique([attemptId, questionId])
   @@map("user_questionnaire_answers")
+}
+
+// ─── System Admin (separate identity from User) ───
+enum AdminRole {
+  SUPER_ADMIN
+  MODERATOR
+  FINANCE
+  CONTENT
+}
+
+model SystemAdmin {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  role         AdminRole @default(MODERATOR)
+  displayName  String    @map("display_name")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  lastLoginAt  DateTime? @map("last_login_at")
+
+  sessions AdminSession[]
+
+  @@map("system_admins")
+}
+
+model AdminSession {
+  id        String      @id @default(uuid())
+  adminId   String      @map("admin_id")
+  admin     SystemAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  tokenHash String      @map("token_hash")
+  ipAddress String?     @map("ip_address")
+  userAgent String?     @map("user_agent")
+  expiresAt DateTime    @map("expires_at")
+  revokedAt DateTime?   @map("revoked_at")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  @@index([adminId])
+  @@index([tokenHash])
+  @@map("admin_sessions")
 }

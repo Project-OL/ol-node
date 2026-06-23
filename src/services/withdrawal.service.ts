@@ -152,8 +152,7 @@ export function calculateWithdrawalAmounts(
   const platformFeeRateBp = resolvePlatformFeeRateBp(grossPoints)
   const platformFeePoints = (grossPoints * BigInt(platformFeeRateBp)) / 10000n
   // agentRewardRateBp = share of platform fee (6000 bp = 60% of platformFeePoints)
-  const agentRewardPoints =
-    (platformFeePoints * BigInt(config.agentRewardRateBp)) / 10000n
+  const agentRewardPoints = (platformFeePoints * BigInt(config.agentRewardRateBp)) / 10000n
   const hostPayoutPoints = grossPoints - platformFeePoints
 
   const hostPayoutUsd = new Prisma.Decimal(hostPayoutPoints.toString()).div(

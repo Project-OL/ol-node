@@ -43,9 +43,7 @@ export const LIVE_COMMISSION_TX_TYPES = new Set<PointTxType>([
   PointTxType.LIVESTREAM_GIFT, // legacy enum, eligible if ever written
 ])
 
-export const MATCH_CHAT_COMMISSION_TX_TYPES = new Set<PointTxType>([
-  PointTxType.VIDEO_CALL,
-])
+export const MATCH_CHAT_COMMISSION_TX_TYPES = new Set<PointTxType>([PointTxType.VIDEO_CALL])
 
 export const COMMISSION_ELIGIBLE_TX_TYPES = new Set<PointTxType>([
   ...LIVE_COMMISSION_TX_TYPES,
@@ -585,8 +583,8 @@ export const agencyCommissionService = {
     })
 
     const recipientAg = await prismaRead.agency.findUnique({
-        where: { userId: recipientAgentUserId },
-      })
+      where: { userId: recipientAgentUserId },
+    })
     if (!recipientAg) {
       throw new AppError(400, 'Recipient is not an agent', 'INVALID_RECIPIENT')
     }

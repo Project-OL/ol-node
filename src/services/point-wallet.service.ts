@@ -7,8 +7,13 @@ import { pointLedgerRepository } from '../repositories/point-ledger.repository'
 import { walletService } from './wallet.service'
 import { auditService } from './audit.service'
 import { WalletCurrencyType, PointTxType, LedgerDirection, LevelType } from '@prisma/client'
+import { assertPointsDebitAllowed } from './wallet-freeze.service'
 import { walletLevelService } from './user-level.service'
-import { utcDayFromTimestamp, resolvePointSummaryPeriod, type PointSummaryPeriod } from '../utils/datetime'
+import {
+  utcDayFromTimestamp,
+  resolvePointSummaryPeriod,
+  type PointSummaryPeriod,
+} from '../utils/datetime'
 import { formatPointsAsUsd } from '../utils/points-currency'
 import {
   buildPointAmountBreakdown,
@@ -127,9 +132,7 @@ async function buildPointTransactionDetail(
     idempotencyKey: entry.idempotencyKey,
     createdAt: transactionDateTime,
     earningsCategory:
-      entry.direction === LedgerDirection.CREDIT
-        ? earningsCategoryForTxType(entry.txType)
-        : null,
+      entry.direction === LedgerDirection.CREDIT ? earningsCategoryForTxType(entry.txType) : null,
     self: mapLedgerParticipant(selfRow),
     counterparty: counterpartyRow ? mapLedgerParticipant(counterpartyRow) : null,
     counterpartyDetails: counterpartyDetailsMap.get(entry.id) ?? null,
@@ -620,6 +623,8 @@ export const pointWalletService = {
         balanceAfter: existing.balanceAfter,
       }
     }
+
+    await assertPointsDebitAllowed(userId)
 
     const wallet = await tx.wallet.upsert({
       where: {

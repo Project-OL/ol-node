@@ -1,11 +1,6 @@
 import { CoinTxType, type Prisma } from '@prisma/client'
 import { prisma } from '../config/database'
-import {
-  redisClient,
-  RedisKeys,
-  RICH_CONFIG_TTL,
-  RICH_STATE_TTL,
-} from '../config/redis'
+import { redisClient, RedisKeys, RICH_CONFIG_TTL, RICH_STATE_TTL } from '../config/redis'
 import { richTierRepository } from '../repositories/richTier.repository'
 import { vipAssignmentRepository } from '../repositories/vip-assignment.repository'
 import { enqueueRolloverMaster } from '../queues/rich-tier.queue'

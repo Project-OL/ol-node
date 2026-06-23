@@ -19,6 +19,7 @@ import { providerService } from '../services/provider.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { AuthProvider } from '../models/types'
 import { displayNameFromUser } from '../utils/profileDisplay'
+import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 export interface OAuthUserInfo {
   email: string | null
@@ -168,19 +169,7 @@ export const oauthService = {
     }
     if (existing) {
       const user = existing.user
-      if (user.status === 'deactivating') {
-        throw new AppError(
-          403,
-          'Account scheduled for deletion. You can reactivate it in account settings.',
-          'ACCOUNT_DEACTIVATING',
-          { canReactivate: true },
-        )
-      }
-      if (user.status === 'deleted') {
-        throw new AppError(403, 'Account has been permanently deleted.', 'ACCOUNT_DELETED')
-      }
-      if (user.status === 'suspended')
-        throw new AppError(403, 'Account suspended', 'ACCOUNT_SUSPENDED')
+      await ensureUserMayAuthenticate(user)
       await deviceService.linkAccountToDevice(deviceId, user.id)
       const tokens = await sessionService.createSession({
         userId: user.id,

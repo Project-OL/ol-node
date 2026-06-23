@@ -1,14 +1,6 @@
-import {
-  CoinTxType,
-  LedgerDirection,
-  PointTxType,
-  Prisma,
-} from '@prisma/client'
+import { CoinTxType, LedgerDirection, PointTxType, Prisma } from '@prisma/client'
 import { prismaRead } from '../config/database'
-import {
-  getTransactionName,
-  type LedgerWalletContext,
-} from '../config/transaction-display-names'
+import { getTransactionName, type LedgerWalletContext } from '../config/transaction-display-names'
 
 export const COUNTERPARTY_USER_SELECT = {
   id: true,
@@ -65,7 +57,9 @@ function userDisplayName(user: CounterpartyUserRow): string {
   return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
 
-export function mapUserCounterpartyDetails(user: CounterpartyUserRow): NonNullable<CounterpartyDetails> {
+export function mapUserCounterpartyDetails(
+  user: CounterpartyUserRow,
+): NonNullable<CounterpartyDetails> {
   return {
     userId: user.id,
     name: userDisplayName(user),
@@ -278,9 +272,7 @@ export async function buildCounterpartyDetailsMap(
   return result
 }
 
-export function enrichLedgerEntry<
-  T extends LedgerEntryLike & Record<string, unknown>,
->(
+export function enrichLedgerEntry<T extends LedgerEntryLike & Record<string, unknown>>(
   entry: T,
   walletContext: LedgerWalletContext,
   counterpartyDetails: CounterpartyDetails,
@@ -292,9 +284,7 @@ export function enrichLedgerEntry<
   }
 }
 
-export async function enrichLedgerEntries<
-  T extends LedgerEntryLike & Record<string, unknown>,
->(
+export async function enrichLedgerEntries<T extends LedgerEntryLike & Record<string, unknown>>(
   entries: T[],
   walletContext: LedgerWalletContext,
   walletUserId: string,

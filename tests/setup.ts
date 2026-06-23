@@ -1,5 +1,8 @@
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? 'test-secret-at-least-32-characters-long'
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET ?? 'test-refresh-secret-at-least-32-chars'
+process.env.ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET ?? 'test-admin-jwt-secret-at-least-32-chars'
+process.env.ADMIN_JWT_REFRESH_SECRET =
+  process.env.ADMIN_JWT_REFRESH_SECRET ?? 'test-admin-refresh-secret-at-least-32-chars'
 process.env.LIVE_WEBHOOK_SECRET = process.env.LIVE_WEBHOOK_SECRET ?? 'test-live-webhook-secret-at-least-32-chars'
 process.env.NODE_ENV = 'test'
 process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://test:test@localhost:5432/test'

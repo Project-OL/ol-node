@@ -1,10 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { AppError } from '../../middlewares/errorHandler'
-import { requireAdmin } from '../../middlewares/requireAdmin'
+import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { superHostTargetParamsSchema } from '../../models/super-host.schemas'
 import { superHostService } from '../../services/super-host.service'
 
-const preAuth = [requireAdmin]
+const preAuth = [authenticateAdmin]
 
 export default async function superHostRoutes(app: FastifyInstance) {
   app.post<{ Params: { targetUserId: string } }>(
@@ -22,7 +22,7 @@ export default async function superHostRoutes(app: FastifyInstance) {
       },
     },
     async (request: FastifyRequest<{ Params: { targetUserId: string } }>, reply: FastifyReply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) {
         throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       }
@@ -56,7 +56,7 @@ export default async function superHostRoutes(app: FastifyInstance) {
       },
     },
     async (request: FastifyRequest<{ Params: { targetUserId: string } }>, reply: FastifyReply) => {
-      const adminUserId = request.userId
+      const adminUserId = request.adminUser?.id
       if (!adminUserId) {
         throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       }

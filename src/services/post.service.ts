@@ -12,6 +12,7 @@ import { assembleLockedPostResponse, assemblePostResponse } from './post-respons
 import { subscriptionService } from './subscription.service'
 import { videoThumbnailService } from './video-thumbnail.service'
 import { rootLogger } from '../utils/rootLogger'
+import { assertUserMayPost } from './wallet-freeze.service'
 
 const VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'] as const
 
@@ -111,6 +112,8 @@ export const postService = {
   },
 
   async createPost(userId: string, dto: CreatePostDto, meta: AuditMeta): Promise<PostResponse> {
+    await assertUserMayPost(userId)
+
     const {
       mediaKey,
       caption,

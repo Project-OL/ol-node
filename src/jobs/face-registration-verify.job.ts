@@ -273,7 +273,8 @@ export async function processFaceRegistrationVerifyJob(
         duplicateOfUserId: validation.duplicateMatch?.matchedUserId ?? null,
         faceMatchSimilarity: validation.duplicateMatch?.matchSimilarity ?? null,
         moderationLabels: (validation.moderationLabels ?? null) as Prisma.InputJsonValue | null,
-        qualityChecksPassed: (validation.qualityChecksPassed ?? null) as Prisma.InputJsonValue | null,
+        qualityChecksPassed: (validation.qualityChecksPassed ??
+          null) as Prisma.InputJsonValue | null,
       })
       await faceRegistrationRepository.updateSession(sessionId, {
         status: 'REJECTED',
@@ -310,8 +311,7 @@ export async function processFaceRegistrationVerifyJob(
       status: 'VALIDATION_FAILED',
       audit: {
         qualityCheckFailures: validation.details?.failedChecks,
-        contentPolicyViolation:
-          errorCode === FACE_REGISTRATION_ERRORS.FACE_QUALITY_CONTENT_POLICY,
+        contentPolicyViolation: errorCode === FACE_REGISTRATION_ERRORS.FACE_QUALITY_CONTENT_POLICY,
         details: {
           qualityMetrics: validation.details?.qualityMetrics,
           recommendation: validation.details?.recommendation,

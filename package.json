@@ -42,6 +42,7 @@
         "postman:auth": "node scripts/generate-auth-postman-collection.mjs",
         "grant:trading-coins": "tsx scripts/grant-trading-coins.ts",
         "seed:agency-agent-dev": "tsx scripts/seed-agency-agent-dev.ts",
+        "seed:super-admin": "tsx src/scripts/seed-super-admin.ts",
         "seed:coin-trading-rates": "tsx scripts/seed-coin-trading-rates.ts",
         "seed:coin-trading-topup-packages": "tsx scripts/seed-coin-trading-topup-packages.ts",
         "lab:seed": "tsx lab/fixtures/seed.ts",

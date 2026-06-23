@@ -20,7 +20,11 @@ import { enqueueGuardianExpiry } from '../queues/guardian.queue'
 import { ledgerHostPointsKey } from '../utils/ledger-idempotency'
 import type { PurchaseGuardianInput } from '../models/guardian.schemas'
 import type { ActiveGuardianProfileDto } from '../models/profile.types'
-import { walletLevelService, syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
+import {
+  walletLevelService,
+  syncLevelCacheFromApplyResult,
+  type LevelApplyResult,
+} from './user-level.service'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
 const MONTHLY_PRICE: Record<GuardianTier, number> = {

@@ -1,9 +1,4 @@
-import {
-  redisClient,
-  RedisKeys,
-  FAN_RANK_DAY_TTL,
-  FAN_RANK_WEEK_MONTH_TTL,
-} from '../config/redis'
+import { redisClient, RedisKeys, FAN_RANK_DAY_TTL, FAN_RANK_WEEK_MONTH_TTL } from '../config/redis'
 import {
   fanRankingRepository,
   mapUserToRankingFields,

@@ -19,6 +19,7 @@ import {
   syncLevelCacheFromApplyResult,
   type LevelApplyResult,
 } from './user-level.service'
+import { assertCoinDebitAllowed } from './wallet-freeze.service'
 import { RECHARGE_TX_TYPES, richTierService } from './rich-tier.service'
 import { epayClient } from '../lib/epay.client'
 
@@ -570,6 +571,8 @@ export const coinWalletService = {
     }
 
     const currencyType = options.currencyType ?? WalletCurrencyType.COIN
+    await assertCoinDebitAllowed(userId, currencyType)
+
     const wallet = await tx.wallet.upsert({
       where: {
         userId_currencyType: {

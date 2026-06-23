@@ -51,11 +51,15 @@ export async function buildDuplicateMatchDetails(input: {
     matchedUser,
     matchedUserId: input.matchedUserId ?? null,
     matchSimilarity: input.matchSimilarity ?? null,
-    action: FACE_QUALITY_RECOMMENDATIONS.FACE_DUPLICATE_IDENTITY ?? 'Contact support if you believe this is an error.',
+    action:
+      FACE_QUALITY_RECOMMENDATIONS.FACE_DUPLICATE_IDENTITY ??
+      'Contact support if you believe this is an error.',
   }
 }
 
-export function duplicateDetailsForAppError(details: DuplicateMatchDetails): Record<string, unknown> {
+export function duplicateDetailsForAppError(
+  details: DuplicateMatchDetails,
+): Record<string, unknown> {
   return {
     matchedUser: details.matchedUser,
     matchedUserId: details.matchedUserId,
