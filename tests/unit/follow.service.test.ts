@@ -31,6 +31,10 @@ vi.mock('../../src/services/audit.service', () => ({
   auditService: { log: (...args: unknown[]) => auditLog(...args) },
 }))
 
+vi.mock('../../src/utils/block-relationship', () => ({
+  assertNotBlockedEitherWay: vi.fn().mockResolvedValue(undefined),
+}))
+
 const upsertFollow = vi.fn()
 const deleteFollow = vi.fn()
 const existsFollow = vi.fn()

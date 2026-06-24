@@ -3,6 +3,7 @@ import type { UserFollow, User } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import type { TaggedUser } from '../types/post.types'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { userNotBlockedWithFilter } from '../utils/block-relationship'
 
 interface FollowWithUser {
   follow: UserFollow
@@ -34,9 +35,14 @@ function mutualFriendsWhere(userId: string) {
   return {
     followerId: userId,
     following: {
-      following: {
-        some: { followingId: userId },
-      },
+      AND: [
+        {
+          following: {
+            some: { followingId: userId },
+          },
+        },
+        userNotBlockedWithFilter(userId),
+      ],
     },
   }
 }
@@ -93,7 +99,7 @@ export const followRepository = {
     cursor: string | null,
     limit: number,
   ): Promise<{ items: FollowWithUser[]; nextCursor: string | null; total: number }> {
-    const where = { followingId: userId }
+    const where = { followingId: userId, follower: userNotBlockedWithFilter(userId) }
     const follows = await prismaRead.userFollow.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -165,7 +171,7 @@ export const followRepository = {
     cursor: string | null,
     limit: number,
   ): Promise<{ items: FollowWithUser[]; nextCursor: string | null; total: number }> {
-    const where = { followerId: userId }
+    const where = { followerId: userId, following: userNotBlockedWithFilter(userId) }
     const follows = await prismaRead.userFollow.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -302,11 +308,15 @@ export const followRepository = {
   },
 
   async countFollowers(userId: string): Promise<number> {
-    return prisma.userFollow.count({ where: { followingId: userId } })
+    return prisma.userFollow.count({
+      where: { followingId: userId, follower: userNotBlockedWithFilter(userId) },
+    })
   },
 
   async countFollowing(userId: string): Promise<number> {
-    return prisma.userFollow.count({ where: { followerId: userId } })
+    return prisma.userFollow.count({
+      where: { followerId: userId, following: userNotBlockedWithFilter(userId) },
+    })
   },
 
   /** Lightweight: IDs only, for messaging privacy checks. Cap at 500. */

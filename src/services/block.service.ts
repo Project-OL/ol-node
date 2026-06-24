@@ -3,8 +3,10 @@ import { userRepository } from '../repositories/user.repository'
 import { cacheService } from './cache.service'
 import { auditService } from '../services/audit.service'
 import { AppError } from '../middlewares/errorHandler'
-import { RedisKeys, BLOCK_LIST_TTL } from '../config/redis'
+import { RedisKeys, BLOCK_LIST_TTL, redisClient } from '../config/redis'
 import type { GetBlockListInput } from '../models/messaging.schemas'
+import { subscriptionService } from './subscription.service'
+import { invalidateSocialCountsCache } from './follow.service'
 
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
@@ -77,6 +79,12 @@ export const blockService = {
     }
     await blockRepository.blockUser(blockerId, blockedId)
     await cacheService.delete(RedisKeys.blockList(blockerId))
+    await Promise.all([
+      redisClient.del(RedisKeys.allowedMessaging(blockedId, blockerId)).catch(() => {}),
+      redisClient.del(RedisKeys.allowedMessaging(blockerId, blockedId)).catch(() => {}),
+      subscriptionService.stopRenewalsDueToBlock(blockerId, blockedId),
+      invalidateSocialCountsCache(blockerId, blockedId),
+    ])
     await auditService.log({
       actionType: 'BLOCK_USER',
       actionStatus: 'success',

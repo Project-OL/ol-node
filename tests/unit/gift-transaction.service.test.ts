@@ -38,6 +38,10 @@ vi.mock("../../src/services/vip-membership.service", () => ({
   },
 }));
 
+vi.mock("../../src/utils/block-relationship", () => ({
+  assertNotBlockedEitherWay: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("../../src/config/redis", () => ({
   redisClient: { del: (...a: unknown[]) => redisDel(...a) },
   getRedisForRead: () => ({ get: vi.fn() }),

@@ -8,6 +8,7 @@ import type { PaginatedResult, UserCard } from '../types/social.types'
 import { AppError } from '../middlewares/errorHandler'
 import { superHostService } from './super-host.service'
 import { guardianService } from './guardian.service'
+import { assertNotBlockedEitherWay } from '../utils/block-relationship'
 
 export interface AuditMeta {
   request?: { ip?: string; headers?: Record<string, string | undefined> }
@@ -122,6 +123,8 @@ export const followService = {
     if (followerId === targetUserId) {
       throw new AppError(400, 'Cannot follow self', 'CANNOT_FOLLOW_SELF')
     }
+
+    await assertNotBlockedEitherWay(followerId, targetUserId)
 
     const already = await followRepository.existsFollow(followerId, targetUserId)
     if (already) {

@@ -12,6 +12,7 @@ import { walletLevelService, syncLevelCacheFromApplyResult } from './user-level.
 import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
 import { userRepository } from '../repositories/user.repository'
 import { auditService } from './audit.service'
+import { assertNotBlockedEitherWay } from '../utils/block-relationship'
 import {
   WalletCurrencyType,
   CoinTxType,
@@ -108,6 +109,8 @@ export const videoCallSessionService = {
     const creator = await userRepository.findByPublicId(numericId)
     if (!creator) throw new AppError(404, 'Creator not found', 'NOT_FOUND')
     if (creator.id === callerId) throw new AppError(400, 'Cannot call yourself', 'INVALID_REQUEST')
+
+    await assertNotBlockedEitherWay(callerId, creator.id)
 
     // Get creator call settings
     const settings = await videoCallRepository.getSettings(creator.id)

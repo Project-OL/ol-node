@@ -8,6 +8,7 @@ import type { PaginatedResult, UserCardWithVisit } from '../types/social.types'
 import { superHostService } from './super-host.service'
 import { guardianService } from './guardian.service'
 import { privacyService } from './privacy.service'
+import { isBlockedEitherWay } from '../utils/block-relationship'
 
 export interface AuditMeta {
   request?: { ip?: string; headers?: Record<string, string | undefined> }
@@ -41,6 +42,10 @@ function computeAge(dob: Date | null): number | null {
 export const visitorService = {
   async recordVisit(profileId: string, visitorId: string, meta: AuditMeta): Promise<void> {
     if (profileId === visitorId) {
+      return
+    }
+
+    if (await isBlockedEitherWay(profileId, visitorId)) {
       return
     }
 

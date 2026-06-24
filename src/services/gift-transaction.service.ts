@@ -22,6 +22,7 @@ import { getPeriodKeys } from '../utils/periodKeys'
 import { vipMembershipService } from './vip-membership.service'
 import { fanSpendIncrementForGift } from './vip-membership.helpers'
 import { utcDayFromTimestamp } from '../utils/datetime'
+import { assertNotBlockedEitherWay } from '../utils/block-relationship'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
@@ -55,6 +56,8 @@ export const giftTransactionService = {
     if (params.senderUserId === params.receiverUserId) {
       throw new AppError(400, 'Cannot send a gift to yourself', 'INVALID_REQUEST')
     }
+
+    await assertNotBlockedEitherWay(params.senderUserId, params.receiverUserId)
 
     const gift = await giftRepository.findById(params.giftId)
     if (!gift || !gift.isActive) {

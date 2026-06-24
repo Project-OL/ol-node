@@ -36,6 +36,7 @@ import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { walletService } from './wallet.service'
 import { syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
+import { assertNotBlockedEitherWay, isBlockedEitherWay } from '../utils/block-relationship'
 
 async function bustAgentCommissionIfNeeded(agentUserId: string | null): Promise<void> {
   if (!agentUserId) return
@@ -94,6 +95,47 @@ async function setSubscriptionAccess(
 ): Promise<void> {
   const ttl = accessTtlSeconds(nextRenewalAt)
   await redisClient.set(RedisKeys.subscriptionAccess(subscriberId, creatorId), '1', 'EX', ttl)
+}
+
+/**
+ * Stop future renewals when users block each other. Paid access remains until `nextRenewalAt`.
+ */
+async function stopRenewalDueToBlockKeepingAccess(
+  subscriberId: string,
+  creatorId: string,
+): Promise<void> {
+  const sub = await subscriptionRepository.findByPair(subscriberId, creatorId)
+  if (!sub) return
+  if (
+    sub.status !== CreatorSubscriptionStatus.ACTIVE &&
+    sub.status !== CreatorSubscriptionStatus.GRACE
+  ) {
+    return
+  }
+
+  await subscriptionRepository.updateById(sub.id, {
+    status: CreatorSubscriptionStatus.CANCELLED,
+    graceUntil: null,
+  })
+  await cancelSubscriptionRenewalJob(sub.id)
+  await cancelSubscriptionGraceJob(sub.id)
+
+  if (sub.nextRenewalAt.getTime() > Date.now()) {
+    await setSubscriptionAccess(subscriberId, creatorId, sub.nextRenewalAt)
+  } else {
+    await redisClient.del(RedisKeys.subscriptionAccess(subscriberId, creatorId))
+  }
+
+  await userSubscriberRepository.deletePair(subscriberId, creatorId)
+  await invalidateSubscriberCountCache(creatorId)
+  await invalidateTopCreatorsCachesForCreator(creatorId)
+
+  console.info('[Subscription] renewal stopped due to block', {
+    subscriptionId: sub.id,
+    subscriberId,
+    creatorId,
+    accessUntil: sub.nextRenewalAt.toISOString(),
+  })
 }
 
 async function invalidateSubscriberCountCache(creatorId: string): Promise<void> {
@@ -266,6 +308,8 @@ export const subscriptionService = {
       throw new AppError(400, 'Cannot subscribe to yourself', 'INVALID_REQUEST')
     }
 
+    await assertNotBlockedEitherWay(subscriberId, creatorId)
+
     const creator = await userRepository.findById(creatorId)
     if (!creator) {
       throw new AppError(404, 'Creator not found', 'NOT_FOUND')
@@ -374,6 +418,12 @@ export const subscriptionService = {
     console.info('[Subscription] cancelled', { subscriptionId: sub.id, subscriberId, creatorId })
   },
 
+  /** Cancel renewal/grace for subscriptions in either direction; keep access until period end. */
+  async stopRenewalsDueToBlock(userA: string, userB: string): Promise<void> {
+    await stopRenewalDueToBlockKeepingAccess(userA, userB)
+    await stopRenewalDueToBlockKeepingAccess(userB, userA)
+  },
+
   async checkAccess(subscriberId: string, creatorId: string): Promise<boolean> {
     if (subscriberId === creatorId) {
       return true
@@ -470,6 +520,11 @@ export const subscriptionService = {
       return
     }
 
+    if (await isBlockedEitherWay(sub.subscriberId, sub.creatorId)) {
+      await stopRenewalDueToBlockKeepingAccess(sub.subscriberId, sub.creatorId)
+      return
+    }
+
     const idempotencyKey = `sub-renewal:${subscriptionId}:${sub.nextRenewalAt.toISOString()}`
     const hostPtsIdem = `sub-host-pts:renewal:${subscriptionId}:${sub.nextRenewalAt.toISOString()}`
 
@@ -563,6 +618,11 @@ export const subscriptionService = {
       return
     }
     if (!sub.graceUntil || sub.graceUntil.getTime() > Date.now()) {
+      return
+    }
+
+    if (await isBlockedEitherWay(sub.subscriberId, sub.creatorId)) {
+      await stopRenewalDueToBlockKeepingAccess(sub.subscriberId, sub.creatorId)
       return
     }
 

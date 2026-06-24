@@ -1,5 +1,6 @@
 import { prisma, prismaRead } from '../config/database'
 import type { ProfileVisitor, User, UserLevel } from '@prisma/client'
+import { userNotBlockedWithFilter } from '../utils/block-relationship'
 
 export interface VisitorRow {
   visit: ProfileVisitor
@@ -73,7 +74,9 @@ export const visitorRepository = {
   },
 
   async countVisitors(profileId: string): Promise<number> {
-    return prismaRead.profileVisitor.count({ where: { profileId } })
+    return prismaRead.profileVisitor.count({
+      where: { profileId, visitor: userNotBlockedWithFilter(profileId) },
+    })
   },
 
   async findVisitors(
@@ -81,7 +84,7 @@ export const visitorRepository = {
     cursor: string | null,
     limit: number,
   ): Promise<{ items: VisitorRow[]; nextCursor: string | null; total: number }> {
-    const where = { profileId }
+    const where = { profileId, visitor: userNotBlockedWithFilter(profileId) }
     const rows = await prismaRead.profileVisitor.findMany({
       where,
       orderBy: { visitedAt: 'desc' },
@@ -129,7 +132,7 @@ export const visitorRepository = {
     cursor: string | null,
     limit: number,
   ): Promise<{ items: VisitorRow[]; nextCursor: string | null; total: number }> {
-    const where = { visitorId }
+    const where = { visitorId, profile: userNotBlockedWithFilter(visitorId) }
     const rows = await prismaRead.profileVisitor.findMany({
       where,
       orderBy: { visitedAt: 'desc' },
