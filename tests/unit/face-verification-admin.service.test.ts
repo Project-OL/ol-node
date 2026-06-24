@@ -97,6 +97,9 @@ describe('faceVerificationAdminService', () => {
       expect(result.relatedRevoked).toHaveLength(1)
       expect(revokeProfile).toHaveBeenCalledTimes(2)
       expect(createRevocationRecord).toHaveBeenCalledTimes(2)
+      expect(createRevocationRecord).toHaveBeenCalledWith(
+        expect.objectContaining({ revokedByAdminId: adminId }),
+      )
     })
 
     it('throws when primary profile missing', async () => {

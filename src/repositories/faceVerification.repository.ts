@@ -384,6 +384,7 @@ export const faceVerificationRepository = {
       userId: string
       faceProfileId?: string | null
       revokedByUserId?: string | null
+      revokedByAdminId?: string | null
       revokeReason?: string | null
       rekognitionFaceId?: string | null
     },
@@ -394,6 +395,7 @@ export const faceVerificationRepository = {
         userId: input.userId,
         faceProfileId: input.faceProfileId ?? undefined,
         revokedByUserId: input.revokedByUserId ?? undefined,
+        revokedByAdminId: input.revokedByAdminId ?? undefined,
         revokeReason: input.revokeReason ?? undefined,
         rekognitionFaceId: input.rekognitionFaceId ?? undefined,
       },

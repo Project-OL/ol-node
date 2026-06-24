@@ -296,6 +296,8 @@ export const adminWalletService = {
       { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
     )
 
+    await walletService.adjustPointBalanceCache(params.targetUserId, -params.amount)
+
     auditService.log({
       userId: params.adminUserId,
       actionType: 'ADMIN_WALLET_DEBIT_POINTS',

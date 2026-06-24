@@ -112,7 +112,7 @@ async function revokeOneUserFaceProfile(
   await faceVerificationRepository.createRevocationRecord({
     userId: targetUserId,
     faceProfileId: profile.id,
-    revokedByUserId: adminUserId,
+    revokedByAdminId: adminUserId,
     revokeReason: reason ?? null,
     rekognitionFaceId: profile.rekognitionFaceId,
   })
@@ -418,7 +418,7 @@ export const faceVerificationAdminService = {
     await faceVerificationRepository.createRevocationRecord({
       userId: blockedUserId,
       faceProfileId: blockedProfile.id,
-      revokedByUserId: adminUserId,
+      revokedByAdminId: adminUserId,
       revokeReason: reason ?? 'duplicate_identity_resolved',
       rekognitionFaceId: blockedProfile.rekognitionFaceId,
     })

@@ -181,6 +181,7 @@ export const adminUserDetailService = {
       name: buildUserDisplayName(row),
       publicId: row.publicId.toString(),
       avatarUrl: row.avatarUrl,
+      bio: row.bio,
       vip,
       email: email.value,
       emailVerified: email.verified,

@@ -2221,7 +2221,10 @@ model FaceProfileRevocation {
   id                String   @id @default(uuid()) @db.Uuid
   userId            String   @map("user_id") @db.Uuid
   faceProfileId     String?  @map("face_profile_id") @db.Uuid
+  /// App user who initiated revocation (self-service); null for admin actions.
   revokedByUserId   String?  @map("revoked_by_user_id") @db.Uuid
+  /// `system_admins.id` when revoked via admin API (no FK — same pattern as `banned_devices`).
+  revokedByAdminId  String?  @map("revoked_by_admin_id") @db.Uuid
   revokeReason      String?  @map("revoke_reason") @db.Text
   rekognitionFaceId String?  @map("rekognition_face_id") @db.VarChar(128)
   revokedAt         DateTime @default(now()) @map("revoked_at")

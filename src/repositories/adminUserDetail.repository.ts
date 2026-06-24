@@ -21,6 +21,7 @@ export const adminUserDetailSelect = {
   gender: true,
   country: true,
   avatarUrl: true,
+  bio: true,
   status: true,
   suspendedUntil: true,
   personalCoinsFrozen: true,
@@ -59,6 +60,7 @@ export type AdminUserDetailRow = {
   gender: string | null
   country: string | null
   avatarUrl: string | null
+  bio: string | null
   status: string
   suspendedUntil: Date | null
   personalCoinsFrozen: boolean
