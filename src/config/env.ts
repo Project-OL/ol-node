@@ -262,7 +262,6 @@ const envSchema = z
         'MSG91_SMS_TEMPLATE_ID',
         'MSG91_WHATSAPP_TEMPLATE_ID',
         'MSG91_WHATSAPP_SENDER',
-        'MSG91_WHATSAPP_NAMESPACE',
         'MSG91_SENDER_ID',
         'MSG91_DLT_ENTITY_ID',
         'SES_FROM_EMAIL',

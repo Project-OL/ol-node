@@ -69,6 +69,17 @@ describe('msg91.provider WhatsApp OTP', () => {
     })
   })
 
+  it('sets namespace to null when not provided (MSG91 otp_delivery default)', () => {
+    const body = buildWhatsappOtpRequestBody({
+      phone: '919876543210',
+      otp: '48291',
+      integratedNumber: '15559762402',
+      templateName: 'otp_delivery',
+      languageCode: 'en',
+    })
+    expect(body.payload.template).toMatchObject({ namespace: null })
+  })
+
   it('sendWhatsappOtp posts MSG91 authentication template payload', async () => {
     const result = await msg91Provider.sendWhatsappOtp({
       phone: '919876543210',
