@@ -38,19 +38,6 @@ function isExpectedProviderError(error: unknown): error is AxiosError {
   return axios.isAxiosError(error)
 }
 
-function buildWhatsappTemplateVariables(
-  otp: string,
-  purpose: string,
-  templateVariables?: Record<string, string>,
-): Record<string, string> {
-  return {
-    VAR1: otp,
-    OTP: otp,
-    purpose,
-    ...(templateVariables ?? {}),
-  }
-}
-
 /** MSG91 SMS template exposes a single placeholder named `var` for the OTP. */
 function buildSmsTemplateVariables(
   otp: string,
@@ -62,37 +49,66 @@ function buildSmsTemplateVariables(
   }
 }
 
+/**
+ * MSG91 authentication templates (e.g. otp_delivery) expect OTP in body_1 and button_1.
+ * @see https://msg91.com/help/whatsapp/whatsapp-otp
+ */
+export function buildWhatsappOtpRequestBody(params: {
+  phone: string
+  otp: string
+  integratedNumber: string
+  templateName: string
+  languageCode: string
+  namespace: string
+}) {
+  return {
+    integrated_number: params.integratedNumber,
+    content_type: 'template',
+    payload: {
+      messaging_product: 'whatsapp',
+      type: 'template',
+      template: {
+        name: params.templateName,
+        language: {
+          code: params.languageCode,
+          policy: 'deterministic',
+        },
+        namespace: params.namespace,
+        to_and_components: [
+          {
+            to: [params.phone],
+            components: {
+              body_1: {
+                type: 'text',
+                value: params.otp,
+              },
+              button_1: {
+                subtype: 'url',
+                type: 'text',
+                value: params.otp,
+              },
+            },
+          },
+        ],
+      },
+    },
+  }
+}
+
 export const msg91Provider = {
   async sendWhatsappOtp(params: WhatsappOtpParams): Promise<OtpProviderResult> {
     try {
-      const variables = buildWhatsappTemplateVariables(
-        params.otp,
-        params.purpose,
-        params.templateVariables,
-      )
+      const body = buildWhatsappOtpRequestBody({
+        phone: params.phone,
+        otp: params.otp,
+        integratedNumber: env.MSG91_WHATSAPP_SENDER ?? '',
+        templateName: env.MSG91_WHATSAPP_TEMPLATE_ID ?? '',
+        languageCode: env.MSG91_WHATSAPP_LANGUAGE_CODE ?? 'en',
+        namespace: env.MSG91_WHATSAPP_NAMESPACE ?? '',
+      })
       const response = await msg91Client.post(
         '/api/v5/whatsapp/whatsapp-outbound-message/bulk/',
-        {
-          integrated_number: env.MSG91_WHATSAPP_SENDER,
-          content_type: 'template',
-          payload: {
-            to: params.phone,
-            type: 'template',
-            template: {
-              name: env.MSG91_WHATSAPP_TEMPLATE_ID,
-              language: { code: 'en' },
-              components: [
-                {
-                  type: 'body',
-                  parameters: Object.values(variables).map((value) => ({
-                    type: 'text',
-                    text: value,
-                  })),
-                },
-              ],
-            },
-          },
-        },
+        body,
         { headers: msg91AuthHeaders() },
       )
 
