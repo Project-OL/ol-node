@@ -32,10 +32,10 @@ vi.mock('../../src/utils/rootLogger', () => ({
   },
 }))
 
+const envState = vi.hoisted(() => ({ OTP_DELIVERY_ENABLED: true }))
+
 vi.mock('../../src/config/env', () => ({
-  env: {
-    OTP_DELIVERY_ENABLED: true,
-  },
+  env: envState,
 }))
 
 const { detectOtpTarget, otpDeliveryService } =
@@ -44,6 +44,7 @@ const { detectOtpTarget, otpDeliveryService } =
 describe('otpDeliveryService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    envState.OTP_DELIVERY_ENABLED = true
     whatsappSend.mockResolvedValue({
       success: true,
       providerMessageId: 'wa-1',
@@ -140,6 +141,49 @@ describe('otpDeliveryService', () => {
     expect(smsSend).not.toHaveBeenCalled()
   })
 
+  it('throws INVALID_OTP_TARGET for unsupported identifiers', () => {
+    expect(() => detectOtpTarget('not-a-valid-target')).toThrow(
+      expect.objectContaining({ code: 'INVALID_OTP_TARGET', statusCode: 400 }),
+    )
+  })
+
+  it('skips provider send when OTP_DELIVERY_ENABLED is false', async () => {
+    envState.OTP_DELIVERY_ENABLED = false
+
+    await otpDeliveryService.send({
+      otp: '12345',
+      targetIdentifier: '+919876543210',
+      purpose: 'signup',
+    })
+
+    expect(whatsappSend).not.toHaveBeenCalled()
+    expect(smsSend).not.toHaveBeenCalled()
+    expect(emailSend).not.toHaveBeenCalled()
+    expect(auditLog).not.toHaveBeenCalled()
+  })
+
+  it('throws OTP_DELIVERY_FAILED when SES email delivery fails', async () => {
+    emailSend.mockResolvedValue({ success: false, error: 'ses rejected' })
+
+    await expect(
+      otpDeliveryService.send({
+        otp: '12345',
+        targetIdentifier: 'fail@example.com',
+        purpose: 'bind_email',
+      }),
+    ).rejects.toMatchObject({ code: 'OTP_DELIVERY_FAILED', statusCode: 502 })
+
+    expect(whatsappSend).not.toHaveBeenCalled()
+    expect(smsSend).not.toHaveBeenCalled()
+    expect(auditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionType: 'OTP_DELIVERY_FAILED',
+        actionStatus: 'failed',
+        actionDetails: expect.objectContaining({ provider: 'ses_email' }),
+      }),
+    )
+  })
+
   it('throws OTP_DELIVERY_FAILED when all phone providers fail', async () => {
     whatsappSend.mockResolvedValue({
       success: false,
@@ -153,7 +197,7 @@ describe('otpDeliveryService', () => {
         targetIdentifier: '+919876543210',
         purpose: 'login',
       }),
-    ).rejects.toMatchObject({ code: 'OTP_DELIVERY_FAILED' })
+    ).rejects.toMatchObject({ code: 'OTP_DELIVERY_FAILED', statusCode: 502 })
 
     expect(auditLog).toHaveBeenCalledWith(
       expect.objectContaining({
