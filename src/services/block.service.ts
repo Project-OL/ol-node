@@ -101,6 +101,7 @@ export const blockService = {
     }
     await blockRepository.unblockUser(blockerId, blockedId)
     await cacheService.delete(RedisKeys.blockList(blockerId))
+    await invalidateSocialCountsCache(blockerId, blockedId)
     await auditService.log({
       actionType: 'UNBLOCK_USER',
       actionStatus: 'success',
@@ -118,6 +119,7 @@ export const blockService = {
     )
     const result = await blockRepository.bulkUnblock(blockerId, blockedIds)
     await cacheService.delete(RedisKeys.blockList(blockerId))
+    await invalidateSocialCountsCache(blockerId, ...blockedIds)
     await auditService.log({
       actionType: 'BULK_UNBLOCK',
       actionStatus: 'success',
