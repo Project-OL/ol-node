@@ -6,7 +6,7 @@ vi.mock('../../src/repositories/block.repository', () => ({
   blockRepository: { isBlocked: (...args: unknown[]) => isBlocked(...args) },
 }))
 
-const { assertNotBlockedEitherWay, isBlockedEitherWay } = await import(
+const { assertNotBlockedEitherWay, isBlockedEitherWay, userNotBlockedWithFilter } = await import(
   '../../src/utils/block-relationship'
 )
 
@@ -39,6 +39,19 @@ describe('block-relationship', () => {
     await expect(assertNotBlockedEitherWay('a', 'b')).rejects.toMatchObject({
       code: 'YOU_ARE_BLOCKED',
       statusCode: 403,
+    })
+  })
+})
+
+describe('userNotBlockedWithFilter', () => {
+  it('excludes users with any block relationship to the viewer', () => {
+    expect(userNotBlockedWithFilter('viewer')).toEqual({
+      NOT: {
+        OR: [
+          { blockedBy: { some: { blockedId: 'viewer' } } },
+          { blockedUsers: { some: { blockerId: 'viewer' } } },
+        ],
+      },
     })
   })
 })

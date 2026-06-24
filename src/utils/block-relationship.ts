@@ -28,8 +28,8 @@ export function userNotBlockedWithFilter(viewerId: string): Prisma.UserWhereInpu
   return {
     NOT: {
       OR: [
-        { blockedBy: { some: { blockerId: viewerId } } },
-        { blockedUsers: { some: { blockedId: viewerId } } },
+        { blockedBy: { some: { blockedId: viewerId } } },
+        { blockedUsers: { some: { blockerId: viewerId } } },
       ],
     },
   }
