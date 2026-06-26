@@ -11,6 +11,14 @@ const findActiveByUserId = vi.fn()
 const revokeAllByUserId = vi.fn()
 const updateRefreshTokenAndBumpVersion = vi.fn()
 
+const findActiveByUserIdAndDeviceId = vi.fn()
+const deleteLinkedAccountIfExists = vi.fn()
+vi.mock('../../src/repositories/device.repository', () => ({
+  deviceRepository: {
+    deleteLinkedAccountIfExists: (...a: unknown[]) => deleteLinkedAccountIfExists(...a),
+  },
+}))
+
 vi.mock('../../src/repositories/session.repository', () => ({
   sessionRepository: {
     loginCreateOrReuseSession: (...a: unknown[]) => loginCreateOrReuseSession(...a),
@@ -18,6 +26,7 @@ vi.mock('../../src/repositories/session.repository', () => ({
     findById: (...a: unknown[]) => findById(...a),
     revokeById: (...a: unknown[]) => revokeById(...a),
     findActiveByUserId: (...a: unknown[]) => findActiveByUserId(...a),
+    findActiveByUserIdAndDeviceId: (...a: unknown[]) => findActiveByUserIdAndDeviceId(...a),
     revokeAllByUserId: (...a: unknown[]) => revokeAllByUserId(...a),
     updateRefreshTokenAndBumpVersion: (...a: unknown[]) => updateRefreshTokenAndBumpVersion(...a),
   },
@@ -65,6 +74,7 @@ vi.mock('../../src/config/redis', () => ({
     session: (id: string) => `session:${id}`,
     refreshLock: (id: string) => `refresh:${id}`,
     userTokenVersion: (id: string) => `utv:${id}`,
+    deviceLinkedAccounts: (deviceId: string) => `device:${deviceId}:linked`,
   },
 }))
 
@@ -98,6 +108,9 @@ describe('sessionService one active session per (userId, deviceId)', () => {
     findByRefreshTokenHash.mockReset()
     revokeById.mockReset()
     findActiveByUserId.mockReset()
+    findActiveByUserIdAndDeviceId.mockReset()
+    deleteLinkedAccountIfExists.mockReset()
+    deleteLinkedAccountIfExists.mockResolvedValue(true)
     revokeAllByUserId.mockReset()
     updateRefreshTokenAndBumpVersion.mockReset()
     upsertDevice.mockClear()
@@ -233,23 +246,48 @@ describe('sessionService one active session per (userId, deviceId)', () => {
     findById.mockResolvedValue({
       id: sid,
       userId: baseParams.userId,
+      deviceId: baseParams.deviceId,
     })
+    findActiveByUserIdAndDeviceId.mockResolvedValue(null)
 
     await sessionService.revokeSession(sid, baseParams.userId)
 
     expect(revokeById).toHaveBeenCalledWith(sid)
     expect(redisDel).toHaveBeenCalledWith(`session:${sid}`)
+    expect(redisDel).toHaveBeenCalledWith(`device:${baseParams.deviceId}:linked`)
+    expect(deleteLinkedAccountIfExists).toHaveBeenCalledWith(
+      baseParams.deviceId,
+      baseParams.userId,
+    )
+  })
+
+  it('logout keeps device link when another active session remains on device', async () => {
+    const sid = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+    findById.mockResolvedValue({
+      id: sid,
+      userId: baseParams.userId,
+      deviceId: baseParams.deviceId,
+    })
+    findActiveByUserIdAndDeviceId.mockResolvedValue({ id: 'other-session' })
+
+    await sessionService.revokeSession(sid, baseParams.userId)
+
+    expect(deleteLinkedAccountIfExists).not.toHaveBeenCalled()
   })
 
   it('revokeAllSessions clears Redis for each active session', async () => {
     const ids = ['s1', 's2']
-    findActiveByUserId.mockResolvedValue(ids.map((id) => ({ id })))
+    findActiveByUserId.mockResolvedValue(
+      ids.map((id, i) => ({ id, deviceId: i === 0 ? 'dev-a' : 'dev-b' })),
+    )
     revokeAllByUserId.mockResolvedValue({ count: 2 })
 
     await sessionService.revokeAllSessions(baseParams.userId)
 
     expect(redisDel).toHaveBeenCalledWith('session:s1')
     expect(redisDel).toHaveBeenCalledWith('session:s2')
+    expect(deleteLinkedAccountIfExists).toHaveBeenCalledWith('dev-a', baseParams.userId)
+    expect(deleteLinkedAccountIfExists).toHaveBeenCalledWith('dev-b', baseParams.userId)
     expect(incrementTokenVersion).toHaveBeenCalledWith(baseParams.userId)
   })
 

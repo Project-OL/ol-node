@@ -240,17 +240,14 @@ export const deviceService = {
 
     await deviceBanService.assertDeviceNotBanned(deviceId)
 
-    const existingCount = await deviceRepository.countLinkedAccounts(deviceId)
-    if (existingCount >= 3) {
-      const existingAccounts = await deviceRepository.findLinkedAccounts(deviceId)
-      const alreadyLinked = existingAccounts.some((acc) => acc.userId === userId)
-      if (!alreadyLinked) {
-        throw new AppError(
-          400,
-          'This device already has 3 linked accounts. Remove one to add another.',
-          'DEVICE_ACCOUNT_LIMIT_REACHED',
-        )
-      }
+    const activeAccounts = await deviceRepository.findActiveSessionAccountsOnDevice(deviceId)
+    const alreadyActive = activeAccounts.some((acc) => acc.userId === userId)
+    if (activeAccounts.length >= 3 && !alreadyActive) {
+      throw new AppError(
+        400,
+        'This device already has 3 linked accounts. Remove one to add another.',
+        'DEVICE_ACCOUNT_LIMIT_REACHED',
+      )
     }
 
     await deviceRepository.upsertLinkedAccount(deviceId, userId)

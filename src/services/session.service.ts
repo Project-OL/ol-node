@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import { Prisma } from '@prisma/client'
 import { sessionRepository } from '../repositories/session.repository'
+import { deviceRepository } from '../repositories/device.repository'
 import { deviceRegistryRepository } from '../repositories/device-registry.repository'
 import { userRepository } from '../repositories/user.repository'
 import { redisClient, RedisKeys } from '../config/redis'
@@ -417,6 +418,13 @@ export const sessionService = {
     await redisClient.del(RedisKeys.session(sessionId))
     if (session.deviceId) {
       await redisClient.del(RedisKeys.deviceLinkedAccounts(session.deviceId))
+      const stillActive = await sessionRepository.findActiveByUserIdAndDeviceId(
+        userId,
+        session.deviceId,
+      )
+      if (!stillActive) {
+        await deviceRepository.deleteLinkedAccountIfExists(session.deviceId, userId)
+      }
     }
     authSessionMetrics.bumpRevoke()
   },
@@ -439,6 +447,11 @@ export const sessionService = {
         pipe.del(RedisKeys.deviceLinkedAccounts(deviceId))
       }
       await pipe.exec()
+      await Promise.all(
+        [...deviceIds].map((deviceId) =>
+          deviceRepository.deleteLinkedAccountIfExists(deviceId, userId),
+        ),
+      )
     }
     await userRepository.incrementTokenVersion(userId)
     await invalidateUserTokenVersionCache(userId)

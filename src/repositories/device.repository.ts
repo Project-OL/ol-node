@@ -166,6 +166,13 @@ export const deviceRepository = {
     })
   },
 
+  async deleteLinkedAccountIfExists(deviceId: string, userId: string): Promise<boolean> {
+    const result = await prisma.deviceLinkedAccount.deleteMany({
+      where: { deviceId, userId },
+    })
+    return result.count > 0
+  },
+
   async deleteAllLinkedAccounts(deviceId: string): Promise<number> {
     const result = await prisma.deviceLinkedAccount.deleteMany({
       where: { deviceId },

@@ -52,6 +52,10 @@ vi.mock('../../src/services/audit.service', () => ({
   auditService: { log: (...args: unknown[]) => auditLog(...args) },
 }))
 
+vi.mock('../../src/services/device-ban.service', () => ({
+  deviceBanService: { assertDeviceNotBanned: vi.fn().mockResolvedValue(undefined) },
+}))
+
 const { deviceService } = await import('../../src/services/device.service')
 
 const deviceId = 'dev-123'
@@ -64,7 +68,7 @@ describe('deviceService linked accounts', () => {
 
   describe('linkAccountToDevice', () => {
     it('links when under limit', async () => {
-      countLinkedAccounts.mockResolvedValue(1)
+      findActiveSessionAccountsOnDevice.mockResolvedValue([{ userId: 'u2' }])
       await deviceService.linkAccountToDevice(deviceId, userId)
 
       expect(upsertLinkedAccount).toHaveBeenCalledWith(deviceId, userId)
@@ -79,8 +83,7 @@ describe('deviceService linked accounts', () => {
     })
 
     it('throws when at limit and new user', async () => {
-      countLinkedAccounts.mockResolvedValue(3)
-      findLinkedAccounts.mockResolvedValue([
+      findActiveSessionAccountsOnDevice.mockResolvedValue([
         { userId: 'u1' },
         { userId: 'u2' },
         { userId: 'u3' },
@@ -94,9 +97,8 @@ describe('deviceService linked accounts', () => {
       })
     })
 
-    it('allows relink when already linked even at limit', async () => {
-      countLinkedAccounts.mockResolvedValue(3)
-      findLinkedAccounts.mockResolvedValue([
+    it('allows relink when already active even at limit', async () => {
+      findActiveSessionAccountsOnDevice.mockResolvedValue([
         { userId },
         { userId: 'u2' },
         { userId: 'u3' },
