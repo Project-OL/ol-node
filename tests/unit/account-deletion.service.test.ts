@@ -137,11 +137,11 @@ describe('accountDeletionService.scheduleDeletion', () => {
   })
 
   it('throws SECURITY_PASSWORD_INCORRECT when password wrong', async () => {
-    verifyCurrentPassword.mockRejectedValue(new AppError(401, 'Incorrect security password', 'SECURITY_PASSWORD_INCORRECT'))
+    verifyCurrentPassword.mockRejectedValue(new AppError(403, 'Incorrect security password', 'SECURITY_PASSWORD_INCORRECT'))
 
     await expect(
       accountDeletionService.scheduleDeletion(userId, 'Wrong'),
-    ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT', statusCode: 401 })
+    ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT', statusCode: 403 })
 
     expect(create).not.toHaveBeenCalled()
   })
@@ -285,12 +285,12 @@ describe('accountDeletionService.cancelDeletion', () => {
       deactivationUntil: future,
     })
     verifyCurrentPassword.mockRejectedValue(
-      new AppError(401, 'Incorrect security password', 'SECURITY_PASSWORD_INCORRECT'),
+      new AppError(403, 'Incorrect security password', 'SECURITY_PASSWORD_INCORRECT'),
     )
 
     await expect(
       accountDeletionService.cancelDeletion(userId, 'Wrong'),
-    ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT', statusCode: 401 })
+    ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT', statusCode: 403 })
   })
 })
 

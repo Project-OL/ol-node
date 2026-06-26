@@ -86,6 +86,19 @@ export const followRepository = {
     })
   },
 
+  /** Remove follow edges in both directions (idempotent; used when blocking). */
+  async deleteFollowsBetween(userA: string, userB: string): Promise<number> {
+    const result = await prisma.userFollow.deleteMany({
+      where: {
+        OR: [
+          { followerId: userA, followingId: userB },
+          { followerId: userB, followingId: userA },
+        ],
+      },
+    })
+    return result.count
+  },
+
   async existsFollow(followerId: string, followingId: string): Promise<boolean> {
     const count = await prisma.userFollow.count({
       where: { followerId, followingId },

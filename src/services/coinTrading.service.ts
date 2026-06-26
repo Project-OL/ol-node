@@ -562,8 +562,14 @@ export const coinTradingService = {
     const pid = Number(input.recipientPublicId)
     const recipient = await userRepository.findByPublicId(pid)
     if (!recipient) throw new AppError(404, 'Recipient not found', 'RECIPIENT_NOT_FOUND')
-    if (recipient.id === senderAgentUserId)
-      throw new AppError(400, 'Self transfer blocked', 'SELF_TRANSFER')
+    const isSelfTransfer = recipient.id === senderAgentUserId
+    if (isSelfTransfer && input.targetWalletType !== 'PERSONAL') {
+      throw new AppError(
+        400,
+        'Self transfer only allowed to personal coin wallet',
+        'SELF_TRANSFER',
+      )
+    }
     const recipientWalletType = resolveRecipientWalletType(recipient, input.targetWalletType)
     // Transfer into a recipient's personal COIN wallet counts as Rich tier recharge only.
     const recipientGetsPersonalCoin = recipientWalletType === WalletCurrencyType.COIN

@@ -135,7 +135,14 @@ vi.mock("../../src/config/database", () => {
       }),
       coinTradingTopupOrder: { create: vi.fn(), update: vi.fn() },
     },
-    prismaRead: {},
+    prismaRead: {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          personalCoinsFrozen: false,
+          tradingCoinsFrozen: false,
+        }),
+      },
+    },
   };
 });
 
@@ -342,5 +349,49 @@ describe("coinTradingService transfer/exchange wallet selection", () => {
         idempotencyKey: "idem-bad-step",
       }),
     ).rejects.toMatchObject({ code: "INVALID_AMOUNT_STEP" });
+  });
+
+  it("transferTradingCoins allows self-transfer to personal coin wallet", async () => {
+    vi.mocked(userRepository.findByPublicId).mockResolvedValue({
+      id: "agent-1",
+      isAgent: true,
+      publicId: 12345n,
+    } as never);
+
+    await coinTradingService.transferTradingCoins("agent-1", {
+      recipientPublicId: "12345",
+      tradingCoins: 500n,
+      targetWalletType: "PERSONAL",
+      idempotencyKey: "idem-self-personal",
+    });
+
+    expect(upsertCurrencyTypes).toContain(WalletCurrencyType.TRADING_COIN);
+    expect(upsertCurrencyTypes).toContain(WalletCurrencyType.COIN);
+    expect(walletService.adjustTradingBalanceCache).toHaveBeenCalledWith("agent-1");
+    expect(walletService.adjustCoinBalanceCache).toHaveBeenCalledWith("agent-1", 0n);
+    expect(coinTradingRepository.createTransfer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        senderAgentUserId: "agent-1",
+        recipientUserId: "agent-1",
+        recipientWalletType: "PERSONAL",
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("transferTradingCoins rejects self-transfer without PERSONAL target", async () => {
+    vi.mocked(userRepository.findByPublicId).mockResolvedValue({
+      id: "agent-1",
+      isAgent: true,
+      publicId: 12345n,
+    } as never);
+
+    await expect(
+      coinTradingService.transferTradingCoins("agent-1", {
+        recipientPublicId: "12345",
+        tradingCoins: 500n,
+        idempotencyKey: "idem-self-trading",
+      }),
+    ).rejects.toMatchObject({ code: "SELF_TRANSFER" });
   });
 });

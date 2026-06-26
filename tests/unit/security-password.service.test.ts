@@ -316,7 +316,7 @@ describe('securityPasswordService', () => {
 
       await expect(
         securityPasswordService.verifyCurrentPassword(userId, '999999'),
-      ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT', statusCode: 401 })
+      ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT', statusCode: 403 })
 
       expect(secUpdate).toHaveBeenCalledWith(
         userId,

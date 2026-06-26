@@ -7,6 +7,7 @@ import { RedisKeys, BLOCK_LIST_TTL, redisClient } from '../config/redis'
 import type { GetBlockListInput } from '../models/messaging.schemas'
 import { subscriptionService } from './subscription.service'
 import { invalidateSocialCountsCache } from './follow.service'
+import { followRepository } from '../repositories/follow.repository'
 
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
@@ -78,6 +79,7 @@ export const blockService = {
       throw new AppError(409, 'Already blocked', 'ALREADY_BLOCKED')
     }
     await blockRepository.blockUser(blockerId, blockedId)
+    await followRepository.deleteFollowsBetween(blockerId, blockedId)
     await cacheService.delete(RedisKeys.blockList(blockerId))
     await Promise.all([
       redisClient.del(RedisKeys.allowedMessaging(blockedId, blockerId)).catch(() => {}),

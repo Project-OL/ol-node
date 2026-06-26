@@ -319,7 +319,7 @@ describe('DeviceService', () => {
       verifyCurrentPassword.mockRejectedValue(
         Object.assign(new Error('Incorrect security password'), {
           code: 'SECURITY_PASSWORD_INCORRECT',
-          statusCode: 401,
+          statusCode: 403,
         }),
       )
 
@@ -327,7 +327,7 @@ describe('DeviceService', () => {
         deviceService.logoutAllOtherDevices(userId, 'Wrong', currentDeviceId),
       ).rejects.toMatchObject({
         code: 'SECURITY_PASSWORD_INCORRECT',
-        statusCode: 401,
+        statusCode: 403,
       })
     })
 

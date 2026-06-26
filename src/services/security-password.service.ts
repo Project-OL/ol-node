@@ -242,7 +242,7 @@ export const securityPasswordService = {
         actionStatus: 'failed',
         actionDetails: { attemptNumber: failedAttempts },
       })
-      throw new AppError(401, 'Incorrect security password', 'SECURITY_PASSWORD_INCORRECT')
+      throw new AppError(403, 'Incorrect security password', 'SECURITY_PASSWORD_INCORRECT')
     }
 
     await securityPasswordRepository.resetFailedAttempts(userId)
