@@ -92,6 +92,8 @@ export const RedisKeys = {
   /** Visitor cooldown (profileId + visitorId). */
   visitorCooldown: (profileId: string, visitorId: string) =>
     `visitor:cooldown:${profileId}:${visitorId}`,
+  /** Active SMS-only OTP route for a phone; TTL slides on each WhatsApp or SMS delivery. */
+  otpSmsPreferredRoute: (providerPhone: string) => `otp:sms-preferred:${providerPhone}`,
   /** Per-user social endpoint rate limit. */
   socialRateLimit: (endpoint: string, userId: string) => `ratelimit:social:${endpoint}:${userId}`,
   /** User level cache. */
@@ -351,6 +353,8 @@ export const TYPING_TTL = 5
 export const WS_TICKET_TTL_SEC = 60 * 15
 /** Messaging: block list per user TTL (1h). */
 export const BLOCK_LIST_TTL = 60 * 60
+/** SMS-only OTP routing window per phone; refreshed on each WhatsApp or SMS delivery. */
+export const OTP_SMS_PREFERRED_ROUTE_TTL_SEC = 120
 
 /** Wallet: cached balance TTL (5 minutes). */
 export const WALLET_BALANCE_TTL = 300

@@ -23,12 +23,37 @@ vi.mock('../../src/services/audit.service', () => ({
   },
 }))
 
+const logDebug = vi.fn()
+const logInfo = vi.fn()
+const logWarn = vi.fn()
+const logError = vi.fn()
+
 vi.mock('../../src/utils/rootLogger', () => ({
   rootLogger: {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
+    child: () => ({
+      debug: logDebug,
+      info: logInfo,
+      warn: logWarn,
+      error: logError,
+    }),
+    debug: logDebug,
+    info: logInfo,
+    warn: logWarn,
+    error: logError,
+  },
+}))
+
+const redisExists = vi.fn().mockResolvedValue(0)
+const redisSet = vi.fn().mockResolvedValue('OK')
+
+vi.mock('../../src/config/redis', () => ({
+  OTP_SMS_PREFERRED_ROUTE_TTL_SEC: 120,
+  RedisKeys: {
+    otpSmsPreferredRoute: (phone: string) => `otp:sms-preferred:${phone}`,
+  },
+  redisClient: {
+    exists: (...args: unknown[]) => redisExists(...args),
+    set: (...args: unknown[]) => redisSet(...args),
   },
 }))
 
@@ -45,6 +70,8 @@ describe('otpDeliveryService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     envState.OTP_DELIVERY_ENABLED = true
+    redisExists.mockResolvedValue(0)
+    redisSet.mockResolvedValue('OK')
     whatsappSend.mockResolvedValue({
       success: true,
       providerMessageId: 'wa-1',
@@ -97,6 +124,68 @@ describe('otpDeliveryService', () => {
         actionStatus: 'success',
       }),
     )
+    expect(logInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'otp_delivery_succeeded',
+        deliveryProvider: 'msg91_whatsapp',
+        purpose: 'login',
+      }),
+      expect.any(String),
+    )
+    expect(redisSet).toHaveBeenCalledWith(
+      'otp:sms-preferred:919876543210',
+      '1',
+      'EX',
+      120,
+    )
+  })
+
+  it('uses SMS only while SMS-preferred window is active and extends TTL on each SMS', async () => {
+    redisExists.mockResolvedValue(1)
+
+    await otpDeliveryService.send({
+      otp: '54321',
+      targetIdentifier: '+919876543210',
+      purpose: 'signup',
+    })
+
+    expect(whatsappSend).not.toHaveBeenCalled()
+    expect(smsSend).toHaveBeenCalledWith({
+      phone: '919876543210',
+      otp: '54321',
+      purpose: 'signup',
+    })
+    expect(redisSet).toHaveBeenCalledWith(
+      'otp:sms-preferred:919876543210',
+      '1',
+      'EX',
+      120,
+    )
+    expect(logInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'otp_delivery_started',
+        deliveryProvider: 'msg91_sms',
+        routeReason: 'sms_preferred_route',
+      }),
+      expect.any(String),
+    )
+  })
+
+  it('extends SMS-preferred window when WhatsApp falls back to SMS', async () => {
+    whatsappSend.mockResolvedValue({ success: false, error: 'wa failed' })
+
+    await otpDeliveryService.send({
+      otp: '12345',
+      targetIdentifier: '+919876543210',
+      purpose: 'login',
+    })
+
+    expect(redisSet).toHaveBeenCalledWith(
+      'otp:sms-preferred:919876543210',
+      '1',
+      'EX',
+      120,
+    )
   })
 
   it('falls back to SMS when WhatsApp delivery fails', async () => {
@@ -123,6 +212,21 @@ describe('otpDeliveryService', () => {
         actionStatus: 'success',
       }),
     )
+    expect(logInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'otp_delivery_fallback',
+        deliveryProvider: 'msg91_sms',
+        fallbackFrom: 'msg91_whatsapp',
+      }),
+      expect.any(String),
+    )
+    expect(logInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'otp_delivery_succeeded',
+        deliveryProvider: 'msg91_sms',
+      }),
+      expect.any(String),
+    )
   })
 
   it('sends email OTP via SES', async () => {
@@ -139,6 +243,14 @@ describe('otpDeliveryService', () => {
     })
     expect(whatsappSend).not.toHaveBeenCalled()
     expect(smsSend).not.toHaveBeenCalled()
+    expect(logInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'otp_delivery_succeeded',
+        deliveryProvider: 'ses_email',
+        purpose: 'reset_password',
+      }),
+      expect.any(String),
+    )
   })
 
   it('throws INVALID_OTP_TARGET for unsupported identifiers', () => {
@@ -160,6 +272,10 @@ describe('otpDeliveryService', () => {
     expect(smsSend).not.toHaveBeenCalled()
     expect(emailSend).not.toHaveBeenCalled()
     expect(auditLog).not.toHaveBeenCalled()
+    expect(logDebug).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'otp_delivery_skipped' }),
+      expect.any(String),
+    )
   })
 
   it('throws OTP_DELIVERY_FAILED when SES email delivery fails', async () => {
