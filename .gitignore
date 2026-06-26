@@ -6,6 +6,7 @@ dist/
 coverage/
 docs/
 postman/
+scripts/
 # Environment files
 .env
 .env.local
