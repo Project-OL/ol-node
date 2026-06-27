@@ -1239,6 +1239,7 @@ model AgencyAgentApplication {
   adminNote  String?                      @map("admin_note") @db.Text
   userNote   String?                      @map("user_note") @db.Text
   reviewedAt DateTime?                    @map("reviewed_at")
+  /// `system_admins.id` when approved/rejected via admin API (no FK — same pattern as `banned_devices.banned_by_admin_id`).
   reviewedBy String?                      @map("reviewed_by") @db.Uuid
   createdAt  DateTime                     @default(now()) @map("created_at")
   updatedAt  DateTime                     @updatedAt @map("updated_at")
