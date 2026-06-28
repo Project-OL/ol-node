@@ -121,8 +121,33 @@ export async function buildApp() {
     contentSecurityPolicy: env.NODE_ENV === 'production',
   })
 
+  const isLocalhostOrigin = (origin: string): boolean => {
+    try {
+      const url = new URL(origin)
+      return (
+        url.hostname === 'localhost' && (url.protocol === 'http:' || url.protocol === 'https:')
+      )
+    } catch {
+      return false
+    }
+  }
+
   await app.register(cors, {
-    origin: env.ALLOWED_ORIGINS,
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true)
+        return
+      }
+      if (env.ALLOWED_ORIGINS.includes(origin)) {
+        callback(null, origin)
+        return
+      }
+      if (env.NODE_ENV !== 'production' && isLocalhostOrigin(origin)) {
+        callback(null, origin)
+        return
+      }
+      callback(null, false)
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   })

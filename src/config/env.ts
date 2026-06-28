@@ -144,7 +144,7 @@ const envSchema = z
 
     ALLOWED_ORIGINS: z
       .string()
-      .default('http://localhost:3000')
+      .default('http://localhost:3000,http://localhost:5173')
       .transform((value) =>
         value
           .split(',')
