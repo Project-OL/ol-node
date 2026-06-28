@@ -19,6 +19,7 @@ import { supportRepository } from '../repositories/support.repository'
 import { rootLogger } from '../utils/rootLogger'
 import { displayNameFromUser } from '../utils/profileDisplay'
 import { agencyCommissionService } from './agencyCommission.service'
+import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyKycService } from './agencyKyc.service'
 import { agencyCoinsellerService } from './agencyCoinseller.service'
 
@@ -168,6 +169,7 @@ export const agencyService = {
     adminUserId: string
     applicantUserId: string
     applicationId: string
+    commissionTier?: string
   }) {
     const existingAgency = await agencyRepository.getAgencyByUserId(params.applicantUserId)
     if (existingAgency) {
@@ -198,6 +200,18 @@ export const agencyService = {
 
     await agencyKycService.validateKycComplete(params.applicantUserId)
 
+    let initialLevel = 'D'
+    if (params.commissionTier != null && params.commissionTier.trim() !== '') {
+      const tierRow = await agencyCommissionRepository.getLevelRow(params.commissionTier.trim())
+      if (!tierRow) {
+        throw new AppError(400, 'Invalid commission tier', 'INVALID_COMMISSION_TIER')
+      }
+      initialLevel = tierRow.level
+    } else {
+      const levels = await agencyCommissionRepository.getLevelConfig()
+      initialLevel = levels[0]?.level ?? 'D'
+    }
+
     const userRow = await prisma.user.findUnique({
       where: { id: params.applicantUserId },
       select: {
@@ -225,6 +239,10 @@ export const agencyService = {
           },
           tx,
         )
+        await tx.agency.update({
+          where: { userId: userRow.id },
+          data: { currentLevel: initialLevel },
+        })
         await tx.user.update({
           where: { id: userRow.id },
           data: { isAgent: true },
@@ -353,10 +371,15 @@ export const agencyService = {
     userId: string,
     _source: 'CS' | 'ADMIN',
     tx?: import('@prisma/client').Prisma.TransactionClient,
+    opts?: { pausedUntil?: Date | null },
   ) {
     const now = new Date()
     const run = async (inner: import('@prisma/client').Prisma.TransactionClient) => {
-      return agencyRepository.setPause(userId, { pausedAt: now, pausedUntil: null }, inner)
+      return agencyRepository.setPause(
+        userId,
+        { pausedAt: now, pausedUntil: opts?.pausedUntil ?? null },
+        inner,
+      )
     }
     if (tx) return run(tx)
     const updated = await prisma.$transaction(async (inner) => run(inner), {
@@ -375,6 +398,25 @@ export const agencyService = {
     )
     await agencyService.onAgencyMutation(userId)
     return updated
+  },
+
+  async suspendAgencyUntil(agencyUserId: string, pausedUntil: Date) {
+    const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
+    if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
+    await agencyService.pauseAgency(agencyUserId, 'ADMIN', undefined, { pausedUntil })
+    return { ok: true as const, pausedUntil: pausedUntil.toISOString() }
+  },
+
+  async setCommissionTier(agencyUserId: string, commissionTier: string) {
+    const tierRow = await agencyCommissionRepository.getLevelRow(commissionTier)
+    if (!tierRow) {
+      throw new AppError(400, 'Invalid commission tier', 'INVALID_COMMISSION_TIER')
+    }
+    const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
+    if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
+    await agencyRepository.setCommissionLevel(agencyUserId, tierRow.level)
+    await agencyService.onAgencyMutation(agencyUserId)
+    return { ok: true as const, commissionTier: tierRow.level }
   },
 
   async setPayrollEnabled(userId: string, enabled: boolean) {

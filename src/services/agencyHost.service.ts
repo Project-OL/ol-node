@@ -817,4 +817,122 @@ export const agencyHostService = {
     const updated = await userRepository.setIsTagged(hostUserId, isTagged)
     return { ok: true, userId: updated.id, isTagged: updated.isTagged }
   },
+
+  /** Admin bypass: add host to agency without country/cooldown gates. */
+  async adminAddHost(agencyUserId: string, hostUserId: string, adminUserId: string) {
+    const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
+    if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
+
+    const hostUser = await prisma.user.findUnique({
+      where: { id: hostUserId },
+      select: { id: true, currentAgencyId: true, isAgent: true },
+    })
+    if (!hostUser) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    if (hostUser.isAgent) {
+      throw new AppError(403, 'Agents cannot be added as hosts', 'INVALID_APPLICANT')
+    }
+    if (hostUser.currentAgencyId) {
+      throw new AppError(409, 'Host already in an agency', 'ALREADY_IN_AGENCY')
+    }
+
+    const now = new Date()
+    try {
+      await prisma.$transaction(
+        async (tx) => {
+          await agencyApplicationRepository.createAcceptedApplication(
+            {
+              agencyUserId,
+              hostUserId,
+              resolvedAt: now,
+            },
+            tx,
+          )
+          await agencyHostRepository.insertHost({ agencyUserId, hostUserId }, tx)
+          await tx.user.update({
+            where: { id: hostUserId },
+            data: { currentAgencyId: agencyUserId },
+          })
+          await agencyRepository.incrementHostCount(agencyUserId, 1, tx)
+        },
+        { isolationLevel: 'Serializable', timeout: TX_MS },
+      )
+    } catch (e) {
+      if (isUniqueViolation(e)) {
+        throw new AppError(409, 'Already in an agency', 'ALREADY_IN_AGENCY')
+      }
+      throw e
+    }
+
+    await cacheRedisService.del(RedisKeys.agencyMe(hostUserId))
+    await agencyService.onAgencyMutation(agencyUserId)
+    return { ok: true as const, hostUserId, agencyUserId, adminUserId }
+  },
+
+  async adminTransferHosts(params: {
+    sourceAgencyUserId: string
+    targetAgencyUserId: string
+    hostUserIds: string[]
+    adminUserId: string
+  }) {
+    if (params.sourceAgencyUserId === params.targetAgencyUserId) {
+      throw new AppError(400, 'Source and target agency must differ', 'INVALID_REQUEST')
+    }
+
+    const [source, target] = await Promise.all([
+      agencyRepository.getAgencyByUserId(params.sourceAgencyUserId),
+      agencyRepository.getAgencyByUserId(params.targetAgencyUserId),
+    ])
+    if (!source) throw new AppError(404, 'Source agency not found', 'AGENCY_NOT_FOUND')
+    if (!target) throw new AppError(404, 'Target agency not found', 'AGENCY_NOT_FOUND')
+
+    const transferred: string[] = []
+    await prisma.$transaction(
+      async (tx) => {
+        for (const hostUserId of params.hostUserIds) {
+          const membership = await tx.agencyHost.findUnique({ where: { hostUserId } })
+          if (!membership || membership.agencyUserId !== params.sourceAgencyUserId) {
+            throw new AppError(404, 'Host not in source agency', 'HOST_NOT_FOUND', {
+              hostUserId,
+            })
+          }
+
+          await finalizeAgencyHostExit(
+            params.sourceAgencyUserId,
+            hostUserId,
+            'ADMIN_FORCE_EXIT',
+            tx,
+            {
+              adminUserId: params.adminUserId,
+              source: 'admin_agency_transfer',
+              targetAgencyUserId: params.targetAgencyUserId,
+            },
+          )
+
+          await agencyHostRepository.insertHost(
+            { agencyUserId: params.targetAgencyUserId, hostUserId },
+            tx,
+          )
+          await tx.user.update({
+            where: { id: hostUserId },
+            data: { currentAgencyId: params.targetAgencyUserId },
+          })
+          await agencyRepository.incrementHostCount(params.targetAgencyUserId, 1, tx)
+          transferred.push(hostUserId)
+        }
+      },
+      { isolationLevel: 'Serializable', timeout: TX_MS },
+    )
+
+    for (const hostUserId of transferred) {
+      await cacheRedisService.del(RedisKeys.agencyMe(hostUserId))
+    }
+    await agencyService.onAgencyMutation(params.sourceAgencyUserId)
+    await agencyService.onAgencyMutation(params.targetAgencyUserId)
+
+    return {
+      ok: true as const,
+      transferredCount: transferred.length,
+      hostUserIds: transferred,
+    }
+  },
 }

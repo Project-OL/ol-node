@@ -1,6 +1,59 @@
 import type { Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 
+export type AgencyAdminListParams = {
+  status?: 'ACTIVE' | 'SUSPENDED'
+  country?: string
+  search?: string
+  skip: number
+  take: number
+}
+
+function buildAdminListWhere(params: AgencyAdminListParams): Prisma.AgencyWhereInput {
+  const now = new Date()
+  const and: Prisma.AgencyWhereInput[] = []
+
+  if (params.status === 'ACTIVE') {
+    and.push({
+      OR: [{ pausedAt: null }, { pausedUntil: { lte: now } }],
+    })
+  } else if (params.status === 'SUSPENDED') {
+    and.push({
+      pausedAt: { not: null },
+      OR: [{ pausedUntil: null }, { pausedUntil: { gt: now } }],
+    })
+  }
+
+  if (params.country) {
+    and.push({ user: { country: params.country } })
+  }
+
+  const q = params.search?.trim()
+  if (q) {
+    let publicIdFilter: bigint | null = null
+    try {
+      publicIdFilter = BigInt(q)
+    } catch {
+      /* not numeric */
+    }
+    const or: Prisma.AgencyWhereInput[] = [
+      { displayName: { contains: q, mode: 'insensitive' } },
+      { user: { username: { contains: q, mode: 'insensitive' } } },
+    ]
+    if (publicIdFilter != null) {
+      or.push(
+        { defaultPublicId: publicIdFilter },
+        { user: { defaultPublicId: publicIdFilter } },
+        { user: { publicId: publicIdFilter } },
+        { user: { currentVipPublicId: publicIdFilter } },
+      )
+    }
+    and.push({ OR: or })
+  }
+
+  return and.length > 0 ? { AND: and } : {}
+}
+
 export const agencyRepository = {
   async createAgency(
     data: { userId: string; defaultPublicId: bigint; displayName: string },
@@ -99,6 +152,113 @@ export const agencyRepository = {
    * Phase 1: sort by totalHostsCount desc, tie-break defaultPublicId desc.
    * Cursor: opaque offset string (see agencyRanking.service).
    */
+  async countAll() {
+    return prismaRead.agency.count()
+  },
+
+  async countActive() {
+    const now = new Date()
+    return prismaRead.agency.count({
+      where: {
+        OR: [{ pausedAt: null }, { pausedUntil: { lte: now } }],
+      },
+    })
+  },
+
+  async countSuspended() {
+    const now = new Date()
+    return prismaRead.agency.count({
+      where: {
+        pausedAt: { not: null },
+        OR: [{ pausedUntil: null }, { pausedUntil: { gt: now } }],
+      },
+    })
+  },
+
+  async countAllHosts() {
+    return prismaRead.agencyHost.count()
+  },
+
+  async sumPlatformDailyEarnings(fromDay: Date, toDay: Date): Promise<bigint> {
+    const rows = await prismaRead.$queryRaw<{ s: bigint }[]>`
+      SELECT COALESCE(SUM(e.host_earnings_points + e.host_commission_points), 0)::bigint AS s
+      FROM agency_daily_earnings e
+      INNER JOIN users u ON u.id = e.host_user_id
+      WHERE e.day >= ${fromDay}::date
+        AND e.day <= ${toDay}::date
+        AND u.status NOT IN ('suspended', 'deleted')
+    `
+    return rows[0]?.s ?? 0n
+  },
+
+  async listForAdmin(params: AgencyAdminListParams) {
+    return prismaRead.agency.findMany({
+      where: buildAdminListWhere(params),
+      orderBy: [{ totalHostsCount: 'desc' }, { defaultPublicId: 'desc' }],
+      skip: params.skip,
+      take: params.take,
+      select: {
+        userId: true,
+        defaultPublicId: true,
+        totalHostsCount: true,
+        currentLevel: true,
+        pausedAt: true,
+        pausedUntil: true,
+        createdAt: true,
+        user: {
+          select: {
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            country: true,
+          },
+        },
+      },
+    })
+  },
+
+  async countForAdmin(params: Omit<AgencyAdminListParams, 'skip' | 'take'>) {
+    return prismaRead.agency.count({
+      where: buildAdminListWhere({ ...params, skip: 0, take: 1 }),
+    })
+  },
+
+  async sumEarningsByAgencyForRange(fromDay: Date, toDay: Date): Promise<Map<string, bigint>> {
+    const rows = await prismaRead.$queryRaw<{ agency_user_id: string; s: bigint }[]>`
+      SELECT
+        e.agency_user_id,
+        COALESCE(SUM(e.host_earnings_points + e.host_commission_points), 0)::bigint AS s
+      FROM agency_daily_earnings e
+      INNER JOIN users u ON u.id = e.host_user_id
+      WHERE e.day >= ${fromDay}::date
+        AND e.day <= ${toDay}::date
+        AND u.status NOT IN ('suspended', 'deleted')
+      GROUP BY e.agency_user_id
+    `
+    return new Map(rows.map((r) => [r.agency_user_id, r.s]))
+  },
+
+  async countHostsWithCommission(agencyUserId: string): Promise<number> {
+    const rows = await prismaRead.$queryRaw<{ c: bigint }[]>`
+      SELECT COUNT(DISTINCT e.host_user_id)::bigint AS c
+      FROM agency_daily_earnings e
+      WHERE e.agency_user_id = ${agencyUserId}::uuid
+        AND e.host_commission_points > 0
+    `
+    return Number(rows[0]?.c ?? 0n)
+  },
+
+  async setCommissionLevel(userId: string, level: string, tx?: Prisma.TransactionClient) {
+    const client = tx ?? prisma
+    return client.agency.update({
+      where: { userId },
+      data: { currentLevel: level },
+    })
+  },
+
   async listForRanking(params: { limit: number; skip: number; country: string | null }) {
     if (!params.country) return []
     return prismaRead.agency.findMany({

@@ -11,6 +11,19 @@ const DEFAULT_WARNING =
   'Your account has received a warning from platform moderation. Please review our community guidelines.'
 
 export const adminMessagingService = {
+  async sendSystemMessage(params: {
+    targetUserId: string
+    adminUserId: string
+    message: string
+    auditActionType?: string
+  }) {
+    return adminMessagingService.sendPlatformWarning({
+      targetUserId: params.targetUserId,
+      adminUserId: params.adminUserId,
+      message: params.message,
+    })
+  },
+
   async sendPlatformWarning(params: {
     targetUserId: string
     adminUserId: string

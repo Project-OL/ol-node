@@ -3,8 +3,21 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
+import {
+  addHostBodySchema,
+  agencyAdminListQuerySchema,
+  approveApplicationBodySchema,
+  editCommissionTierBodySchema,
+  pendingApplicationsQuerySchema,
+  rejectApplicationBodySchema,
+  sendAgencyMessageBodySchema,
+  suspendAgencyBodySchema,
+  transferHostsBodySchema,
+} from '../../models/agency-admin.schemas'
 import { agencyAgentApplicationRepository } from '../../repositories/agencyAgentApplication.repository'
 import { agencyAgentApplicationService } from '../../services/agencyAgentApplication.service'
+import { agencyAdminService } from '../../services/agencyAdmin.service'
+import { adminMessagingService } from '../../services/adminMessaging.service'
 import { adminWalletService } from '../../services/adminWallet.service'
 import { agencyService } from '../../services/agency.service'
 import { agencyHostService } from '../../services/agencyHost.service'
@@ -17,6 +30,7 @@ import { withdrawalPayoutRailConfigService } from '../../services/withdrawalPayo
 import { redisClient, RedisKeys } from '../../config/redis'
 import { prisma } from '../../config/database'
 import { PayoutRailConfigUpdateSchema } from '../../models/withdrawalPayoutRail.schemas'
+import { addUtcDays, utcNow } from '../../utils/datetime'
 
 const DEFAULT_AGENT_APP_LIST_STATUSES: AgencyAgentApplicationStatus[] = [
   'PENDING',
@@ -24,19 +38,18 @@ const DEFAULT_AGENT_APP_LIST_STATUSES: AgencyAgentApplicationStatus[] = [
   'MORE_DOCS_REQUIRED',
 ]
 
-const ApproveSchema = z.object({
-  applicationId: z.string().uuid(),
-})
+const ApproveSchema = approveApplicationBodySchema
 
 const listAgentApplicationsQuerySchema = z.object({
   status: z
     .enum(['PENDING', 'UNDER_REVIEW', 'MORE_DOCS_REQUIRED', 'APPROVED', 'REJECTED'])
     .optional(),
-  /** When true (default), returns open review queue only. When false with no `status`, returns all. */
   forReview: z.coerce.boolean().optional(),
   skip: z.coerce.number().int().min(0).default(0),
   take: z.coerce.number().int().min(1).max(100).default(20),
 })
+
+const preAuth = [authenticateAdmin]
 
 const positiveAmountString = z
   .string()
@@ -108,6 +121,140 @@ const HostTagSchema = z.object({
 })
 
 export default async function agencyAdminRoutes(app: FastifyInstance) {
+  app.get('/stats', { preHandler: preAuth }, async (_request, reply) => {
+    const stats = await agencyAdminService.getOverviewStats()
+    return reply.send(stats)
+  })
+
+  app.get('/', { preHandler: preAuth }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const q = agencyAdminListQuerySchema.parse(request.query ?? {})
+    const result = await agencyAdminService.listAgencies({
+      status: q.status,
+      country: q.country,
+      search: q.q,
+      skip: q.skip,
+      take: q.take,
+    })
+    return reply.send(result)
+  })
+
+  app.get('/applications/pending', { preHandler: preAuth }, async (request, reply) => {
+    const q = pendingApplicationsQuerySchema.parse(request.query ?? {})
+    const result = await agencyAdminService.listPendingApplications({
+      skip: q.skip,
+      take: q.take,
+    })
+    return reply.send(result)
+  })
+
+  app.patch<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/commission-tier',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const body = editCommissionTierBodySchema.parse(request.body ?? {})
+      const agency = await agencyAdminService.resolveAgencyByIdentifier(
+        request.params.agencyIdentifier,
+      )
+      const result = await agencyService.setCommissionTier(
+        agency.userId,
+        body.commissionTier,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/message',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = sendAgencyMessageBodySchema.parse(request.body ?? {})
+      const agency = await agencyAdminService.resolveAgencyByIdentifier(
+        request.params.agencyIdentifier,
+      )
+      const result = await adminMessagingService.sendSystemMessage({
+        targetUserId: agency.userId,
+        adminUserId,
+        message: body.message,
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/hosts',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = addHostBodySchema.parse(request.body ?? {})
+      const agency = await agencyAdminService.resolveAgencyByIdentifier(
+        request.params.agencyIdentifier,
+      )
+      const result = await agencyHostService.adminAddHost(
+        agency.userId,
+        body.hostUserId,
+        adminUserId,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/transfer-hosts',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = transferHostsBodySchema.parse(request.body ?? {})
+      const source = await agencyAdminService.resolveAgencyByIdentifier(
+        request.params.agencyIdentifier,
+      )
+      const target = await agencyAdminService.resolveAgencyByIdentifier(body.targetAgencyIdentifier)
+      const result = await agencyHostService.adminTransferHosts({
+        sourceAgencyUserId: source.userId,
+        targetAgencyUserId: target.userId,
+        hostUserIds: body.hostUserIds,
+        adminUserId,
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/suspend',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const body = suspendAgencyBodySchema.parse(request.body ?? {})
+      const agency = await agencyAdminService.resolveAgencyByIdentifier(
+        request.params.agencyIdentifier,
+      )
+      const pausedUntil = body.pausedUntil
+        ? new Date(body.pausedUntil)
+        : addUtcDays(utcNow(), body.suspendDays!)
+      const result = await agencyService.suspendAgencyUntil(agency.userId, pausedUntil)
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/applications/:userId/reject',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = rejectApplicationBodySchema.parse(request.body ?? {})
+      const result = await agencyAdminService.rejectApplication({
+        applicantUserId: request.params.userId,
+        adminUserId,
+        adminNote: body.adminNote,
+        userNote: body.userNote,
+      })
+      return reply.send(result)
+    },
+  )
+
   app.get(
     '/applications',
     { preHandler: [authenticateAdmin] },
@@ -183,6 +330,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         adminUserId,
         applicantUserId: request.params.userId,
         applicationId: parsed.data.applicationId,
+        commissionTier: parsed.data.commissionTier,
       })
       return reply.status(result.created ? 201 : 200).send({
         ok: true,
@@ -492,6 +640,29 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         body.agencyUserId,
       )
       return reply.send({ ok: true })
+    },
+  )
+
+  app.get<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const detail = await agencyAdminService.getAgencyDetail(request.params.agencyIdentifier)
+      return reply.send(detail)
+    },
+  )
+
+  app.delete<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const agency = await agencyAdminService.resolveAgencyByIdentifier(
+        request.params.agencyIdentifier,
+      )
+      const result = await agencyAdminService.deleteAgencyByAdmin(agency.userId, adminUserId)
+      return reply.send(result)
     },
   )
 }
