@@ -7,7 +7,6 @@ import { followService } from './follow.service'
 import { cacheService } from './cache.service'
 import { auditService } from './audit.service'
 import { userSearchService } from './userSearch.service'
-import { privacyService } from './privacy.service'
 import { redisClient } from '../config/redis'
 import {
   RedisKeys,
@@ -38,6 +37,8 @@ import {
   prepareMediaItemsForSend,
 } from './message-send-media.service'
 
+import { presenceService } from './presence.service'
+
 export type DmContact = {
   userId: string
   username: string
@@ -46,6 +47,9 @@ export type DmContact = {
   displayPublicId: string
   avatar: string | null
   isOnline: boolean
+  lastActiveAt: string | null
+  lastOnlineSeconds: number | null
+  lastOnlineLabel: string | null
   isMutual: boolean
   existingConversationId: string | null
 }
@@ -635,7 +639,21 @@ export const messagingService = {
     const cacheKey = `dm-contacts:${userId}`
     const cached = await redisClient.get(cacheKey)
     if (cached) {
-      return JSON.parse(cached) as DmContact[]
+      const parsed = JSON.parse(cached) as DmContact[]
+      const presenceMap = await presenceService.getPublicPresenceForUsers(
+        userId,
+        parsed.map((c) => c.userId),
+      )
+      return parsed.map((c) => {
+        const presence = presenceMap.get(c.userId)
+        return {
+          ...c,
+          isOnline: presence?.isOnline ?? false,
+          lastActiveAt: presence?.lastActiveAt ?? null,
+          lastOnlineSeconds: presence?.lastOnlineSeconds ?? null,
+          lastOnlineLabel: presence?.lastOnlineLabel ?? null,
+        }
+      })
     }
     const { items: friends } = await followService.getFriends(userId, userId, null, 40)
     let contactIds = friends.map((c: { userId: string }) => c.userId)
@@ -669,13 +687,12 @@ export const messagingService = {
     const existingConvs = await Promise.all(
       contactIds.map((id: string) => conversationRepository.findDirectConversation(userId, id)),
     )
-    const onlineKeys = contactIds.map((id: string) => RedisKeys.userOnlineStatus(id))
-    const onlineValues = onlineKeys.length ? await redisClient.mget(...onlineKeys) : []
-    const effOnline = await privacyService.getEffectiveFlagsBulk(contactIds)
+    const presenceMap = await presenceService.getPublicPresenceForUsers(userId, contactIds)
     const result: DmContact[] = contactIds.map((id: string, i: number) => {
       const friendCard = friends.find((f: { userId: string }) => f.userId === id)
       const followCard = following.find((f: { userId: string }) => f.userId === id)
       const card = friendCard ?? followCard
+      const presence = presenceMap.get(id)
       return {
         userId: id,
         username: card?.username ?? '',
@@ -683,7 +700,10 @@ export const messagingService = {
         publicId: card?.publicId ?? '',
         displayPublicId: card?.displayPublicId ?? card?.publicId ?? '',
         avatar: card?.avatarUrl ?? null,
-        isOnline: !!onlineValues[i] && !(effOnline.get(id)?.invisibleOnline ?? false),
+        isOnline: presence?.isOnline ?? false,
+        lastActiveAt: presence?.lastActiveAt ?? null,
+        lastOnlineSeconds: presence?.lastOnlineSeconds ?? null,
+        lastOnlineLabel: presence?.lastOnlineLabel ?? null,
         isMutual: !!friendCard,
         existingConversationId: existingConvs[i]?.id ?? null,
       }

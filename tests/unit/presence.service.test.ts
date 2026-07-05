@@ -12,7 +12,11 @@ const evalMock = vi.fn()
 
 const publish = vi.fn()
 
+const touchUserLastActive = vi.fn()
 
+vi.mock('../../src/middlewares/lastActiveTracker.middleware', () => ({
+  touchUserLastActive: (...args: unknown[]) => touchUserLastActive(...args),
+}))
 
 vi.mock('../../src/config/redis', () => ({
 
@@ -59,7 +63,8 @@ describe('presenceService', () => {
     evalMock.mockReset()
 
     publish.mockReset()
-
+    touchUserLastActive.mockReset()
+    touchUserLastActive.mockResolvedValue(undefined)
   })
 
 
@@ -77,7 +82,7 @@ describe('presenceService', () => {
     await presenceService.recordSocketConnected('u1')
 
     expect(set).toHaveBeenCalledWith('online:u1', '1', 'EX', 60)
-
+    expect(touchUserLastActive).toHaveBeenCalledWith('u1')
     expect(publish).toHaveBeenCalled()
 
     const payload = publish.mock.calls[0]?.[1] as string
@@ -135,7 +140,7 @@ describe('presenceService', () => {
     await presenceService.refreshOnlineHeartbeat('u1')
 
     expect(set).toHaveBeenCalledWith('online:u1', '1', 'EX', 60)
-
+    expect(touchUserLastActive).toHaveBeenCalledWith('u1')
   })
 
 })

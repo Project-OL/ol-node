@@ -1,4 +1,9 @@
 import { PRESENCE_HEARTBEAT_TTL_SEC, redisClient, RedisKeys } from '../config/redis'
+import { prismaRead } from '../config/database'
+import { touchUserLastActive } from '../middlewares/lastActiveTracker.middleware'
+import { privacyService } from './privacy.service'
+import { formatLastOnline } from '../utils/last-online'
+import type { PublicPresenceDto } from '../models/presence.schemas'
 import type { ServerFrame } from '../realtime/types'
 
 const DECR_PRESENCE_CLAMP = `
@@ -35,6 +40,7 @@ export const presenceService = {
         'EX',
         PRESENCE_HEARTBEAT_TTL_SEC,
       )
+      await touchUserLastActive(userId)
       await publishPresence(userId, true)
     }
   },
@@ -54,8 +60,120 @@ export const presenceService = {
     }
   },
 
-  /** PING: refresh `online:{userId}` so DM / presence stay warm. */
+  /** PING / HTTP heartbeat: refresh `online:{userId}` so DM / presence stay warm. */
   async refreshOnlineHeartbeat(userId: string): Promise<void> {
     await redisClient.set(RedisKeys.userOnlineStatus(userId), '1', 'EX', PRESENCE_HEARTBEAT_TTL_SEC)
+    await touchUserLastActive(userId)
+  },
+
+  /** HTTP or foreground app: mark online + refresh last-active timestamp. */
+  async setUserOnline(userId: string): Promise<void> {
+    const wasOnline = await redisClient.get(RedisKeys.userOnlineStatus(userId))
+    await redisClient.set(
+      RedisKeys.userOnlineStatus(userId),
+      '1',
+      'EX',
+      PRESENCE_HEARTBEAT_TTL_SEC,
+    )
+    await touchUserLastActive(userId)
+    if (wasOnline !== '1') {
+      await publishPresence(userId, true)
+    }
+  },
+
+  /** Explicit offline (clears Redis online key; WS may re-heartbeat later). */
+  async setUserOffline(userId: string): Promise<void> {
+    await redisClient.del(RedisKeys.userOnlineStatus(userId))
+    await publishPresence(userId, false)
+  },
+
+  async isUserOnline(userId: string): Promise<boolean> {
+    const v = await redisClient.get(RedisKeys.userOnlineStatus(userId))
+    return v === '1'
+  },
+
+  /**
+   * Presence for one or more users as seen by `viewerId`.
+   * Respects VIP invisible-online privacy on targets.
+   */
+  async getPublicPresenceForUsers(
+    viewerId: string,
+    targetUserIds: string[],
+  ): Promise<Map<string, PublicPresenceDto>> {
+    const unique = [...new Set(targetUserIds.filter(Boolean))]
+    const result = new Map<string, PublicPresenceDto>()
+    if (unique.length === 0) return result
+
+    const onlineKeys = unique.map((id) => RedisKeys.userOnlineStatus(id))
+    const onlineValues = await redisClient.mget(...onlineKeys)
+    const privacyFlags = await privacyService.getEffectiveFlagsBulk(unique)
+
+    const offlineNeedingLastActive: string[] = []
+    for (let i = 0; i < unique.length; i++) {
+      const userId = unique[i]!
+      const hidden = privacyFlags.get(userId)?.invisibleOnline ?? false
+      const rawOnline = onlineValues[i] === '1'
+
+      if (hidden && viewerId !== userId) {
+        result.set(userId, {
+          userId,
+          isOnline: false,
+          lastActiveAt: null,
+          lastOnlineSeconds: null,
+          lastOnlineLabel: null,
+        })
+        continue
+      }
+
+      if (rawOnline) {
+        result.set(userId, {
+          userId,
+          isOnline: true,
+          lastActiveAt: null,
+          lastOnlineSeconds: null,
+          lastOnlineLabel: null,
+        })
+      } else {
+        offlineNeedingLastActive.push(userId)
+      }
+    }
+
+    if (offlineNeedingLastActive.length === 0) return result
+
+    const rows = await prismaRead.user.findMany({
+      where: { id: { in: offlineNeedingLastActive } },
+      select: { id: true, lastActiveAt: true },
+    })
+    const lastActiveMap = new Map(rows.map((r) => [r.id, r.lastActiveAt]))
+
+    for (const userId of offlineNeedingLastActive) {
+      const lastActive = lastActiveMap.get(userId) ?? null
+      const lastOnline = formatLastOnline(lastActive)
+      result.set(userId, {
+        userId,
+        isOnline: false,
+        lastActiveAt: lastOnline.lastActiveAt,
+        lastOnlineSeconds: lastOnline.lastOnlineSeconds,
+        lastOnlineLabel: lastOnline.lastOnlineLabel,
+      })
+    }
+
+    return result
+  },
+
+  async getPublicPresenceForUser(
+    viewerId: string,
+    targetUserId: string,
+  ): Promise<PublicPresenceDto> {
+    const map = await presenceService.getPublicPresenceForUsers(viewerId, [targetUserId])
+    return (
+      map.get(targetUserId) ?? {
+        userId: targetUserId,
+        isOnline: false,
+        lastActiveAt: null,
+        lastOnlineSeconds: null,
+        lastOnlineLabel: null,
+      }
+    )
   },
 }

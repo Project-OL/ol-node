@@ -13,6 +13,7 @@ import { richTierService } from './rich-tier.service'
 import { vipMembershipService } from './vip-membership.service'
 import { prismaRead } from '../config/database'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
+import { presenceService } from './presence.service'
 
 export type ResolvedPublicIdentity = {
   userId: string
@@ -24,6 +25,10 @@ export type ResolvedPublicIdentity = {
   displayPublicId: string
   isAgency: boolean
   avatarUrl: string | null
+  isOnline: boolean
+  lastActiveAt: string | null
+  lastOnlineSeconds: number | null
+  lastOnlineLabel: string | null
 }
 
 export const userSearchService = {
@@ -31,7 +36,10 @@ export const userSearchService = {
    * Resolve a user by **any** externally visible numeric id: `public_id`, `default_public_id`,
    * or `current_vip_public_id` (`userRepository.findByPublicId`).
    */
-  async resolvePublicIdentity(publicId: string): Promise<ResolvedPublicIdentity | null> {
+  async resolvePublicIdentity(
+    publicId: string,
+    viewerId?: string,
+  ): Promise<ResolvedPublicIdentity | null> {
     const numericId = Number(publicId)
     if (!Number.isInteger(numericId) || numericId <= 0) {
       throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
@@ -45,6 +53,15 @@ export const userSearchService = {
         : (user.firstName ?? user.lastName)
     const displayName = fullName && fullName.trim().length > 0 ? fullName : user.username
 
+    const presence = viewerId
+      ? await presenceService.getPublicPresenceForUser(viewerId, user.id)
+      : {
+          isOnline: false,
+          lastActiveAt: null,
+          lastOnlineSeconds: null,
+          lastOnlineLabel: null,
+        }
+
     return {
       userId: user.id,
       username: user.username ?? '',
@@ -53,6 +70,10 @@ export const userSearchService = {
       displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
       isAgency: Boolean(user.isAgent),
       avatarUrl: user.avatarUrl ?? null,
+      isOnline: presence.isOnline,
+      lastActiveAt: presence.lastActiveAt,
+      lastOnlineSeconds: presence.lastOnlineSeconds,
+      lastOnlineLabel: presence.lastOnlineLabel,
     }
   },
 

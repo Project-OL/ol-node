@@ -10,6 +10,8 @@ import { visitorRepository } from '../../repositories/visitor.repository'
 import { AppError } from '../../middlewares/errorHandler'
 import { env } from '../../config/env'
 import { subscriptionService } from '../../services/subscription.service'
+import { setPresenceBodySchema, bulkPresenceBodySchema } from '../../models/presence.schemas'
+import { presenceService } from '../../services/presence.service'
 
 const PATCH_ME_ALLOWED_FIELDS = new Set(['name', 'dob', 'bio'])
 
@@ -45,6 +47,47 @@ export default async function usersRoutes(app: FastifyInstance) {
         latencyMs: Date.now() - started,
       })
       return reply.status(200).send(data)
+    },
+  )
+
+  app.put(
+    '/me/presence',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Set online presence from HTTP (mobile foreground). `online: true` refreshes Redis online key (~60s TTL) and last-active; `online: false` clears online immediately.',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const body = setPresenceBodySchema.parse(request.body ?? {})
+      if (body.online) {
+        await presenceService.setUserOnline(userId)
+      } else {
+        await presenceService.setUserOffline(userId)
+      }
+      return reply.send({ ok: true, online: body.online })
+    },
+  )
+
+  app.post(
+    '/presence/bulk',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Batch presence lookup for up to 100 user UUIDs. Returns isOnline and last-online (seconds/minutes/hours label) when offline.',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const viewerId = request.userId!
+      const body = bulkPresenceBodySchema.parse(request.body ?? {})
+      const map = await presenceService.getPublicPresenceForUsers(viewerId, body.userIds)
+      const items = body.userIds.map((id) => map.get(id)!)
+      return reply.send({ items })
     },
   )
 
@@ -152,11 +195,36 @@ export default async function usersRoutes(app: FastifyInstance) {
       },
     },
     async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
-      const resolved = await userSearchService.resolvePublicIdentity(request.params.publicId)
+      const resolved = await userSearchService.resolvePublicIdentity(
+        request.params.publicId,
+        request.userId!,
+      )
       if (!resolved) {
         throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
       }
       return reply.status(200).send(resolved)
+    },
+  )
+
+  app.get<{ Params: { publicId: string } }>(
+    '/:publicId/presence',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description: 'Online status and last-seen for a user by public id.',
+      },
+    },
+    async (request: FastifyRequest<{ Params: { publicId: string } }>, reply: FastifyReply) => {
+      const identity = await userSearchService.resolvePublicIdentity(request.params.publicId)
+      if (!identity) {
+        throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+      }
+      const presence = await presenceService.getPublicPresenceForUser(
+        request.userId!,
+        identity.userId,
+      )
+      return reply.send(presence)
     },
   )
 

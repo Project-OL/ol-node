@@ -27,21 +27,7 @@ export interface DeviceInfo {
   sessionId: string | null
 }
 
-function formatTimeAgo(date: Date): string {
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  const minutes = Math.floor(diff / 60000)
-  const hours = Math.floor(diff / 3600000)
-  const days = Math.floor(diff / 86400000)
-
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
-  if (hours < 24) return `${hours}h ago`
-  if (days < 7) return `${days}d ago`
-  if (days < 30) return `${Math.floor(days / 7)}w ago`
-  return `${Math.floor(days / 30)}mo ago`
-}
-
+import { formatLastActiveTimeAgo } from '../utils/last-online'
 import { deviceBanService } from './device-ban.service'
 
 export const deviceService = {
@@ -84,7 +70,7 @@ export const deviceService = {
           platform: device.platform,
           isCurrentDevice: device.deviceId === currentDeviceId,
           lastActiveAt: device.lastActiveAt,
-          lastActiveTimeAgo: formatTimeAgo(device.lastActiveAt),
+          lastActiveTimeAgo: formatLastActiveTimeAgo(device.lastActiveAt),
           loginAt: device.loginAt,
           ipAddress: device.ipAddress,
           userAgent: device.userAgent,
