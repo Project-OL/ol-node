@@ -1,5 +1,4 @@
 import type { MessageType } from '@prisma/client'
-import { conversationRepository } from '../repositories/conversation.repository'
 import {
   messageRepository,
   type MessageWithDetails,
@@ -9,7 +8,8 @@ import { cacheService } from './cache.service'
 import { RedisKeys, redisClient } from '../config/redis'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
 import type { PlatformMessageMetadata } from '../models/platform-message.schemas'
-import { getOrCreatePlatformSenderUser } from './platformSender.service'
+import { messageTypeToPlatformConversationType } from '../lib/platform-conversations.constants'
+import { platformConversationsService } from './platformConversations.service'
 import { rootLogger } from '../utils/rootLogger'
 
 const log = rootLogger.child({ module: 'platform-messaging' })
@@ -35,7 +35,7 @@ async function applyPlatformMessageSideEffects(params: {
   msg: MessageWithDetails
   outboxId: bigint
   targetUserId: string
-  supportUserId: string
+  platformSenderUserId: string
 }): Promise<void> {
   await pushMessageToHotCache(params.conversationId, params.msg)
   await redisClient.incr(RedisKeys.unreadCount(params.targetUserId, params.conversationId))
@@ -43,30 +43,6 @@ async function applyPlatformMessageSideEffects(params: {
 }
 
 export const platformMessagingService = {
-  async getOrCreatePlatformConversation(targetUserId: string): Promise<{
-    conversationId: string
-    platformSenderUserId: string
-  }> {
-    const sender = await getOrCreatePlatformSenderUser()
-
-    const existing = await conversationRepository.findDirectConversation(sender.id, targetUserId)
-    if (existing) {
-      return { conversationId: existing.id, platformSenderUserId: sender.id }
-    }
-
-    const created = await conversationRepository.createConversation({
-      type: 'DIRECT',
-      memberIds: [sender.id, targetUserId],
-    })
-    return { conversationId: created.id, platformSenderUserId: sender.id }
-  },
-
-  /** @deprecated Use getOrCreatePlatformConversation */
-  async getOrCreateSupportConversation(targetUserId: string) {
-    const r = await this.getOrCreatePlatformConversation(targetUserId)
-    return { conversationId: r.conversationId, supportUserId: r.platformSenderUserId }
-  },
-
   async sendPlatformMessage(params: {
     targetUserId: string
     type: Extract<MessageType, 'SYSTEM' | 'NOTIFICATION' | 'TRANSACTIONAL'>
@@ -80,9 +56,9 @@ export const platformMessagingService = {
       return { conversationId: '', messageId: '', created: false }
     }
 
-    const { conversationId, platformSenderUserId } = await this.getOrCreatePlatformConversation(
-      params.targetUserId,
-    )
+    const conversationType = messageTypeToPlatformConversationType(params.type)
+    const { conversationId, platformSenderUserId } =
+      await platformConversationsService.resolveForMessage(params.targetUserId, conversationType)
 
     const result = await messageRepository.sendMessageWithOutbox({
       conversationId,
@@ -105,7 +81,7 @@ export const platformMessagingService = {
         msg: result.message,
         outboxId: result.outboxId,
         targetUserId: params.targetUserId,
-        supportUserId: platformSenderUserId,
+        platformSenderUserId,
       })
     }
 

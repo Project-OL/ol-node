@@ -735,6 +735,9 @@ model PostLike {
 enum ConversationType {
   DIRECT
   GROUP
+  SYSTEM
+  NOTIFICATION
+  TRANSACTIONAL
 }
 
 enum MessageType {

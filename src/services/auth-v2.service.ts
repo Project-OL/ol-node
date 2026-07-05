@@ -19,6 +19,7 @@ import { userPublicIdService } from './user-public-id.service'
 import { passwordService } from './password.service'
 import { otpAuthService } from './otp-auth.service'
 import { auditService } from './audit.service'
+import { platformConversationsService } from './platformConversations.service'
 import { cacheService } from './cache.service'
 import { providerService } from './provider.service'
 import {
@@ -179,6 +180,9 @@ export const authV2Service = {
         },
       })
       return u
+    })
+    void platformConversationsService.provisionForNewUser(user.id).catch((err) => {
+      console.error(`[platform-inbox] provision failed for ${user.id}`, err)
     })
     void userPublicIdService.setOriginalPublicId(user.id, publicId).catch((err) => {
       console.error(`[public-id] Failed to store originalPublicId for ${user.id}`, err)

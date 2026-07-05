@@ -14,6 +14,7 @@ import { userPublicIdService } from '../services/user-public-id.service'
 import { sessionService } from '../services/session.service'
 import { deviceService } from '../services/device.service'
 import { auditService } from '../services/audit.service'
+import { platformConversationsService } from '../services/platformConversations.service'
 import { cacheService } from '../services/cache.service'
 import { providerService } from '../services/provider.service'
 import { AppError } from '../middlewares/errorHandler'
@@ -224,6 +225,9 @@ export const oauthService = {
         status: 'new',
         passwordSet: false,
       },
+    })
+    void platformConversationsService.provisionForNewUser(user.id).catch((err) => {
+      console.error(`[platform-inbox] provision failed for ${user.id}`, err)
     })
     void userPublicIdService.setOriginalPublicId(user.id, publicId).catch((err) => {
       console.error(`[public-id] Failed to store originalPublicId for ${user.id}`, err)

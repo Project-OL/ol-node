@@ -1,6 +1,7 @@
 import type { Conversation, ConversationType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import type { PlatformConversationType } from '../lib/platform-conversations.constants'
 
 const conversationMemberUserSelect = {
   id: true,
@@ -75,10 +76,15 @@ export type ConversationPreview = {
 export async function createConversation(data: {
   type: ConversationType
   memberIds: string[]
+  /** When set, empty threads still appear in conversation list sort order. */
+  lastMessageAt?: Date | null
 }): Promise<ConversationWithMembers> {
   const conv = await prisma.$transaction(async (tx) => {
     const c = await tx.conversation.create({
-      data: { type: data.type },
+      data: {
+        type: data.type,
+        ...(data.lastMessageAt !== undefined ? { lastMessageAt: data.lastMessageAt } : {}),
+      },
     })
     await tx.conversationMember.createMany({
       data: data.memberIds.map((userId) => ({
@@ -100,6 +106,34 @@ export async function createConversation(data: {
   })
   if (!withMembers) throw new Error('Conversation not found after create')
   return withMembers as unknown as ConversationWithMembers
+}
+
+export async function findPlatformConversationForUser(
+  userId: string,
+  type: PlatformConversationType,
+): Promise<Conversation | null> {
+  return prismaRead.conversation.findFirst({
+    where: {
+      type,
+      members: {
+        some: { userId, isDeleted: false },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+}
+
+export async function createPlatformConversation(data: {
+  type: PlatformConversationType
+  userId: string
+  platformSenderUserId: string
+}): Promise<ConversationWithMembers> {
+  const now = new Date()
+  return createConversation({
+    type: data.type,
+    memberIds: [data.platformSenderUserId, data.userId],
+    lastMessageAt: now,
+  })
 }
 
 export async function findDirectConversation(
@@ -289,6 +323,8 @@ export async function isActiveConversationMember(
 
 export const conversationRepository = {
   createConversation,
+  createPlatformConversation,
+  findPlatformConversationForUser,
   findDirectConversation,
   findConversationById,
   listConversationsForUser,
