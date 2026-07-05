@@ -745,6 +745,8 @@ enum MessageType {
   AUDIO
   FILE
   SYSTEM
+  TRANSACTIONAL
+  NOTIFICATION
 }
 
 enum MediaType {
@@ -828,6 +830,7 @@ model Message {
   senderId        String            @map("sender_id") @db.Uuid
   type            MessageType
   content         String?           @db.Text
+  metadata        Json?             @map("metadata")
   replyToId       String?           @map("reply_to_id")
   isDeleted       Boolean           @default(false) @map("is_deleted")
   deletedAt       DateTime?         @map("deleted_at")

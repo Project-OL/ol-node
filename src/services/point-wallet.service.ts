@@ -33,6 +33,7 @@ import {
   buildCounterpartyDetailsMap,
   COUNTERPARTY_USER_SELECT,
 } from '../utils/ledger-transaction-enrichment'
+import { enqueuePlatformLedgerMessage } from '../queues/platform-message.queue'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
@@ -252,6 +253,8 @@ export const pointWalletService = {
       },
       { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
+
+    void enqueuePlatformLedgerMessage('point', entry.id).catch(() => {})
 
     await walletService.adjustPointBalanceCache(userId, amount)
 
@@ -545,6 +548,8 @@ export const pointWalletService = {
     })
     await walletRepository.bumpVersion(tx, wallet.id)
 
+    void enqueuePlatformLedgerMessage('point', entry.id).catch(() => {})
+
     const applyCommission =
       txType === PointTxType.LIVESTREAM_GIFT ||
       txType === PointTxType.GIFT_RECEIVE ||
@@ -583,6 +588,8 @@ export const pointWalletService = {
         amount,
       )
     }
+
+    void enqueuePlatformLedgerMessage('point', entry.id).catch(() => {})
 
     return {
       ledgerEntryId: entry.id,
@@ -667,6 +674,7 @@ export const pointWalletService = {
       idempotencyKey: options.idempotencyKey,
     })
     await walletRepository.bumpVersion(tx, wallet.id)
+    void enqueuePlatformLedgerMessage('point', entry.id).catch(() => {})
     return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter }
   },
 

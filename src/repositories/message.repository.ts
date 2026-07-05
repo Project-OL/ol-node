@@ -46,6 +46,7 @@ const senderSelect = {
 } as const
 
 export type MessageWithDetails = Message & {
+  metadata: unknown | null
   sender: {
     id: string
     username: string
@@ -118,6 +119,7 @@ export type SendMessageWithOutboxInput = {
   clientMessageId: string
   type: MessageType
   content?: string
+  metadata?: Prisma.InputJsonValue
   replyToId?: string
   mediaItems?: MediaItemInput[]
   isAutoReply?: boolean
@@ -183,6 +185,7 @@ export async function sendMessageWithOutbox(
           senderId: data.senderId,
           type: data.type,
           content: data.content,
+          metadata: data.metadata,
           replyToId: data.replyToId,
           seq,
           clientMessageId: data.clientMessageId,
@@ -263,6 +266,7 @@ function mapToMessageWithDetails(
     type: MessageType
     seq: bigint
     content: string | null
+    metadata?: unknown | null
     replyToId: string | null
     isDeleted: boolean
     deletedAt: Date | null

@@ -26,6 +26,7 @@ import { walletService } from './wallet.service'
 import { auditService } from './audit.service'
 import { supportService } from './support.service'
 import { storageService } from './storage.service'
+import { enqueuePlatformWithdrawalMessage } from '../queues/platform-message.queue'
 import {
   enqueuePayrollSla,
   enqueuePayrollWaiting,
@@ -454,6 +455,19 @@ export const withdrawalService = {
       hostPayoutUsd: refreshed.hostPayoutUsd?.toString() ?? null,
     }
     await walletService.resolveIdemKey(idem, response)
+
+    const pendingAssignment = await prismaRead.withdrawalPayrollAssignment.findFirst({
+      where: { withdrawalId, status: 'PENDING' },
+      orderBy: { createdAt: 'desc' },
+      select: { agencyUserId: true },
+    })
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'created',
+      hostUserId: userId,
+      agentUserId: pendingAssignment?.agencyUserId,
+    }).catch(() => {})
+
     return response
   },
 
@@ -637,6 +651,8 @@ export const withdrawalService = {
 
   async agentRejectPayroll(agentUserId: string, assignmentId: string, reason?: string) {
     let withdrawalId: string | null = null
+    let hostUserId: string | null = null
+    let rejectedWithdrawalId: string | null = null
     const now = new Date()
 
     await prisma.$transaction(
@@ -653,6 +669,14 @@ export const withdrawalService = {
         if (a.status !== 'PENDING' || a.expiresAt <= now) {
           throw new AppError(400, 'Assignment cannot be rejected', 'INVALID_STATE')
         }
+
+        hostUserId = (
+          await tx.withdrawal.findUnique({
+            where: { id: a.withdrawalId },
+            select: { userId: true },
+          })
+        )?.userId ?? null
+        rejectedWithdrawalId = a.withdrawalId
 
         await payrollAssignmentRepository.updateStatus(
           {
@@ -690,6 +714,16 @@ export const withdrawalService = {
     await removePayrollSla(assignmentId)
     await bustPayrollSummaryCache(agentUserId)
     if (withdrawalId) await withdrawalService.assignToAgency(withdrawalId)
+
+    if (hostUserId && rejectedWithdrawalId) {
+      void enqueuePlatformWithdrawalMessage({
+        withdrawalId: rejectedWithdrawalId,
+        event: 'agent_rejected',
+        hostUserId,
+        agentUserId,
+        reason,
+      }).catch(() => {})
+    }
   },
 
   async getPresignedProofUrl(agentUserId: string, assignmentId: string, mimeType: string) {
@@ -730,6 +764,8 @@ export const withdrawalService = {
 
     let rewardOut = '0'
     let hostPayoutOut = '0'
+    let notifyWithdrawalId: string | null = null
+    let notifyHostUserId: string | null = null
 
     await prisma.$transaction(
       async (tx) => {
@@ -753,6 +789,8 @@ export const withdrawalService = {
         const hostPayoutPoints = grossPoints - platformFeePoints
         const reward = a.withdrawal.agentRewardPoints ?? 0n
         const hostUserId = a.withdrawal.userId
+        notifyWithdrawalId = a.withdrawalId
+        notifyHostUserId = hostUserId
 
         rewardOut = reward.toString()
         hostPayoutOut = hostPayoutPoints.toString()
@@ -811,6 +849,15 @@ export const withdrawalService = {
     console.info(
       `[withdrawal] Payroll proof → WAITING assignment=${assignmentId} agent=${agentUserId}`,
     )
+
+    if (notifyWithdrawalId && notifyHostUserId) {
+      void enqueuePlatformWithdrawalMessage({
+        withdrawalId: notifyWithdrawalId,
+        event: 'waiting',
+        hostUserId: notifyHostUserId,
+        agentUserId,
+      }).catch(() => {})
+    }
 
     return { agentRewardPoints: rewardOut, hostPayoutPoints: hostPayoutOut }
   },
@@ -893,6 +940,13 @@ export const withdrawalService = {
       await walletService.adjustPointBalanceCache(hostUserId, 0n)
       await walletService.bustUnconfirmedCache(hostUserId)
     }
+
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'paid',
+      hostUserId,
+      agentUserId,
+    }).catch(() => {})
   },
 
   async createDisputeEvidenceUploadUrl(
@@ -1391,6 +1445,14 @@ export const withdrawalService = {
       actionStatus: 'success',
       actionDetails: { withdrawalId, reason, adminUserId },
     })
+
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'failed',
+      hostUserId: w.userId,
+      agentUserId: agencyUserId ?? undefined,
+      reason,
+    }).catch(() => {})
 
     return prismaRead.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } })
   },

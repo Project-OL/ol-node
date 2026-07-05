@@ -53,6 +53,7 @@ import agencyAdminRoutes from './routes/v1/agency-admin.routes'
 import questionnaireRoutes from './routes/v1/questionnaire.routes'
 import questionnaireAdminRoutes from './routes/v1/questionnaire-admin.routes'
 import userAdminRoutes from './routes/v1/user-admin.routes'
+import platformMessageAdminRoutes from './routes/v1/platform-message-admin.routes'
 import adminUserWalletRoutes from './routes/v1/admin-user-wallet.routes'
 import adminUserModerationRoutes from './routes/v1/admin-user-moderation.routes'
 import postAdminRoutes from './routes/v1/post-admin.routes'
@@ -211,6 +212,7 @@ export async function buildApp() {
       await adminApp.register(adminUserWalletRoutes)
       await adminApp.register(adminUserModerationRoutes)
       await adminApp.register(userAdminRoutes)
+      await adminApp.register(platformMessageAdminRoutes)
       await adminApp.register(postAdminRoutes)
       await adminApp.register(faceVerificationAdminRoutes)
       await adminApp.register(agencyAdminRoutes, { prefix: '/agency' })
