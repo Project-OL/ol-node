@@ -5,11 +5,11 @@ import {
   type MessageWithDetails,
 } from '../repositories/message.repository'
 import { userRepository } from '../repositories/user.repository'
-import { AppError } from '../middlewares/errorHandler'
 import { cacheService } from './cache.service'
 import { RedisKeys, redisClient } from '../config/redis'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
 import type { PlatformMessageMetadata } from '../models/platform-message.schemas'
+import { getOrCreatePlatformSenderUser } from './platformSender.service'
 import { rootLogger } from '../utils/rootLogger'
 
 const log = rootLogger.child({ module: 'platform-messaging' })
@@ -43,25 +43,28 @@ async function applyPlatformMessageSideEffects(params: {
 }
 
 export const platformMessagingService = {
-  async getOrCreateSupportConversation(targetUserId: string): Promise<{
+  async getOrCreatePlatformConversation(targetUserId: string): Promise<{
     conversationId: string
-    supportUserId: string
+    platformSenderUserId: string
   }> {
-    const support = await userRepository.findFirstSupportUser()
-    if (!support) {
-      throw new AppError(503, 'No support system user configured', 'SUPPORT_USER_MISSING')
-    }
+    const sender = await getOrCreatePlatformSenderUser()
 
-    const existing = await conversationRepository.findDirectConversation(support.id, targetUserId)
+    const existing = await conversationRepository.findDirectConversation(sender.id, targetUserId)
     if (existing) {
-      return { conversationId: existing.id, supportUserId: support.id }
+      return { conversationId: existing.id, platformSenderUserId: sender.id }
     }
 
     const created = await conversationRepository.createConversation({
       type: 'DIRECT',
-      memberIds: [support.id, targetUserId],
+      memberIds: [sender.id, targetUserId],
     })
-    return { conversationId: created.id, supportUserId: support.id }
+    return { conversationId: created.id, platformSenderUserId: sender.id }
+  },
+
+  /** @deprecated Use getOrCreatePlatformConversation */
+  async getOrCreateSupportConversation(targetUserId: string) {
+    const r = await this.getOrCreatePlatformConversation(targetUserId)
+    return { conversationId: r.conversationId, supportUserId: r.platformSenderUserId }
   },
 
   async sendPlatformMessage(params: {
@@ -77,13 +80,13 @@ export const platformMessagingService = {
       return { conversationId: '', messageId: '', created: false }
     }
 
-    const { conversationId, supportUserId } = await this.getOrCreateSupportConversation(
+    const { conversationId, platformSenderUserId } = await this.getOrCreatePlatformConversation(
       params.targetUserId,
     )
 
     const result = await messageRepository.sendMessageWithOutbox({
       conversationId,
-      senderId: supportUserId,
+      senderId: platformSenderUserId,
       clientMessageId: params.clientMessageId,
       type: params.type,
       content: params.content.slice(0, 4000),
@@ -91,7 +94,7 @@ export const platformMessagingService = {
     })
 
     await Promise.all([
-      cacheService.delete(RedisKeys.userConversations(supportUserId)),
+      cacheService.delete(RedisKeys.userConversations(platformSenderUserId)),
       cacheService.delete(RedisKeys.userConversations(params.targetUserId)),
       cacheService.delete(RedisKeys.convMessages(conversationId)),
     ])
@@ -102,7 +105,7 @@ export const platformMessagingService = {
         msg: result.message,
         outboxId: result.outboxId,
         targetUserId: params.targetUserId,
-        supportUserId,
+        supportUserId: platformSenderUserId,
       })
     }
 
