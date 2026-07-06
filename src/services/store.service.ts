@@ -12,7 +12,7 @@ import {
 import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
 import { cacheRedisService } from './cacheRedis.service'
-import { storeRepository } from '../repositories/store.repository'
+import { lockActiveStoreCategory, storeRepository } from '../repositories/store.repository'
 import { vipAssignmentRepository } from '../repositories/vip-assignment.repository'
 import { followRepository } from '../repositories/follow.repository'
 import { coinWalletService } from './coin-wallet.service'
@@ -23,6 +23,7 @@ import {
   enqueueStoreItemExpiry,
 } from '../queues/store-item-expiry.queue'
 import type { ActiveStoreItemsMap } from '../models/store.types'
+import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -90,6 +91,132 @@ export type ListOwnedItemsResponse = {
     revokedAt: string | null
   }>
   nextCursor: string | null
+}
+
+async function executePurchaseItem(params: {
+  buyerId: string
+  storeItemId: string
+  recipientId: string
+  idempotencyKey: string
+}): Promise<{
+  userStoreItemId: string
+  storeItemId: string
+  recipientId: string
+  purchasedById: string
+  coinsPaid: number
+  expiresAt: string
+  isGift: boolean
+  isApplied: boolean
+}> {
+  const isGift = params.recipientId !== params.buyerId
+  const item = await storeRepository.findItemById(params.storeItemId)
+  if (!item || !item.isActive) {
+    throw new AppError(404, 'Store item not found', 'STORE_ITEM_NOT_FOUND')
+  }
+  if (isGift) {
+    const [aToB, bToA] = await Promise.all([
+      followRepository.existsFollow(params.buyerId, params.recipientId),
+      followRepository.existsFollow(params.recipientId, params.buyerId),
+    ])
+    if (!aToB && !bToA) {
+      throw new AppError(403, 'Gifting requires follower/following relation', 'GIFT_NOT_ALLOWED')
+    }
+  }
+
+  const expiresAt = new Date(Date.now() + item.validityDays * 24 * 60 * 60 * 1000)
+  let buyerWealthResult: LevelApplyResult | null = null
+  // Read Committed + explicit locks (same rationale as gifts/send): the buyer
+  // wallet FOR UPDATE serializes the debit, and the (user, category) advisory
+  // lock serializes the active-item switch against equip/unequip/expiry.
+  // Serializable added no protection and aborted every lock waiter with 40001.
+  // The retry wrapper remains as a deadlock safety net.
+  const created = await withSerializationRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        buyerWealthResult = await coinWalletService.debitForStoreItemPurchase(
+          params.buyerId,
+          BigInt(item.coinCost),
+          {
+            recipientId: params.recipientId,
+            storeItemId: item.id,
+            idempotencyKey: params.idempotencyKey,
+            applyWealthXp: true,
+          },
+          tx,
+        )
+        const row = await tx.userStoreItem.create({
+          data: {
+            userId: params.recipientId,
+            storeItemId: item.id,
+            purchasedById: params.buyerId,
+            coinsPaid: item.coinCost,
+            expiresAt,
+            isApplied: false,
+            idempotencyKey: params.idempotencyKey,
+          },
+        })
+
+        if (!isGift) {
+          await lockActiveStoreCategory(tx, params.recipientId, item.category)
+          const existingActive = await tx.userActiveStoreItems.findUnique({
+            where: {
+              userId_category: {
+                userId: params.recipientId,
+                category: item.category,
+              },
+            },
+          })
+          if (existingActive?.userStoreItemId) {
+            await tx.userStoreItem.updateMany({
+              where: { id: existingActive.userStoreItemId, userId: params.recipientId },
+              data: { isApplied: false },
+            })
+          }
+          await tx.userStoreItem.update({
+            where: { id: row.id },
+            data: { isApplied: true, activatedAt: new Date() },
+          })
+          await tx.userActiveStoreItems.upsert({
+            where: {
+              userId_category: { userId: params.recipientId, category: item.category },
+            },
+            create: {
+              userId: params.recipientId,
+              category: item.category,
+              userStoreItemId: row.id,
+            },
+            update: { userStoreItemId: row.id },
+          })
+        }
+        return row
+      },
+      { timeout: TX_TIMEOUT_MS },
+    ),
+  )
+
+  await walletService.adjustCoinBalanceCache(params.buyerId, BigInt(item.coinCost))
+  await syncLevelCacheFromApplyResult(params.buyerId, LevelType.WEALTH, buyerWealthResult)
+  await enqueueStoreItemExpiry(created.id, expiresAt)
+  await Promise.all([
+    cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.recipientId)),
+    cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.buyerId)),
+    cacheRedisService.del(
+      RedisKeys.userActiveStore(params.recipientId),
+      RedisKeys.storeCatalog(),
+      RedisKeys.storeCatalog(item.category),
+    ),
+  ])
+
+  return {
+    userStoreItemId: created.id,
+    storeItemId: created.storeItemId,
+    recipientId: created.userId,
+    purchasedById: created.purchasedById,
+    coinsPaid: created.coinsPaid,
+    expiresAt: created.expiresAt.toISOString(),
+    isGift,
+    isApplied: !isGift,
+  }
 }
 
 export const storeService = {
@@ -185,106 +312,40 @@ export const storeService = {
     isGift: boolean
     isApplied: boolean
   }> {
-    const isGift = params.recipientId !== params.buyerId
-    const item = await storeRepository.findItemById(params.storeItemId)
-    if (!item || !item.isActive) {
-      throw new AppError(404, 'Store item not found', 'STORE_ITEM_NOT_FOUND')
+    // Same idempotency envelope as gifts/send + withdrawal-create: Redis replay
+    // window returns the original 201 body for retries; the unique keys on
+    // coin_ledger_entries and user_store_items backstop after the TTL (mapped
+    // to 409 IDEM_CONFLICT below instead of surfacing a raw P2002 500).
+    const idem = `store-purchase:${params.buyerId}:${params.idempotencyKey}`
+    const cachedResponse = (await walletService.getCachedIdemResponse(idem)) as Awaited<
+      ReturnType<typeof executePurchaseItem>
+    > | null
+    if (cachedResponse) return cachedResponse
+
+    const acquired = await walletService.acquireIdemKey(idem)
+    if (!acquired) {
+      throw new AppError(409, 'Already processing', 'IDEM_CONFLICT')
     }
-    if (isGift) {
-      const [aToB, bToA] = await Promise.all([
-        followRepository.existsFollow(params.buyerId, params.recipientId),
-        followRepository.existsFollow(params.recipientId, params.buyerId),
-      ])
-      if (!aToB && !bToA) {
-        throw new AppError(403, 'Gifting requires follower/following relation', 'GIFT_NOT_ALLOWED')
+
+    try {
+      const response = await executePurchaseItem(params)
+      try {
+        await walletService.resolveIdemKey(idem, response)
+      } catch {
+        // Replay window lost; DB unique keys still prevent double-processing.
       }
-    }
-
-    const expiresAt = new Date(Date.now() + item.validityDays * 24 * 60 * 60 * 1000)
-    let buyerWealthResult: LevelApplyResult | null = null
-    const created = await prisma.$transaction(
-      async (tx) => {
-        buyerWealthResult = await coinWalletService.debitForStoreItemPurchase(
-          params.buyerId,
-          BigInt(item.coinCost),
-          {
-            recipientId: params.recipientId,
-            storeItemId: item.id,
-            idempotencyKey: params.idempotencyKey,
-            applyWealthXp: true,
-          },
-          tx,
-        )
-        const row = await tx.userStoreItem.create({
-          data: {
-            userId: params.recipientId,
-            storeItemId: item.id,
-            purchasedById: params.buyerId,
-            coinsPaid: item.coinCost,
-            expiresAt,
-            isApplied: false,
-            idempotencyKey: params.idempotencyKey,
-          },
-        })
-
-        if (!isGift) {
-          const existingActive = await tx.userActiveStoreItems.findUnique({
-            where: {
-              userId_category: {
-                userId: params.recipientId,
-                category: item.category,
-              },
-            },
-          })
-          if (existingActive?.userStoreItemId) {
-            await tx.userStoreItem.updateMany({
-              where: { id: existingActive.userStoreItemId, userId: params.recipientId },
-              data: { isApplied: false },
-            })
-          }
-          await tx.userStoreItem.update({
-            where: { id: row.id },
-            data: { isApplied: true, activatedAt: new Date() },
-          })
-          await tx.userActiveStoreItems.upsert({
-            where: {
-              userId_category: { userId: params.recipientId, category: item.category },
-            },
-            create: {
-              userId: params.recipientId,
-              category: item.category,
-              userStoreItemId: row.id,
-            },
-            update: { userStoreItemId: row.id },
-          })
-        }
-        return row
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TX_TIMEOUT_MS },
-    )
-
-    await walletService.adjustCoinBalanceCache(params.buyerId, BigInt(item.coinCost))
-    await syncLevelCacheFromApplyResult(params.buyerId, LevelType.WEALTH, buyerWealthResult)
-    await enqueueStoreItemExpiry(created.id, expiresAt)
-    await Promise.all([
-      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.recipientId)),
-      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.buyerId)),
-      cacheRedisService.del(
-        RedisKeys.userActiveStore(params.recipientId),
-        RedisKeys.storeCatalog(),
-        RedisKeys.storeCatalog(item.category),
-      ),
-    ])
-
-    return {
-      userStoreItemId: created.id,
-      storeItemId: created.storeItemId,
-      recipientId: created.userId,
-      purchasedById: created.purchasedById,
-      coinsPaid: created.coinsPaid,
-      expiresAt: created.expiresAt.toISOString(),
-      isGift,
-      isApplied: !isGift,
+      return response
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Settled earlier but the Redis snapshot expired — never double-buy.
+        throw new AppError(409, 'Duplicate purchase (already processed)', 'IDEM_CONFLICT')
+      }
+      try {
+        await redisClient.del(RedisKeys.walletIdem(idem))
+      } catch {
+        // best-effort
+      }
+      throw err
     }
   },
 

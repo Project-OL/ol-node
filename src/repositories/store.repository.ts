@@ -10,6 +10,22 @@ import { prisma, prismaRead } from '../config/database'
 
 const TX_TIMEOUT_MS = 20_000
 
+/**
+ * Transaction-scoped mutual exclusion for the (user, category) active-item
+ * read-modify-write. Purchase (self), equip, unequip, and expiry all switch
+ * `user_active_store_items` based on a prior read; this advisory lock
+ * serializes them at Read Committed without Serializable's 40001 abort storms.
+ * Released automatically at commit/rollback.
+ */
+export async function lockActiveStoreCategory(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  category: StoreItemCategory,
+): Promise<void> {
+  // ::text cast: pg_advisory_xact_lock returns void, which $queryRaw cannot deserialize.
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`store-active:${userId}:${category}`}, 0))::text AS locked`
+}
+
 export const storeRepository = {
   async findAllItems(category?: StoreItemCategory): Promise<StoreItem[]> {
     return prismaRead.storeItem.findMany({
@@ -63,6 +79,7 @@ export const storeRepository = {
   ): Promise<void> {
     await prisma.$transaction(
       async (tx) => {
+        await lockActiveStoreCategory(tx, userId, category)
         const activeRow = await tx.userActiveStoreItems.findUnique({
           where: { userId_category: { userId, category } },
         })
@@ -89,7 +106,7 @@ export const storeRepository = {
           update: { userStoreItemId },
         })
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
   },
 
@@ -100,6 +117,7 @@ export const storeRepository = {
   ): Promise<void> {
     await prisma.$transaction(
       async (tx) => {
+        await lockActiveStoreCategory(tx, userId, category)
         await tx.userStoreItem.update({
           where: { id: userStoreItemId },
           data: { isApplied: false },
@@ -115,7 +133,7 @@ export const storeRepository = {
           update: { userStoreItemId: null },
         })
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
   },
 
@@ -124,6 +142,14 @@ export const storeRepository = {
   ): Promise<{ userId: string; category: StoreItemCategory } | null> {
     return prisma.$transaction(
       async (tx) => {
+        const target = await tx.userStoreItem.findUnique({
+          where: { id: userStoreItemId },
+          select: { userId: true, storeItem: { select: { category: true } } },
+        })
+        if (!target) return null
+        // Category known — take the (user, category) lock, then re-read the
+        // mutable flags so the decision is made under mutual exclusion.
+        await lockActiveStoreCategory(tx, target.userId, target.storeItem.category)
         const row = await tx.userStoreItem.findUnique({
           where: { id: userStoreItemId },
           include: { storeItem: { select: { category: true } } },
@@ -161,7 +187,7 @@ export const storeRepository = {
         }
         return { userId: row.userId, category: row.storeItem.category }
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
   },
 

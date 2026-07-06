@@ -1,4 +1,4 @@
-{
+﻿{
     "name": "vone-backend",
     "version": "1.0.0",
     "description": "Vone VoIP REST API",
@@ -49,7 +49,7 @@
         "seed:coin-trading-rates": "tsx scripts/seed-coin-trading-rates.ts",
         "seed:coin-trading-topup-packages": "tsx scripts/seed-coin-trading-topup-packages.ts",
         "lab:seed": "tsx lab/fixtures/seed.ts",
-        "lab:concurrency": "vitest run lab/concurrency",
+        "lab:concurrency": "vitest run lab/concurrency --fileParallelism=false",
         "lab:auth": "k6 run lab/modules/02-auth/k6-scenario.js",
         "lab:users": "k6 run lab/modules/03-users-social/k6-scenario.js",
         "lab:messaging": "k6 run lab/modules/04-messaging/k6-scenario.js",

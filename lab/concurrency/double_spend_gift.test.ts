@@ -2,7 +2,7 @@
  * CRITICAL: concurrent gift sends must never double-spend or drive coin balance negative,
  * and retries with the same idempotencyKey must not double-process.
  *
- * Live test — requires the API running locally plus seeded lab users
+ * Live test - requires the API running locally plus seeded lab users
  * (npm run lab:seed && npx tsx lab/fixtures/phase1-social-seed.ts).
  *
  * Run (PowerShell): $env:LAB_CONCURRENCY='1'; npm run lab:concurrency
@@ -17,12 +17,12 @@ import crypto from 'crypto'
 import dotenv from 'dotenv'
 
 const RUN = process.env.LAB_CONCURRENCY === '1'
-// Vitest mirrors Vite's built-in BASE_URL ('/') into process.env — only accept real URLs.
+// Vitest mirrors Vite's built-in BASE_URL ('/') into process.env - only accept real URLs.
 const envBase = process.env.LAB_BASE_URL || process.env.BASE_URL || ''
 const BASE = /^https?:\/\//.test(envBase) ? envBase : 'http://localhost:3000'
 const GIFT_NAME = 'Lab Concurrency Gift'
 const GIFT_COST = 1000n
-/** 60% host share (hostPointsFromGift) — keep in sync with src/config/host-revenue-shares. */
+/** 60% host share (hostPointsFromGift) - keep in sync with src/config/host-revenue-shares. */
 const POINTS_PER_GIFT = 600n
 
 // tests/setup.ts injects placeholder DATABASE_URL/REDIS_URL when unset; this live
@@ -113,6 +113,11 @@ async function coinBalance(walletId: string): Promise<bigint> {
 describe.skipIf(!RUN)('double-spend: POST /api/v1/gifts/send', () => {
   beforeAll(async () => {
     await redis.connect()
+    // repeated lab runs trip the per-identifier login rate limit - clear it first
+    {
+      const rlKeys = await redis.keys('ratelimit:login:*')
+      if (rlKeys.length > 0) await redis.del(...rlKeys)
+    }
 
     const login = await fetch(`${BASE}/api/v1/auth/login/password`, {
       method: 'POST',

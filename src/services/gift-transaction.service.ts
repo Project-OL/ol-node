@@ -1,5 +1,4 @@
-import crypto, { randomUUID } from 'crypto'
-import { Prisma } from '@prisma/client'
+﻿import crypto, { randomUUID } from 'crypto'
 import { prisma } from '../config/database'
 import { hostPointsFromGift } from '../config/host-revenue-shares'
 import { redisClient, RedisKeys } from '../config/redis'
@@ -24,26 +23,11 @@ import { vipMembershipService } from './vip-membership.service'
 import { fanSpendIncrementForGift } from './vip-membership.helpers'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { assertNotBlockedEitherWay } from '../utils/block-relationship'
+import { isSerializationAbort, isUniqueViolation } from '../utils/txRetry'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
-/** Serializable aborts (P2034) are expected under concurrent sends — bounded retry. */
+/** Serialization/deadlock aborts are expected under concurrent sends - bounded retry. */
 const SEND_TX_MAX_ATTEMPTS = 3
-
-function isSerializationAbort(err: unknown): boolean {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false
-  if (err.code === 'P2034') return true
-  // Raw queries (SELECT ... FOR UPDATE) surface serialization/deadlock aborts as
-  // P2010 with the Postgres SQLSTATE in meta: 40001 serialization_failure, 40P01 deadlock.
-  if (err.code === 'P2010') {
-    const pgCode = (err.meta as { code?: string } | undefined)?.code
-    return pgCode === '40001' || pgCode === '40P01'
-  }
-  return false
-}
-
-function isLedgerIdemViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
-}
 
 async function invalidateAfterGiftSend(params: {
   senderId: string
@@ -257,7 +241,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
       break
     } catch (err) {
       if (attempt < SEND_TX_MAX_ATTEMPTS && isSerializationAbort(err)) {
-        // Serializable write conflict with a concurrent send — retry after brief jitter.
+        // Serialization conflict with a concurrent send - retry after brief jitter.
         await new Promise((r) => setTimeout(r, 20 * attempt + Math.floor(Math.random() * 30)))
         continue
       }
@@ -353,8 +337,8 @@ export const giftTransactionService = {
     try {
       result = await executeSendGift(params, `gift:${params.senderUserId}:${params.idempotencyKey}`)
     } catch (err) {
-      if (isLedgerIdemViolation(err)) {
-        // Settled earlier but the Redis snapshot expired — never double-send.
+      if (isUniqueViolation(err)) {
+        // Settled earlier but the Redis snapshot expired - never double-send.
         throw new AppError(409, 'Duplicate gift send (already processed)', 'IDEM_CONFLICT')
       }
       // Definitive failure: release the in-flight marker so a corrected retry
