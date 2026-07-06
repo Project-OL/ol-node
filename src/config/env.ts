@@ -192,6 +192,10 @@ const envSchema = z
     // Wallet / coins
     COIN_TOPUP_RATE_LIMIT_MAX: z.coerce.number().default(5),
     COIN_TOPUP_RATE_LIMIT_WINDOW: z.coerce.number().default(60000),
+    /** When true, aggregate per-route p50/p95/p99 in memory (lab soak). */
+    LAB_REQUEST_METRICS: z.coerce.boolean().default(false),
+    /** When true with LAB_REQUEST_METRICS, rate-limit uses in-memory store (avoids Redis command burn during soak). */
+    LAB_INMEMORY_RATE_LIMIT: z.coerce.boolean().default(false),
     POINTS_WITHDRAW_MIN: z.coerce.bigint().default(6700n),
     POINTS_WITHDRAW_MAX_WEEKLY: z.coerce.bigint().default(1050000n),
     POINTS_TO_USD_RATE: z.coerce.number().default(210),

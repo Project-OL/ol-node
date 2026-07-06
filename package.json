@@ -39,6 +39,9 @@
         "backfill:vip-public-ids": "tsx scripts/backfill-vip-public-ids.ts",
         "typecheck": "tsc --noEmit",
         "api-contract:lock": "tsx scripts/generate-api-contract-lock.ts && tsx scripts/generate-api-contract-index.ts",
+        "api-surface:generate": "tsx scripts/generate-api-surface.ts",
+        "api-surface:coverage": "tsx scripts/generate-coverage-matrix.ts",
+        "test:http": "vitest run tests/http",
         "postman:auth": "node scripts/generate-auth-postman-collection.mjs",
         "grant:trading-coins": "tsx scripts/grant-trading-coins.ts",
         "seed:agency-agent-dev": "tsx scripts/seed-agency-agent-dev.ts",
@@ -54,7 +57,10 @@
         "lab:gifts": "k6 run lab/modules/06-gifts-calls/k6-scenario.js",
         "lab:soak": "k6 run lab/k6/scenarios/12_full_soak.js",
         "lab:all": "bash lab/scripts/run_all.sh",
-        "lab:report": "tsx lab/scripts/analyze_report.ts"
+        "lab:report": "tsx lab/scripts/analyze_report.ts",
+        "lab:probe": "tsx lab/scripts/probe-endpoints.ts",
+        "lab:perf-doc": "tsx lab/scripts/generate-endpoint-performance-doc.ts",
+        "lab:perf": "npm run lab:probe && npm run lab:perf-doc"
     },
     "dependencies": {
         "@aws-sdk/client-rekognition": "^3.1046.0",
@@ -86,6 +92,7 @@
         "livekit-server-sdk": "^2.15.0",
         "pino": "^9.3.2",
         "pino-pretty": "^11.2.1",
+        "redis": "^6.1.0",
         "sanitize-html": "^2.17.4",
         "uuid": "^11.1.1",
         "zod": "^3.23.8"

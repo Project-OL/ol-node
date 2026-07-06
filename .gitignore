@@ -38,3 +38,5 @@ CLAUDE.md
 /lab/0x-*/
 /lab/**/*.html
 lab/
+tests/
+package-lock.json

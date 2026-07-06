@@ -15,6 +15,12 @@ import { redisClient } from './config/redis'
 import { errorHandler } from './middlewares/errorHandler'
 import { notFoundHandler } from './middlewares/notFoundHandler'
 import { requestIdHook, requestLoggerHook } from './middlewares/requestLogger'
+import {
+  requestTimingOnRequest,
+  requestTimingOnResponse,
+  requestTimingOnSend,
+} from './middlewares/requestTiming.middleware'
+import { requestMetrics } from './utils/requestMetrics'
 
 import authRoutes from './routes/v1/auth.routes'
 import securityPasswordRoutes from './routes/v1/security-password.routes'
@@ -153,11 +159,13 @@ export async function buildApp() {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   })
 
+  const labInMemoryRateLimit = env.LAB_REQUEST_METRICS || env.LAB_INMEMORY_RATE_LIMIT
+
   await app.register(rateLimit, {
     max: env.RATE_LIMIT_MAX,
     timeWindow: env.RATE_LIMIT_TIME_WINDOW,
-    redis: redisClient,
-    skipOnError: false,
+    ...(labInMemoryRateLimit ? {} : { redis: redisClient }),
+    skipOnError: labInMemoryRateLimit,
     keyGenerator: (req) => {
       const xff = req.headers['x-forwarded-for']
       if (typeof xff === 'string' && xff.length > 0) {
@@ -174,6 +182,9 @@ export async function buildApp() {
 
   app.addHook('onRequest', requestIdHook)
   app.addHook('onRequest', requestLoggerHook)
+  app.addHook('onRequest', requestTimingOnRequest)
+  app.addHook('onSend', requestTimingOnSend)
+  app.addHook('onResponse', requestTimingOnResponse)
 
   app.setErrorHandler(errorHandler)
   app.setNotFoundHandler(notFoundHandler)
@@ -251,6 +262,11 @@ export async function buildApp() {
       await publicIdPreGenerationService.runHorizonJob()
     } catch (err) {
       rootLogger.error({ err }, '[pregen] startup horizon run failed; cron will retry')
+    }
+    if (env.LAB_REQUEST_METRICS) {
+      const interval = setInterval(() => requestMetrics.logSummary('periodic'), 60_000)
+      interval.unref()
+      rootLogger.info('LAB_REQUEST_METRICS enabled — GET /health/metrics for server p50/p95/p99')
     }
   })
 

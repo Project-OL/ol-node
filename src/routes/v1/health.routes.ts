@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify'
 import { prisma } from '../../config/database'
 import { redisClient } from '../../config/redis'
+import { env } from '../../config/env'
+import { requestMetrics } from '../../utils/requestMetrics'
 
 export default async function healthRoutes(app: FastifyInstance) {
   /** Liveness: cheap, no dependencies. Use for process health. */
@@ -28,4 +30,15 @@ export default async function healthRoutes(app: FastifyInstance) {
       ...(Object.keys(checks).length > 0 && { checks }),
     })
   })
+
+  if (env.LAB_REQUEST_METRICS) {
+    app.get('/metrics', async (_request, reply) => {
+      return reply.send({
+        source: 'server',
+        unit: 'ms',
+        routes: requestMetrics.snapshot(),
+        timestamp: new Date().toISOString(),
+      })
+    })
+  }
 }

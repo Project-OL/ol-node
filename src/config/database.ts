@@ -1,5 +1,6 @@
-import { PrismaClient } from '@prisma/client'
+import { Prisma, PrismaClient } from '@prisma/client'
 import { env } from './env'
+import { labRequestContext } from '../utils/labRequestContext'
 
 declare global {
   // eslint-disable-next-line no-var -- required for Node global augmentation in dev hot-reload
@@ -8,19 +9,48 @@ declare global {
   var __prismaRead: PrismaClient | undefined
 }
 
-const prismaOptions: { log: ('query' | 'error' | 'warn')[]; errorFormat: 'minimal' } = {
-  log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+const baseLog: Prisma.LogLevel[] = ['error', 'warn']
+const devLog: Prisma.LogLevel[] =
+  env.NODE_ENV === 'development' && !env.LAB_REQUEST_METRICS
+    ? ['query', 'error', 'warn']
+    : baseLog
+
+const prismaLog: Prisma.LogDefinition[] = env.LAB_REQUEST_METRICS
+  ? [
+      { level: 'error', emit: 'stdout' },
+      { level: 'warn', emit: 'stdout' },
+    ]
+  : devLog.map((level) => ({ level, emit: 'stdout' as const }))
+
+const prismaOptions: Prisma.PrismaClientOptions = {
+  log: prismaLog,
   errorFormat: 'minimal',
 }
 
-export const prisma = global.__prisma ?? new PrismaClient(prismaOptions)
+function withLabQueryCounter(client: PrismaClient): PrismaClient {
+  if (!env.LAB_REQUEST_METRICS) return client
+  return client.$extends({
+    query: {
+      $allOperations({ query, args }) {
+        labRequestContext.incrementDb()
+        return query(args)
+      },
+    },
+  }) as unknown as PrismaClient
+}
 
-/** Read replica client when DATABASE_READ_URL is set; use for read-only queries to scale reads. */
+function createClient(readUrl?: string): PrismaClient {
+  const base =
+    readUrl != null
+      ? new PrismaClient({ ...prismaOptions, datasources: { db: { url: readUrl } } })
+      : new PrismaClient(prismaOptions)
+  return withLabQueryCounter(base)
+}
+
+export const prisma = global.__prisma ?? createClient()
 export const prismaRead: PrismaClient =
   global.__prismaRead ??
-  (env.DATABASE_READ_URL
-    ? new PrismaClient({ ...prismaOptions, datasources: { db: { url: env.DATABASE_READ_URL } } })
-    : prisma)
+  (env.DATABASE_READ_URL ? createClient(env.DATABASE_READ_URL) : prisma)
 
 if (env.NODE_ENV !== 'production') {
   global.__prisma = prisma
