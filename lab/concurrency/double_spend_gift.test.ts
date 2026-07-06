@@ -115,7 +115,9 @@ describe.skipIf(!RUN)('double-spend: POST /api/v1/gifts/send', () => {
     await redis.connect()
     // repeated lab runs trip the per-identifier login rate limit - clear it first
     {
-      const rlKeys = await redis.keys('ratelimit:login:*')
+      const rlKeys = await redis
+        .keys('ratelimit:login:*')
+        .then(async (a) => a.concat(await redis.keys('ratelimit:auth:*')))
       if (rlKeys.length > 0) await redis.del(...rlKeys)
     }
 

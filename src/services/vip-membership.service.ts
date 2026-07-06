@@ -24,6 +24,7 @@ import {
   VIP_DURATION_CAP_DAYS,
 } from './vip-membership.helpers'
 import { syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
+import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
@@ -355,79 +356,117 @@ export const vipMembershipService = {
     const { periodDays, coinCost } = this.tierConfig(tier)
 
     let buyerWealthResult: LevelApplyResult | null = null
-    const { proposedExpiresAt } = await prisma.$transaction(
-      async (tx) => {
-        const u = await tx.user.findUnique({
-          where: { id: userId },
-          select: {
-            vipSubscriptionExpiresAt: true,
-            vipSubscriptionStartAt: true,
-          },
-        })
-        if (!u) {
-          throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
-        }
+    // Read Committed + the buyer's COIN wallet FOR UPDATE (inside debit) as the
+    // serializer: every purchase for a user debits the same wallet row, so
+    // reading the membership state AFTER the debit sees the latest committed
+    // stack. Serializable previously aborted concurrent stacks with 40001 500s.
+    const runPurchaseTransaction = () =>
+      prisma.$transaction(
+        async (tx) => {
+          // Pre-read only for error precedence (USER_NOT_FOUND / duration cap
+          // before INSUFFICIENT_COINS) — the authoritative read happens below,
+          // under the wallet lock.
+          const preRead = await tx.user.findUnique({
+            where: { id: userId },
+            select: { vipSubscriptionExpiresAt: true },
+          })
+          if (!preRead) {
+            throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+          }
+          const preNow = new Date()
+          assertWithinCap(
+            computeProposedExpiresAt({
+              now: preNow,
+              currentExpiresAt: preRead.vipSubscriptionExpiresAt,
+              periodDays,
+            }),
+            preNow,
+            VIP_DURATION_CAP_DAYS,
+          )
 
-        const now = new Date()
-        const proposed = computeProposedExpiresAt({
-          now,
-          currentExpiresAt: u.vipSubscriptionExpiresAt,
-          periodDays,
-        })
-        assertWithinCap(proposed, now, VIP_DURATION_CAP_DAYS)
-
-        const { ledgerEntryId, wealthLevelResult } = await coinWalletService.debit(
-          userId,
-          coinCost,
-          CoinTxType.VIP_MEMBERSHIP_PURCHASE,
-          tx,
-          {
-            idempotencyKey,
-            description: `VIP membership (${tier})`,
-            metadata: { tier, periodDays },
-            applyWealthXp: true,
-          },
-        )
-        buyerWealthResult = wealthLevelResult
-
-        const existing = await vipMembershipRepository.findPurchaseByLedgerEntryId(
-          ledgerEntryId,
-          tx,
-        )
-        if (existing) {
-          return { proposedExpiresAt: existing.expiresAtAfter }
-        }
-
-        await vipMembershipRepository.updateMembershipState(
-          {
+          const { ledgerEntryId, wealthLevelResult } = await coinWalletService.debit(
             userId,
-            expiresAt: proposed,
-            setStartAt: u.vipSubscriptionStartAt == null ? now : undefined,
-            active: true,
-          },
-          tx,
-        )
-
-        await vipMembershipRepository.insertPurchase(
-          {
-            userId,
-            tier,
-            periodDays,
             coinCost,
-            ledgerEntryId,
-            expiresAtBefore: u.vipSubscriptionExpiresAt,
-            expiresAtAfter: proposed,
-          },
-          tx,
-        )
+            CoinTxType.VIP_MEMBERSHIP_PURCHASE,
+            tx,
+            {
+              idempotencyKey,
+              description: `VIP membership (${tier})`,
+              metadata: { tier, periodDays },
+              applyWealthXp: true,
+            },
+          )
+          buyerWealthResult = wealthLevelResult
 
-        return { proposedExpiresAt: proposed }
-      },
-      {
-        isolationLevel: 'Serializable',
-        timeout: INTERACTIVE_TX_TIMEOUT_MS,
-      },
-    )
+          const existing = await vipMembershipRepository.findPurchaseByLedgerEntryId(
+            ledgerEntryId,
+            tx,
+          )
+          if (existing) {
+            return { proposedExpiresAt: existing.expiresAtAfter }
+          }
+
+          // Authoritative stacking read — serialized by the wallet lock above.
+          const u = await tx.user.findUnique({
+            where: { id: userId },
+            select: {
+              vipSubscriptionExpiresAt: true,
+              vipSubscriptionStartAt: true,
+            },
+          })
+          if (!u) {
+            throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+          }
+          const now = new Date()
+          const proposed = computeProposedExpiresAt({
+            now,
+            currentExpiresAt: u.vipSubscriptionExpiresAt,
+            periodDays,
+          })
+          assertWithinCap(proposed, now, VIP_DURATION_CAP_DAYS)
+
+          await vipMembershipRepository.updateMembershipState(
+            {
+              userId,
+              expiresAt: proposed,
+              setStartAt: u.vipSubscriptionStartAt == null ? now : undefined,
+              active: true,
+            },
+            tx,
+          )
+
+          await vipMembershipRepository.insertPurchase(
+            {
+              userId,
+              tier,
+              periodDays,
+              coinCost,
+              ledgerEntryId,
+              expiresAtBefore: u.vipSubscriptionExpiresAt,
+              expiresAtAfter: proposed,
+            },
+            tx,
+          )
+
+          return { proposedExpiresAt: proposed }
+        },
+        { timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      )
+
+    let txResult: { proposedExpiresAt: Date }
+    try {
+      txResult = await withSerializationRetry(runPurchaseTransaction)
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Parallel duplicate idempotency key: the winner committed between our
+        // findByIdempotencyKey check and insert. Re-run once — the debit now
+        // replays the existing ledger entry and returns the original result.
+        txResult = await runPurchaseTransaction()
+      } else {
+        throw err
+      }
+    }
+    const { proposedExpiresAt } = txResult
 
     await walletService.adjustCoinBalanceCache(userId, coinCost)
     await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, buyerWealthResult)
@@ -507,8 +546,10 @@ export const vipMembershipService = {
     if (!u?.vipSubscriptionExpiresAt) return
     if (u.vipSubscriptionExpiresAt.getTime() > Date.now()) return
 
-    await prisma.user.update({
-      where: { id: args.userId },
+    // Conditional guard: a purchase committed between the read above and this
+    // write must not be deactivated (updateMany matches 0 rows in that case).
+    await prisma.user.updateMany({
+      where: { id: args.userId, vipSubscriptionExpiresAt: { lte: new Date() } },
       data: { vipSubscriptionActive: false },
     })
     await this.refreshCache(args.userId)

@@ -11,6 +11,8 @@ const preAuth = [authenticate]
 
 const PurchaseBodySchema = z.object({
   tier: z.nativeEnum(VipMembershipTier),
+  /** Optional client retry token; same key replays the original result instead of stacking again. */
+  idempotencyKey: z.string().min(8).max(128).optional(),
 })
 
 export default async function vipMembershipRoutes(app: FastifyInstance) {
@@ -69,7 +71,11 @@ export default async function vipMembershipRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const idempotencyKey = `vip-membership-purchase:${userId}:${crypto.randomUUID()}`
+      // Client-provided keys are stable across retries (ledger + purchase rows
+      // replay); without one, each request is a distinct purchase (legacy).
+      const idempotencyKey = `vip-membership-purchase:${userId}:${
+        parsed.data.idempotencyKey ?? crypto.randomUUID()
+      }`
       const body = await vipMembershipService.purchase(userId, parsed.data.tier, idempotencyKey)
       return reply.status(201).send({
         tier: body.tier,

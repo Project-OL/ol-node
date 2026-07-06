@@ -70,6 +70,7 @@ vi.mock("../../src/queues/vip-membership.queue", () => ({
 
 const prismaUserFindUnique = vi.fn();
 const prismaUserUpdate = vi.fn();
+const prismaUserUpdateMany = vi.fn();
 const prismaTx = vi.fn();
 
 vi.mock("../../src/config/database", () => ({
@@ -78,6 +79,7 @@ vi.mock("../../src/config/database", () => ({
     user: {
       findUnique: (...a: unknown[]) => prismaUserFindUnique(...a),
       update: (...a: unknown[]) => prismaUserUpdate(...a),
+      updateMany: (...a: unknown[]) => prismaUserUpdateMany(...a),
     },
     vipMembershipPurchase: { findMany: vi.fn() },
   },
@@ -104,11 +106,11 @@ describe("vipMembershipService.processExpiryJob", () => {
     expect(prismaUserUpdate).not.toHaveBeenCalled();
   });
 
-  it("sets vipSubscriptionActive false when expired", async () => {
+  it("sets vipSubscriptionActive false when expired (guarded against concurrent purchase)", async () => {
     prismaUserFindUnique.mockResolvedValue({
       vipSubscriptionExpiresAt: new Date(Date.now() - 86_400_000),
     });
-    prismaUserUpdate.mockResolvedValue({} as never);
+    prismaUserUpdateMany.mockResolvedValue({ count: 1 } as never);
     getMembershipState.mockResolvedValue({
       isActive: false,
       expiresAt: new Date(Date.now() - 86_400_000),
@@ -116,8 +118,8 @@ describe("vipMembershipService.processExpiryJob", () => {
     getLatestTier.mockResolvedValue(null);
 
     await vipMembershipService.processExpiryJob({ userId: "u1" });
-    expect(prismaUserUpdate).toHaveBeenCalledWith({
-      where: { id: "u1" },
+    expect(prismaUserUpdateMany).toHaveBeenCalledWith({
+      where: { id: "u1", vipSubscriptionExpiresAt: { lte: expect.any(Date) } },
       data: { vipSubscriptionActive: false },
     });
   });

@@ -1,7 +1,7 @@
 /**
- * CRITICAL: a rare ID is unique inventory - N parallel purchases of the same ID
- * must sell it exactly once (no 5xx for the losers), and retries with the same
- * idempotencyKey must replay the original result (not 404/500 after a settled buy).
+ * CRITICAL: VIP membership stacking math must hold under parallel purchases
+ * (expiresAt = base + N * periodDays, N debits), and retries with the same
+ * idempotencyKey must replay the original result instead of buying again.
  *
  * Live test - requires the API running locally plus seeded lab user
  * (npm run lab:seed). Run (PowerShell): $env:LAB_CONCURRENCY='1'; npm run lab:concurrency
@@ -17,7 +17,10 @@ import dotenv from 'dotenv'
 const RUN = process.env.LAB_CONCURRENCY === '1'
 const envBase = process.env.LAB_BASE_URL || ''
 const BASE = /^https?:\/\//.test(envBase) ? envBase : 'http://localhost:3000'
-const PRICE = 1000n
+/** Keep in sync with src/services/vip-membership.helpers.ts */
+const DIAMOND_COST = 1_000_000n
+const DIAMOND_PERIOD_DAYS = 30
+const DAY_MS = 24 * 60 * 60 * 1000
 
 const fileEnv = fs.existsSync(path.resolve('.env'))
   ? dotenv.parse(fs.readFileSync(path.resolve('.env')))
@@ -32,34 +35,37 @@ const redis = RUN ? new Redis(REDIS_URL, { lazyConnect: true }) : (null as unkno
 
 type BuyResult = {
   status: number
-  body: { publicId?: string; code?: string; [k: string]: unknown } | null
+  body: { tier?: string; coinsPaid?: string; expiresAt?: string; code?: string } | null
 }
 
 let token = ''
-let buyerId = ''
-let buyerWalletId = ''
-let rareSeq = 0
+let userId = ''
+let walletId = ''
 
-async function buy(publicId: bigint, idempotencyKey: string): Promise<BuyResult> {
-  const res = await fetch(`${BASE}/api/v1/store/rare-ids/purchase`, {
+async function buy(idempotencyKey: string): Promise<BuyResult> {
+  const res = await fetch(`${BASE}/api/v1/vip-membership/purchase`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ publicId: publicId.toString(), idempotencyKey }),
+    body: JSON.stringify({ tier: 'DIAMOND', idempotencyKey }),
   })
   const body = (await res.json().catch(() => null)) as BuyResult['body']
   return { status: res.status, body }
 }
 
-async function createRareId(): Promise<bigint> {
-  const publicId =
-    BigInt(9_800_000_000) + BigInt(Date.now() % 1_000_000_000) * 100n + BigInt(rareSeq++)
-  await prisma.vipPublicId.create({
-    data: { publicId, isAvailable: true, priceCredits: Number(PRICE), rarityScore: 10 },
+async function resetVipState() {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      vipSubscriptionExpiresAt: null,
+      vipSubscriptionStartAt: null,
+      vipSubscriptionActive: false,
+    },
   })
-  return publicId
+  await redis.del(`vipm:active:${userId}`)
+  await redis.del(`ratelimit:vip-membership:purchase:${userId}`)
 }
 
-async function setCoinBalance(userId: string, target: bigint): Promise<string> {
+async function setCoinBalance(target: bigint): Promise<string> {
   const wallet = await prisma.wallet.upsert({
     where: { userId_currencyType: { userId, currencyType: 'COIN' } },
     create: { userId, currencyType: 'COIN' },
@@ -80,17 +86,16 @@ async function setCoinBalance(userId: string, target: bigint): Promise<string> {
         txType: 'ADJUSTMENT',
         amount: delta > 0n ? delta : -delta,
         balanceAfter: target,
-        description: 'lab rareid concurrency funding',
-        idempotencyKey: `lab-rareid-fund-${crypto.randomUUID()}`,
+        description: 'lab vipm concurrency funding',
+        idempotencyKey: `lab-vipm-fund-${crypto.randomUUID()}`,
       },
     })
   }
   await redis.del(`wallet:coins:${userId}`)
-  await redis.del(`ratelimit:store:rare-id:${userId}`)
   return wallet.id
 }
 
-async function coinBalance(walletId: string): Promise<bigint> {
+async function coinBalance(): Promise<bigint> {
   const last = await prisma.coinLedgerEntry.findFirst({
     where: { walletId },
     orderBy: { createdAt: 'desc' },
@@ -99,7 +104,7 @@ async function coinBalance(walletId: string): Promise<bigint> {
   return last?.balanceAfter ?? 0n
 }
 
-describe.skipIf(!RUN)('unique inventory: POST /api/v1/store/rare-ids/purchase', () => {
+describe.skipIf(!RUN)('stacking: POST /api/v1/vip-membership/purchase', () => {
   beforeAll(async () => {
     await redis.connect()
     const rlKeys = await redis
@@ -121,82 +126,80 @@ describe.skipIf(!RUN)('unique inventory: POST /api/v1/store/rare-ids/purchase', 
     expect(login.status).toBe(200)
     const loginBody = (await login.json()) as { accessToken: string; userId: string }
     token = loginBody.accessToken
-    buyerId = loginBody.userId
+    userId = loginBody.userId
   }, 60_000)
 
   afterAll(async () => {
     if (!RUN) return
+    await resetVipState().catch(() => undefined)
     await prisma.$disconnect()
     await redis.quit()
   })
 
-  it('one rare ID, 6 parallel buyers-worth of requests: sold exactly once, losers get 4xx, no 5xx', async () => {
-    const N = 6
-    buyerWalletId = await setCoinBalance(buyerId, PRICE * BigInt(N))
-    const publicId = await createRareId()
+  it('3 parallel purchases stack exactly 3 periods: 3 debits, expiresAt = now + 90d, no 5xx', async () => {
+    const N = 3
+    await resetVipState()
+    walletId = await setCoinBalance(DIAMOND_COST * BigInt(N))
     const startedAt = new Date()
 
     const results = await Promise.all(
-      Array.from({ length: N }, () => buy(publicId, `conc-${crypto.randomUUID()}`)),
+      Array.from({ length: N }, () => buy(`conc-${crypto.randomUUID()}`)),
     )
 
-    const ok = results.filter((r) => r.status === 201)
-    const gone = results.filter(
-      (r) =>
-        (r.status === 404 || r.status === 409) &&
-        (r.body?.code === 'RARE_ID_NOT_AVAILABLE' || r.body?.code === 'RARE_ID_ALREADY_OWNED'),
-    )
-    const other = results.filter((r) => ![...ok, ...gone].includes(r))
-
+    const other = results.filter((r) => r.status !== 201)
     expect(other, `unexpected statuses: ${JSON.stringify(other)}`).toHaveLength(0)
-    expect(ok).toHaveLength(1)
-    expect(gone).toHaveLength(N - 1)
-
-    // Inventory sold exactly once, one debit, one assignment.
-    const rare = await prisma.vipPublicId.findUnique({ where: { publicId } })
-    expect(rare?.isAvailable).toBe(false)
-    expect(rare?.currentOwnerId).toBe(buyerId)
 
     const debits = await prisma.coinLedgerEntry.count({
-      where: { walletId: buyerWalletId, txType: 'VIP_PURCHASE', createdAt: { gte: startedAt } },
+      where: { walletId, txType: 'VIP_MEMBERSHIP_PURCHASE', createdAt: { gte: startedAt } },
     })
-    expect(debits).toBe(1)
-    expect(await coinBalance(buyerWalletId)).toBe(PRICE * BigInt(N - 1))
+    expect(debits).toBe(N)
+    expect(await coinBalance()).toBe(0n)
 
-    const assignments = await prisma.userVipAssignment.count({
-      where: { userId: buyerId, publicId },
+    // The money-math core: every paid period must be reflected in the expiry.
+    const u = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { vipSubscriptionExpiresAt: true, vipSubscriptionActive: true },
     })
-    expect(assignments).toBe(1)
+    expect(u?.vipSubscriptionActive).toBe(true)
+    const expected = startedAt.getTime() + N * DIAMOND_PERIOD_DAYS * DAY_MS
+    const actual = u!.vipSubscriptionExpiresAt!.getTime()
+    // allow the seconds the requests took to run
+    expect(Math.abs(actual - expected)).toBeLessThan(60_000)
+
+    const purchases = await prisma.vipMembershipPurchase.count({
+      where: { userId, createdAt: { gte: startedAt } },
+    })
+    expect(purchases).toBe(N)
   }, 120_000)
 
-  it('sequential retry with the same idempotencyKey replays the original result (single debit)', async () => {
-    await setCoinBalance(buyerId, PRICE * 3n)
-    const publicId = await createRareId()
+  it('sequential retry with the same idempotencyKey replays the original result (single purchase)', async () => {
+    await resetVipState()
+    walletId = await setCoinBalance(DIAMOND_COST * 3n)
     const startedAt = new Date()
     const key = `conc-${crypto.randomUUID()}`
 
-    const first = await buy(publicId, key)
+    const first = await buy(key)
     expect(first.status).toBe(201)
-    expect(first.body?.publicId).toBe(publicId.toString())
+    expect(first.body?.expiresAt).toBeTruthy()
 
-    const second = await buy(publicId, key)
+    const second = await buy(key)
     expect(second.status).toBe(201)
     expect(second.body).toEqual(first.body)
 
     const debits = await prisma.coinLedgerEntry.count({
-      where: { walletId: buyerWalletId, txType: 'VIP_PURCHASE', createdAt: { gte: startedAt } },
+      where: { walletId, txType: 'VIP_MEMBERSHIP_PURCHASE', createdAt: { gte: startedAt } },
     })
     expect(debits).toBe(1)
-    expect(await coinBalance(buyerWalletId)).toBe(PRICE * 2n)
+    expect(await coinBalance()).toBe(DIAMOND_COST * 2n)
   }, 60_000)
 
-  it('parallel duplicate idempotencyKey: exactly one debit; loser replays or gets IDEM_CONFLICT', async () => {
-    await setCoinBalance(buyerId, PRICE * 2n)
-    const publicId = await createRareId()
+  it('parallel duplicate idempotencyKey: exactly one purchase; both callers converge on it', async () => {
+    await resetVipState()
+    walletId = await setCoinBalance(DIAMOND_COST * 2n)
     const startedAt = new Date()
     const key = `conc-${crypto.randomUUID()}`
 
-    const [a, b] = await Promise.all([buy(publicId, key), buy(publicId, key)])
+    const [a, b] = await Promise.all([buy(key), buy(key)])
     const statuses = [a.status, b.status].sort()
 
     expect(statuses[0] === 201).toBe(true)
@@ -206,9 +209,9 @@ describe.skipIf(!RUN)('unique inventory: POST /api/v1/store/rare-ids/purchase', 
     }
 
     const debits = await prisma.coinLedgerEntry.count({
-      where: { walletId: buyerWalletId, txType: 'VIP_PURCHASE', createdAt: { gte: startedAt } },
+      where: { walletId, txType: 'VIP_MEMBERSHIP_PURCHASE', createdAt: { gte: startedAt } },
     })
     expect(debits).toBe(1)
-    expect(await coinBalance(buyerWalletId)).toBe(PRICE)
+    expect(await coinBalance()).toBe(DIAMOND_COST)
   }, 60_000)
 })
