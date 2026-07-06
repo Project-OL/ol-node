@@ -38,6 +38,26 @@ export const userRepository = {
     )
   },
 
+  /** Lean display rows for batch enrichment (guardian summaries, list cards) — one query. */
+  async findDisplayRowsByIds(ids: string[]) {
+    if (ids.length === 0) return []
+    return withDbRetry(prismaRead, () =>
+      prismaRead.user.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+          publicId: true,
+          defaultPublicId: true,
+          currentVipPublicId: true,
+          avatarUrl: true,
+        },
+      }),
+    )
+  },
+
   async isAgentUser(id: string): Promise<boolean> {
     const row = await withDbRetry(prismaRead, () =>
       prismaRead.user.findUnique({

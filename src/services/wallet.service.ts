@@ -7,7 +7,7 @@ import { WALLET_BALANCE_TTL, WALLET_IDEM_TTL, RedisKeys } from '../config/redis'
 import { WalletCurrencyType } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 
-function mapDbUnavailable(err: unknown): never {
+export function mapDbUnavailable(err: unknown): never {
   if (err instanceof PrismaClientInitializationError) {
     throw new AppError(
       503,

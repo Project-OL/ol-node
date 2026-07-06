@@ -23,6 +23,14 @@ export const walletUserLevelRepository = {
     })
   },
 
+  /** Level rows for many users in one round-trip (batch display enrichment). */
+  async getByUsersForTypes(userIds: string[], levelTypes: LevelType[]) {
+    if (userIds.length === 0) return []
+    return prismaRead.walletUserLevel.findMany({
+      where: { userId: { in: userIds }, levelType: { in: levelTypes } },
+    })
+  },
+
   async getConfigs(levelType: LevelType) {
     return prismaRead.walletLevelConfig.findMany({
       where: { levelType, isActive: true },

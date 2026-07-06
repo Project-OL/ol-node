@@ -39,6 +39,71 @@ function computeAge(dob: Date | null): number | null {
   return age >= 0 ? age : null
 }
 
+type VisitRowLike = {
+  user: {
+    id: string
+    publicId: bigint
+    defaultPublicId: bigint
+    currentVipPublicId: bigint | null
+    isAgent: boolean
+    username: string
+    firstName: string | null
+    lastName: string | null
+    avatarUrl: string | null
+    gender: string | null
+    dateOfBirth: Date | null
+    country: string | null
+  }
+  visit: { visitedAt: Date }
+}
+
+/**
+ * Shared card builder for visitors / visit-history. Batched enrichment: one
+ * Redis pipeline + one DB query per lookup kind instead of two per list item.
+ */
+async function buildVisitCards(items: VisitRowLike[]): Promise<UserCardWithVisit[]> {
+  const userIds = items.map((i) => i.user.id)
+
+  const [levels, subscriberCounts, superHostMap, guardianMap] = await Promise.all([
+    walletLevelService.getDisplayLevelsForUsers(userIds),
+    userSubscriberRepository.countSubscribersForCreators(userIds),
+    superHostService.isSuperHostBulk(userIds),
+    guardianService.getActiveGuardianSummariesBulk(userIds),
+  ])
+
+  return items.map((row) => {
+    const user = row.user
+    const level = levels.get(user.id)
+    const subscriberCount = subscriberCounts.get(user.id) ?? 0
+    const displayName = buildDisplayName(user)
+    const age = computeAge(user.dateOfBirth)
+
+    return {
+      id: user.id,
+      userId: user.id,
+      username: user.username,
+      publicId: String(user.publicId),
+      displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
+      isAgency: Boolean(user.isAgent),
+      name: displayName,
+      displayName,
+      avatarUrl: user.avatarUrl,
+      country: user.country ?? null,
+      gender: user.gender,
+      age,
+      livestreamLevel: level?.livestreamLevel ?? 0,
+      wealthLevel: level?.wealthLevel ?? 0,
+      subscriberCount,
+      isFollowing: false,
+      isFollowedBy: false,
+      isFriend: false,
+      isSuperHost: superHostMap.get(user.id) ?? false,
+      activeGuardian: guardianMap.get(user.id) ?? null,
+      visitedAt: row.visit.visitedAt,
+    }
+  })
+}
+
 export const visitorService = {
   async recordVisit(profileId: string, visitorId: string, meta: AuditMeta): Promise<void> {
     if (profileId === visitorId) {
@@ -92,52 +157,7 @@ export const visitorService = {
       limit,
     )
 
-    const users = items.map((i) => i.user)
-    const userIds = users.map((u) => u.id)
-
-    const levels = await walletLevelService.getDisplayLevelsForUsers(userIds)
-
-    const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
-
-    const cards: UserCardWithVisit[] = await Promise.all(
-      items.map(async (row) => {
-        const user = row.user
-        const [isSuperHost, activeGuardian] = await Promise.all([
-          superHostService.isSuperHost(user.id),
-          guardianService.getActiveGuardianSummary(user.id),
-        ])
-        const level = levels.get(user.id)
-        const livestreamLevel = level?.livestreamLevel ?? 0
-        const wealthLevel = level?.wealthLevel ?? 0
-        const subscriberCount = subscriberCounts.get(user.id) ?? 0
-        const displayName = buildDisplayName(user)
-        const age = computeAge(user.dateOfBirth)
-
-        return {
-          id: user.id,
-          userId: user.id,
-          username: user.username,
-          publicId: String(user.publicId),
-          displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
-          isAgency: Boolean(user.isAgent),
-          name: displayName,
-          displayName,
-          avatarUrl: user.avatarUrl,
-          country: user.country ?? null,
-          gender: user.gender,
-          age,
-          livestreamLevel,
-          wealthLevel,
-          subscriberCount,
-          isFollowing: false,
-          isFollowedBy: false,
-          isFriend: false,
-          isSuperHost,
-          activeGuardian,
-          visitedAt: row.visit.visitedAt,
-        }
-      }),
-    )
+    const cards = await buildVisitCards(items)
 
     return {
       items: cards,
@@ -157,52 +177,7 @@ export const visitorService = {
       limit,
     )
 
-    const users = items.map((i) => i.user)
-    const userIds = users.map((u) => u.id)
-
-    const levels = await walletLevelService.getDisplayLevelsForUsers(userIds)
-
-    const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
-
-    const cards: UserCardWithVisit[] = await Promise.all(
-      items.map(async (row) => {
-        const user = row.user
-        const [isSuperHost, activeGuardian] = await Promise.all([
-          superHostService.isSuperHost(user.id),
-          guardianService.getActiveGuardianSummary(user.id),
-        ])
-        const level = levels.get(user.id)
-        const livestreamLevel = level?.livestreamLevel ?? 0
-        const wealthLevel = level?.wealthLevel ?? 0
-        const subscriberCount = subscriberCounts.get(user.id) ?? 0
-        const displayName = buildDisplayName(user)
-        const age = computeAge(user.dateOfBirth)
-
-        return {
-          id: user.id,
-          userId: user.id,
-          username: user.username,
-          publicId: String(user.publicId),
-          displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
-          isAgency: Boolean(user.isAgent),
-          name: displayName,
-          displayName,
-          avatarUrl: user.avatarUrl,
-          country: user.country ?? null,
-          gender: user.gender,
-          age,
-          livestreamLevel,
-          wealthLevel,
-          subscriberCount,
-          isFollowing: false,
-          isFollowedBy: false,
-          isFriend: false,
-          isSuperHost,
-          activeGuardian,
-          visitedAt: row.visit.visitedAt,
-        }
-      }),
-    )
+    const cards = await buildVisitCards(items)
 
     return {
       items: cards,

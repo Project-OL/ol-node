@@ -36,6 +36,25 @@ export const superHostRepository = {
     }
   },
 
+  /** Active (non-revoked) super-host user ids among `userIds` — one query. */
+  async isActiveBulk(userIds: string[]): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set()
+    try {
+      const rows = await prismaRead.$queryRaw<Array<{ user_id: string }>>`
+        SELECT user_id
+        FROM super_hosts
+        WHERE user_id IN (${Prisma.join(userIds.map((id) => Prisma.sql`${id}::uuid`))})
+          AND revoked_at IS NULL
+      `
+      return new Set(rows.map((r) => r.user_id))
+    } catch (err) {
+      if (isMissingSuperHostsTable(err)) {
+        return new Set()
+      }
+      throw err
+    }
+  },
+
   async grant(userId: string, adminUserId: string): Promise<void> {
     await prisma.$executeRaw`
       INSERT INTO super_hosts (user_id, granted_by_user_id, granted_at, revoked_at, revoked_by_user_id)

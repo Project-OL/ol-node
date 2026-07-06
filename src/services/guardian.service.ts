@@ -4,7 +4,7 @@ import { PointTxType, LevelType } from '@prisma/client'
 import { prisma } from '../config/database'
 import { HOST_REVENUE_SHARES, hostPointsFromGuardian } from '../config/host-revenue-shares'
 import { AppError } from '../middlewares/errorHandler'
-import { RedisKeys, GUARDIAN_ACTIVE_TTL, GUARDIAN_LIST_TTL } from '../config/redis'
+import { redisClient, RedisKeys, GUARDIAN_ACTIVE_TTL, GUARDIAN_LIST_TTL } from '../config/redis'
 import { cacheService } from './cache.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
@@ -466,6 +466,117 @@ export const guardianService = {
       GUARDIAN_ACTIVE_TTL,
     )
     return summary
+  },
+
+  /**
+   * Batched getActiveGuardianSummary for list endpoints: one Redis pipeline for
+   * cached summaries, one guardians query + one users query for misses. Uses the
+   * same per-target cache keys/JSON format ('null' sentinel included) as the
+   * single-target path, so invalidation behavior is unchanged.
+   */
+  async getActiveGuardianSummariesBulk(
+    targetUserIds: string[],
+  ): Promise<Map<string, ActiveGuardianSummary | null>> {
+    const unique = [...new Set(targetUserIds.filter(Boolean))]
+    const out = new Map<string, ActiveGuardianSummary | null>()
+    if (unique.length === 0) return out
+
+    let cached: (string | null)[] = new Array(unique.length).fill(null)
+    try {
+      const pipe = redisClient.pipeline()
+      for (const id of unique) pipe.get(RedisKeys.guardianActive(id))
+      const exec = await pipe.exec()
+      if (exec && exec.length === unique.length) {
+        cached = exec.map(([, v]) => v as string | null)
+      }
+    } catch {
+      // Redis unavailable — treat all as misses
+    }
+
+    const missing: string[] = []
+    for (let i = 0; i < unique.length; i++) {
+      const id = unique[i]!
+      const raw = cached[i]
+      if (raw !== null && raw !== undefined) {
+        const parsed = parseCachedActiveGuardianSummary(raw)
+        if (parsed !== null || raw === 'null') {
+          out.set(id, parsed)
+          continue
+        }
+      }
+      missing.push(id)
+    }
+    if (missing.length === 0) return out
+
+    const activeRows = await guardianRepository.findActiveByTargetIds(missing)
+    const rowsByTarget = new Map<string, Guardian[]>()
+    for (const row of activeRows) {
+      const list = rowsByTarget.get(row.targetUserId)
+      if (list) list.push(row)
+      else rowsByTarget.set(row.targetUserId, [row])
+    }
+
+    const topByTarget = new Map<string, Guardian>()
+    for (const id of missing) {
+      const top = pickTopGuardian(rowsByTarget.get(id) ?? [])
+      if (top) topByTarget.set(id, top)
+    }
+
+    const guardianUserIds = [...new Set([...topByTarget.values()].map((g) => g.guardianUserId))]
+    const guardianUsers = await userRepository.findDisplayRowsByIds(guardianUserIds)
+    const usersById = new Map(guardianUsers.map((u) => [u.id, u]))
+
+    const writePipe = redisClient.pipeline()
+    for (const id of missing) {
+      const top = topByTarget.get(id)
+      if (!top) {
+        out.set(id, null)
+        writePipe.set(RedisKeys.guardianActive(id), 'null', 'EX', GUARDIAN_ACTIVE_TTL)
+        continue
+      }
+      const guardianUser = usersById.get(top.guardianUserId)
+      if (!guardianUser) {
+        // Same failure mode as the single-target path.
+        throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+      }
+      const displayName = buildUserDisplayName(guardianUser)
+      const displayPublicId = resolveDisplayPublicId(guardianUser)
+      const summary: ActiveGuardianSummary = {
+        guardianId: top.id,
+        guardianUserId: top.guardianUserId,
+        guardianPublicId: guardianUser.publicId.toString(),
+        displayPublicId,
+        displayName,
+        avatarUrl: guardianUser.avatarUrl,
+        tier: top.tier,
+        purchasedAt: top.purchasedAt,
+        expiresAt: top.expiresAt,
+        user: {
+          userId: top.guardianUserId,
+          publicId: guardianUser.publicId.toString(),
+          displayPublicId,
+          name: displayName,
+          avatarUrl: guardianUser.avatarUrl,
+        },
+      }
+      out.set(id, summary)
+      writePipe.set(
+        RedisKeys.guardianActive(id),
+        JSON.stringify({
+          ...summary,
+          purchasedAt: summary.purchasedAt.toISOString(),
+          expiresAt: summary.expiresAt.toISOString(),
+        }),
+        'EX',
+        GUARDIAN_ACTIVE_TTL,
+      )
+    }
+    try {
+      await writePipe.exec()
+    } catch {
+      // best-effort cache write
+    }
+    return out
   },
 
   async getActiveGuardian(targetUserId: string): Promise<ActiveGuardianResponse | null> {

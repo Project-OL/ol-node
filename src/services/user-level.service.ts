@@ -288,18 +288,58 @@ export const walletLevelService = {
       missing.push(uid)
     }
 
-    await Promise.all(
-      missing.map(async (uid) => {
-        const [w, s] = await Promise.all([
-          this.getSnapshot(uid, LevelType.WEALTH),
-          this.getSnapshot(uid, LevelType.LIVESTREAM),
-        ])
+    if (missing.length > 0) {
+      // One query for all missing users (was 2 per-user getSnapshot round-trips).
+      // Users without a wallet_user_levels row display the same defaults
+      // getOrCreate would have returned (level 1, cumulative 0) — without the
+      // incidental row creation on a read path.
+      const [rows, wealthThresholds, streamThresholds] = await Promise.all([
+        walletUserLevelRepository.getByUsersForTypes(missing, [
+          LevelType.WEALTH,
+          LevelType.LIVESTREAM,
+        ]),
+        getThresholds(LevelType.WEALTH),
+        getThresholds(LevelType.LIVESTREAM),
+      ])
+      const rowByUserType = new Map<string, (typeof rows)[number]>()
+      for (const row of rows) rowByUserType.set(`${row.userId}:${row.levelType}`, row)
+
+      const writePipe = redis.pipeline()
+      for (const uid of missing) {
+        const w = rowByUserType.get(`${uid}:${LevelType.WEALTH}`)
+        const s = rowByUserType.get(`${uid}:${LevelType.LIVESTREAM}`)
+        const wSnap = buildSnapshot(
+          w?.cumulativeTotal ?? 0n,
+          w?.currentLevel ?? 1,
+          w?.currentLevel ?? 1,
+          wealthThresholds,
+        )
+        wSnap.leveledUp = false
+        const sSnap = buildSnapshot(
+          s?.cumulativeTotal ?? 0n,
+          s?.currentLevel ?? 1,
+          s?.currentLevel ?? 1,
+          streamThresholds,
+        )
+        sSnap.leveledUp = false
         map.set(uid, {
-          wealthLevel: w.currentLevel,
-          livestreamLevel: s.currentLevel,
+          wealthLevel: wSnap.currentLevel,
+          livestreamLevel: sSnap.currentLevel,
         })
-      }),
-    )
+        writePipe.set(RedisKeys.userWealthLevel(uid), JSON.stringify(wSnap), 'EX', USER_LEVEL_TTL)
+        writePipe.set(
+          RedisKeys.userLivestreamLevel(uid),
+          JSON.stringify(sSnap),
+          'EX',
+          USER_LEVEL_TTL,
+        )
+      }
+      try {
+        await writePipe.exec()
+      } catch {
+        // best-effort cache write
+      }
+    }
 
     return map
   },

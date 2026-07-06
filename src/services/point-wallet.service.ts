@@ -4,7 +4,7 @@ import { getRedisForRead, redisClient, RedisKeys, WALLET_BALANCE_TTL } from '../
 import { AppError } from '../middlewares/errorHandler'
 import { walletRepository } from '../repositories/wallet.repository'
 import { pointLedgerRepository } from '../repositories/point-ledger.repository'
-import { walletService } from './wallet.service'
+import { mapDbUnavailable, walletService } from './wallet.service'
 import { auditService } from './audit.service'
 import { WalletCurrencyType, PointTxType, LedgerDirection, LevelType } from '@prisma/client'
 import { assertPointsDebitAllowed } from './wallet-freeze.service'
@@ -142,14 +142,16 @@ async function buildPointTransactionDetail(
 
 export const pointWalletService = {
   async getSummary(userId: string, opts?: { period?: PointSummaryPeriod }) {
-    const balance = await walletService.getPointBalance(userId)
-
-    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
-    const unconfirmed = wallet.unconfirmedPoints ?? 0n
-    const available = balance - unconfirmed
+    // Balance + unconfirmed come from one cached breakdown (same operands, same
+    // availablePoints = totalPoints - unconfirmedPoints computation).
+    const {
+      total: balance,
+      available,
+      unconfirmed,
+    } = await pointWalletService.getBalanceBreakdown(userId)
 
     const earningsWhere: Prisma.PointLedgerEntryWhereInput = {
-      walletId: wallet.id,
+      wallet: { userId, currencyType: WalletCurrencyType.POINT },
       direction: LedgerDirection.CREDIT,
     }
 
@@ -773,10 +775,53 @@ export const pointWalletService = {
     available: bigint
     unconfirmed: bigint
   }> {
-    const [total, unconfirmed] = await Promise.all([
-      walletService.getPointBalance(userId),
-      pointWalletService.getUnconfirmedPoints(userId),
-    ])
+    const balKey = RedisKeys.walletPointBalance(userId)
+    const unconfKey = RedisKeys.walletPointsUnconfirmed(userId)
+
+    let totalRaw: string | null = null
+    let unconfRaw: string | null = null
+    try {
+      // One MGET replaces two GETs; both operands cached under their existing keys.
+      const [t, u] = await getRedisForRead().mget(balKey, unconfKey)
+      totalRaw = t ?? null
+      unconfRaw = u ?? null
+    } catch {
+      // Redis unavailable — recompute from Postgres below
+    }
+    if (totalRaw !== null && unconfRaw !== null) {
+      const total = BigInt(totalRaw)
+      const unconfirmed = BigInt(unconfRaw)
+      return { total, available: total - unconfirmed, unconfirmed }
+    }
+
+    // Miss on either key: one wallet row serves both the unconfirmed value and
+    // the wallet id for the ledger recompute (previously two getOrCreate calls).
+    let wallet
+    try {
+      wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
+    } catch (e) {
+      mapDbUnavailable(e)
+    }
+    const unconfirmed = unconfRaw !== null ? BigInt(unconfRaw) : (wallet.unconfirmedPoints ?? 0n)
+    let total: bigint
+    if (totalRaw !== null) {
+      total = BigInt(totalRaw)
+    } else {
+      try {
+        total = await pointLedgerRepository.computeBalance(wallet.id)
+      } catch (e) {
+        mapDbUnavailable(e)
+      }
+    }
+
+    try {
+      const pipe = redisClient.pipeline()
+      if (totalRaw === null) pipe.set(balKey, total.toString(), 'EX', WALLET_BALANCE_TTL)
+      if (unconfRaw === null) pipe.set(unconfKey, unconfirmed.toString(), 'EX', WALLET_BALANCE_TTL)
+      await pipe.exec()
+    } catch {
+      // best-effort cache write
+    }
     return { total, unconfirmed, available: total - unconfirmed }
   },
 

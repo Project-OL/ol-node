@@ -1,4 +1,4 @@
-import { RedisKeys, redisClient } from '../config/redis'
+﻿import { RedisKeys, redisClient } from '../config/redis'
 import { cacheService } from './cache.service'
 import { auditService } from './audit.service'
 import { followRepository } from '../repositories/follow.repository'
@@ -61,46 +61,46 @@ async function toUserCards(
   levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
   subscriberCounts: Map<string, number>,
 ): Promise<UserCard[]> {
-  const decorated = await Promise.all(
-    items.map(async ({ user, isFollowing, isFollowedBy }) => {
-      const [isSuperHost, activeGuardian] = await Promise.all([
-        superHostService.isSuperHost(user.id),
-        guardianService.getActiveGuardianSummary(user.id),
-      ])
+  // Batched enrichment: one Redis pipeline + one DB query per lookup kind instead
+  // of two lookups per list item (N+1).
+  const ids = items.map((i) => i.user.id)
+  const [superHostMap, guardianMap] = await Promise.all([
+    superHostService.isSuperHostBulk(ids),
+    guardianService.getActiveGuardianSummariesBulk(ids),
+  ])
 
-      const level = levels.get(user.id)
-      const livestreamLevel = level?.livestreamLevel ?? 0
-      const wealthLevel = level?.wealthLevel ?? 0
-      const subscriberCount = subscriberCounts.get(user.id) ?? 0
-      const displayName = buildDisplayName(user)
-      const age = computeAge(user.dateOfBirth)
-      const isFriend = isFollowing && isFollowedBy
+  return items.map(({ user, isFollowing, isFollowedBy }) => {
+    const level = levels.get(user.id)
+    const livestreamLevel = level?.livestreamLevel ?? 0
+    const wealthLevel = level?.wealthLevel ?? 0
+    const subscriberCount = subscriberCounts.get(user.id) ?? 0
+    const displayName = buildDisplayName(user)
+    const age = computeAge(user.dateOfBirth)
+    const isFriend = isFollowing && isFollowedBy
 
-      return {
-        id: user.id,
-        userId: user.id,
-        username: user.username,
-        publicId: String(user.publicId),
-        displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
-        isAgency: Boolean(user.isAgent),
-        name: displayName,
-        displayName,
-        avatarUrl: user.avatarUrl,
-        country: user.country ?? null,
-        gender: user.gender,
-        age,
-        livestreamLevel,
-        wealthLevel,
-        subscriberCount,
-        isFollowing,
-        isFollowedBy,
-        isFriend,
-        isSuperHost,
-        activeGuardian,
-      }
-    }),
-  )
-  return decorated
+    return {
+      id: user.id,
+      userId: user.id,
+      username: user.username,
+      publicId: String(user.publicId),
+      displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
+      isAgency: Boolean(user.isAgent),
+      name: displayName,
+      displayName,
+      avatarUrl: user.avatarUrl,
+      country: user.country ?? null,
+      gender: user.gender,
+      age,
+      livestreamLevel,
+      wealthLevel,
+      subscriberCount,
+      isFollowing,
+      isFollowedBy,
+      isFriend,
+      isSuperHost: superHostMap.get(user.id) ?? false,
+      activeGuardian: guardianMap.get(user.id) ?? null,
+    }
+  })
 }
 
 /** Bust cached followers/following/friends for one or more users (primary Redis). */
@@ -178,9 +178,10 @@ export const followService = {
     const users = items.map((i) => i.user)
     const userIds = users.map((u) => u.id)
 
-    const levels = await walletLevelService.getDisplayLevelsForUsers(userIds)
-
-    const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
+    const [levels, subscriberCounts] = await Promise.all([
+      walletLevelService.getDisplayLevelsForUsers(userIds),
+      userSubscriberRepository.countSubscribersForCreators(userIds),
+    ])
 
     const cards = await toUserCards(
       items.map((i) => ({
@@ -214,9 +215,10 @@ export const followService = {
     const users = items.map((i) => i.user)
     const userIds = users.map((u) => u.id)
 
-    const levels = await walletLevelService.getDisplayLevelsForUsers(userIds)
-
-    const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
+    const [levels, subscriberCounts] = await Promise.all([
+      walletLevelService.getDisplayLevelsForUsers(userIds),
+      userSubscriberRepository.countSubscribersForCreators(userIds),
+    ])
 
     const cards = await toUserCards(
       items.map((i) => ({
@@ -250,9 +252,10 @@ export const followService = {
     const users = items.map((i) => i.user)
     const userIds = users.map((u) => u.id)
 
-    const levels = await walletLevelService.getDisplayLevelsForUsers(userIds)
-
-    const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators(userIds)
+    const [levels, subscriberCounts] = await Promise.all([
+      walletLevelService.getDisplayLevelsForUsers(userIds),
+      userSubscriberRepository.countSubscribersForCreators(userIds),
+    ])
 
     const cards = await toUserCards(
       items.map((i) => ({

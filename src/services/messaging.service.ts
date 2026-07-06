@@ -684,11 +684,11 @@ export const messagingService = {
       }
       contactIds = Array.from(set).slice(0, 40)
     }
-    const existingConvs = await Promise.all(
-      contactIds.map((id: string) => conversationRepository.findDirectConversation(userId, id)),
-    )
-    const presenceMap = await presenceService.getPublicPresenceForUsers(userId, contactIds)
-    const result: DmContact[] = contactIds.map((id: string, i: number) => {
+    const [existingConvIds, presenceMap] = await Promise.all([
+      conversationRepository.findDirectConversationIdsWith(userId, contactIds),
+      presenceService.getPublicPresenceForUsers(userId, contactIds),
+    ])
+    const result: DmContact[] = contactIds.map((id: string) => {
       const friendCard = friends.find((f: { userId: string }) => f.userId === id)
       const followCard = following.find((f: { userId: string }) => f.userId === id)
       const card = friendCard ?? followCard
@@ -705,7 +705,7 @@ export const messagingService = {
         lastOnlineSeconds: presence?.lastOnlineSeconds ?? null,
         lastOnlineLabel: presence?.lastOnlineLabel ?? null,
         isMutual: !!friendCard,
-        existingConversationId: existingConvs[i]?.id ?? null,
+        existingConversationId: existingConvIds.get(id) ?? null,
       }
     })
     await redisClient.set(cacheKey, JSON.stringify(result), 'EX', 60)

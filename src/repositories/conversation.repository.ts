@@ -158,6 +158,39 @@ export async function findDirectConversation(
   return conv
 }
 
+/**
+ * Batched findDirectConversation: existing DIRECT conversation id per contact in
+ * `otherUserIds` (both memberships non-deleted) — one query instead of 2 per contact.
+ */
+export async function findDirectConversationIdsWith(
+  userId: string,
+  otherUserIds: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (otherUserIds.length === 0) return map
+  const convs = await prismaRead.conversation.findMany({
+    where: {
+      type: 'DIRECT',
+      members: { some: { userId, isDeleted: false } },
+    },
+    select: {
+      id: true,
+      members: {
+        where: { userId: { in: otherUserIds }, isDeleted: false },
+        select: { userId: true },
+      },
+    },
+  })
+  for (const conv of convs) {
+    for (const member of conv.members) {
+      if (member.userId !== userId && !map.has(member.userId)) {
+        map.set(member.userId, conv.id)
+      }
+    }
+  }
+  return map
+}
+
 export async function findConversationById(
   id: string,
   userId?: string,
@@ -326,6 +359,7 @@ export const conversationRepository = {
   createPlatformConversation,
   findPlatformConversationForUser,
   findDirectConversation,
+  findDirectConversationIdsWith,
   findConversationById,
   listConversationsForUser,
   updateLastMessageAt,
