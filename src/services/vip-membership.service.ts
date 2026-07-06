@@ -491,44 +491,54 @@ export const vipMembershipService = {
     const claimDate = new Date(`${utcDateString(now)}T00:00:00.000Z`)
     const idempotencyKey = `vip-daily-claim:${userId}:${utcDateString(now)}`
 
-    await prisma.$transaction(
-      async (tx) => {
-        const existing = await tx.vipDailyClaim.findUnique({
-          where: { userId_claimDate: { userId, claimDate } },
-        })
-        if (existing) {
-          throw new AppError(409, 'Already claimed today', 'ALREADY_CLAIMED_TODAY')
-        }
+    // Read Committed: idempotency is carried by the per-UTC-day ledger key
+    // (credit replays existing entries) and the vip_daily_claims PK. A parallel
+    // duplicate that races past the existence check hits the PK and maps to the
+    // same 409 a sequential duplicate gets (previously a Serializable 40001 500).
+    try {
+      await withSerializationRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            const existing = await tx.vipDailyClaim.findUnique({
+              where: { userId_claimDate: { userId, claimDate } },
+            })
+            if (existing) {
+              throw new AppError(409, 'Already claimed today', 'ALREADY_CLAIMED_TODAY')
+            }
 
-        // VIP daily grant is NOT a recharge under the spend-based wealth model: no WEALTH XP.
-        const credit = await coinWalletService.credit(
-          userId,
-          VIP_DAILY_GRANT_COINS,
-          CoinTxType.VIP_REWARD,
-          tx,
-          {
-            idempotencyKey,
-            description: 'VIP daily reward',
-            metadata: { claimDate: utcDateString(now) },
-            applyWealthCredit: false,
-          },
-        )
+            // VIP daily grant is NOT a recharge under the spend-based wealth model: no WEALTH XP.
+            const credit = await coinWalletService.credit(
+              userId,
+              VIP_DAILY_GRANT_COINS,
+              CoinTxType.VIP_REWARD,
+              tx,
+              {
+                idempotencyKey,
+                description: 'VIP daily reward',
+                metadata: { claimDate: utcDateString(now) },
+                applyWealthCredit: false,
+              },
+            )
 
-        await vipMembershipRepository.insertDailyClaim(
-          {
-            userId,
-            claimDate,
-            coinAmount: VIP_DAILY_GRANT_COINS,
-            ledgerEntryId: credit.ledgerEntryId,
+            await vipMembershipRepository.insertDailyClaim(
+              {
+                userId,
+                claimDate,
+                coinAmount: VIP_DAILY_GRANT_COINS,
+                ledgerEntryId: credit.ledgerEntryId,
+              },
+              tx,
+            )
           },
-          tx,
-        )
-      },
-      {
-        isolationLevel: 'Serializable',
-        timeout: INTERACTIVE_TX_TIMEOUT_MS,
-      },
-    )
+          { timeout: INTERACTIVE_TX_TIMEOUT_MS },
+        ),
+      )
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new AppError(409, 'Already claimed today', 'ALREADY_CLAIMED_TODAY')
+      }
+      throw err
+    }
 
     await walletService.adjustCoinBalanceCache(userId, 0n)
 
