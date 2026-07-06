@@ -1,4 +1,4 @@
-import { Prisma, StoreItemCategory, LevelType } from '@prisma/client'
+import { StoreItemCategory, LevelType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
   redisClient,
@@ -12,7 +12,11 @@ import {
 import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
 import { cacheRedisService } from './cacheRedis.service'
-import { lockActiveStoreCategory, storeRepository } from '../repositories/store.repository'
+import {
+  lockActiveStoreCategory,
+  lockVipPublicIdRow,
+  storeRepository,
+} from '../repositories/store.repository'
 import { vipAssignmentRepository } from '../repositories/vip-assignment.repository'
 import { followRepository } from '../repositories/follow.repository'
 import { coinWalletService } from './coin-wallet.service'
@@ -219,6 +223,127 @@ async function executePurchaseItem(params: {
   }
 }
 
+async function executePurchaseRareId(params: {
+  buyerId: string
+  publicId: bigint
+  recipientId: string
+  idempotencyKey: string
+}): Promise<{
+  publicId: string
+  recipientId: string
+  purchasedById: string
+  expiresAt: string
+  isGift: boolean
+}> {
+  const row = await prismaRead.vipPublicId.findUnique({ where: { publicId: params.publicId } })
+  if (!row || !row.isAvailable || row.priceCredits == null) {
+    throw new AppError(404, 'Rare ID not available', 'RARE_ID_NOT_AVAILABLE')
+  }
+  const isGift = params.recipientId !== params.buyerId
+  if (isGift) {
+    const [aToB, bToA] = await Promise.all([
+      followRepository.existsFollow(params.buyerId, params.recipientId),
+      followRepository.existsFollow(params.recipientId, params.buyerId),
+    ])
+    if (!aToB && !bToA) {
+      throw new AppError(403, 'Gifting requires follower/following relation', 'GIFT_NOT_ALLOWED')
+    }
+  }
+
+  const existing = await prismaRead.userVipAssignment.findFirst({
+    where: {
+      userId: params.recipientId,
+      publicId: params.publicId,
+      isActive: true,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+  })
+  if (existing) {
+    throw new AppError(409, 'Recipient already has this rare ID', 'RARE_ID_ALREADY_OWNED')
+  }
+
+  const expiresAt = new Date(Date.now() + env.STORE_RARE_ID_DURATION_DAYS * 24 * 60 * 60 * 1000)
+  let buyerWealthResult: LevelApplyResult | null = null
+  // Read Committed + explicit locks: the buyer-wallet FOR UPDATE serializes the
+  // debit, and the vip_public_ids row FOR UPDATE makes the availability
+  // re-check + sell an atomic inventory reservation — concurrent buyers of the
+  // same id queue on the row lock and the losers see isAvailable=false (409)
+  // instead of Serializable's 40001 500s.
+  const createdAssignment = await withSerializationRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        buyerWealthResult = await coinWalletService.debitForVipPurchase(
+          params.buyerId,
+          BigInt(row.priceCredits!),
+          {
+            recipientId: params.recipientId,
+            publicId: params.publicId.toString(),
+            idempotencyKey: params.idempotencyKey,
+            applyWealthXp: true,
+          },
+          tx,
+        )
+        await lockVipPublicIdRow(tx, params.publicId)
+        const locked = await tx.vipPublicId.findUnique({ where: { publicId: params.publicId } })
+        if (!locked || !locked.isAvailable) {
+          throw new AppError(409, 'Rare ID no longer available', 'RARE_ID_NOT_AVAILABLE')
+        }
+        await tx.vipPublicId.update({
+          where: { publicId: params.publicId },
+          data: {
+            isAvailable: false,
+            currentOwnerId: params.recipientId,
+            purchasedAt: new Date(),
+            expiresAt,
+          },
+        })
+        const assignment = await tx.userVipAssignment.create({
+          data: {
+            userId: params.recipientId,
+            publicId: params.publicId,
+            startsAt: new Date(),
+            expiresAt,
+            isActive: true,
+          },
+        })
+        if (!isGift) {
+          await tx.user.update({
+            where: { id: params.recipientId },
+            data: {
+              currentVipPublicId: params.publicId,
+              vipPublicIdExpiresAt: expiresAt,
+              vipPurchaseAt: new Date(),
+            },
+          })
+        }
+        return assignment
+      },
+      { timeout: TX_TIMEOUT_MS },
+    ),
+  )
+
+  await walletService.adjustCoinBalanceCache(params.buyerId, BigInt(row.priceCredits!))
+  await syncLevelCacheFromApplyResult(params.buyerId, LevelType.WEALTH, buyerWealthResult)
+  await enqueueRareIdAssignmentExpiry(createdAssignment.id, createdAssignment.expiresAt)
+  await Promise.all([
+    cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.recipientId)),
+    cacheRedisService.del(RedisKeys.storeRareIds(), RedisKeys.userActiveStore(params.recipientId)),
+    cacheRedisService.del(
+      RedisKeys.userMe(params.recipientId),
+      RedisKeys.userProfile(params.recipientId),
+    ),
+  ])
+
+  return {
+    publicId: params.publicId.toString(),
+    recipientId: params.recipientId,
+    purchasedById: params.buyerId,
+    expiresAt: expiresAt.toISOString(),
+    isGift,
+  }
+}
+
 export const storeService = {
   async getCatalog(
     category?: StoreItemCategory,
@@ -361,107 +486,39 @@ export const storeService = {
     expiresAt: string
     isGift: boolean
   }> {
-    const row = await prismaRead.vipPublicId.findUnique({ where: { publicId: params.publicId } })
-    if (!row || !row.isAvailable || row.priceCredits == null) {
-      throw new AppError(404, 'Rare ID not available', 'RARE_ID_NOT_AVAILABLE')
+    // Idempotency envelope (same as purchaseItem): without the replay window a
+    // retried successful buy previously failed the pre-check with 404
+    // RARE_ID_NOT_AVAILABLE — the client was debited but told the buy failed.
+    const idem = `store-rare-id:${params.buyerId}:${params.idempotencyKey}`
+    const cachedResponse = (await walletService.getCachedIdemResponse(idem)) as Awaited<
+      ReturnType<typeof executePurchaseRareId>
+    > | null
+    if (cachedResponse) return cachedResponse
+
+    const acquired = await walletService.acquireIdemKey(idem)
+    if (!acquired) {
+      throw new AppError(409, 'Already processing', 'IDEM_CONFLICT')
     }
-    const isGift = params.recipientId !== params.buyerId
-    if (isGift) {
-      const [aToB, bToA] = await Promise.all([
-        followRepository.existsFollow(params.buyerId, params.recipientId),
-        followRepository.existsFollow(params.recipientId, params.buyerId),
-      ])
-      if (!aToB && !bToA) {
-        throw new AppError(403, 'Gifting requires follower/following relation', 'GIFT_NOT_ALLOWED')
+
+    try {
+      const response = await executePurchaseRareId(params)
+      try {
+        await walletService.resolveIdemKey(idem, response)
+      } catch {
+        // Replay window lost; the ledger unique key still prevents double-processing.
       }
-    }
-
-    const existing = await prismaRead.userVipAssignment.findFirst({
-      where: {
-        userId: params.recipientId,
-        publicId: params.publicId,
-        isActive: true,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-    })
-    if (existing) {
-      throw new AppError(409, 'Recipient already has this rare ID', 'RARE_ID_ALREADY_OWNED')
-    }
-
-    const expiresAt = new Date(Date.now() + env.STORE_RARE_ID_DURATION_DAYS * 24 * 60 * 60 * 1000)
-    let buyerWealthResult: LevelApplyResult | null = null
-    const createdAssignment = await prisma.$transaction(
-      async (tx) => {
-        buyerWealthResult = await coinWalletService.debitForVipPurchase(
-          params.buyerId,
-          BigInt(row.priceCredits!),
-          {
-            recipientId: params.recipientId,
-            publicId: params.publicId.toString(),
-            idempotencyKey: params.idempotencyKey,
-            applyWealthXp: true,
-          },
-          tx,
-        )
-        const locked = await tx.vipPublicId.findUnique({ where: { publicId: params.publicId } })
-        if (!locked || !locked.isAvailable) {
-          throw new AppError(409, 'Rare ID no longer available', 'RARE_ID_NOT_AVAILABLE')
-        }
-        await tx.vipPublicId.update({
-          where: { publicId: params.publicId },
-          data: {
-            isAvailable: false,
-            currentOwnerId: params.recipientId,
-            purchasedAt: new Date(),
-            expiresAt,
-          },
-        })
-        const assignment = await tx.userVipAssignment.create({
-          data: {
-            userId: params.recipientId,
-            publicId: params.publicId,
-            startsAt: new Date(),
-            expiresAt,
-            isActive: true,
-          },
-        })
-        if (!isGift) {
-          await tx.user.update({
-            where: { id: params.recipientId },
-            data: {
-              currentVipPublicId: params.publicId,
-              vipPublicIdExpiresAt: expiresAt,
-              vipPurchaseAt: new Date(),
-            },
-          })
-        }
-        return assignment
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TX_TIMEOUT_MS },
-    )
-
-    await walletService.adjustCoinBalanceCache(params.buyerId, BigInt(row.priceCredits!))
-    await syncLevelCacheFromApplyResult(params.buyerId, LevelType.WEALTH, buyerWealthResult)
-    await enqueueRareIdAssignmentExpiry(createdAssignment.id, createdAssignment.expiresAt)
-    await Promise.all([
-      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(params.recipientId)),
-      cacheRedisService.del(
-        RedisKeys.storeRareIds(),
-        RedisKeys.userActiveStore(params.recipientId),
-      ),
-      cacheRedisService.del(
-        RedisKeys.userMe(params.recipientId),
-        RedisKeys.userProfile(params.recipientId),
-      ),
-    ])
-
-    return {
-      publicId: params.publicId.toString(),
-      recipientId: params.recipientId,
-      purchasedById: params.buyerId,
-      expiresAt: expiresAt.toISOString(),
-      isGift,
+      return response
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Settled earlier but the Redis snapshot expired — never double-buy.
+        throw new AppError(409, 'Duplicate purchase (already processed)', 'IDEM_CONFLICT')
+      }
+      try {
+        await redisClient.del(RedisKeys.walletIdem(idem))
+      } catch {
+        // best-effort
+      }
+      throw err
     }
   },
 

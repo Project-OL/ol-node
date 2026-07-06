@@ -26,6 +26,19 @@ export async function lockActiveStoreCategory(
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`store-active:${userId}:${category}`}, 0))::text AS locked`
 }
 
+/**
+ * Row lock for the rare-ID inventory reservation: the availability re-check +
+ * sell must be atomic against concurrent buyers of the same public id. At Read
+ * Committed the plain re-read would race (both buyers see isAvailable=true);
+ * FOR UPDATE serializes them so the loser sees the sold row and gets a 409.
+ */
+export async function lockVipPublicIdRow(
+  tx: Prisma.TransactionClient,
+  publicId: bigint,
+): Promise<void> {
+  await tx.$queryRaw`SELECT public_id FROM vip_public_ids WHERE public_id = ${publicId} FOR UPDATE`
+}
+
 export const storeRepository = {
   async findAllItems(category?: StoreItemCategory): Promise<StoreItem[]> {
     return prismaRead.storeItem.findMany({
