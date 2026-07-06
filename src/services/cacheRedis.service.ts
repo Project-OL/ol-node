@@ -1,4 +1,4 @@
-import { redisClient } from '../config/redis'
+import { getRedisForRead, redisClient } from '../config/redis'
 import { env } from '../config/env'
 import { rootLogger } from '../utils/rootLogger'
 
@@ -27,7 +27,8 @@ export const cacheRedisService = {
   async get<T>(key: string): Promise<T | null> {
     const started = Date.now()
     try {
-      const raw = await withTimeout(redisClient.get(key), `GET ${key}`)
+      // Cache-aside reads go to the read replica when REDIS_READ_URL is set; set/del stay on primary.
+      const raw = await withTimeout(getRedisForRead().get(key), `GET ${key}`)
       if (raw == null) {
         log.debug({ key, latencyMs: Date.now() - started, result: 'MISS' }, 'cache get')
         return null

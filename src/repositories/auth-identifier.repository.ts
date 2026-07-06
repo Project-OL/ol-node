@@ -11,6 +11,19 @@ export const authIdentifierRepository = {
     })
   },
 
+  /**
+   * Password-login lookup: credential row + full user + password hash in one round-trip.
+   * Reads the primary so a just-changed password is never compared against a stale replica hash.
+   */
+  async findForLoginWithPassword(provider: AuthProvider, identifier: string) {
+    return prisma.authIdentifier.findUnique({
+      where: {
+        provider_identifier: { provider, identifier },
+      },
+      include: { user: { include: { authPassword: true } } },
+    })
+  },
+
   async findByIdentifier(identifier: string) {
     return prismaRead.authIdentifier.findFirst({
       where: { identifier },

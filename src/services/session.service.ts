@@ -199,18 +199,20 @@ export const sessionService = {
       authSessionMetrics.bumpRevoke()
     }
 
-    await deviceRegistryRepository.upsert({
-      userId: params.userId,
-      deviceId: params.deviceId,
-      deviceName: params.deviceName,
-      ipAddress: params.ipAddress,
-      userAgent: params.userAgent ?? undefined,
-      deviceFingerprintHash: fpHash,
-      ipHash: hashIp(params.ipAddress),
-      userAgentHash: hashUserAgent(params.userAgent),
-    })
-
-    const userTv = await resolveUserTokenVersion(params.userId)
+    // Independent: device_registry upsert and users.token_version read touch different rows.
+    const [, userTv] = await Promise.all([
+      deviceRegistryRepository.upsert({
+        userId: params.userId,
+        deviceId: params.deviceId,
+        deviceName: params.deviceName,
+        ipAddress: params.ipAddress,
+        userAgent: params.userAgent ?? undefined,
+        deviceFingerprintHash: fpHash,
+        ipHash: hashIp(params.ipAddress),
+        userAgentHash: hashUserAgent(params.userAgent),
+      }),
+      resolveUserTokenVersion(params.userId),
+    ])
     const accessToken = signAccess(
       {
         sub: params.userId,

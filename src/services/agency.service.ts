@@ -331,23 +331,27 @@ export const agencyService = {
 
   /** Compact agency slice for `GET /users/me`. */
   async buildMeAgencyBlock(userId: string) {
-    const [owned, hostRow, pendingLeave, selfProfile] = await Promise.all([
+    const [owned, hostRow] = await Promise.all([
       agencyRepository.getAgencyByUserId(userId),
       agencyHostRepository.getHostWithAgency(userId),
-      agencyLeaveApplicationRepository.getPendingForHost(userId),
-      prismaRead.user.findUnique({
-        where: { id: userId },
-        select: { avatarUrl: true },
-      }),
     ])
 
     let role: 'AGENT' | 'HOST' | 'NONE' = 'NONE'
     if (owned) role = 'AGENT'
     else if (hostRow) role = 'HOST'
 
-    const commissionExtras = owned
-      ? await agencyCommissionService.buildMeAgentCommissionSummary(userId)
-      : undefined
+    // pendingLeave feeds asHost only; avatarUrl + commission feed asAgent only — skip what the
+    // role can't render (most users are neither, so this drops 2 queries from GET /users/me).
+    const [pendingLeave, selfProfile, commissionExtras] = await Promise.all([
+      hostRow ? agencyLeaveApplicationRepository.getPendingForHost(userId) : null,
+      owned
+        ? prismaRead.user.findUnique({
+            where: { id: userId },
+            select: { avatarUrl: true },
+          })
+        : null,
+      owned ? agencyCommissionService.buildMeAgentCommissionSummary(userId) : undefined,
+    ])
 
     return {
       role,

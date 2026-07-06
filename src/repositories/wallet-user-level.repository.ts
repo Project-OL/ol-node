@@ -16,6 +16,13 @@ export const walletUserLevelRepository = {
     })
   },
 
+  /** Multiple level rows (e.g. LIVESTREAM + WEALTH for /users/me) in one round-trip. */
+  async getByUserForTypes(userId: string, levelTypes: LevelType[]) {
+    return prismaRead.walletUserLevel.findMany({
+      where: { userId, levelType: { in: levelTypes } },
+    })
+  },
+
   async getConfigs(levelType: LevelType) {
     return prismaRead.walletLevelConfig.findMany({
       where: { levelType, isActive: true },

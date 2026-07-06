@@ -21,10 +21,12 @@ vi.mock('../../src/services/wallet.service', () => ({
 }))
 
 const walletUserLevelGetByUser = vi.fn()
+const walletUserLevelGetByUserForTypes = vi.fn()
 
 vi.mock('../../src/repositories/wallet-user-level.repository', () => ({
   walletUserLevelRepository: {
     getByUser: (...a: unknown[]) => walletUserLevelGetByUser(...a),
+    getByUserForTypes: (...a: unknown[]) => walletUserLevelGetByUserForTypes(...a),
   },
 }))
 
@@ -146,6 +148,9 @@ vi.mock('../../src/config/redis', () => ({
   redisClient: {
     get: vi.fn().mockResolvedValue(null),
   },
+  getRedisForRead: () => ({
+    get: vi.fn().mockResolvedValue(null),
+  }),
   RedisKeys: {
     userMe: (id: string) => `user:me:${id}`,
     userProfile: (id: string) => `user:profile:${id}`,
@@ -198,6 +203,8 @@ describe('meService', () => {
     getCoinBalance.mockReset()
     getPointBalance.mockReset()
     walletUserLevelGetByUser.mockReset()
+    walletUserLevelGetByUserForTypes.mockReset()
+    walletUserLevelGetByUserForTypes.mockResolvedValue([])
     vipFindMostRecent.mockReset()
     getCompletionSummaryForUser.mockReset()
     getCompletionSummaryForUser.mockResolvedValue({
@@ -365,13 +372,15 @@ describe('meService', () => {
   })
 
   it('getMe shows free username change unavailable after change this month', async () => {
+    // Relative to "now" so the test does not rot when the calendar month rolls over.
+    const now = new Date()
+    const thisMonthChange = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
     cacheGet.mockResolvedValueOnce(null)
-    findForMe.mockResolvedValueOnce(
-      baseRow({ usernameUpdatedAt: new Date(Date.UTC(2026, 5, 10)) }),
-    )
+    findForMe.mockResolvedValueOnce(baseRow({ usernameUpdatedAt: thisMonthChange }))
     const out = await meService.getMe('user-1')
     expect(out.data.canChangeUsername).toBe(false)
-    expect(out.data.usernameNextChangeAt).toBe('2026-07-01T00:00:00.000Z')
+    expect(out.data.usernameNextChangeAt).toBe(nextMonthStart.toISOString())
   })
 
   it('getMe ignores legacy Redis payload without dateOfBirth key (refetch + bust cache)', async () => {
@@ -430,8 +439,9 @@ describe('meService', () => {
   })
 
   it('patchMe name update debits coins when free change already used this month', async () => {
+    const now = new Date()
     findForMe.mockResolvedValueOnce(
-      baseRow({ usernameUpdatedAt: new Date(Date.UTC(2026, 5, 1)) }),
+      baseRow({ usernameUpdatedAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)) }),
     )
     debitForDisplayNameChange.mockResolvedValue(undefined)
     findForMe.mockResolvedValueOnce(
@@ -473,8 +483,9 @@ describe('meService', () => {
   })
 
   it('patchMe name rejects when wallet debit fails (insufficient coins)', async () => {
+    const now = new Date()
     findForMe.mockResolvedValueOnce(
-      baseRow({ usernameUpdatedAt: new Date(Date.UTC(2026, 5, 1)) }),
+      baseRow({ usernameUpdatedAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)) }),
     )
     debitForDisplayNameChange.mockRejectedValueOnce(
       new AppError(402, 'Not enough coins to change display name', 'INSUFFICIENT_COINS', {

@@ -364,55 +364,49 @@ export const authV2Service = {
     deviceId: string,
     request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
   ) {
-    let user: { id: string; publicId: bigint; passwordSet: boolean; status: string } | null = null
+    // Single round-trip resolves credential row + full user + password hash (was 3 separate
+    // queries: identifier lookup, authPassword lookup, profile lookup).
+    type LoginUserRow = NonNullable<
+      Awaited<ReturnType<typeof authIdentifierRepository.findForLoginWithPassword>>
+    >['user']
+    let user: LoginUserRow | null = null
     if (provider === 'publicId') {
       const num = Number(identifier)
       if (!Number.isInteger(num) || num < 0)
         throw new AppError(400, 'Invalid public ID', 'INVALID_PUBLIC_ID')
       user = await userRepository.findByPublicId(num)
     } else {
-      const auth = await authIdentifierRepository.findByProviderAndIdentifier(provider, identifier)
+      const auth = await authIdentifierRepository.findForLoginWithPassword(provider, identifier)
       if (!auth) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
       user = auth.user
     }
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     await ensureUserMayAuthenticate(user)
-    const pw = await prisma.authPassword.findUnique({
-      where: { userId: user.id },
-      include: { user: { select: { id: true, publicId: true, passwordSet: true, status: true } } },
-    })
+    // publicId path resolves the user on the read replica; re-read the hash from the primary
+    // so password changes are honored immediately. Provider paths already read the primary.
+    const pw =
+      provider === 'publicId'
+        ? await prisma.authPassword.findUnique({ where: { userId: user.id } })
+        : user.authPassword
     if (!pw) throw new AppError(401, 'Password not set for this account', 'PASSWORD_NOT_SET')
     const match = await passwordService.compare(password, pw.passwordHash)
     if (!match) throw new AppError(401, 'Invalid password', 'INVALID_CREDENTIALS')
     const publicId = Number(user.publicId)
-
-    const profile = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        firstName: true,
-        lastName: true,
-        username: true,
-        avatarUrl: true,
-        passwordSet: true,
-        isSupport: true,
-      },
-    })
-    if (!profile) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
     await deviceService.linkAccountToDevice(deviceId, user.id)
 
     const tokens = await sessionService.createSession({
       userId: user.id,
       publicId,
-      passwordSet: profile.passwordSet,
+      passwordSet: user.passwordSet,
       deviceName,
       deviceId,
       ipAddress: getIp(request),
       userAgent: getUserAgent(request),
       loginType: 'password',
-      displayName: displayNameFromUser(profile),
-      avatarUrl: profile.avatarUrl,
-      isSupport: profile.isSupport ?? false,
+      displayName: displayNameFromUser(user),
+      avatarUrl: user.avatarUrl,
+      isSupport: user.isSupport ?? false,
     })
     await auditService.log({
       userId: user.id,

@@ -8,7 +8,7 @@ import { vipAssignmentRepository } from '../repositories/vip-assignment.reposito
 import { walletService } from './wallet.service'
 import { coinWalletService } from './coin-wallet.service'
 import { cacheRedisService } from './cacheRedis.service'
-import { redisClient, RedisKeys } from '../config/redis'
+import { getRedisForRead, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { signAccess } from '../utils/jwt'
 import { AppError } from '../middlewares/errorHandler'
@@ -144,13 +144,14 @@ async function fetchWalletData(userId: string): Promise<{
   lastVipStartedAt: string | null
   lastVipExpiresAt: string | null
 }> {
-  const [coins, points, livestreamRow, wealthRow, lastVip] = await Promise.all([
+  const [coins, points, levelRows, lastVip] = await Promise.all([
     walletService.getCoinBalance(userId),
     walletService.getPointBalance(userId),
-    walletUserLevelRepository.getByUser(userId, LevelType.LIVESTREAM),
-    walletUserLevelRepository.getByUser(userId, LevelType.WEALTH),
+    walletUserLevelRepository.getByUserForTypes(userId, [LevelType.LIVESTREAM, LevelType.WEALTH]),
     vipAssignmentRepository.findMostRecent(userId),
   ])
+  const livestreamRow = levelRows.find((r) => r.levelType === LevelType.LIVESTREAM)
+  const wealthRow = levelRows.find((r) => r.levelType === LevelType.WEALTH)
   const now = new Date()
   // Legacy pool VIP auto-grants are disabled; this stays true only for existing un-expired user_vip_assignments (incl. store rare-ID leases).
   const isVipActive =
@@ -214,14 +215,18 @@ export const meService = {
         throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
       }
       profile = toProfileCache(row)
-      await cacheRedisService.set(key, profile, env.REDIS_TTL_ME)
-      await cacheRedisService.set(RedisKeys.userProfile(userId), profile, env.REDIS_TTL_PROFILE)
+      await Promise.all([
+        cacheRedisService.set(key, profile, env.REDIS_TTL_ME),
+        cacheRedisService.set(RedisKeys.userProfile(userId), profile, env.REDIS_TTL_PROFILE),
+      ])
       cacheResult = 'MISS'
     }
 
     // Wallet/level/VIP data is always fetched fresh (each has its own short-lived Redis cache).
-    const walletData = await fetchWalletData(userId)
+    // All enrichments run concurrently; only richTier waits on walletData (needs isVipActive).
+    const walletDataPromise = fetchWalletData(userId)
     const [
+      walletData,
       galleryCompletion,
       isSuperHost,
       activeGuardian,
@@ -233,18 +238,21 @@ export const meService = {
       faceVerified,
       activeVipRaw,
     ] = await Promise.all([
+      walletDataPromise,
       giftGalleryService.getCompletionSummaryForUser(userId),
       superHostService.isSuperHost(userId),
       guardianService.getActiveGuardianSummary(userId),
       storeService.getActiveItemsForUser(userId),
-      richTierService.getCurrentTierForUser(userId, {
-        isVip: walletData.isVipActive,
-      }),
+      walletDataPromise.then((wd) =>
+        richTierService.getCurrentTierForUser(userId, { isVip: wd.isVipActive }),
+      ),
       vipMembershipService.buildMeVipMembershipBlock(userId),
       agencyService.buildMeAgencyBlock(userId),
       livePhotoService.buildMeLivePhotoBlock(userId),
       faceVerificationRepository.isVerifiedForUser(userId),
-      redisClient.get(RedisKeys.userActiveVipId(userId)).catch(() => null),
+      getRedisForRead()
+        .get(RedisKeys.userActiveVipId(userId))
+        .catch(() => null),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
       isSuperHost,
@@ -405,11 +413,14 @@ export const meService = {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     }
     const profile = toProfileCache(fresh)
-    await cacheRedisService.set(RedisKeys.userMe(userId), profile, env.REDIS_TTL_ME)
-    await cacheRedisService.set(RedisKeys.userProfile(userId), profile, env.REDIS_TTL_PROFILE)
+    await Promise.all([
+      cacheRedisService.set(RedisKeys.userMe(userId), profile, env.REDIS_TTL_ME),
+      cacheRedisService.set(RedisKeys.userProfile(userId), profile, env.REDIS_TTL_PROFILE),
+    ])
 
-    const walletData = await fetchWalletData(userId)
+    const walletDataPromise = fetchWalletData(userId)
     const [
+      walletData,
       galleryCompletion,
       isSuperHost,
       activeGuardian,
@@ -420,13 +431,14 @@ export const meService = {
       livePhoto,
       faceVerified,
     ] = await Promise.all([
+      walletDataPromise,
       giftGalleryService.getCompletionSummaryForUser(userId),
       superHostService.isSuperHost(userId),
       guardianService.getActiveGuardianSummary(userId),
       storeService.getActiveItemsForUser(userId),
-      richTierService.getCurrentTierForUser(userId, {
-        isVip: walletData.isVipActive,
-      }),
+      walletDataPromise.then((wd) =>
+        richTierService.getCurrentTierForUser(userId, { isVip: wd.isVipActive }),
+      ),
       vipMembershipService.buildMeVipMembershipBlock(userId),
       agencyService.buildMeAgencyBlock(userId),
       livePhotoService.buildMeLivePhotoBlock(userId),

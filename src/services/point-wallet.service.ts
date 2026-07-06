@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
-import { redisClient, RedisKeys, WALLET_BALANCE_TTL } from '../config/redis'
+import { getRedisForRead, redisClient, RedisKeys, WALLET_BALANCE_TTL } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { walletRepository } from '../repositories/wallet.repository'
 import { pointLedgerRepository } from '../repositories/point-ledger.repository'
@@ -747,7 +747,7 @@ export const pointWalletService = {
   async getUnconfirmedPoints(userId: string): Promise<bigint> {
     const key = RedisKeys.walletPointsUnconfirmed(userId)
     try {
-      const cached = await redisClient.get(key)
+      const cached = await getRedisForRead().get(key)
       if (cached !== null) return BigInt(cached)
     } catch {
       // fall through to Postgres
