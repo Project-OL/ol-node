@@ -5,6 +5,8 @@ import { prisma } from '../config/database'
 import { HOST_REVENUE_SHARES, hostPointsFromGuardian } from '../config/host-revenue-shares'
 import { AppError } from '../middlewares/errorHandler'
 import { redisClient, RedisKeys, GUARDIAN_ACTIVE_TTL, GUARDIAN_LIST_TTL } from '../config/redis'
+import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
+import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 import { cacheService } from './cache.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
@@ -260,6 +262,15 @@ function guardianListCacheHasUserEnrichment(items: GuardianListItem[]): boolean 
   )
 }
 
+type GuardianPurchaseResult = {
+  guardianId: string
+  tier: GuardianTier
+  durationMonths: number
+  coinsPaid: string
+  expiresAt: Date
+  daysRemaining: number
+}
+
 export const guardianService = {
   getGuardianConfig(): GuardianConfig {
     const tiers = (Object.keys(MONTHLY_PRICE) as GuardianTier[]).map((tier) => ({
@@ -284,6 +295,68 @@ export const guardianService = {
     expiresAt: Date
     daysRemaining: number
   }> {
+    if (!input.idempotencyKey) {
+      // Legacy path: per-request ledger key, no replay window.
+      return this.executePurchaseGuardian(
+        guardianUserId,
+        input,
+        `guardian-purchase:${crypto.randomUUID()}`,
+      )
+    }
+
+    // Same envelope as gifts/send: Redis replay + SET NX in-flight marker;
+    // ledger keys derive from the client key so the DB unique constraint
+    // backstops after the TTL. expiresAt must be revived (route calls
+    // .toISOString() on it).
+    const idem = `guardian-purchase:${guardianUserId}:${input.idempotencyKey}`
+    const cached = (await walletService.getCachedIdemResponse(idem)) as
+      | (Omit<GuardianPurchaseResult, 'expiresAt'> & { expiresAt: string })
+      | null
+    if (cached) return { ...cached, expiresAt: new Date(cached.expiresAt) }
+
+    const acquired = await walletService.acquireIdemKey(idem)
+    if (!acquired) {
+      throw new AppError(409, 'Already processing', 'IDEM_CONFLICT')
+    }
+
+    let result: GuardianPurchaseResult
+    try {
+      result = await this.executePurchaseGuardian(
+        guardianUserId,
+        input,
+        `guardian-purchase:${guardianUserId}:${input.idempotencyKey}`,
+      )
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new AppError(409, 'Duplicate guardian purchase (already processed)', 'IDEM_CONFLICT')
+      }
+      try {
+        await redisClient.del(RedisKeys.walletIdem(idem))
+      } catch {
+        // best-effort
+      }
+      throw err
+    }
+    try {
+      await walletService.resolveIdemKey(idem, result)
+    } catch {
+      // Replay window lost; ledger unique keys still prevent double-processing.
+    }
+    return result
+  },
+
+  async executePurchaseGuardian(
+    guardianUserId: string,
+    input: PurchaseGuardianInput,
+    idempotencyKey: string,
+  ): Promise<{
+    guardianId: string
+    tier: GuardianTier
+    durationMonths: number
+    coinsPaid: string
+    expiresAt: Date
+    daysRemaining: number
+  }> {
     if (guardianUserId === input.targetUserId) {
       throw new AppError(400, 'Cannot guardian yourself', 'CANNOT_GUARDIAN_SELF')
     }
@@ -298,13 +371,27 @@ export const guardianService = {
     }
     const totalCoins = BigInt(MONTHLY_PRICE[input.tier] * mult)
     const expiresAt = addMonths(new Date(), input.durationMonths)
-    const idempotencyKey = `guardian-purchase:${crypto.randomUUID()}`
 
     let bustAgentUserId: string | null = null
     let buyerWealthResult: LevelApplyResult | null = null
     let hostLivestreamResult: LevelApplyResult | null = null
-    const guardian = await prisma.$transaction(
-      async (tx) => {
+    // Read Committed: buyer COIN wallet + target/agent POINT wallets are locked
+    // FOR UPDATE inside the debit/credit helpers; guardians upsert and
+    // commission increments are atomic. Serializable previously aborted
+    // concurrent purchasers with 40001 500s. The duplicate-key guard below
+    // prevents a post-Redis-window retry from re-extending the guardian
+    // (the ledger debit would otherwise replay silently and re-run the upsert
+    // with a fresh expiry).
+    const guardian = await withSerializationRetry(() =>
+      prisma.$transaction(async (tx) => {
+        const dup = await coinLedgerRepository.findByIdempotencyKey(tx, idempotencyKey)
+        if (dup) {
+          throw new AppError(
+            409,
+            'Duplicate guardian purchase (already processed)',
+            'IDEM_CONFLICT',
+          )
+        }
         buyerWealthResult = await coinWalletService.debitForGuardianPurchase(
           guardianUserId,
           totalCoins,
@@ -352,8 +439,7 @@ export const guardianService = {
         }
 
         return row
-      },
-      { isolationLevel: 'Serializable' },
+      }),
     )
 
     await walletService.adjustCoinBalanceCache(guardianUserId, totalCoins)
