@@ -59,6 +59,7 @@ export default async function giftRoutes(app: FastifyInstance) {
         receiverUserId: body.receiverUserId,
         giftId: body.giftId,
         context: body.context,
+        idempotencyKey: body.idempotencyKey,
       })
       return reply.status(201).send(result)
     },

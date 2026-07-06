@@ -1,4 +1,5 @@
 import crypto, { randomUUID } from 'crypto'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../config/database'
 import { hostPointsFromGift } from '../config/host-revenue-shares'
 import { redisClient, RedisKeys } from '../config/redis'
@@ -25,6 +26,24 @@ import { utcDayFromTimestamp } from '../utils/datetime'
 import { assertNotBlockedEitherWay } from '../utils/block-relationship'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
+/** Serializable aborts (P2034) are expected under concurrent sends — bounded retry. */
+const SEND_TX_MAX_ATTEMPTS = 3
+
+function isSerializationAbort(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false
+  if (err.code === 'P2034') return true
+  // Raw queries (SELECT ... FOR UPDATE) surface serialization/deadlock aborts as
+  // P2010 with the Postgres SQLSTATE in meta: 40001 serialization_failure, 40P01 deadlock.
+  if (err.code === 'P2010') {
+    const pgCode = (err.meta as { code?: string } | undefined)?.code
+    return pgCode === '40001' || pgCode === '40P01'
+  }
+  return false
+}
+
+function isLedgerIdemViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
+}
 
 async function invalidateAfterGiftSend(params: {
   senderId: string
@@ -46,34 +65,36 @@ async function invalidateAfterGiftSend(params: {
   }
 }
 
-export const giftTransactionService = {
-  async sendGift(params: {
-    senderUserId: string
-    receiverUserId: string
-    giftId: string
-    context: 'direct' | 'livestream'
-  }) {
-    if (params.senderUserId === params.receiverUserId) {
-      throw new AppError(400, 'Cannot send a gift to yourself', 'INVALID_REQUEST')
-    }
+type SendGiftParams = {
+  senderUserId: string
+  receiverUserId: string
+  giftId: string
+  context: 'direct' | 'livestream'
+  idempotencyKey?: string
+}
 
-    await assertNotBlockedEitherWay(params.senderUserId, params.receiverUserId)
+async function executeSendGift(params: SendGiftParams, idemBase: string) {
+  if (params.senderUserId === params.receiverUserId) {
+    throw new AppError(400, 'Cannot send a gift to yourself', 'INVALID_REQUEST')
+  }
 
-    const gift = await giftRepository.findById(params.giftId)
-    if (!gift || !gift.isActive) {
-      throw new AppError(404, 'Gift not found', 'NOT_FOUND')
-    }
+  await assertNotBlockedEitherWay(params.senderUserId, params.receiverUserId)
 
-    const coinCost = gift.coinCost
-    const pointsAwarded = Number(hostPointsFromGift(BigInt(coinCost)))
-    const idemBase = `gift:${crypto.randomUUID()}`
-    const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys()
+  const gift = await giftRepository.findById(params.giftId)
+  if (!gift || !gift.isActive) {
+    throw new AppError(404, 'Gift not found', 'NOT_FOUND')
+  }
 
-    const senderHasActiveVipMembership = await vipMembershipService.hasActive(params.senderUserId)
+  const coinCost = gift.coinCost
+  const pointsAwarded = Number(hostPointsFromGift(BigInt(coinCost)))
+  const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys()
 
-    type LevelRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>
+  const senderHasActiveVipMembership = await vipMembershipService.hasActive(params.senderUserId)
 
-    const txResult = await prisma.$transaction(
+  type LevelRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>
+
+  const runSendTransaction = () =>
+    prisma.$transaction(
       async (tx) => {
         const senderCoinWallet = await walletRepository.getOrCreate(
           params.senderUserId,
@@ -220,71 +241,137 @@ export const giftTransactionService = {
           bustAgentUserId,
         }
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      // Default (Read Committed) isolation: correctness comes from the explicit
+      // FOR UPDATE wallet locks (sender COIN, receiver POINT, and agent POINT
+      // inside creditInTransaction) plus atomic ON CONFLICT increments
+      // (fan_spend, agency_daily_earnings) and unique ledger/commission keys.
+      // Serializable added no protection here and made every lock waiter abort
+      // with 40001 when the lock holder committed (retry storms under load).
+      { timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
 
-    await walletService.adjustCoinBalanceCache(params.senderUserId, 0n)
-    await walletService.adjustPointBalanceCache(params.receiverUserId, 0n)
-
-    if (txResult.wealthResult) {
-      await walletLevelService.refreshCache(
-        params.senderUserId,
-        LevelType.WEALTH,
-        txResult.wealthResult.newCumulative,
-        txResult.wealthResult.newLevel,
-        txResult.wealthResult.previousLevel,
-      )
-    }
-
-    if (txResult.livestreamResult && pointsAwarded > 0) {
-      await walletLevelService.refreshCache(
-        params.receiverUserId,
-        LevelType.LIVESTREAM,
-        txResult.livestreamResult.newCumulative,
-        txResult.livestreamResult.newLevel,
-        txResult.livestreamResult.previousLevel,
-      )
-    }
-
-    if (txResult.bustAgentUserId) {
-      const { agencyCommissionService } = await import('./agencyCommission.service')
-      await agencyCommissionService.bustAgentCommissionCaches(txResult.bustAgentUserId)
-    }
-
-    await invalidateAfterGiftSend({
-      senderId: params.senderUserId,
-      receiverId: params.receiverUserId,
-      year,
-      month,
-      dayKey,
-      weekKey,
-      monthKey,
-    })
-
-    let galleryUpdated = false
-    let galleryNowFull = false
+  let txResult: Awaited<ReturnType<typeof runSendTransaction>>
+  for (let attempt = 1; ; attempt++) {
     try {
-      const r = await giftGalleryService.recordGiftProgress({
-        hostUserId: params.receiverUserId,
-        giftId: params.giftId,
-        senderId: params.senderUserId,
-      })
-      galleryUpdated = r.created
-      galleryNowFull = r.galleryNowFull
+      txResult = await runSendTransaction()
+      break
     } catch (err) {
-      console.error('[Gift send] recordGiftProgress failed', err)
+      if (attempt < SEND_TX_MAX_ATTEMPTS && isSerializationAbort(err)) {
+        // Serializable write conflict with a concurrent send — retry after brief jitter.
+        await new Promise((r) => setTimeout(r, 20 * attempt + Math.floor(Math.random() * 30)))
+        continue
+      }
+      throw err
+    }
+  }
+
+  await walletService.adjustCoinBalanceCache(params.senderUserId, 0n)
+  await walletService.adjustPointBalanceCache(params.receiverUserId, 0n)
+
+  if (txResult.wealthResult) {
+    await walletLevelService.refreshCache(
+      params.senderUserId,
+      LevelType.WEALTH,
+      txResult.wealthResult.newCumulative,
+      txResult.wealthResult.newLevel,
+      txResult.wealthResult.previousLevel,
+    )
+  }
+
+  if (txResult.livestreamResult && pointsAwarded > 0) {
+    await walletLevelService.refreshCache(
+      params.receiverUserId,
+      LevelType.LIVESTREAM,
+      txResult.livestreamResult.newCumulative,
+      txResult.livestreamResult.newLevel,
+      txResult.livestreamResult.previousLevel,
+    )
+  }
+
+  if (txResult.bustAgentUserId) {
+    const { agencyCommissionService } = await import('./agencyCommission.service')
+    await agencyCommissionService.bustAgentCommissionCaches(txResult.bustAgentUserId)
+  }
+
+  await invalidateAfterGiftSend({
+    senderId: params.senderUserId,
+    receiverId: params.receiverUserId,
+    year,
+    month,
+    dayKey,
+    weekKey,
+    monthKey,
+  })
+
+  let galleryUpdated = false
+  let galleryNowFull = false
+  try {
+    const r = await giftGalleryService.recordGiftProgress({
+      hostUserId: params.receiverUserId,
+      giftId: params.giftId,
+      senderId: params.senderUserId,
+    })
+    galleryUpdated = r.created
+    galleryNowFull = r.galleryNowFull
+  } catch (err) {
+    console.error('[Gift send] recordGiftProgress failed', err)
+  }
+
+  const senderCoinsRemaining = await walletService.getCoinBalance(params.senderUserId)
+
+  return {
+    transactionId: txResult.transactionId,
+    giftName: gift.name,
+    coinCost,
+    pointsAwarded,
+    senderCoinsRemaining: Number(senderCoinsRemaining),
+    galleryUpdated,
+    galleryNowFull,
+  }
+}
+
+export const giftTransactionService = {
+  async sendGift(params: SendGiftParams) {
+    if (!params.idempotencyKey) {
+      // Legacy path: per-request ledger keys, no replay window.
+      return executeSendGift(params, `gift:${crypto.randomUUID()}`)
     }
 
-    const senderCoinsRemaining = await walletService.getCoinBalance(params.senderUserId)
+    // Same envelope as withdrawal-create: Redis replay window + SET NX in-flight
+    // marker; ledger idempotency keys derived from the client key so the DB
+    // unique constraint backstops double-processing after the Redis TTL.
+    const idem = `gift-send:${params.senderUserId}:${params.idempotencyKey}`
+    const cached = await walletService.getCachedIdemResponse(idem)
+    if (cached) return cached
 
-    return {
-      transactionId: txResult.transactionId,
-      giftName: gift.name,
-      coinCost,
-      pointsAwarded,
-      senderCoinsRemaining: Number(senderCoinsRemaining),
-      galleryUpdated,
-      galleryNowFull,
+    const acquired = await walletService.acquireIdemKey(idem)
+    if (!acquired) {
+      throw new AppError(409, 'Already processing', 'IDEM_CONFLICT')
     }
+
+    let result: Awaited<ReturnType<typeof executeSendGift>>
+    try {
+      result = await executeSendGift(params, `gift:${params.senderUserId}:${params.idempotencyKey}`)
+    } catch (err) {
+      if (isLedgerIdemViolation(err)) {
+        // Settled earlier but the Redis snapshot expired — never double-send.
+        throw new AppError(409, 'Duplicate gift send (already processed)', 'IDEM_CONFLICT')
+      }
+      // Definitive failure: release the in-flight marker so a corrected retry
+      // with the same key is not locked out for the idem TTL.
+      try {
+        await redisClient.del(RedisKeys.walletIdem(idem))
+      } catch {
+        // best-effort
+      }
+      throw err
+    }
+
+    try {
+      await walletService.resolveIdemKey(idem, result)
+    } catch {
+      // Replay window lost; the ledger unique keys still prevent double-processing.
+    }
+    return result
   },
 }
