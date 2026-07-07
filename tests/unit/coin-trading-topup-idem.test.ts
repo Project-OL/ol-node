@@ -126,7 +126,7 @@ describe('coinTradingService.initiateTopup idempotency', () => {
   })
 
   it('without a client key: no replay envelope, order key is time-based (legacy)', async () => {
-    const { idempotencyKey: _omit, ...legacyInput } = input
+    const legacyInput = { ...input, idempotencyKey: undefined }
     await coinTradingService.initiateTopup('agent-1', legacyInput)
     expect(getCachedIdemResponse).not.toHaveBeenCalled()
     expect(acquireIdemKey).not.toHaveBeenCalled()
