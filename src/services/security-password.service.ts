@@ -103,18 +103,33 @@ export const securityPasswordService = {
       throw new AppError(400, 'Identifier cannot receive OTP', 'INVALID_IDENTIFIER')
     }
 
-    await otpAuthService.createAndStore({
-      targetIdentifier: identifier.identifier,
-      purpose: 'set_security_password',
-      userId,
-    })
+    // Burst single-flight: a double-tap / parallel duplicate within the guard
+    // window returns the same success body without generating and delivering a
+    // second OTP (the per-minute rate limit still applies above this).
+    const singleFlightKey = `otp:single-flight:security:${userId}:${identifierId}`
+    let firstInBurst = true
+    try {
+      // ioredis returns 'OK' when acquired, null when the guard is already
+      // held. Only an explicit null suppresses the send (fail-open otherwise).
+      firstInBurst = (await redisClient.set(singleFlightKey, '1', 'EX', 3, 'NX')) !== null
+    } catch {
+      // Redis unavailable — fall through and send normally
+    }
 
-    await auditService.log({
-      userId,
-      actionType: 'SECURITY_PASSWORD_OTP_SENT',
-      actionStatus: 'success',
-      actionDetails: { identifierId },
-    })
+    if (firstInBurst) {
+      await otpAuthService.createAndStore({
+        targetIdentifier: identifier.identifier,
+        purpose: 'set_security_password',
+        userId,
+      })
+
+      await auditService.log({
+        userId,
+        actionType: 'SECURITY_PASSWORD_OTP_SENT',
+        actionStatus: 'success',
+        actionDetails: { identifierId },
+      })
+    }
 
     return {
       otpSent: true,

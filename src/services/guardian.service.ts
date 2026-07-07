@@ -325,6 +325,7 @@ export const guardianService = {
         guardianUserId,
         input,
         `guardian-purchase:${guardianUserId}:${input.idempotencyKey}`,
+        { guardDuplicateKey: true },
       )
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -349,6 +350,7 @@ export const guardianService = {
     guardianUserId: string,
     input: PurchaseGuardianInput,
     idempotencyKey: string,
+    opts?: { guardDuplicateKey?: boolean },
   ): Promise<{
     guardianId: string
     tier: GuardianTier
@@ -384,13 +386,18 @@ export const guardianService = {
     // with a fresh expiry).
     const guardian = await withSerializationRetry(() =>
       prisma.$transaction(async (tx) => {
-        const dup = await coinLedgerRepository.findByIdempotencyKey(tx, idempotencyKey)
-        if (dup) {
-          throw new AppError(
-            409,
-            'Duplicate guardian purchase (already processed)',
-            'IDEM_CONFLICT',
-          )
+        // Client-keyed calls only: a post-Redis-window retry must not let the
+        // debit replay silently and re-run the guardians upsert with a fresh
+        // expiry. Random legacy keys cannot collide, so they skip the query.
+        if (opts?.guardDuplicateKey) {
+          const dup = await coinLedgerRepository.findByIdempotencyKey(tx, idempotencyKey)
+          if (dup) {
+            throw new AppError(
+              409,
+              'Duplicate guardian purchase (already processed)',
+              'IDEM_CONFLICT',
+            )
+          }
         }
         buyerWealthResult = await coinWalletService.debitForGuardianPurchase(
           guardianUserId,

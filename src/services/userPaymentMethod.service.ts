@@ -15,6 +15,7 @@ import {
 import type { BindBankInput } from '../models/paymentMethod.schemas'
 import type { PayoutRailPublicDto } from './withdrawalPayoutRailConfig.service'
 import { withdrawalPayoutRailConfigService } from './withdrawalPayoutRailConfig.service'
+import { isUniqueViolation } from '../utils/txRetry'
 
 export { maskAccountNumber, maskEmail, maskPaymentMethodForDisplay }
 
@@ -33,17 +34,34 @@ function railFieldsForType(
 export const userPaymentMethodService = {
   async bindEpay(userId: string, body: { epayEmail: string }, securityPassword: string) {
     await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
-    await userPaymentMethodRepository.upsert({
-      userId,
-      methodType: 'EPAY',
-      epayEmail: body.epayEmail,
-    })
+    // Native ON CONFLICT upsert on (userId, methodType) is race-safe; the
+    // retry-once covers Prisma's emulated-upsert fallback where a parallel
+    // first bind can surface P2002 instead of converging to an update.
+    try {
+      await userPaymentMethodRepository.upsert({
+        userId,
+        methodType: 'EPAY',
+        epayEmail: body.epayEmail,
+      })
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err
+      await userPaymentMethodRepository.upsert({
+        userId,
+        methodType: 'EPAY',
+        epayEmail: body.epayEmail,
+      })
+    }
     await redisClient.del(RedisKeys.userPaymentMethods(userId))
   },
 
   async bindBank(userId: string, body: BindBankInput, securityPassword: string) {
     await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
-    await userPaymentMethodRepository.upsertBank(userId, body)
+    try {
+      await userPaymentMethodRepository.upsertBank(userId, body)
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err
+      await userPaymentMethodRepository.upsertBank(userId, body)
+    }
     await redisClient.del(RedisKeys.userPaymentMethods(userId))
   },
 

@@ -130,6 +130,10 @@ vi.mock("../../src/config/database", () => {
           coinLedgerEntry: {
             findFirst: vi.fn().mockResolvedValue({ balanceAfter: 10_000n }),
           },
+          // transferTradingCoins replays via the transfer row's unique key.
+          coinTradingTransfer: {
+            findUnique: vi.fn().mockResolvedValue(null),
+          },
         };
         return fn(tx);
       }),
