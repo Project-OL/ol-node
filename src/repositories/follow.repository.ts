@@ -143,7 +143,7 @@ export const followRepository = {
       },
     })
 
-    const total = await prisma.userFollow.count({ where })
+    const total = await prismaRead.userFollow.count({ where })
 
     const userIds = follows.map((f) => f.followerId)
     const relations = await prismaRead.userFollow.findMany({
@@ -215,7 +215,7 @@ export const followRepository = {
       },
     })
 
-    const total = await prisma.userFollow.count({ where })
+    const total = await prismaRead.userFollow.count({ where })
 
     const userIds = follows.map((f) => f.followingId)
     const relations = await prismaRead.userFollow.findMany({
@@ -286,7 +286,7 @@ export const followRepository = {
       },
     })
 
-    const total = await prisma.userFollow.count({ where: mutualFriendsWhere(userId) })
+    const total = await prismaRead.userFollow.count({ where: mutualFriendsWhere(userId) })
 
     const userIds = follows.map((f) => f.followingId)
     const relations = await prismaRead.userFollow.findMany({
