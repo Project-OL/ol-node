@@ -16,6 +16,7 @@ import {
   utcDateString,
 } from '../utils/datetime'
 import { AppError } from '../middlewares/errorHandler'
+import { withSerializationRetry } from '../utils/txRetry'
 import { walletRepository } from '../repositories/wallet.repository'
 import { withdrawalRepository } from '../repositories/withdrawal.repository'
 import { payrollAssignmentRepository } from '../repositories/payrollAssignment.repository'
@@ -355,14 +356,38 @@ export const withdrawalService = {
       throw new AppError(409, 'Already processing', 'IDEM_CONFLICT')
     }
 
+    try {
+      return await withdrawalService.executeCreateWithdrawal(userId, params, idem)
+    } catch (err) {
+      // Definitive failure: release the in-flight marker so a corrected retry
+      // with the same key is not locked out for the idem TTL.
+      try {
+        await redisClient.del(RedisKeys.walletIdem(idem))
+      } catch {
+        // best-effort
+      }
+      throw err
+    }
+  },
+
+  async executeCreateWithdrawal(
+    userId: string,
+    params: {
+      grossPoints: bigint
+      paymentMethodId: string
+      idempotencyKey: string
+      notes?: string
+    },
+    idem: string,
+  ) {
     const method = await userPaymentMethodRepository.findById(params.paymentMethodId, userId)
     if (!method) {
       throw new AppError(404, 'Payment method not found', 'NOT_FOUND')
     }
 
     // Multiple open withdrawals are allowed (v2). Spending is capped by the
-    // host's AVAILABLE points (totalPoints − unconfirmedPoints), enforced inside
-    // the Serializable transaction below.
+    // host's AVAILABLE points (totalPoints − unconfirmedPoints), enforced under
+    // the wallet lock inside the transaction below.
 
     const config = await withdrawalService.getPayrollConfig()
     const amounts = calculateWithdrawalAmounts(params.grossPoints, config)
@@ -370,70 +395,77 @@ export const withdrawalService = {
     const withdrawalId = randomUUID()
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
 
-    await prisma.$transaction(
-      async (tx) => {
-        // Lock the POINT wallet row first so the availability check and escrow
-        // increment are serialized against concurrent withdrawal creation.
-        await walletRepository.lockForUpdate(tx, wallet.id)
-        const walletRow = await tx.wallet.findUniqueOrThrow({
-          where: { id: wallet.id },
-          select: { unconfirmedPoints: true },
-        })
-        const last = await tx.pointLedgerEntry.findFirst({
-          where: { walletId: wallet.id },
-          orderBy: { createdAt: 'desc' },
-          select: { balanceAfter: true },
-        })
-        const totalPoints = last?.balanceAfter ?? 0n
-        const unconfirmed = walletRow.unconfirmedPoints ?? 0n
-        const available = totalPoints - unconfirmed
-        if (available < params.grossPoints) {
-          throw new AppError(400, 'Insufficient available points', 'INSUFFICIENT_POINTS', {
-            balance: available.toString(),
-            required: params.grossPoints.toString(),
-            unconfirmed: unconfirmed.toString(),
+    // Read Committed: the POINT wallet FOR UPDATE lock serializes the
+    // availability check + escrow increment; the ledger/withdrawal keys are
+    // derived from the (stable across retries) withdrawalId. Serializable
+    // previously aborted every lock waiter with 40001 500s under parallel
+    // withdrawal creation.
+    await withSerializationRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // Lock the POINT wallet row first so the availability check and escrow
+          // increment are serialized against concurrent withdrawal creation.
+          await walletRepository.lockForUpdate(tx, wallet.id)
+          const walletRow = await tx.wallet.findUniqueOrThrow({
+            where: { id: wallet.id },
+            select: { unconfirmedPoints: true },
           })
-        }
+          const last = await tx.pointLedgerEntry.findFirst({
+            where: { walletId: wallet.id },
+            orderBy: { createdAt: 'desc' },
+            select: { balanceAfter: true },
+          })
+          const totalPoints = last?.balanceAfter ?? 0n
+          const unconfirmed = walletRow.unconfirmedPoints ?? 0n
+          const available = totalPoints - unconfirmed
+          if (available < params.grossPoints) {
+            throw new AppError(400, 'Insufficient available points', 'INSUFFICIENT_POINTS', {
+              balance: available.toString(),
+              required: params.grossPoints.toString(),
+              unconfirmed: unconfirmed.toString(),
+            })
+          }
 
-        // Soft escrow: marks points in-flight without reducing the ledger sum.
-        await pointWalletService.escrow(
-          userId,
-          params.grossPoints,
-          PointTxType.WITHDRAWAL_ESCROW,
-          tx,
-          {
-            idempotencyKey: `withdrawal-escrow:${withdrawalId}`,
-            refId: withdrawalId,
-            description: 'Withdrawal escrow',
-          },
-        )
-
-        await tx.wallet.update({
-          where: { id: wallet.id },
-          data: { unconfirmedPoints: { increment: params.grossPoints } },
-        })
-
-        await withdrawalRepository.create(
-          {
-            id: withdrawalId,
-            walletId: wallet.id,
+          // Soft escrow: marks points in-flight without reducing the ledger sum.
+          await pointWalletService.escrow(
             userId,
-            amountPoints: params.grossPoints,
-            status: 'PENDING',
-            paymentMethodId: method.id,
-            hostPayoutUsd: amounts.hostPayoutUsd,
-            platformFeePoints: amounts.platformFeePoints,
-            agentRewardPoints: amounts.agentRewardPoints,
-            idempotencyKey: `withdrawal:${userId}:${withdrawalId}`,
-            notes: params.notes ?? null,
-            withdrawalVersion: 2,
-          },
-          tx,
-        )
+            params.grossPoints,
+            PointTxType.WITHDRAWAL_ESCROW,
+            tx,
+            {
+              idempotencyKey: `withdrawal-escrow:${withdrawalId}`,
+              refId: withdrawalId,
+              description: 'Withdrawal escrow',
+            },
+          )
 
-        await userPaymentMethodRepository.touchLastUsed(method.id, userId, tx)
-      },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+          await tx.wallet.update({
+            where: { id: wallet.id },
+            data: { unconfirmedPoints: { increment: params.grossPoints } },
+          })
+
+          await withdrawalRepository.create(
+            {
+              id: withdrawalId,
+              walletId: wallet.id,
+              userId,
+              amountPoints: params.grossPoints,
+              status: 'PENDING',
+              paymentMethodId: method.id,
+              hostPayoutUsd: amounts.hostPayoutUsd,
+              platformFeePoints: amounts.platformFeePoints,
+              agentRewardPoints: amounts.agentRewardPoints,
+              idempotencyKey: `withdrawal:${userId}:${withdrawalId}`,
+              notes: params.notes ?? null,
+              withdrawalVersion: 2,
+            },
+            tx,
+          )
+
+          await userPaymentMethodRepository.touchLastUsed(method.id, userId, tx)
+        },
+        { timeout: INTERACTIVE_TX_MS },
+      ),
     )
 
     await redisClient.del(RedisKeys.userPaymentMethods(userId))
@@ -670,12 +702,13 @@ export const withdrawalService = {
           throw new AppError(400, 'Assignment cannot be rejected', 'INVALID_STATE')
         }
 
-        hostUserId = (
-          await tx.withdrawal.findUnique({
-            where: { id: a.withdrawalId },
-            select: { userId: true },
-          })
-        )?.userId ?? null
+        hostUserId =
+          (
+            await tx.withdrawal.findUnique({
+              where: { id: a.withdrawalId },
+              select: { userId: true },
+            })
+          )?.userId ?? null
         rejectedWithdrawalId = a.withdrawalId
 
         await payrollAssignmentRepository.updateStatus(
