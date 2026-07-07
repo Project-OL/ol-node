@@ -20,6 +20,8 @@ const topupSchema = z
     currency: z.string().default('USD'),
     callbackUrl: z.string().url().optional(),
     returnUrl: z.string().url().optional(),
+    /** Optional client retry token; same key replays the original order instead of creating another. */
+    idempotencyKey: z.string().min(8).max(128).optional(),
   })
   .refine((b) => b.packageId != null || b.amountUsd != null, {
     message: 'packageId or amountUsd required',
@@ -27,6 +29,8 @@ const topupSchema = z
 const exchangeSchema = z.object({
   pointsToExchange: z.string().min(1),
   securityPassword: z.string().optional(),
+  /** Optional client retry token; same key replays the original result instead of re-exchanging. */
+  idempotencyKey: z.string().min(8).max(128).optional(),
 })
 const transferSchema = z.object({
   recipientPublicId: z.string().min(1),
@@ -112,6 +116,7 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
         packageId: body.packageId,
         amountUsd: body.amountUsd,
         currency: body.currency,
+        idempotencyKey: body.idempotencyKey,
         callbackUrl:
           body.callbackUrl ?? `${request.protocol}://${request.hostname}/api/v1/webhooks/epay`,
         returnUrl: body.returnUrl ?? `${request.protocol}://${request.hostname}`,
@@ -148,6 +153,7 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
       const result = await coinTradingService.exchangePointsForTradingCoins(
         request.userId!,
         BigInt(body.pointsToExchange),
+        body.idempotencyKey,
       )
       return reply.send(result)
     },

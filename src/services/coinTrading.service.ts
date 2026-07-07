@@ -35,6 +35,8 @@ import {
   type RateTierUsd,
 } from '../config/coin-trading-rates.defaults'
 import { enrichLedgerEntries } from '../utils/ledger-transaction-enrichment'
+import { pointLedgerRepository } from '../repositories/point-ledger.repository'
+import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -266,6 +268,14 @@ function formatPackage(row: {
   }
 }
 
+type TopupInitiateResult = {
+  paymentUrl: string
+  orderId: string
+  amountUsd: string
+  tradingCoinsAwarded: string
+  packageId: string | null
+}
+
 export const coinTradingService = {
   async getTopupPackages() {
     const key = RedisKeys.ctTopupPackages()
@@ -368,12 +378,61 @@ export const coinTradingService = {
       currency: string
       callbackUrl: string
       returnUrl: string
+      idempotencyKey?: string
     },
   ) {
     const user = await userRepository.findById(agentUserId)
     if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
     await agencyService.enforcePauseGate(agentUserId)
 
+    // Optional client key: retries replay the original order/payment link
+    // instead of opening a second PENDING order + payment URL.
+    const idem = input.idempotencyKey ? `ct-topup:${agentUserId}:${input.idempotencyKey}` : null
+    if (idem) {
+      const cached = (await walletService.getCachedIdemResponse(idem)) as TopupInitiateResult | null
+      if (cached) return cached
+      const acquired = await walletService.acquireIdemKey(idem)
+      if (!acquired) throw new AppError(409, 'Already processing', 'IDEM_CONFLICT')
+    }
+    try {
+      const response: TopupInitiateResult = await coinTradingService.executeInitiateTopupInternal(
+        agentUserId,
+        input,
+      )
+      if (idem) {
+        try {
+          await walletService.resolveIdemKey(idem, response)
+        } catch {
+          // Replay window lost; the order unique key still blocks duplicates.
+        }
+      }
+      return response
+    } catch (err) {
+      if (idem) {
+        if (isUniqueViolation(err)) {
+          throw new AppError(409, 'Duplicate top-up request (already created)', 'IDEM_CONFLICT')
+        }
+        try {
+          await redisClient.del(RedisKeys.walletIdem(idem))
+        } catch {
+          // best-effort
+        }
+      }
+      throw err
+    }
+  },
+
+  async executeInitiateTopupInternal(
+    agentUserId: string,
+    input: {
+      packageId?: string
+      amountUsd?: number
+      currency: string
+      callbackUrl: string
+      returnUrl: string
+      idempotencyKey?: string
+    },
+  ) {
     let amountUsd: number
     let tradingCoinsAwarded: bigint
     let rateApplied: number
@@ -387,7 +446,7 @@ export const coinTradingService = {
       tradingCoinsAwarded = pkg.tradingCoins
       rateApplied = pkg.coinsPerUsd
     } else if (input.amountUsd != null) {
-      const rate = await this.lookupTopupRate(input.amountUsd)
+      const rate = await coinTradingService.lookupTopupRate(input.amountUsd)
       amountUsd = input.amountUsd
       tradingCoinsAwarded = rate.totalCoins
       rateApplied = rate.coinsPerUsd
@@ -395,7 +454,9 @@ export const coinTradingService = {
       throw new AppError(400, 'packageId or amountUsd required', 'TOPUP_INPUT_REQUIRED')
     }
 
-    const idempotencyKey = `trading-topup:${agentUserId}:${Date.now()}`
+    const idempotencyKey = input.idempotencyKey
+      ? `trading-topup:${agentUserId}:${input.idempotencyKey}`
+      : `trading-topup:${agentUserId}:${Date.now()}`
     const order = await prisma.coinTradingTopupOrder.create({
       data: {
         agentUserId,
@@ -475,7 +536,58 @@ export const coinTradingService = {
     )
     await walletService.adjustTradingBalanceCache(order.agentUserId)
   },
-  async exchangePointsForTradingCoins(userId: string, pointsToExchange: bigint) {
+  async exchangePointsForTradingCoins(
+    userId: string,
+    pointsToExchange: bigint,
+    clientIdempotencyKey?: string,
+  ) {
+    // Optional client key: retries replay the original result instead of
+    // exchanging again (previously every request minted a fresh refId).
+    const idem = clientIdempotencyKey ? `ct-exchange:${userId}:${clientIdempotencyKey}` : null
+    if (idem) {
+      const cached = (await walletService.getCachedIdemResponse(idem)) as {
+        coinsAwarded: string
+        walletType: string
+        exchangeRate: number
+      } | null
+      if (cached) return cached
+      const acquired = await walletService.acquireIdemKey(idem)
+      if (!acquired) throw new AppError(409, 'Already processing', 'IDEM_CONFLICT')
+    }
+    try {
+      const response = await coinTradingService.executeExchangeInternal(
+        userId,
+        pointsToExchange,
+        clientIdempotencyKey,
+      )
+      if (idem) {
+        try {
+          await walletService.resolveIdemKey(idem, response)
+        } catch {
+          // Replay window lost; ledger unique keys still prevent double-processing.
+        }
+      }
+      return response
+    } catch (err) {
+      if (idem) {
+        if (isUniqueViolation(err)) {
+          throw new AppError(409, 'Duplicate exchange (already processed)', 'IDEM_CONFLICT')
+        }
+        try {
+          await redisClient.del(RedisKeys.walletIdem(idem))
+        } catch {
+          // best-effort
+        }
+      }
+      throw err
+    }
+  },
+
+  async executeExchangeInternal(
+    userId: string,
+    pointsToExchange: bigint,
+    clientIdempotencyKey?: string,
+  ) {
     assertPositiveAmountMultiple(pointsToExchange, POINTS_EXCHANGE_STEP, {
       belowMinCode: 'MIN_POINTS_EXCHANGE',
       unitLabel: 'points to exchange',
@@ -497,7 +609,11 @@ export const coinTradingService = {
     const coinsPerUsd = lookupExchangeCoinsPerUsd(rates, usdEquiv)
     const coinsAwarded = BigInt(Math.floor((Number(pointsToExchange) * coinsPerUsd) / 10000))
 
-    const exchangeRefId = randomUUID()
+    // Deterministic refId when the client sent a retry token, so the ledger
+    // unique keys backstop double-processing after the Redis window.
+    const exchangeRefId = clientIdempotencyKey
+      ? `idem-${userId.slice(0, 8)}-${clientIdempotencyKey}`
+      : randomUUID()
     const targetWalletType = user.isAgent
       ? WalletCurrencyType.TRADING_COIN
       : WalletCurrencyType.COIN
@@ -505,29 +621,43 @@ export const coinTradingService = {
       ? CoinTxType.TRADING_EXCHANGE_FROM_POINTS
       : CoinTxType.POINT_EXCHANGE_TO_COINS
 
-    await prisma.$transaction(
-      async (tx) => {
-        await pointWalletService.debit(userId, pointsToExchange, PointTxType.TRANSFER_OUT, tx, {
-          idempotencyKey: `exchange-pts:${exchangeRefId}`,
-          refId: exchangeRefId,
-          description: user.isAgent
-            ? 'Points exchanged for trading coins'
-            : 'Points exchanged for coins',
-          metadata: { exchangeRefId },
-        })
+    // Read Committed: both wallets are FOR UPDATE-locked inside debit/credit.
+    // The duplicate guard prevents a post-window retry from replaying the point
+    // debit while re-crediting coins.
+    await withSerializationRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          if (clientIdempotencyKey) {
+            const dup = await pointLedgerRepository.findByIdempotencyKey(
+              tx,
+              `exchange-pts:${exchangeRefId}`,
+            )
+            if (dup) {
+              throw new AppError(409, 'Duplicate exchange (already processed)', 'IDEM_CONFLICT')
+            }
+          }
+          await pointWalletService.debit(userId, pointsToExchange, PointTxType.TRANSFER_OUT, tx, {
+            idempotencyKey: `exchange-pts:${exchangeRefId}`,
+            refId: exchangeRefId,
+            description: user.isAgent
+              ? 'Points exchanged for trading coins'
+              : 'Points exchanged for coins',
+            metadata: { exchangeRefId },
+          })
 
-        await coinWalletService.credit(userId, coinsAwarded, coinTxType, tx, {
-          idempotencyKey: user.isAgent
-            ? `exchange-ct:${exchangeRefId}`
-            : `exchange-coin:${exchangeRefId}`,
-          description: user.isAgent
-            ? 'Trading coins from points exchange'
-            : 'Coins from points exchange',
-          applyWealthCredit: false,
-          currencyType: targetWalletType,
-        })
-      },
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+          await coinWalletService.credit(userId, coinsAwarded, coinTxType, tx, {
+            idempotencyKey: user.isAgent
+              ? `exchange-ct:${exchangeRefId}`
+              : `exchange-coin:${exchangeRefId}`,
+            description: user.isAgent
+              ? 'Trading coins from points exchange'
+              : 'Coins from points exchange',
+            applyWealthCredit: false,
+            currencyType: targetWalletType,
+          })
+        },
+        { timeout: TX_TIMEOUT_MS },
+      ),
     )
 
     await walletService.adjustPointBalanceCache(userId, 0n)
@@ -564,64 +694,90 @@ export const coinTradingService = {
     if (!recipient) throw new AppError(404, 'Recipient not found', 'RECIPIENT_NOT_FOUND')
     const isSelfTransfer = recipient.id === senderAgentUserId
     if (isSelfTransfer && input.targetWalletType !== 'PERSONAL') {
-      throw new AppError(
-        400,
-        'Self transfer only allowed to personal coin wallet',
-        'SELF_TRANSFER',
-      )
+      throw new AppError(400, 'Self transfer only allowed to personal coin wallet', 'SELF_TRANSFER')
     }
     const recipientWalletType = resolveRecipientWalletType(recipient, input.targetWalletType)
     // Transfer into a recipient's personal COIN wallet counts as Rich tier recharge only.
     const recipientGetsPersonalCoin = recipientWalletType === WalletCurrencyType.COIN
-    const { transfer, recharge: recipientRecharge } = await prisma.$transaction(
-      async (tx) => {
-        let recharge: { year: number; month: number } | null = null
-        const senderDebit = await coinWalletService.debit(
-          senderAgentUserId,
-          input.tradingCoins,
-          CoinTxType.TRADING_TRANSFER_OUT,
-          tx,
-          {
-            idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:out`,
-            description: 'Trading coin transfer out',
-            counterpartyId: recipient.id,
-            currencyType: WalletCurrencyType.TRADING_COIN,
-          },
-        )
-        const recipientCredit = await coinWalletService.credit(
-          recipient.id,
-          input.tradingCoins,
-          CoinTxType.TRADING_TRANSFER_IN,
-          tx,
-          {
-            idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:in`,
-            description: 'Trading coin transfer in',
-            counterpartyId: senderAgentUserId,
-            applyWealthCredit: false,
-            currencyType: recipientWalletType,
-          },
-        )
-        if (recipientGetsPersonalCoin) {
-          recharge = await richTierService.applyRecharge(recipient.id, input.tradingCoins, tx)
-        }
-        const transferRow = await coinTradingRepository.createTransfer(
-          {
+    // Read Committed: sender + recipient wallets are FOR UPDATE-locked inside
+    // debit/credit. The transfer row's unique idempotency key is the replay
+    // anchor: a retry (or the loser of a parallel duplicate, via one re-run on
+    // P2002) returns the original transfer row instead of moving coins twice.
+    const runTransferTransaction = () =>
+      prisma.$transaction(
+        async (tx) => {
+          const existingTransfer = await tx.coinTradingTransfer.findUnique({
+            where: {
+              idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}`,
+            },
+          })
+          if (existingTransfer) {
+            return {
+              transfer: existingTransfer,
+              recharge: null as { year: number; month: number } | null,
+            }
+          }
+          let recharge: { year: number; month: number } | null = null
+          const senderDebit = await coinWalletService.debit(
             senderAgentUserId,
-            recipientUserId: recipient.id,
-            tradingCoinsDebited: input.tradingCoins,
-            coinsCredited: input.tradingCoins,
-            recipientWalletType:
-              recipientWalletType === WalletCurrencyType.COIN ? 'PERSONAL' : 'TRADING',
-            senderLedgerEntryId: senderDebit.ledgerEntryId,
-            recipientLedgerEntryId: recipientCredit.ledgerEntryId,
-            idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}`,
-          },
-          tx,
-        )
-        return { transfer: transferRow, recharge }
-      },
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
-    )
+            input.tradingCoins,
+            CoinTxType.TRADING_TRANSFER_OUT,
+            tx,
+            {
+              idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:out`,
+              description: 'Trading coin transfer out',
+              counterpartyId: recipient.id,
+              currencyType: WalletCurrencyType.TRADING_COIN,
+            },
+          )
+          const recipientCredit = await coinWalletService.credit(
+            recipient.id,
+            input.tradingCoins,
+            CoinTxType.TRADING_TRANSFER_IN,
+            tx,
+            {
+              idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}:in`,
+              description: 'Trading coin transfer in',
+              counterpartyId: senderAgentUserId,
+              applyWealthCredit: false,
+              currencyType: recipientWalletType,
+            },
+          )
+          if (recipientGetsPersonalCoin) {
+            recharge = await richTierService.applyRecharge(recipient.id, input.tradingCoins, tx)
+          }
+          const transferRow = await coinTradingRepository.createTransfer(
+            {
+              senderAgentUserId,
+              recipientUserId: recipient.id,
+              tradingCoinsDebited: input.tradingCoins,
+              coinsCredited: input.tradingCoins,
+              recipientWalletType:
+                recipientWalletType === WalletCurrencyType.COIN ? 'PERSONAL' : 'TRADING',
+              senderLedgerEntryId: senderDebit.ledgerEntryId,
+              recipientLedgerEntryId: recipientCredit.ledgerEntryId,
+              idempotencyKey: `trading-transfer:${senderAgentUserId}:${input.idempotencyKey}`,
+            },
+            tx,
+          )
+          return { transfer: transferRow, recharge }
+        },
+        { timeout: TX_TIMEOUT_MS },
+      )
+
+    let txOut: Awaited<ReturnType<typeof runTransferTransaction>>
+    try {
+      txOut = await withSerializationRetry(runTransferTransaction)
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Parallel duplicate key: winner committed between the existence check
+        // and our inserts — re-run once; the check now returns the original row.
+        txOut = await runTransferTransaction()
+      } else {
+        throw err
+      }
+    }
+    const { transfer, recharge: recipientRecharge } = txOut
     await invalidateTradingTransferCaches(senderAgentUserId, recipient.id, recipientWalletType)
     if (recipientGetsPersonalCoin && recipientRecharge) {
       await richTierService.refreshCacheAfterRecharge(
