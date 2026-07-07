@@ -14,6 +14,8 @@ const TransferSchema = z.object({
   points: z.string().min(1),
   /** Prefer header `X-Security-Password`; body field discouraged vs header. */
   securityPassword: z.string().optional(),
+  /** Optional client retry token; same key replays the original transfer instead of re-sending. */
+  idempotencyKey: z.string().min(8).max(128).optional(),
 })
 
 const DateRangeQuerySchema = z
@@ -149,8 +151,11 @@ export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
         throw new AppError(400, 'Recipient is not an agent', 'INVALID_RECIPIENT')
       }
 
-      const ts = Date.now()
-      const idempotencyKey = `agent-point-transfer:${userId}:${ts}`
+      // Client keys are stable across retries (transfer-row replay); without
+      // one, each request is a distinct transfer (legacy).
+      const idempotencyKey = `agent-point-transfer:${userId}:${
+        parsed.data.idempotencyKey ?? Date.now()
+      }`
 
       const result = await agencyCommissionService.transferPointsToAgent({
         senderUserId: userId,

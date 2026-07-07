@@ -14,6 +14,7 @@ import { agencyPointTransferRepository } from '../repositories/agencyPointTransf
 import { pointWalletService } from './point-wallet.service'
 import { cacheRedisService } from './cacheRedis.service'
 import { AppError } from '../middlewares/errorHandler'
+import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 import {
   assertPositiveAmountMultiple,
   AGENT_POINT_TRANSFER_STEP,
@@ -79,7 +80,7 @@ function categoryForTx(txType: PointTxType): CommissionCategory | null {
 
 export const agencyCommissionService = {
   /**
-   * Hot path: host point credit — same Serializable tx as host ledger insert.
+   * Hot path: host point credit â€” same Serializable tx as host ledger insert.
    */
   async applyCommission(
     params: {
@@ -598,66 +599,83 @@ export const agencyCommissionService = {
 
     const transferId = randomUUID()
 
-    await prisma.$transaction(
-      async (tx) => {
-        const existing = await tx.agentPointTransfer.findUnique({
-          where: { idempotencyKey },
-        })
-        if (existing) {
-          return
-        }
+    // Read Committed: both POINT wallets are FOR UPDATE-locked inside
+    // debit/creditInTransaction; the transfer row's unique idempotency key is
+    // the replay anchor. Serializable previously aborted parallel duplicates
+    // with 40001/P2002 500s (and the old in-tx duplicate branch returned a
+    // transferId that did not exist).
+    const runTransferTransaction = () =>
+      prisma.$transaction(
+        async (tx) => {
+          const existing = await tx.agentPointTransfer.findUnique({
+            where: { idempotencyKey },
+          })
+          if (existing) {
+            return existing.id
+          }
 
-        const debit = await pointWalletService.debit(
-          senderUserId,
-          points,
-          PointTxType.AGENT_POINT_TRANSFER,
-          tx,
-          {
-            idempotencyKey: `${idempotencyKey}:debit`,
-            counterpartyId: recipientAgentUserId,
-            refId: transferId,
-            metadata: { transferId },
-          },
-        )
+          const debit = await pointWalletService.debit(
+            senderUserId,
+            points,
+            PointTxType.AGENT_POINT_TRANSFER,
+            tx,
+            {
+              idempotencyKey: `${idempotencyKey}:debit`,
+              counterpartyId: recipientAgentUserId,
+              refId: transferId,
+              metadata: { transferId },
+            },
+          )
 
-        const credit = await pointWalletService.creditInTransaction(
-          recipientAgentUserId,
-          points,
-          PointTxType.AGENT_POINT_TRANSFER,
-          tx,
-          {
-            idempotencyKey: `${idempotencyKey}:credit`,
-            counterpartyId: senderUserId,
-            refId: transferId,
-            metadata: { transferId },
-            applyLivestreamLevel: false,
-          },
-        )
-
-        await agencyPointTransferRepository.insertTransfer(
-          {
-            id: transferId,
-            senderAgentUserId: senderUserId,
+          const credit = await pointWalletService.creditInTransaction(
             recipientAgentUserId,
             points,
-            senderLedgerEntryId: debit.ledgerEntryId,
-            recipientLedgerEntryId: credit.ledgerEntryId,
-            idempotencyKey,
-          },
-          tx,
-        )
-      },
-      {
-        isolationLevel: 'Serializable',
-        timeout: INTERACTIVE_TX_TIMEOUT_MS,
-      },
-    )
+            PointTxType.AGENT_POINT_TRANSFER,
+            tx,
+            {
+              idempotencyKey: `${idempotencyKey}:credit`,
+              counterpartyId: senderUserId,
+              refId: transferId,
+              metadata: { transferId },
+              applyLivestreamLevel: false,
+            },
+          )
+
+          await agencyPointTransferRepository.insertTransfer(
+            {
+              id: transferId,
+              senderAgentUserId: senderUserId,
+              recipientAgentUserId,
+              points,
+              senderLedgerEntryId: debit.ledgerEntryId,
+              recipientLedgerEntryId: credit.ledgerEntryId,
+              idempotencyKey,
+            },
+            tx,
+          )
+          return transferId
+        },
+        { timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      )
+
+    let settledTransferId: string
+    try {
+      settledTransferId = await withSerializationRetry(runTransferTransaction)
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Parallel duplicate key: winner committed between the existence check
+        // and our insert â€” re-run once; the check now returns the original row.
+        settledTransferId = await runTransferTransaction()
+      } else {
+        throw err
+      }
+    }
 
     await Promise.all([
       walletService.adjustPointBalanceCache(senderUserId, -points),
       walletService.adjustPointBalanceCache(recipientAgentUserId, points),
     ])
 
-    return { transferId }
+    return { transferId: settledTransferId }
   },
 }
