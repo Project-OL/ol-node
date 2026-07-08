@@ -224,9 +224,13 @@ export const deviceService = {
       return
     }
 
-    await deviceBanService.assertDeviceNotBanned(deviceId)
-
-    const activeAccounts = await deviceRepository.findActiveSessionAccountsOnDevice(deviceId)
+    // Independent lookups: the ban check (Redis-cached) and the linked-accounts read
+    // touch different stores. Only the ban check throws a business error, so
+    // DEVICE_BANNED keeps precedence over DEVICE_ACCOUNT_LIMIT_REACHED.
+    const [, activeAccounts] = await Promise.all([
+      deviceBanService.assertDeviceNotBanned(deviceId),
+      deviceRepository.findActiveSessionAccountsOnDevice(deviceId),
+    ])
     const alreadyActive = activeAccounts.some((acc) => acc.userId === userId)
     if (activeAccounts.length >= 3 && !alreadyActive) {
       throw new AppError(

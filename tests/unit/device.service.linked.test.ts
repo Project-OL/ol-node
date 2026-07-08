@@ -89,12 +89,30 @@ describe('deviceService linked accounts', () => {
         { userId: 'u3' },
       ])
 
-      await expect(
-        deviceService.linkAccountToDevice(deviceId, userId),
-      ).rejects.toMatchObject({
+      await expect(deviceService.linkAccountToDevice(deviceId, userId)).rejects.toMatchObject({
         code: 'DEVICE_ACCOUNT_LIMIT_REACHED',
         statusCode: 400,
       })
+    })
+
+    it('DEVICE_BANNED takes precedence over the account limit (checks run in parallel)', async () => {
+      const { deviceBanService } = await import('../../src/services/device-ban.service')
+      const { AppError } = await import('../../src/middlewares/errorHandler')
+      vi.mocked(deviceBanService.assertDeviceNotBanned).mockRejectedValueOnce(
+        new AppError(403, 'This device has been banned from the platform', 'DEVICE_BANNED'),
+      )
+      // Device is also at the account limit — the ban error must still win.
+      findActiveSessionAccountsOnDevice.mockResolvedValue([
+        { userId: 'u1' },
+        { userId: 'u2' },
+        { userId: 'u3' },
+      ])
+
+      await expect(deviceService.linkAccountToDevice(deviceId, userId)).rejects.toMatchObject({
+        code: 'DEVICE_BANNED',
+        statusCode: 403,
+      })
+      expect(upsertLinkedAccount).not.toHaveBeenCalled()
     })
 
     it('allows relink when already active even at limit', async () => {
@@ -172,12 +190,7 @@ describe('deviceService linked accounts', () => {
       expect(result).toHaveLength(1)
       expect(findActiveSessionAccountsOnDevice).toHaveBeenCalledWith(deviceId)
       expect(findLinkedAccounts).not.toHaveBeenCalled()
-      expect(cacheSet).toHaveBeenCalledWith(
-        `device:${deviceId}:linked`,
-        expect.any(String),
-        1800,
-      )
+      expect(cacheSet).toHaveBeenCalledWith(`device:${deviceId}:linked`, expect.any(String), 1800)
     })
   })
 })
-

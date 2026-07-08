@@ -127,6 +127,12 @@ export const RedisKeys = {
   userInboxChannel: (userId: string) => `msg:user:${userId}`,
   /** One-time WebSocket upgrade ticket (GETDEL on connect). TTL 15m. */
   wsTicket: (token: string) => `ws:ticket:${token}`,
+  /** Admin notification broadcast: per-campaign progress hash (adminUserId, message, total, remaining, sent, createdAt). */
+  notifyBroadcastState: (campaignId: string) => `notify:broadcast:state:${campaignId}`,
+  /** Admin notification broadcast: pending batch payloads (field = batchIndex, value = JSON userIds). */
+  notifyBroadcastPending: (campaignId: string) => `notify:broadcast:pending:${campaignId}`,
+  /** Admin notification broadcast: set of campaignIds with batches still in flight (sweep scans this). */
+  notifyBroadcastActive: () => 'notify:broadcast:active',
   /**
    * Messaging: Redis pub/sub channel for conversation realtime frames (`ServerFrame` JSON).
    * Same logical channel as legacy `conv:{id}:events`; migrated name for clarity.
@@ -357,6 +363,9 @@ export const BLOCK_LIST_TTL = 60 * 60
 export const OTP_SMS_PREFERRED_ROUTE_TTL_SEC = 120
 
 /** Wallet: cached balance TTL (5 minutes). */
+/** Broadcast progress/pending keys — safety ceiling; normal completion deletes them explicitly. */
+export const NOTIFY_BROADCAST_STATE_TTL = 86400
+
 export const WALLET_BALANCE_TTL = 300
 export const CT_BALANCE_TTL = 300
 export const CT_RECENT_USERS_TTL = 120

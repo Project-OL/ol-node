@@ -88,16 +88,24 @@ import { AGENCY_AUTO_REPLY_JOB, AGENCY_AUTO_REPLY_QUEUE } from './queues/agencyA
 import { processAgencyAutoReplyJob } from './jobs/agencyAutoReply.job'
 import { agencyAutoReplyQueue, type AutoReplyJobData } from './queues/agencyAutoReply.queue'
 import {
+  PLATFORM_BROADCAST_SWEEP_JOB,
   PLATFORM_LEDGER_MESSAGE_JOB,
   PLATFORM_MESSAGE_QUEUE,
+  PLATFORM_NOTIFICATION_BROADCAST_BATCH_JOB,
   PLATFORM_NOTIFICATION_BROADCAST_JOB,
   PLATFORM_WITHDRAWAL_MESSAGE_JOB,
 } from './queues/platform-message.constants'
-import { platformMessageQueue } from './queues/platform-message.queue'
+import {
+  platformMessageQueue,
+  registerPlatformBroadcastSweep,
+} from './queues/platform-message.queue'
 import {
   processPlatformLedgerMessageJob,
+  processPlatformNotificationBroadcastBatchJob,
   processPlatformNotificationBroadcastJob,
   processPlatformWithdrawalMessageJob,
+  sweepStalePlatformBroadcasts,
+  type PlatformNotificationBroadcastBatchJobData,
 } from './jobs/platform-message.job'
 import { LIVE_SESSION_JOBS, LIVE_SESSION_QUEUE } from './queues/live-session.constants'
 import { liveSessionQueue } from './queues/live-session.queue'
@@ -115,6 +123,7 @@ async function main() {
   await connection.connect()
 
   await registerMessageOutboxScheduledJobs()
+  await registerPlatformBroadcastSweep()
 
   const accountDeletionQueue = new Queue(ACCOUNT_DELETION_QUEUE, {
     connection,
@@ -301,22 +310,34 @@ async function main() {
     PLATFORM_MESSAGE_QUEUE,
     async (job: Job) => {
       if (job.name === PLATFORM_LEDGER_MESSAGE_JOB) {
-        await processPlatformLedgerMessageJob(job as Job<{ kind: 'coin' | 'point'; entryId: string }>)
+        await processPlatformLedgerMessageJob(
+          job as Job<{ kind: 'coin' | 'point'; entryId: string }>,
+        )
       } else if (job.name === PLATFORM_WITHDRAWAL_MESSAGE_JOB) {
-        await processPlatformWithdrawalMessageJob(job as Job<{
-          withdrawalId: string
-          event: string
-          hostUserId: string
-          agentUserId?: string
-          reason?: string
-        }>)
+        await processPlatformWithdrawalMessageJob(
+          job as Job<{
+            withdrawalId: string
+            event: string
+            hostUserId: string
+            agentUserId?: string
+            reason?: string
+          }>,
+        )
       } else if (job.name === PLATFORM_NOTIFICATION_BROADCAST_JOB) {
-        await processPlatformNotificationBroadcastJob(job as Job<{
-          adminUserId: string
-          message: string
-          userIds?: string[]
-          campaignId?: string
-        }>)
+        await processPlatformNotificationBroadcastJob(
+          job as Job<{
+            adminUserId: string
+            message: string
+            userIds?: string[]
+            campaignId?: string
+          }>,
+        )
+      } else if (job.name === PLATFORM_NOTIFICATION_BROADCAST_BATCH_JOB) {
+        await processPlatformNotificationBroadcastBatchJob(
+          job as Job<PlatformNotificationBroadcastBatchJobData>,
+        )
+      } else if (job.name === PLATFORM_BROADCAST_SWEEP_JOB) {
+        await sweepStalePlatformBroadcasts()
       }
     },
     { connection, concurrency: 10 },

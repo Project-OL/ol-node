@@ -134,19 +134,14 @@ export const sessionService = {
     const started = Date.now()
     const fpHash = computeDeviceBindingHash(params.deviceId, params.userAgent, params.ipAddress)
 
-    const prior = await deviceRegistryRepository.findByUserAndDevice(params.userId, params.deviceId)
-    if (prior?.deviceFingerprintHash != null && prior.deviceFingerprintHash !== fpHash) {
-      await auditService.log({
-        userId: params.userId,
-        actionType: 'SUSPICIOUS_DEVICE_BINDING',
-        actionStatus: 'success',
-        actionDetails: {
-          deviceId: params.deviceId,
-          previousHashPrefix: prior.deviceFingerprintHash.slice(0, 8),
-        },
-        deviceId: params.deviceId,
-      })
-    }
+    // Prior-fingerprint read only feeds the SUSPICIOUS_DEVICE_BINDING audit — run it
+    // alongside the login transaction and consume it after (awaited below, so a read
+    // failure still fails createSession as before).
+    const priorPromise = deviceRegistryRepository.findByUserAndDevice(
+      params.userId,
+      params.deviceId,
+    )
+    priorPromise.catch(() => {}) // avoid an unhandled rejection when the login tx throws first
 
     const expiresAt = new Date(Date.now() + REFRESH_DAYS * 24 * 60 * 60 * 1000)
 
@@ -190,6 +185,20 @@ export const sessionService = {
 
     if (loginOutcome == null) {
       throw new AppError(503, 'Could not establish session', 'SESSION_LOGIN_FAILED')
+    }
+
+    const prior = await priorPromise
+    if (prior?.deviceFingerprintHash != null && prior.deviceFingerprintHash !== fpHash) {
+      await auditService.log({
+        userId: params.userId,
+        actionType: 'SUSPICIOUS_DEVICE_BINDING',
+        actionStatus: 'success',
+        actionDetails: {
+          deviceId: params.deviceId,
+          previousHashPrefix: prior.deviceFingerprintHash.slice(0, 8),
+        },
+        deviceId: params.deviceId,
+      })
     }
 
     const { session, refreshToken, revokedSessionIds, reused } = loginOutcome

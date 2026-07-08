@@ -62,15 +62,15 @@ export const coinLedgerRepository = {
   },
 
   async computeBalance(walletId: string): Promise<bigint> {
-    const credits = await prismaRead.coinLedgerEntry.aggregate({
-      where: { walletId, direction: LedgerDirection.CREDIT },
-      _sum: { amount: true },
+    // O(1) tail read: every write persists the running balance in balance_after
+    // under the wallet FOR UPDATE lock, so the newest row's snapshot equals the
+    // direction-adjusted SUM over the whole ledger.
+    const last = await prismaRead.coinLedgerEntry.findFirst({
+      where: { walletId },
+      orderBy: { createdAt: 'desc' },
+      select: { balanceAfter: true },
     })
-    const debits = await prismaRead.coinLedgerEntry.aggregate({
-      where: { walletId, direction: LedgerDirection.DEBIT },
-      _sum: { amount: true },
-    })
-    return (credits._sum.amount ?? 0n) - (debits._sum.amount ?? 0n)
+    return last?.balanceAfter ?? 0n
   },
 
   async _getCreatedAt(id: string): Promise<Date> {

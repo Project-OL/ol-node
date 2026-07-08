@@ -1,8 +1,11 @@
 import { Queue } from 'bullmq'
+import { randomUUID } from 'crypto'
 import { redisClient } from '../config/redis'
 import {
+  PLATFORM_BROADCAST_SWEEP_JOB,
   PLATFORM_LEDGER_MESSAGE_JOB,
   PLATFORM_MESSAGE_QUEUE,
+  PLATFORM_NOTIFICATION_BROADCAST_BATCH_JOB,
   PLATFORM_NOTIFICATION_BROADCAST_JOB,
   PLATFORM_WITHDRAWAL_MESSAGE_JOB,
 } from './platform-message.constants'
@@ -46,5 +49,50 @@ export async function enqueuePlatformNotificationBroadcast(data: {
   userIds?: string[]
   campaignId?: string
 }): Promise<void> {
-  await platformMessageQueue.add(PLATFORM_NOTIFICATION_BROADCAST_JOB, data, jobOpts)
+  // Mint the effective campaignId at enqueue time: per-recipient clientMessageIds
+  // (`notify:{campaignId}:{userId}`) derive from it, so it must be stable across
+  // BullMQ retries of the job or every retry would re-send the whole broadcast.
+  const campaignId = data.campaignId ?? `broadcast:${randomUUID()}`
+  await platformMessageQueue.add(
+    PLATFORM_NOTIFICATION_BROADCAST_JOB,
+    { ...data, campaignId },
+    jobOpts,
+  )
+}
+
+export function broadcastBatchJobId(campaignId: string, batchIndex: number): string {
+  return `notify-batch:${campaignId}:${batchIndex}`
+}
+
+/**
+ * One batch of a notification broadcast. Deterministic jobId dedupes re-enqueues
+ * (parent retry, sweep); `priority` keeps transactional platform messages (no
+ * priority = always first in BullMQ) from queueing behind a large broadcast.
+ */
+export async function enqueuePlatformNotificationBroadcastBatch(data: {
+  campaignId: string
+  batchIndex: number
+  adminUserId: string
+  message: string
+  userIds: string[]
+}): Promise<void> {
+  await platformMessageQueue.add(PLATFORM_NOTIFICATION_BROADCAST_BATCH_JOB, data, {
+    ...jobOpts,
+    jobId: broadcastBatchJobId(data.campaignId, data.batchIndex),
+    priority: 10,
+  })
+}
+
+/** Called from `worker.ts` once — 60s sweep re-enqueuing stale broadcast batches (crash recovery). */
+export async function registerPlatformBroadcastSweep(): Promise<void> {
+  await platformMessageQueue.add(
+    PLATFORM_BROADCAST_SWEEP_JOB,
+    {},
+    {
+      repeat: { every: 60_000 },
+      jobId: 'platform-broadcast-sweep-repeat',
+      attempts: 1,
+      removeOnComplete: 100,
+    },
+  )
 }

@@ -88,23 +88,19 @@ export const pointLedgerRepository = {
   },
 
   async computeBalance(walletId: string): Promise<bigint> {
-    const credits = await prismaRead.pointLedgerEntry.aggregate({
-      where: { walletId, direction: LedgerDirection.CREDIT },
-      _sum: { amount: true },
+    // O(1) tail read: every write persists the running balance in balance_after
+    // under the wallet FOR UPDATE lock, so the newest row's snapshot equals the
+    // escrow-excluded SUM. WITHDRAWAL_ESCROW is a SOFT marker (in-flight escrow):
+    // its rows carry the previous running balance forward unchanged, so it does
+    // not reduce the ledger sum (totalPoints); availability is derived separately
+    // as totalPoints - wallets.unconfirmedPoints. The real debit happens at
+    // settlement via WITHDRAWAL_ESCROW_SETTLED.
+    const last = await prismaRead.pointLedgerEntry.findFirst({
+      where: { walletId },
+      orderBy: { createdAt: 'desc' },
+      select: { balanceAfter: true },
     })
-    const debits = await prismaRead.pointLedgerEntry.aggregate({
-      where: {
-        walletId,
-        direction: LedgerDirection.DEBIT,
-        // WITHDRAWAL_ESCROW is a SOFT marker (in-flight escrow). It does not
-        // reduce the ledger sum (totalPoints); availability is derived separately
-        // as totalPoints - wallets.unconfirmedPoints. The real debit happens at
-        // settlement via WITHDRAWAL_ESCROW_SETTLED.
-        txType: { not: PointTxType.WITHDRAWAL_ESCROW },
-      },
-      _sum: { amount: true },
-    })
-    return (credits._sum.amount ?? 0n) - (debits._sum.amount ?? 0n)
+    return last?.balanceAfter ?? 0n
   },
 
   async _getCreatedAt(id: string): Promise<Date> {
