@@ -23,6 +23,7 @@ import { vipMembershipService } from './vip-membership.service'
 import { walletService } from './wallet.service'
 import { richTierService } from './rich-tier.service'
 import { walletLevelService } from './user-level.service'
+import { storeAdminService } from './store-admin.service'
 import { phoneSchema } from '../models/schemas'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 import { normalizeGenderStored } from '../utils/profileDisplay'
@@ -157,7 +158,8 @@ export const adminUserDetailService = {
     const row = await adminUserDetailRepository.findUser(userId)
     if (!row) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
-    const [session, device, agency, vip, email, phone, levels, devicesBlock] = await Promise.all([
+    const [session, device, agency, vip, email, phone, levels, devicesBlock, store] =
+      await Promise.all([
       adminUserDetailRepository.getLatestSession(userId),
       adminUserDetailRepository.getLatestDevice(userId),
       buildAgencyBlock(userId, row.isAgent),
@@ -166,6 +168,7 @@ export const adminUserDetailService = {
       Promise.resolve(pickAuth(row, 'phone')),
       walletLevelService.getDisplayLevelsForUsers([userId]),
       buildDevicesBlock(userId, row.lastIpAddress),
+      storeAdminService.getUserStoreSummary(userId),
     ])
 
     const deviceInfo = resolveDeviceAndIp(row, session, device)
@@ -212,6 +215,7 @@ export const adminUserDetailService = {
         banned: row.postingBanned,
         suspendedUntil: row.postingSuspendedUntil?.toISOString() ?? null,
       },
+      store,
     }
   },
 

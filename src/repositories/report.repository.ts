@@ -1,6 +1,15 @@
-import type { MessageReport } from '@prisma/client'
-import { prisma } from '../config/database'
+import type { MessageReport, ReportStatus, ReportContext, ReportReason, Prisma } from '@prisma/client'
+import { prisma, prismaRead } from '../config/database'
 import type { CreateReportInput } from '../models/messaging.schemas'
+
+const reportUserSelect = {
+  id: true,
+  publicId: true,
+  username: true,
+  firstName: true,
+  lastName: true,
+  avatarUrl: true,
+} as const
 
 export async function createReport(
   data: CreateReportInput & { reporterId: string },
@@ -14,6 +23,9 @@ export async function createReport(
       reason: data.reason,
       additionalInfo: data.additionalInfo,
       evidenceS3Keys: data.evidenceS3Keys ?? [],
+      context: data.context ?? 'CHAT',
+      liveSessionId: data.liveSessionId,
+      hostUserId: data.hostUserId,
     },
   })
 }
@@ -34,7 +46,67 @@ export async function findRecentReport(
   })
 }
 
+async function findById(reportId: string) {
+  return prismaRead.messageReport.findUnique({
+    where: { id: reportId },
+    include: {
+      reporter: { select: reportUserSelect },
+      reportedUser: { select: reportUserSelect },
+      hostUser: { select: reportUserSelect },
+      reviewedByAdmin: { select: { id: true, displayName: true, username: true } },
+    },
+  })
+}
+
+async function findManyForAdmin(filter: {
+  status?: ReportStatus
+  context?: ReportContext
+  reason?: ReportReason
+  reportedUserId?: string
+  skip: number
+  take: number
+}) {
+  const where: Prisma.MessageReportWhereInput = {
+    ...(filter.status ? { status: filter.status } : {}),
+    ...(filter.context ? { context: filter.context } : {}),
+    ...(filter.reason ? { reason: filter.reason } : {}),
+    ...(filter.reportedUserId ? { reportedUserId: filter.reportedUserId } : {}),
+  }
+  const [reports, total] = await Promise.all([
+    prismaRead.messageReport.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: filter.skip,
+      take: filter.take,
+      include: {
+        reporter: { select: reportUserSelect },
+        reportedUser: { select: reportUserSelect },
+      },
+    }),
+    prismaRead.messageReport.count({ where }),
+  ])
+  return { reports, total }
+}
+
+async function updateStatus(
+  reportId: string,
+  data: {
+    status: ReportStatus
+    reviewedByAdminId: string
+    resolutionNote?: string
+    escalatedTicketId?: bigint
+  },
+) {
+  return prisma.messageReport.update({
+    where: { id: reportId },
+    data: { ...data, reviewedAt: new Date() },
+  })
+}
+
 export const reportRepository = {
   createReport,
   findRecentReport,
+  findById,
+  findManyForAdmin,
+  updateStatus,
 }

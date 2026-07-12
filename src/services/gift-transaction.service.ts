@@ -69,11 +69,14 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
     throw new AppError(404, 'Gift not found', 'NOT_FOUND')
   }
 
+  const senderHasActiveVipMembership = await vipMembershipService.hasActive(params.senderUserId)
+  if (gift.vipOnly && !senderHasActiveVipMembership) {
+    throw new AppError(403, 'VIP membership required for this gift', 'VIP_MEMBERSHIP_REQUIRED')
+  }
+
   const coinCost = gift.coinCost
   const pointsAwarded = Number(hostPointsFromGift(BigInt(coinCost)))
   const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys()
-
-  const senderHasActiveVipMembership = await vipMembershipService.hasActive(params.senderUserId)
 
   type LevelRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>
 

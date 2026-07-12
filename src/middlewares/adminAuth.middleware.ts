@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { systemAdminService } from '../services/systemAdmin.service'
+import { redisClient, RedisKeys, ADMIN_ONLINE_TTL } from '../config/redis'
 import { AppError } from './errorHandler'
 import type { AdminRole } from '@prisma/client'
 
@@ -22,6 +23,11 @@ export async function authenticateAdmin(req: FastifyRequest, _reply: FastifyRepl
   const payload = await systemAdminService.verifyAccessToken(token)
 
   req.adminUser = { id: payload.sub, role: payload.role }
+
+  // Presence heartbeat — any authenticated admin request marks the admin online.
+  void redisClient
+    .set(RedisKeys.adminOnline(payload.sub), '1', 'EX', ADMIN_ONLINE_TTL)
+    .catch(() => null)
 }
 
 export function requireAdminRole(...roles: AdminRole[]) {

@@ -1,7 +1,18 @@
 import { prisma, prismaRead } from '../config/database'
 import { Prisma } from '@prisma/client'
+import { toGiftSlug } from '../utils/gift-slug'
 
 export type GiftWithTags = Prisma.GiftGetPayload<{ include: { tags: true } }>
+
+async function uniqueCodeFromName(name: string): Promise<string> {
+  let code = toGiftSlug(name)
+  let suffix = 0
+  while (await prismaRead.gift.findUnique({ where: { code } })) {
+    suffix += 1
+    code = toGiftSlug(`${name}_${suffix}`)
+  }
+  return code
+}
 
 export const giftRepository = {
   async findById(id: string): Promise<GiftWithTags | null> {
@@ -25,7 +36,7 @@ export const giftRepository = {
       prismaRead.gift.findMany({
         where,
         include: { tags: true },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
         skip: params.skip,
         take: params.take,
       }),
@@ -41,10 +52,13 @@ export const giftRepository = {
     displayImageUrl: string
     effectUrl?: string | null
     tags: string[]
+    code?: string
   }) {
+    const code = data.code ?? (await uniqueCodeFromName(data.name))
     return prisma.gift.create({
       data: {
         name: data.name,
+        code,
         coinCost: data.coinCost,
         displayImageUrl: data.displayImageUrl,
         effectUrl: data.effectUrl ?? null,

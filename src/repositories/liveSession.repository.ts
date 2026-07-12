@@ -47,4 +47,12 @@ export const liveSessionRepository = {
       data: { endedAt, durationSeconds, status: 'INTERRUPTED' },
     })
   },
+
+  /** Lookup by session id or LiveKit room id — used to soft-validate LIVE user reports. */
+  async findByIdOrRoomId(ref: string) {
+    return prismaRead.hostLiveSession.findFirst({
+      where: { OR: [{ id: ref }, { roomId: ref }] },
+      select: { id: true, hostUserId: true, roomId: true, status: true },
+    })
+  },
 }

@@ -1061,6 +1061,7 @@ export const withdrawalService = {
       subType: 'WITHDRAWAL_DISPUTE',
       description: `Withdrawal dispute for ID: ${withdrawalId}. ${input.description}`,
       imageUrl: evidenceUrl,
+      transactionRef: { refType: 'WITHDRAWAL', refId: withdrawalId },
     })
 
     await prisma.withdrawal.update({

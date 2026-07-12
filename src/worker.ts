@@ -29,6 +29,8 @@ import {
   STORE_ITEM_EXPIRY_QUEUE,
 } from './queues/store-item-expiry.constants'
 import { storeService } from './services/store.service'
+import { SUPPORT_AUTOCLOSE_QUEUE } from './queues/support-autoclose.constants'
+import { supportService } from './services/support.service'
 import {
   PUBLIC_ID_PREGEN_HORIZON_JOB,
   PUBLIC_ID_PREGEN_QUEUE,
@@ -205,6 +207,14 @@ async function main() {
       } else if (job.name === RARE_ID_EXPIRY_JOB) {
         await storeService.processRareIdExpiryJob(job.data.assignmentId!)
       }
+    },
+    { connection, concurrency: 2 },
+  )
+
+  const supportAutocloseWorker = new Worker(
+    SUPPORT_AUTOCLOSE_QUEUE,
+    async (job: Job<{ ticketId: string }>) => {
+      await supportService.processAutocloseJob(BigInt(job.data.ticketId))
     },
     { connection, concurrency: 2 },
   )
@@ -500,6 +510,10 @@ async function main() {
     console.error('[Store item expiry] Job failed:', job?.id, err)
   })
 
+  supportAutocloseWorker.on('failed', (job, err) => {
+    console.error('[Support autoclose] Job failed:', job?.id, err)
+  })
+
   publicIdPregenWorker.on('failed', (job, err) => {
     console.error('[Public ID pregen] Job failed:', job?.id, err)
   })
@@ -571,6 +585,7 @@ async function main() {
     await richTierRolloverQueue.close()
     await publicIdPregenWorker.close()
     await storeItemExpiryWorker.close()
+    await supportAutocloseWorker.close()
     await guardianExpiryWorker.close()
     await subscriptionGraceWorker.close()
     await subscriptionRenewalWorker.close()

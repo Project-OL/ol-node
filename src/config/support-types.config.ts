@@ -44,6 +44,9 @@ export const SUPPORT_TYPE_CONFIG: SupportTypeConfig[] = [
       { key: 'VIOLATION_OF_CHILD_SAFETY', label: 'Violation of Child Safety' },
       { key: 'REPORT_OTHERS', label: 'Report Others' },
       { key: 'WITHDRAWAL_DISPUTE', label: 'Withdrawal dispute' },
+      { key: 'POINT_TRANSFER_CONFLICT', label: 'Point Transfer Conflict' },
+      { key: 'COIN_TRANSFER_CONFLICT', label: 'Coin Transfer Conflict' },
+      { key: 'USER_REPORT_ESCALATION', label: 'User Report Escalation' },
     ],
   },
   {
@@ -71,4 +74,17 @@ export function isValidSubType(type: string, subType: string): boolean {
   const typeConf = SUPPORT_TYPE_CONFIG.find((t) => t.key === type)
   if (!typeConf) return false
   return typeConf.subTypes.some((s) => s.key === subType)
+}
+
+/** Payment-related complaints jump the queue. */
+const HIGH_PRIORITY_SUBTYPES = new Set([
+  'WITHDRAWAL_DISPUTE',
+  'GIFT_FRAUD',
+  'TOPUP_FRAUD',
+  'POINT_TRANSFER_CONFLICT',
+  'COIN_TRANSFER_CONFLICT',
+])
+
+export function getDefaultPriority(subType: string): 'HIGH' | 'NORMAL' {
+  return HIGH_PRIORITY_SUBTYPES.has(subType) ? 'HIGH' : 'NORMAL'
 }

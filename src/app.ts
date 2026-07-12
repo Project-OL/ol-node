@@ -52,12 +52,15 @@ import superHostRoutes from './routes/v1/super-host.routes'
 import { supportRoutes } from './routes/v1/support.routes'
 import storeRoutes from './routes/v1/store.routes'
 import storeAdminRoutes from './routes/v1/store-admin.routes'
+import giftAdminRoutes from './routes/v1/gift-admin.routes'
 import { richTierRoutes } from './routes/v1/rich-tier.routes'
 import vipMembershipRoutes from './routes/v1/vip-membership.routes'
 import agencyRoutes from './routes/v1/agency.routes'
 import agencyAdminRoutes from './routes/v1/agency-admin.routes'
 import questionnaireRoutes from './routes/v1/questionnaire.routes'
 import questionnaireAdminRoutes from './routes/v1/questionnaire-admin.routes'
+import csaAdminRoutes from './routes/v1/csa-admin.routes'
+import supportAdminRoutes from './routes/v1/support-admin.routes'
 import userAdminRoutes from './routes/v1/user-admin.routes'
 import platformMessageAdminRoutes from './routes/v1/platform-message-admin.routes'
 import adminUserWalletRoutes from './routes/v1/admin-user-wallet.routes'
@@ -220,6 +223,7 @@ export async function buildApp() {
       await registerAdminAuthRoutes(adminApp)
       await adminApp.register(superHostRoutes)
       await adminApp.register(storeAdminRoutes)
+      await adminApp.register(giftAdminRoutes)
       await adminApp.register(adminUserWalletRoutes)
       await adminApp.register(adminUserModerationRoutes)
       await adminApp.register(userAdminRoutes)
@@ -228,6 +232,8 @@ export async function buildApp() {
       await adminApp.register(faceVerificationAdminRoutes)
       await adminApp.register(agencyAdminRoutes, { prefix: '/agency' })
       await adminApp.register(questionnaireAdminRoutes, { prefix: '/questionnaires' })
+      await adminApp.register(csaAdminRoutes, { prefix: '/support' })
+      await adminApp.register(supportAdminRoutes, { prefix: '/support' })
     },
     { prefix: `${prefix}/admin` },
   )

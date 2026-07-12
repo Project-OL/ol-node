@@ -90,21 +90,35 @@ export const CheckBlockQuerySchema = z.object({
   publicId: z.string().min(1, 'publicId is required'),
 })
 
-export const CreateReportSchema = z.object({
-  reportedUserId: z.string().uuid(),
-  conversationId: z.string().cuid().optional(),
-  messageId: z.string().cuid().optional(),
-  reason: z.enum([
-    'SPAM',
-    'HARASSMENT',
-    'INAPPROPRIATE_CONTENT',
-    'FAKE_ACCOUNT',
-    'VIOLENCE',
-    'OTHER',
-  ]),
-  additionalInfo: z.string().max(1000).optional(),
-  evidenceS3Keys: z.array(z.string().min(1)).max(5).optional(),
-})
+export const CreateReportSchema = z
+  .object({
+    reportedUserId: z.string().uuid(),
+    conversationId: z.string().cuid().optional(),
+    messageId: z.string().cuid().optional(),
+    reason: z.enum([
+      'SPAM',
+      'HARASSMENT',
+      'INAPPROPRIATE_CONTENT',
+      'FAKE_ACCOUNT',
+      'VIOLENCE',
+      'OTHER',
+    ]),
+    additionalInfo: z.string().max(1000).optional(),
+    evidenceS3Keys: z.array(z.string().min(1)).max(5).optional(),
+    /** CHAT (default) = DM report; LIVE = report raised during a live broadcast. */
+    context: z.enum(['CHAT', 'LIVE']).default('CHAT'),
+    liveSessionId: z.string().min(1).max(200).optional(),
+    hostUserId: z.string().uuid().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.context === 'LIVE' && !val.liveSessionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['liveSessionId'],
+        message: 'liveSessionId is required for LIVE reports',
+      })
+    }
+  })
 
 export const GetUploadUrlsSchema = z
   .object({

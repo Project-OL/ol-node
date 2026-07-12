@@ -40,3 +40,4 @@ CLAUDE.md
 lab/
 tests/
 package-lock.json
+.claude/

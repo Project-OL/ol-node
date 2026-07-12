@@ -100,6 +100,7 @@ model User {
   blockedUsers                  BlockList[]                    @relation("BlockedUsers")
   reporterReports               MessageReport[]                @relation("Reporter")
   reportedReports               MessageReport[]                @relation("Reported")
+  reportedAsLiveHost            MessageReport[]                @relation("ReportedLiveHost")
   reminderOwner                 BroadcastReminder[]            @relation("ReminderOwner")
   reminderCreator               BroadcastReminder[]            @relation("ReminderCreator")
   wallets                       Wallet[]
@@ -940,13 +941,24 @@ model MessageReport {
   additionalInfo String?      @map("additional_info") @db.Text
   evidenceS3Keys String[]     @map("evidence_s3_keys")
   status         ReportStatus @default(PENDING)
+  context           ReportContext @default(CHAT)
+  liveSessionId     String?       @map("live_session_id")
+  hostUserId        String?       @map("host_user_id") @db.Uuid
+  reviewedByAdminId String?       @map("reviewed_by_admin_id")
+  reviewedAt        DateTime?     @map("reviewed_at")
+  resolutionNote    String?       @map("resolution_note") @db.Text
+  escalatedTicketId BigInt?       @map("escalated_ticket_id") @db.BigInt
   createdAt      DateTime     @default(now()) @map("created_at")
   reporter       User         @relation("Reporter", fields: [reporterId], references: [id])
   reportedUser   User         @relation("Reported", fields: [reportedUserId], references: [id])
+  hostUser        User?        @relation("ReportedLiveHost", fields: [hostUserId], references: [id], onDelete: SetNull)
+  reviewedByAdmin SystemAdmin? @relation("ReportReviewer", fields: [reviewedByAdminId], references: [id], onDelete: SetNull)
 
   @@index([reporterId])
   @@index([reportedUserId])
   @@index([createdAt])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([context, status])
   @@map("message_reports")
 }
 
@@ -1514,6 +1526,33 @@ enum SupportTicketStatus {
   OPEN
   AWAITING_REPLY
   CLOSED
+  ASSIGNED
+  PENDING_REVIEW
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum SupportTicketResolution {
+  RESOLVED
+  REJECTED
+}
+
+enum CsaNotificationType {
+  TICKET_ASSIGNED
+  TICKET_REPLY
+  TICKET_REASSIGNED
+  TICKET_ESCALATED
+  REPORT_ASSIGNED
+}
+
+enum ReportContext {
+  CHAT
+  LIVE
 }
 
 enum SupportMessageSenderType {
@@ -1594,22 +1633,45 @@ model VideoCallSession {
 
 // ── Gifts, gallery, fan ranking ───────────────────────────────────────────────
 
+model GiftCategory {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @db.VarChar(255)
+  slug         String   @unique @db.VarChar(64)
+  displayOrder Int      @default(0) @map("display_order")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  gifts Gift[]
+
+  @@index([isActive])
+  @@index([displayOrder])
+  @@map("gift_categories")
+}
+
 model Gift {
   id              String   @id @default(uuid()) @db.Uuid
   name            String   @db.VarChar(255)
+  code            String   @unique @db.VarChar(64)
   coinCost        Int      @map("coin_cost")
   displayImageUrl String   @map("display_image_url") @db.Text
   effectUrl       String?  @map("effect_url") @db.Text
+  displayOrder    Int      @default(0) @map("display_order")
+  vipOnly         Boolean  @default(false) @map("vip_only")
   isActive        Boolean  @default(true) @map("is_active")
+  categoryId      String?  @map("category_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
+  category            GiftCategory?            @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   tags                GiftTag[]
   gallerySectionItems GiftGallerySectionItem[]
   transactions        GiftTransaction[]
   galleryProgressRows GiftGalleryProgress[]
 
   @@index([isActive])
+  @@index([categoryId])
+  @@index([displayOrder])
   @@map("gifts")
 }
 
@@ -1640,10 +1702,12 @@ model GiftGallery {
 }
 
 model GiftGallerySection {
-  id        String @id @default(uuid()) @db.Uuid
-  galleryId String @map("gallery_id") @db.Uuid
-  title     String @db.VarChar(255)
-  sortOrder Int    @default(0) @map("sort_order")
+  id        String    @id @default(uuid()) @db.Uuid
+  galleryId String    @map("gallery_id") @db.Uuid
+  title     String    @db.VarChar(255)
+  sortOrder Int       @default(0) @map("sort_order")
+  isActive  Boolean   @default(true) @map("is_active")
+  enabledAt DateTime? @map("enabled_at")
 
   gallery GiftGallery              @relation(fields: [galleryId], references: [id], onDelete: Cascade)
   gifts   GiftGallerySectionItem[]
@@ -1965,16 +2029,62 @@ model SupportTicket {
   ratedAt               DateTime?           @map("rated_at")
   closedAt              DateTime?           @map("closed_at")
   closedByUserId        String?             @map("closed_by_user_id") @db.Uuid
+  assignedAdminId       String?             @map("assigned_admin_id")
+  assignedAt            DateTime?           @map("assigned_at")
+  priority              SupportTicketPriority    @default(NORMAL)
+  resolution            SupportTicketResolution?
+  resolvedAt            DateTime?           @map("resolved_at")
+  firstResponseAt       DateTime?           @map("first_response_at")
+  // Transaction reference for payment-conflict tickets (WITHDRAWAL | POINT_TRANSFER | COIN_TRANSFER | LEDGER_ENTRY)
+  refType               String?             @map("ref_type") @db.VarChar(40)
+  refId                 String?             @map("ref_id") @db.VarChar(120)
   createdAt             DateTime            @default(now()) @map("created_at")
   updatedAt             DateTime            @updatedAt @map("updated_at")
 
-  user     User             @relation("SupportTicketsAsUser", fields: [userId], references: [id], onDelete: Cascade)
-  closedBy User?            @relation("SupportTicketsClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
-  messages SupportMessage[]
+  user          User                @relation("SupportTicketsAsUser", fields: [userId], references: [id], onDelete: Cascade)
+  closedBy      User?               @relation("SupportTicketsClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  assignedAdmin SystemAdmin?        @relation("TicketAssignee", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+  messages      SupportMessage[]
+  notes         SupportTicketNote[]
+  csaNotifications CsaNotification[]
 
   @@index([userId, status, updatedAt])
   @@index([status, updatedAt])
+  @@index([assignedAdminId, status, updatedAt])
+  @@index([refType, refId])
   @@map("support_tickets")
+}
+
+model SupportTicketNote {
+  id        BigInt   @id @default(autoincrement()) @db.BigInt
+  ticketId  BigInt   @map("ticket_id") @db.BigInt
+  adminId   String   @map("admin_id")
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  admin  SystemAdmin   @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_notes")
+}
+
+model CsaNotification {
+  id        BigInt              @id @default(autoincrement()) @db.BigInt
+  adminId   String              @map("admin_id")
+  type      CsaNotificationType
+  ticketId  BigInt?             @map("ticket_id") @db.BigInt
+  reportId  String?             @map("report_id")
+  message   String              @db.VarChar(500)
+  isRead    Boolean             @default(false) @map("is_read")
+  readAt    DateTime?           @map("read_at")
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  admin  SystemAdmin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  ticket SupportTicket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  @@index([adminId, isRead, createdAt(sort: Desc)])
+  @@map("csa_notifications")
 }
 
 model SupportMessage {
@@ -2335,6 +2445,13 @@ enum AdminRole {
   MODERATOR
   FINANCE
   CONTENT
+  CUSTOMER_SUPPORT
+}
+
+enum AdminStatus {
+  ACTIVE
+  DISABLED
+  SUSPENDED
 }
 
 model SystemAdmin {
@@ -2343,12 +2460,27 @@ model SystemAdmin {
   passwordHash String    @map("password_hash")
   role         AdminRole @default(MODERATOR)
   displayName  String    @map("display_name")
-  isActive     Boolean   @default(true) @map("is_active")
+  // isActive is derived from status — the only writer is csaManagementService.setStatus
+  // (isActive = status === 'ACTIVE'); login/verifyAccessToken keep checking isActive.
+  isActive          Boolean     @default(true) @map("is_active")
+  username          String?     @unique @db.VarChar(50)
+  phone             String?     @db.VarChar(20)
+  phoneCountryCode  String?     @map("phone_country_code") @db.VarChar(8)
+  gender            String?     @db.VarChar(20)
+  country           String?     @db.VarChar(100)
+  status            AdminStatus @default(ACTIVE)
+  failedLoginCount  Int         @default(0) @map("failed_login_count")
+  lastFailedLoginAt DateTime?   @map("last_failed_login_at")
+  lockedUntil       DateTime?   @map("locked_until")
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
   lastLoginAt  DateTime? @map("last_login_at")
 
-  sessions AdminSession[]
+  sessions        AdminSession[]
+  assignedTickets SupportTicket[]     @relation("TicketAssignee")
+  ticketNotes     SupportTicketNote[]
+  notifications   CsaNotification[]
+  reviewedReports MessageReport[]     @relation("ReportReviewer")
 
   @@map("system_admins")
 }

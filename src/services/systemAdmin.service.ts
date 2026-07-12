@@ -1,8 +1,15 @@
 import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env'
-import { redisClient, RedisKeys } from '../config/redis'
-import { systemAdminRepository } from '../repositories/systemAdmin.repository'
+import {
+  redisClient,
+  RedisKeys,
+  ADMIN_LOGIN_FAIL_TTL,
+  ADMIN_LOGIN_FAIL_LIMIT,
+  ADMIN_LOCKOUT_THRESHOLD,
+  ADMIN_LOCKOUT_MINUTES,
+} from '../config/redis'
+import { systemAdminRepository, type AdminProfileData } from '../repositories/systemAdmin.repository'
 import { AppError } from '../middlewares/errorHandler'
 import { parseJwtExpiresToSeconds } from '../utils/jwt'
 import type { AdminRole } from '@prisma/client'
@@ -48,14 +55,20 @@ function signRefreshToken(adminId: string, sessionId: string): string {
 }
 
 export const systemAdminService = {
-  async createAdmin(data: {
-    email: string
-    password: string
-    displayName: string
-    role?: AdminRole
-  }) {
+  async createAdmin(
+    data: {
+      email: string
+      password: string
+      displayName: string
+      role?: AdminRole
+    } & AdminProfileData,
+  ) {
     const existing = await systemAdminRepository.findByEmail(data.email)
     if (existing) throw new AppError(409, 'Email already registered', 'ADMIN_EMAIL_CONFLICT')
+    if (data.username) {
+      const usernameTaken = await systemAdminRepository.findByUsername(data.username)
+      if (usernameTaken) throw new AppError(409, 'Username already taken', 'ADMIN_USERNAME_CONFLICT')
+    }
 
     const passwordHash = await bcrypt.hash(data.password, BCRYPT_ROUNDS)
     return systemAdminRepository.create({
@@ -63,19 +76,58 @@ export const systemAdminService = {
       passwordHash,
       displayName: data.displayName,
       role: data.role ?? 'MODERATOR',
+      username: data.username ?? null,
+      phone: data.phone ?? null,
+      phoneCountryCode: data.phoneCountryCode ?? null,
+      gender: data.gender ?? null,
+      country: data.country ?? null,
     })
   },
 
   async login(email: string, password: string, meta: { ipAddress?: string; userAgent?: string }) {
+    // Pre-DB throttle: brakes dictionary attacks even for unknown emails.
+    const failKey = RedisKeys.adminLoginFail(email)
+    const recentFailures = Number((await redisClient.get(failKey).catch(() => null)) ?? 0)
+    if (recentFailures >= ADMIN_LOGIN_FAIL_LIMIT) {
+      throw new AppError(429, 'Too many login attempts. Try again later.', 'TOO_MANY_ATTEMPTS', {
+        retryAfter: ADMIN_LOGIN_FAIL_TTL,
+      })
+    }
+
     const admin = await systemAdminRepository.findByEmail(email)
     if (!admin || !admin.isActive) {
+      await recordLoginFailure(failKey)
       throw new AppError(401, 'Invalid credentials', 'ADMIN_INVALID_CREDENTIALS')
+    }
+
+    if (admin.lockedUntil && admin.lockedUntil > new Date()) {
+      const retryAfter = Math.ceil((admin.lockedUntil.getTime() - Date.now()) / 1000)
+      throw new AppError(423, 'Account temporarily locked', 'ADMIN_ACCOUNT_LOCKED', { retryAfter })
     }
 
     const valid = await bcrypt.compare(password, admin.passwordHash)
     if (!valid) {
+      await recordLoginFailure(failKey)
+      const updated = await systemAdminRepository.incrementFailedLogin(admin.id)
+      if (updated.failedLoginCount >= ADMIN_LOCKOUT_THRESHOLD) {
+        const until = new Date(Date.now() + ADMIN_LOCKOUT_MINUTES * 60_000)
+        await systemAdminRepository.setLockedUntil(admin.id, until)
+        console.warn('[admin-auth] account locked after repeated failures', {
+          adminId: admin.id,
+          lockedUntil: until.toISOString(),
+        })
+      }
       throw new AppError(401, 'Invalid credentials', 'ADMIN_INVALID_CREDENTIALS')
     }
+
+    if (admin.failedLoginCount > 0 || admin.lockedUntil) {
+      await systemAdminRepository.resetFailedLogin(admin.id)
+    }
+
+    // A successful login supersedes any earlier logout/disable revocation —
+    // without this, the admin:revoked flag (TTL = access-token TTL) would
+    // reject the freshly minted token too.
+    await redisClient.del(RedisKeys.adminTokenRevoked(admin.id)).catch(() => null)
 
     const placeholderHash = await bcrypt.hash(cryptoRandom(), 10)
     const session = await systemAdminRepository.createSession({
@@ -99,6 +151,9 @@ export const systemAdminService = {
         email: admin.email,
         displayName: admin.displayName,
         role: admin.role,
+        username: admin.username,
+        country: admin.country,
+        status: admin.status,
       },
     }
   },
@@ -166,4 +221,13 @@ export const systemAdminService = {
 
 function cryptoRandom(): string {
   return `${Date.now()}-${Math.random()}`
+}
+
+async function recordLoginFailure(failKey: string): Promise<void> {
+  try {
+    const count = await redisClient.incr(failKey)
+    if (count === 1) await redisClient.expire(failKey, ADMIN_LOGIN_FAIL_TTL)
+  } catch {
+    // Redis unavailable — fail open; the DB lockout still protects known accounts.
+  }
 }

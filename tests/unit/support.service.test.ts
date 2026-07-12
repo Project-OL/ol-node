@@ -49,6 +49,21 @@ vi.mock('../../src/services/storage.service', () => ({
   },
 }))
 
+const assignTicket = vi.fn()
+vi.mock('../../src/services/supportAssignment.service', () => ({
+  supportAssignmentService: {
+    assignTicket: (...a: unknown[]) => assignTicket(...a),
+    reassignAllFrom: vi.fn(),
+  },
+}))
+
+const notify = vi.fn()
+vi.mock('../../src/services/csaNotification.service', () => ({
+  csaNotificationService: {
+    notify: (...a: unknown[]) => notify(...a),
+  },
+}))
+
 const { supportService } = await import('../../src/services/support.service')
 
 const userId = '11111111-1111-1111-1111-111111111111'
@@ -93,7 +108,43 @@ describe('supportService', () => {
     )
     expect(updateTicketStatus).toHaveBeenCalledWith(ticketId, 'OPEN')
     expect(redisDel).toHaveBeenCalled()
+    expect(assignTicket).toHaveBeenCalledWith(ticketId)
     expect(out.status).toBe('OPEN')
+  })
+
+  it('createTicket — assignment failure does not break creation', async () => {
+    createTicket.mockResolvedValue({ id: ticketId, userId, status: 'AWAITING_REPLY' })
+    createMessage.mockResolvedValue({ id: 1n })
+    updateTicketStatus.mockResolvedValue({ id: ticketId, status: 'OPEN', userId })
+    assignTicket.mockRejectedValue(new Error('no CSA infra'))
+
+    const out = await supportService.createTicket(userId, {
+      type: 'CONSULT',
+      subType: 'TOP_UP',
+      description: 'Need help',
+    })
+    expect(out.status).toBe('OPEN')
+  })
+
+  it('createTicket — payment conflict subType gets HIGH priority + transactionRef persisted', async () => {
+    createTicket.mockResolvedValue({ id: ticketId, userId, status: 'AWAITING_REPLY' })
+    createMessage.mockResolvedValue({ id: 1n })
+    updateTicketStatus.mockResolvedValue({ id: ticketId, status: 'OPEN', userId })
+
+    await supportService.createTicket(userId, {
+      type: 'REPORT_COMPLAINTS',
+      subType: 'POINT_TRANSFER_CONFLICT',
+      description: 'Transfer went missing',
+      transactionRef: { refType: 'POINT_TRANSFER', refId: 'ref-123' },
+    })
+
+    expect(createTicket).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priority: 'HIGH',
+        refType: 'POINT_TRANSFER',
+        refId: 'ref-123',
+      }),
+    )
   })
 
   it('createTicket — invalid subType throws AppError 400 INVALID_SUBTYPE', async () => {
@@ -126,9 +177,49 @@ describe('supportService', () => {
         content: 'Hello',
       }),
     )
-    expect(updateTicketStatus).toHaveBeenCalledWith(ticketId, 'AWAITING_REPLY')
+    expect(updateTicketStatus).toHaveBeenCalledWith(ticketId, 'AWAITING_REPLY', undefined)
     expect(updateReadPointer).toHaveBeenCalledWith(ticketId, 'USER', 2n)
     expect(redisDel).toHaveBeenCalled()
+  })
+
+  it('sendMessage — user message notifies assigned CSA', async () => {
+    findTicketById.mockResolvedValue({
+      id: ticketId,
+      publicId: 'tkt_abc',
+      userId,
+      status: 'ASSIGNED',
+      assignedAdminId: 'csa-1',
+    })
+    createMessage.mockResolvedValue({ id: 2n })
+    updateReadPointer.mockResolvedValue({ id: ticketId })
+
+    await supportService.sendMessage(ticketId, userId, false, { content: 'Any update?' })
+
+    expect(notify).toHaveBeenCalledWith(
+      'csa-1',
+      'TICKET_REPLY',
+      expect.stringContaining('tkt_abc'),
+      { ticketId },
+    )
+  })
+
+  it('sendMessage — user message on PENDING_REVIEW contests: clears resolution → AWAITING_REPLY', async () => {
+    findTicketById.mockResolvedValue({
+      id: ticketId,
+      publicId: 'tkt_abc',
+      userId,
+      status: 'PENDING_REVIEW',
+      assignedAdminId: 'csa-1',
+    })
+    createMessage.mockResolvedValue({ id: 5n })
+    updateReadPointer.mockResolvedValue({ id: ticketId })
+
+    await supportService.sendMessage(ticketId, userId, false, { content: 'Not fixed!' })
+
+    expect(updateTicketStatus).toHaveBeenCalledWith(ticketId, 'AWAITING_REPLY', {
+      resolution: null,
+      resolvedAt: null,
+    })
   })
 
   it('sendMessage — CS on AWAITING_REPLY → OPEN + cache invalidation', async () => {
@@ -145,9 +236,55 @@ describe('supportService', () => {
     expect(createMessage).toHaveBeenCalledWith(
       expect.objectContaining({ senderType: 'SUPPORT', content: 'We can help' }),
     )
-    expect(updateTicketStatus).toHaveBeenCalledWith(ticketId, 'OPEN')
+    expect(updateTicketStatus).toHaveBeenCalledWith(ticketId, 'OPEN', undefined)
     expect(updateReadPointer).toHaveBeenCalledWith(ticketId, 'SUPPORT', 3n)
     expect(redisDel).toHaveBeenCalled()
+  })
+
+  it('confirmClose — owner on PENDING_REVIEW → CLOSED', async () => {
+    findTicketById.mockResolvedValue({
+      id: ticketId,
+      userId,
+      status: 'PENDING_REVIEW',
+    })
+    updateTicketStatus.mockResolvedValue({ id: ticketId, status: 'CLOSED', userId })
+
+    await supportService.confirmClose(ticketId, userId)
+
+    expect(updateTicketStatus).toHaveBeenCalledWith(
+      ticketId,
+      'CLOSED',
+      expect.objectContaining({ closedByUserId: userId }),
+    )
+  })
+
+  it('confirmClose — non-owner throws 403; non-PENDING_REVIEW throws 409', async () => {
+    findTicketById.mockResolvedValue({ id: ticketId, userId: 'someone-else', status: 'PENDING_REVIEW' })
+    await expect(supportService.confirmClose(ticketId, userId)).rejects.toMatchObject({
+      statusCode: 403,
+    })
+
+    findTicketById.mockResolvedValue({ id: ticketId, userId, status: 'OPEN' })
+    await expect(supportService.confirmClose(ticketId, userId)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'TICKET_NOT_PENDING_REVIEW',
+    })
+  })
+
+  it('processAutocloseJob — closes only when still PENDING_REVIEW', async () => {
+    findTicketById.mockResolvedValue({ id: ticketId, userId, status: 'PENDING_REVIEW' })
+    updateTicketStatus.mockResolvedValue({ id: ticketId, status: 'CLOSED' })
+    await supportService.processAutocloseJob(ticketId)
+    expect(updateTicketStatus).toHaveBeenCalledWith(
+      ticketId,
+      'CLOSED',
+      expect.objectContaining({ closedAt: expect.any(Date) }),
+    )
+
+    updateTicketStatus.mockClear()
+    findTicketById.mockResolvedValue({ id: ticketId, userId, status: 'AWAITING_REPLY' })
+    await supportService.processAutocloseJob(ticketId)
+    expect(updateTicketStatus).not.toHaveBeenCalled()
   })
 
   it('sendMessage — CLOSED throws 409 TICKET_CLOSED', async () => {

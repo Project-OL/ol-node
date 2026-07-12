@@ -819,8 +819,14 @@ export const storeService = {
     displayImageUrl: string
     effectUrl?: string | null
     sortOrder?: number
+    isActive?: boolean
   }) {
-    const created = await prisma.storeItem.create({ data })
+    const created = await prisma.storeItem.create({
+      data: {
+        ...data,
+        isActive: data.isActive ?? true,
+      },
+    })
     await cacheRedisService.del(RedisKeys.storeCatalog(), RedisKeys.storeCatalog(created.category))
     return created
   },
@@ -831,6 +837,7 @@ export const storeService = {
       name?: string
       description?: string | null
       coinCost?: number
+      validityDays?: number
       isActive?: boolean
       sortOrder?: number
       displayImageUrl?: string

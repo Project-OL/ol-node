@@ -1,0 +1,324 @@
+import { redisClient, RedisKeys } from '../config/redis'
+import { supportRepository } from '../repositories/support.repository'
+import { systemAdminRepository } from '../repositories/systemAdmin.repository'
+import { storageService } from './storage.service'
+import { csaNotificationService } from './csaNotification.service'
+import { enqueueSupportTicketAutoclose } from '../queues/support-autoclose.queue'
+import { AppError } from '../middlewares/errorHandler'
+import type {
+  SupportTicketStatus,
+  SupportTicketType,
+  SupportTicketPriority,
+  SupportTicketResolution,
+} from '@prisma/client'
+import type { z } from 'zod'
+import type {
+  AdminTicketListQuery,
+  AdminReplySchema,
+  AdminTicketMessagesQuerySchema,
+  AdminUploadUrlSchema,
+} from '../models/support-admin.schemas'
+
+const PRESIGN_TTL_SEC = 600
+
+interface AdminActor {
+  id: string
+  role: string
+}
+
+/**
+ * Externally-meaningful 4-stage lifecycle derived from status + assignment.
+ * AWAITING_REPLY stays a live DB status ("user's turn ended, CS action
+ * needed") but renders as assigned/open depending on ownership.
+ */
+export function deriveStage(ticket: {
+  status: SupportTicketStatus
+  assignedAdminId: string | null
+}): 'open' | 'assigned' | 'pending_review' | 'closed' {
+  if (ticket.status === 'CLOSED') return 'closed'
+  if (ticket.status === 'PENDING_REVIEW') return 'pending_review'
+  if (ticket.assignedAdminId) return 'assigned'
+  return 'open'
+}
+
+function toJsonSafe<T>(value: T): T {
+  return JSON.parse(
+    JSON.stringify(value, (_key, jsonValue) =>
+      typeof jsonValue === 'bigint' ? jsonValue.toString() : jsonValue,
+    ),
+  ) as T
+}
+
+async function invalidateUserCaches(userId: string, ticketId: bigint): Promise<void> {
+  await Promise.all([
+    redisClient.del(RedisKeys.supportTicketList(userId)),
+    redisClient.del(RedisKeys.supportTicketDetail(ticketId)),
+  ])
+}
+
+function isSuperAdmin(actor: AdminActor): boolean {
+  return actor.role === 'SUPER_ADMIN'
+}
+
+async function findTicketOrThrow(ticketId: bigint) {
+  const ticket = await supportRepository.findTicketByIdForAdmin(ticketId)
+  if (!ticket) throw new AppError(404, 'Ticket not found', 'TICKET_NOT_FOUND')
+  return ticket
+}
+
+/** Assignee may act; SUPER_ADMIN may act on any ticket. */
+function assertCanAct(actor: AdminActor, ticket: { assignedAdminId: string | null }) {
+  if (isSuperAdmin(actor)) return
+  if (ticket.assignedAdminId !== actor.id) {
+    throw new AppError(403, 'Ticket is not assigned to you', 'TICKET_NOT_ASSIGNED_TO_YOU')
+  }
+}
+
+function ticketDto<T extends { status: SupportTicketStatus; assignedAdminId: string | null }>(
+  ticket: T,
+) {
+  return { ...ticket, stage: deriveStage(ticket) }
+}
+
+export const supportAdminService = {
+  async listTickets(actor: AdminActor, query: AdminTicketListQuery) {
+    const scope = query.assignedTo ?? (isSuperAdmin(actor) ? 'all' : 'me')
+
+    let assignedAdminId: string | undefined
+    let unassigned = false
+    if (scope === 'me') {
+      assignedAdminId = actor.id
+    } else if (scope === 'unassigned') {
+      unassigned = true
+    } else if (scope !== 'all') {
+      if (!isSuperAdmin(actor)) {
+        throw new AppError(403, 'Only SUPER_ADMIN can view other admins’ queues', 'ADMIN_FORBIDDEN')
+      }
+      assignedAdminId = scope
+    } else if (!isSuperAdmin(actor)) {
+      throw new AppError(403, 'Only SUPER_ADMIN can view the global queue', 'ADMIN_FORBIDDEN')
+    }
+
+    const skip = (query.page - 1) * query.limit
+    const { tickets, total } = await supportRepository.findAdminTickets({
+      status: query.status as SupportTicketStatus | undefined,
+      priority: query.priority as SupportTicketPriority | undefined,
+      type: query.type as SupportTicketType | undefined,
+      assignedAdminId,
+      unassigned,
+      skip,
+      take: query.limit,
+    })
+
+    return toJsonSafe({
+      tickets: tickets.map(ticketDto),
+      pagination: { page: query.page, limit: query.limit, total, hasMore: skip + tickets.length < total },
+    })
+  },
+
+  async getTicketDetail(
+    _actor: AdminActor,
+    ticketId: bigint,
+    messageQuery: z.infer<typeof AdminTicketMessagesQuerySchema>,
+  ) {
+    const ticket = await findTicketOrThrow(ticketId)
+
+    const [messages, notes] = await Promise.all([
+      supportRepository.findMessages(ticketId, {
+        cursor: messageQuery.cursor,
+        take: messageQuery.limit,
+      }),
+      supportRepository.findNotes(ticketId),
+    ])
+
+    const latestMessage = messages[0]
+    if (latestMessage) {
+      await supportRepository.updateReadPointer(ticketId, 'SUPPORT', latestMessage.id)
+    }
+
+    return toJsonSafe({
+      ticket: ticketDto(ticket),
+      messages: [...messages].reverse(),
+      notes,
+      hasMore: messages.length === messageQuery.limit,
+      nextCursor:
+        messages.length === messageQuery.limit ? String(messages[messages.length - 1]!.id) : null,
+    })
+  },
+
+  async reply(actor: AdminActor, ticketId: bigint, input: z.infer<typeof AdminReplySchema>) {
+    const ticket = await findTicketOrThrow(ticketId)
+    if (ticket.status === 'CLOSED') {
+      throw new AppError(409, 'Ticket is closed and no longer accepts messages', 'TICKET_CLOSED')
+    }
+    assertCanAct(actor, ticket)
+
+    const message = await supportRepository.createMessage({
+      ticketId,
+      senderType: 'SUPPORT',
+      content: input.content,
+      imageUrl: input.imageUrl,
+    })
+
+    await supportRepository.updateTicketStatus(ticketId, 'ASSIGNED', {
+      ...(ticket.firstResponseAt ? {} : { firstResponseAt: new Date() }),
+      // A SUPER_ADMIN replying to an unassigned ticket implicitly claims it.
+      ...(ticket.assignedAdminId ? {} : { assignedAdminId: actor.id, assignedAt: new Date() }),
+    })
+    await supportRepository.updateReadPointer(ticketId, 'SUPPORT', message.id)
+    await invalidateUserCaches(ticket.userId, ticketId)
+
+    return toJsonSafe(message)
+  },
+
+  async resolve(
+    actor: AdminActor,
+    ticketId: bigint,
+    input: { resolution: SupportTicketResolution; note?: string },
+  ) {
+    const ticket = await findTicketOrThrow(ticketId)
+    if (ticket.status === 'CLOSED') {
+      throw new AppError(409, 'Ticket is already closed', 'TICKET_ALREADY_CLOSED')
+    }
+    if (ticket.status === 'PENDING_REVIEW') {
+      throw new AppError(409, 'Ticket is already pending review', 'TICKET_ALREADY_PENDING_REVIEW')
+    }
+    assertCanAct(actor, ticket)
+
+    const resolvedAt = new Date()
+    const closingContent =
+      input.note ??
+      (input.resolution === 'RESOLVED'
+        ? 'Your issue has been resolved. This ticket will close automatically in 72 hours unless you reply.'
+        : 'Your request has been reviewed and rejected. This ticket will close automatically in 72 hours unless you reply.')
+
+    await supportRepository.createMessage({
+      ticketId,
+      senderType: 'SUPPORT',
+      content: closingContent,
+    })
+
+    const updated = await supportRepository.updateTicketStatus(ticketId, 'PENDING_REVIEW', {
+      resolution: input.resolution,
+      resolvedAt,
+      ...(ticket.firstResponseAt ? {} : { firstResponseAt: resolvedAt }),
+      ...(ticket.assignedAdminId ? {} : { assignedAdminId: actor.id, assignedAt: resolvedAt }),
+    })
+
+    await invalidateUserCaches(ticket.userId, ticketId)
+
+    try {
+      await enqueueSupportTicketAutoclose(ticketId, resolvedAt)
+    } catch (err) {
+      console.warn('[support-admin] autoclose enqueue failed (ticket stays PENDING_REVIEW)', {
+        ticketId: ticketId.toString(),
+        err,
+      })
+    }
+
+    return toJsonSafe(ticketDto(updated))
+  },
+
+  async forceClose(actor: AdminActor, ticketId: bigint) {
+    const ticket = await findTicketOrThrow(ticketId)
+    if (ticket.status === 'CLOSED') {
+      throw new AppError(409, 'Ticket is already closed', 'TICKET_ALREADY_CLOSED')
+    }
+    assertCanAct(actor, ticket)
+
+    const updated = await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
+      closedAt: new Date(),
+    })
+    await invalidateUserCaches(ticket.userId, ticketId)
+    return toJsonSafe(ticketDto(updated))
+  },
+
+  async assign(actor: AdminActor, ticketId: bigint, targetAdminId: string) {
+    const ticket = await findTicketOrThrow(ticketId)
+    if (ticket.status === 'CLOSED') {
+      throw new AppError(409, 'Cannot assign a closed ticket', 'TICKET_CLOSED')
+    }
+    // SUPER_ADMIN may move any ticket; a CSA may only hand off their own.
+    if (!isSuperAdmin(actor) && ticket.assignedAdminId !== actor.id) {
+      throw new AppError(403, 'Ticket is not assigned to you', 'TICKET_NOT_ASSIGNED_TO_YOU')
+    }
+
+    const target = await systemAdminRepository.findById(targetAdminId)
+    if (!target || target.role !== 'CUSTOMER_SUPPORT' || target.status !== 'ACTIVE') {
+      throw new AppError(404, 'Target is not an active customer support user', 'CSA_NOT_FOUND')
+    }
+    if (target.id === ticket.assignedAdminId) {
+      throw new AppError(409, 'Ticket is already assigned to this admin', 'ALREADY_ASSIGNED')
+    }
+
+    const wasUnassigned = !ticket.assignedAdminId
+    const updated = await supportRepository.assignTicket(ticketId, target.id, {
+      setStatusAssigned: wasUnassigned && (ticket.status === 'OPEN' || ticket.status === 'AWAITING_REPLY'),
+    })
+
+    await csaNotificationService.notify(
+      target.id,
+      wasUnassigned ? 'TICKET_ASSIGNED' : 'TICKET_REASSIGNED',
+      `Ticket ${ticket.publicId} (${ticket.type}/${ticket.subType}) assigned to you`,
+      { ticketId },
+    )
+
+    return toJsonSafe(ticketDto(updated))
+  },
+
+  async claim(actor: AdminActor, ticketId: bigint) {
+    const ticket = await findTicketOrThrow(ticketId)
+    if (ticket.status === 'CLOSED') {
+      throw new AppError(409, 'Cannot claim a closed ticket', 'TICKET_CLOSED')
+    }
+    if (ticket.assignedAdminId) {
+      throw new AppError(409, 'Ticket is already assigned', 'ALREADY_ASSIGNED')
+    }
+
+    const updated = await supportRepository.assignTicket(ticketId, actor.id, {
+      setStatusAssigned: ticket.status === 'OPEN' || ticket.status === 'AWAITING_REPLY',
+    })
+    return toJsonSafe(ticketDto(updated))
+  },
+
+  async setPriority(actor: AdminActor, ticketId: bigint, priority: SupportTicketPriority) {
+    const ticket = await findTicketOrThrow(ticketId)
+    if (ticket.status === 'CLOSED') {
+      throw new AppError(409, 'Cannot reprioritize a closed ticket', 'TICKET_CLOSED')
+    }
+    assertCanAct(actor, ticket)
+
+    const updated = await supportRepository.updateTicketStatus(ticketId, ticket.status, { priority })
+    return toJsonSafe(ticketDto(updated))
+  },
+
+  async addNote(actor: AdminActor, ticketId: bigint, content: string) {
+    await findTicketOrThrow(ticketId)
+    const note = await supportRepository.createNote({ ticketId, adminId: actor.id, content })
+    return toJsonSafe(note)
+  },
+
+  async listNotes(_actor: AdminActor, ticketId: bigint) {
+    await findTicketOrThrow(ticketId)
+    const notes = await supportRepository.findNotes(ticketId)
+    return toJsonSafe({ notes })
+  },
+
+  async getUploadUrl(actor: AdminActor, input: z.infer<typeof AdminUploadUrlSchema>) {
+    const ticket = await findTicketOrThrow(input.ticketId)
+    if (ticket.status === 'CLOSED') {
+      throw new AppError(409, 'Cannot upload to a closed ticket', 'TICKET_CLOSED')
+    }
+    assertCanAct(actor, ticket)
+
+    const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const key = `support/messages/${input.ticketId}/${Date.now()}_${safeFileName}`
+    const uploadUrl = await storageService.getPresignedPutUrl(key, input.mimeType, PRESIGN_TTL_SEC)
+    const publicUrl = storageService.getCdnOrS3PublicUrl(key)
+    return { uploadUrl, publicUrl, key }
+  },
+
+  async myStats(actor: AdminActor) {
+    return supportRepository.csaPerformance(actor.id)
+  },
+}

@@ -413,4 +413,9 @@ export const giftGalleryService = {
     const { year, month } = getActivePeriod()
     await bustGalleryCachesForMonth(year, month)
   },
+
+  /** Invalidate caches for a specific UTC gallery month. */
+  async invalidateMonthCaches(year: number, month: number): Promise<void> {
+    await bustGalleryCachesForMonth(year, month)
+  },
 }

@@ -7,6 +7,7 @@ import { adminUserPatchBodySchema } from '../../models/admin-user-detail.schemas
 import { adminUserTagsService } from '../../services/admin-user-tags.service'
 import { adminUserSearchService } from '../../services/adminUserSearch.service'
 import { adminUserDetailService } from '../../services/adminUserDetail.service'
+import { storeAdminService } from '../../services/store-admin.service'
 
 const preAuth = [authenticateAdmin]
 
@@ -29,6 +30,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
               enum: ['auto', 'name', 'userId', 'publicId', 'email', 'phone', 'deviceId'],
             },
             limit: { type: 'integer', minimum: 1, maximum: 50 },
+            includeStore: { type: 'boolean' },
           },
         },
       },
@@ -63,6 +65,25 @@ export default async function userAdminRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(await adminUserDetailService.getUserDetail(request.params.userId))
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
+    '/users/:userId/store-items',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Store'],
+        description: 'User-owned store items and currently equipped cosmetics.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      return reply.send(await storeAdminService.getUserStoreSummary(request.params.userId))
     },
   )
 

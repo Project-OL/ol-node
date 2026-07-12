@@ -17,7 +17,17 @@ const CreateAdminBody = z.object({
   email: z.string().email(),
   password: z.string().min(12),
   displayName: z.string().min(2),
-  role: z.enum(['SUPER_ADMIN', 'MODERATOR', 'FINANCE', 'CONTENT']).optional(),
+  role: z.enum(['SUPER_ADMIN', 'MODERATOR', 'FINANCE', 'CONTENT', 'CUSTOMER_SUPPORT']).optional(),
+  username: z
+    .string()
+    .min(3)
+    .max(50)
+    .regex(/^[a-zA-Z0-9._-]+$/)
+    .optional(),
+  phone: z.string().min(4).max(20).optional(),
+  phoneCountryCode: z.string().min(1).max(8).optional(),
+  gender: z.string().max(20).optional(),
+  country: z.string().max(100).optional(),
 })
 
 export async function registerAdminAuthRoutes(app: FastifyInstance) {

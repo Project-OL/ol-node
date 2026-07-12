@@ -2,8 +2,10 @@ import { redisClient, RedisKeys, SUPPORT_TICKET_LIST_TTL } from '../config/redis
 import type { SupportTicketStatus, SupportTicketType } from '@prisma/client'
 import { supportRepository } from '../repositories/support.repository'
 import { storageService } from './storage.service'
+import { supportAssignmentService } from './supportAssignment.service'
+import { csaNotificationService } from './csaNotification.service'
 import { AppError } from '../middlewares/errorHandler'
-import { SUPPORT_TYPE_CONFIG, isValidSubType } from '../config/support-types.config'
+import { SUPPORT_TYPE_CONFIG, isValidSubType, getDefaultPriority } from '../config/support-types.config'
 import type {
   SupportUploadUrlInput,
   CreateTicketInput,
@@ -101,6 +103,9 @@ export const supportService = {
       subType: input.subType,
       description: input.description,
       imageUrl: input.imageUrl,
+      priority: getDefaultPriority(input.subType),
+      refType: input.transactionRef?.refType,
+      refId: input.transactionRef?.refId,
     })
 
     await supportRepository.createMessage({
@@ -114,6 +119,17 @@ export const supportService = {
     const updated = await supportRepository.updateTicketStatus(ticket.id, 'OPEN')
 
     await redisClient.del(RedisKeys.supportTicketList(userId))
+
+    // Auto-assignment must never fail ticket creation — an unassigned OPEN
+    // ticket is a designed state (claimable from the workbench queue).
+    try {
+      await supportAssignmentService.assignTicket(ticket.id)
+    } catch (err) {
+      console.warn('[support] auto-assignment failed; ticket left unassigned', {
+        ticketId: ticket.id.toString(),
+        err,
+      })
+    }
 
     return updated
   },
@@ -226,6 +242,10 @@ export const supportService = {
 
     const senderType = callerIsCS ? 'SUPPORT' : 'USER'
     const nextStatus = callerIsCS ? 'OPEN' : 'AWAITING_REPLY'
+    // A user message on a PENDING_REVIEW ticket contests the resolution —
+    // clear it and put the ticket back in the CS queue (auto-close job
+    // re-checks status and becomes a no-op).
+    const contestsResolution = !callerIsCS && ticket.status === 'PENDING_REVIEW'
 
     const [message] = await Promise.all([
       supportRepository.createMessage({
@@ -235,11 +255,24 @@ export const supportService = {
         content: input.content,
         imageUrl: input.imageUrl,
       }),
-      supportRepository.updateTicketStatus(ticketId, nextStatus),
+      supportRepository.updateTicketStatus(
+        ticketId,
+        nextStatus,
+        contestsResolution ? { resolution: null, resolvedAt: null } : undefined,
+      ),
     ])
     await supportRepository.updateReadPointer(ticketId, callerIsCS ? 'SUPPORT' : 'USER', message.id)
 
     await invalidateCaches(ticket.userId, ticketId)
+
+    if (!callerIsCS && ticket.assignedAdminId) {
+      await csaNotificationService.notify(
+        ticket.assignedAdminId,
+        'TICKET_REPLY',
+        `New reply on ticket ${ticket.publicId}`,
+        { ticketId },
+      )
+    }
 
     return toJsonSafe(message)
   },
@@ -262,6 +295,32 @@ export const supportService = {
     return toJsonSafe(updated)
   },
 
+  /** Owner accepts a PENDING_REVIEW resolution and closes the ticket. */
+  async confirmClose(ticketId: bigint, userId: string) {
+    const ticket = await supportRepository.findTicketById(ticketId)
+    if (!ticket) throw new AppError(404, 'Ticket not found', 'TICKET_NOT_FOUND')
+
+    if (ticket.userId !== userId) {
+      throw new AppError(403, 'Forbidden', 'TICKET_ACCESS_DENIED')
+    }
+    if (ticket.status !== 'PENDING_REVIEW') {
+      throw new AppError(
+        409,
+        'Only tickets pending review can be confirmed closed',
+        'TICKET_NOT_PENDING_REVIEW',
+      )
+    }
+
+    const updated = await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
+      closedAt: new Date(),
+      closedByUserId: userId,
+    })
+
+    await invalidateCaches(userId, ticketId)
+
+    return toJsonSafe(updated)
+  },
+
   async rateTicket(ticketId: bigint, userId: string, input: RateTicketInput) {
     const ticket = await supportRepository.findTicketById(ticketId)
     if (!ticket) throw new AppError(404, 'Ticket not found', 'TICKET_NOT_FOUND')
@@ -280,6 +339,21 @@ export const supportService = {
     await invalidateCaches(userId, ticketId)
 
     return toJsonSafe(updated)
+  },
+
+  /**
+   * BullMQ auto-close: fires 72h after a ticket entered PENDING_REVIEW.
+   * No-op unless the ticket is still PENDING_REVIEW (user may have contested
+   * or confirmed in the meantime).
+   */
+  async processAutocloseJob(ticketId: bigint) {
+    const ticket = await supportRepository.findTicketById(ticketId)
+    if (!ticket || ticket.status !== 'PENDING_REVIEW') return
+
+    await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
+      closedAt: new Date(),
+    })
+    await invalidateCaches(ticket.userId, ticketId)
   },
 
   async listAllTickets(query: GetAllTicketsQuery) {

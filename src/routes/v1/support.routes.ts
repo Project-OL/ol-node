@@ -4,6 +4,7 @@ import { requireSupportAuth } from '../../middlewares/requireSupportAuth'
 import { supportTicketCreateRateLimit } from '../../middlewares/rateLimitAuth'
 import { supportService } from '../../services/support.service'
 import { AppError } from '../../middlewares/errorHandler'
+import { parseRequest } from '../../utils/zod-request'
 import type { JwtAccessPayload } from '../../models/types'
 import {
   SupportUploadUrlSchema,
@@ -43,7 +44,7 @@ export async function supportRoutes(app: FastifyInstance) {
     '/tickets',
     { preHandler: [...preAuth, supportTicketCreateRateLimit] },
     async (req: FastifyRequest, reply: FastifyReply) => {
-      const body = CreateTicketSchema.parse(req.body)
+      const body = parseRequest(CreateTicketSchema, req.body)
       const userId = req.userId
       if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const ticket = await supportService.createTicket(userId, body)
@@ -94,6 +95,18 @@ export async function supportRoutes(app: FastifyInstance) {
         body,
       )
       return reply.status(201).send({ message })
+    },
+  )
+
+  app.post(
+    '/tickets/:ticketId/confirm-close',
+    { preHandler: preAuth },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const { ticketId } = req.params as { ticketId: string }
+      const userId = req.userId
+      if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const ticket = await supportService.confirmClose(BigInt(ticketId), userId)
+      return reply.send({ ticket })
     },
   )
 

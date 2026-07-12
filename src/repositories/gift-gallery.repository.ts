@@ -3,6 +3,10 @@ import type { GiftGallery, Prisma } from '@prisma/client'
 
 const globalGalleryInclude = {
   sections: {
+    where: {
+      isActive: true,
+      OR: [{ enabledAt: null }, { enabledAt: { lte: new Date() } }],
+    },
     orderBy: { sortOrder: 'asc' as const },
     include: {
       gifts: {
@@ -12,7 +16,7 @@ const globalGalleryInclude = {
       },
     },
   },
-} as const
+} satisfies Prisma.GiftGalleryInclude
 
 export type GlobalGalleryWithSections = Prisma.GiftGalleryGetPayload<{
   include: typeof globalGalleryInclude

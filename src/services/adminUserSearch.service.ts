@@ -6,6 +6,7 @@ import {
   type AdminUserSearchRow,
 } from '../repositories/adminUserSearch.repository'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { storeAdminService } from './store-admin.service'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -31,6 +32,7 @@ export interface AdminUserSearchResultItem {
   email: string | null
   phone: string | null
   matchedBy: AdminUserSearchMatchType
+  store?: Awaited<ReturnType<typeof storeAdminService.getUserStoreSummary>>
 }
 
 function pickContact(
@@ -78,6 +80,24 @@ export const adminUserSearchService = {
   }> {
     const query = params.q.trim()
     const effectiveType = params.type === 'auto' ? resolveAutoType(query) : params.type
+    const includeStore = params.includeStore ?? true
+
+    const attachStore = async (result: {
+      users: AdminUserSearchResultItem[]
+      matchedBy: AdminUserSearchMatchType | null
+    }) => {
+      if (!includeStore || result.users.length === 0) return result
+      const summaries = await storeAdminService.getUserStoreSummaries(
+        result.users.map((u) => u.userId),
+      )
+      return {
+        matchedBy: result.matchedBy,
+        users: result.users.map((user) => ({
+          ...user,
+          store: summaries.get(user.userId),
+        })),
+      }
+    }
 
     if (effectiveType === 'name' && query.length < 2) {
       throw new AppError(400, 'Name search requires at least 2 characters', 'INVALID_REQUEST')
@@ -89,10 +109,13 @@ export const adminUserSearchService = {
       }
       const row = await adminUserSearchRepository.findByUserId(query)
       if (row) {
-        return { users: [mapRow(row, 'userId')], matchedBy: 'userId' }
+        return attachStore({
+          users: [mapRow(row, 'userId')],
+          matchedBy: 'userId',
+        })
       }
       if (params.type === 'auto') {
-        return this.searchByDevice(query, params.limit)
+        return this.searchByDevice(query, params.limit, includeStore)
       }
       return { users: [], matchedBy: null }
     }
@@ -108,18 +131,18 @@ export const adminUserSearchService = {
         throw new AppError(400, 'Invalid public id', 'INVALID_PUBLIC_ID')
       }
       const row = await adminUserSearchRepository.findByPublicId(publicId)
-      return {
+      return attachStore({
         users: row ? [mapRow(row, 'publicId')] : [],
         matchedBy: row ? 'publicId' : null,
-      }
+      })
     }
 
     if (effectiveType === 'email') {
       const row = await adminUserSearchRepository.findByEmail(query.toLowerCase())
-      return {
+      return attachStore({
         users: row ? [mapRow(row, 'email')] : [],
         matchedBy: row ? 'email' : null,
-      }
+      })
     }
 
     if (effectiveType === 'phone') {
@@ -128,26 +151,27 @@ export const adminUserSearchService = {
         throw new AppError(400, 'Invalid phone number', 'INVALID_PHONE')
       }
       const row = await adminUserSearchRepository.findByPhone(normalized)
-      return {
+      return attachStore({
         users: row ? [mapRow(row, 'phone')] : [],
         matchedBy: row ? 'phone' : null,
-      }
+      })
     }
 
     if (effectiveType === 'deviceId') {
-      return this.searchByDevice(query, params.limit)
+      return this.searchByDevice(query, params.limit, includeStore)
     }
 
     const rows = await adminUserSearchRepository.searchByName(query, params.limit)
-    return {
+    return attachStore({
       users: rows.map((row) => mapRow(row, 'name')),
       matchedBy: rows.length > 0 ? 'name' : null,
-    }
+    })
   },
 
   async searchByDevice(
     deviceId: string,
     limit: number,
+    includeStore = true,
   ): Promise<{ users: AdminUserSearchResultItem[]; matchedBy: AdminUserSearchMatchType | null }> {
     const userIds = (await adminUserSearchRepository.findUserIdsByDeviceId(deviceId)).slice(
       0,
@@ -155,6 +179,16 @@ export const adminUserSearchService = {
     )
     const rows = await adminUserSearchRepository.findByUserIds(userIds)
     const users = rows.map((row) => mapRow(row, 'deviceId'))
-    return { users, matchedBy: users.length > 0 ? 'deviceId' : null }
+    if (!includeStore || users.length === 0) {
+      return { users, matchedBy: users.length > 0 ? 'deviceId' : null }
+    }
+    const summaries = await storeAdminService.getUserStoreSummaries(users.map((u) => u.userId))
+    return {
+      users: users.map((user) => ({
+        ...user,
+        store: summaries.get(user.userId),
+      })),
+      matchedBy: users.length > 0 ? 'deviceId' : null,
+    }
   },
 }

@@ -1,71 +1,24 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
-import { StoreItemCategory } from '@prisma/client'
-import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
+import { authenticateAdmin, requireAdminRole } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import { storeService } from '../../services/store.service'
+import { storeAdminService } from '../../services/store-admin.service'
+import { storeAdminRepository } from '../../repositories/store-admin.repository'
 import { env } from '../../config/env'
 import { uploadStoreAdminAsset } from '../../utils/store-admin-assets'
+import { adminCatalogAssetUploadService } from '../../services/admin-catalog-asset-upload.service'
+import { AdminCatalogAssetUploadUrlBodySchema } from '../../models/admin-catalog-asset-upload.schemas'
+import {
+  StoreAdminListQuerySchema,
+  CreateStoreAdminBodySchema,
+  CreateStoreAdminMultipartFieldsSchema,
+  PatchStoreAdminBodySchema,
+  PatchStoreAdminMultipartFieldsSchema,
+} from '../../models/store-admin.schemas'
 
-const CreateStoreItemSchema = z.object({
-  name: z.string().min(1).max(255),
-  description: z.string().max(2000).optional(),
-  category: z.nativeEnum(StoreItemCategory),
-  coinCost: z.number().int().positive(),
-  validityDays: z.number().int().positive().max(365).optional(),
-  displayImageUrl: z.string().url(),
-  effectUrl: z.string().url().nullable().optional(),
-  sortOrder: z.number().int().min(0).optional(),
-})
-
-/** Form fields for multipart create (values are strings). */
-const CreateStoreItemMultipartFieldsSchema = z.object({
-  name: z.string().min(1).max(255),
-  description: z.preprocess((v) => (v === '' ? undefined : v), z.string().max(2000).optional()),
-  category: z.nativeEnum(StoreItemCategory),
-  coinCost: z.coerce.number().int().positive(),
-  validityDays: z.preprocess(
-    (v) => (v === '' || v === undefined ? undefined : v),
-    z.coerce.number().int().positive().max(365).optional(),
-  ),
-  displayImageUrl: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
-  effectUrl: z.union([z.literal(''), z.string().url()]).optional(),
-  sortOrder: z.preprocess(
-    (v) => (v === '' || v === undefined ? undefined : v),
-    z.coerce.number().int().min(0).optional(),
-  ),
-})
-
-const UpdateStoreItemSchema = z.object({
-  name: z.string().min(1).max(255).optional(),
-  description: z.string().max(2000).nullable().optional(),
-  coinCost: z.number().int().positive().optional(),
-  isActive: z.boolean().optional(),
-  sortOrder: z.number().int().min(0).optional(),
-  displayImageUrl: z.string().url().optional(),
-  effectUrl: z.string().url().nullable().optional(),
-})
-
-const UpdateStoreItemMultipartFieldsSchema = z.object({
-  name: z.string().min(1).max(255).optional(),
-  coinCost: z.preprocess(
-    (v) => (v === '' || v === undefined ? undefined : v),
-    z.coerce.number().int().positive().optional(),
-  ),
-  isActive: z.preprocess((v) => {
-    if (v === '' || v === undefined) return undefined
-    if (v === 'true' || v === true) return true
-    if (v === 'false' || v === false) return false
-    return v
-  }, z.boolean().optional()),
-  sortOrder: z.preprocess(
-    (v) => (v === '' || v === undefined ? undefined : v),
-    z.coerce.number().int().min(0).optional(),
-  ),
-  displayImageUrl: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
-  effectUrl: z.string().optional(),
-})
+const preAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 
 type FilePart = { buffer: Buffer; filename: string }
 
@@ -139,15 +92,51 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
     limits: { fileSize: env.MAX_UPLOAD_SIZE_BYTES },
   })
 
+  app.get(
+    '/store/analytics',
+    { preHandler: preAuth },
+    async (_request: FastifyRequest, reply: FastifyReply) => {
+      const analytics = await storeAdminService.getAnalytics()
+      return reply.send(analytics)
+    },
+  )
+
+  app.post(
+    '/store/items/upload-url',
+    { preHandler: preAuth },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = AdminCatalogAssetUploadUrlBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await adminCatalogAssetUploadService.getStoreItemUploadUrl(parsed.data)
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/store/items',
+    { preHandler: preAuth },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const q = StoreAdminListQuerySchema.parse(request.query)
+      const result = await storeAdminService.listItems(q)
+      return reply.send(result)
+    },
+  )
+
   app.post(
     '/store/items',
-    { preHandler: [authenticateAdmin] },
+    { preHandler: preAuth },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const ct = String(request.headers['content-type'] ?? '')
 
       if (ct.includes('multipart/form-data')) {
         const { fields, displayImage, effect } = await readStoreAdminMultipart(request)
-        const parsed = CreateStoreItemMultipartFieldsSchema.safeParse(fields)
+        const parsed = CreateStoreAdminMultipartFieldsSchema.safeParse(fields)
         if (!parsed.success) {
           throw new AppError(
             400,
@@ -193,11 +182,12 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
           displayImageUrl,
           effectUrl,
           sortOrder: f.sortOrder,
+          isActive: f.isActive,
         })
-        return reply.status(201).send(created)
+        return reply.status(201).send(storeAdminService.mapStoreItemRow(created, 0))
       }
 
-      const parsed = CreateStoreItemSchema.safeParse(request.body ?? {})
+      const parsed = CreateStoreAdminBodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
         throw new AppError(
           400,
@@ -206,19 +196,19 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
         )
       }
       const created = await storeService.createStoreItem(parsed.data)
-      return reply.status(201).send(created)
+      return reply.status(201).send(storeAdminService.mapStoreItemRow(created, 0))
     },
   )
 
   app.patch<{ Params: { id: string } }>(
     '/store/items/:id',
-    { preHandler: [authenticateAdmin] },
+    { preHandler: preAuth },
     async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const ct = String(request.headers['content-type'] ?? '')
 
       if (ct.includes('multipart/form-data')) {
         const { fields, displayImage, effect } = await readStoreAdminMultipart(request)
-        const parsed = UpdateStoreItemMultipartFieldsSchema.safeParse(fields)
+        const parsed = PatchStoreAdminMultipartFieldsSchema.safeParse(fields)
         if (!parsed.success) {
           throw new AppError(
             400,
@@ -238,6 +228,7 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
           patch.description = raw === '' ? null : raw
         }
         if (f.coinCost !== undefined) patch.coinCost = f.coinCost
+        if (f.validityDays !== undefined) patch.validityDays = f.validityDays
         if (f.isActive !== undefined) patch.isActive = f.isActive
         if (f.sortOrder !== undefined) patch.sortOrder = f.sortOrder
         if (f.displayImageUrl !== undefined) patch.displayImageUrl = f.displayImageUrl
@@ -273,10 +264,13 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
         }
 
         const updated = await storeService.updateStoreItem(request.params.id, patch)
-        return reply.send(updated)
+        const [purchaseCount] = await Promise.all([
+          storeAdminRepository.getPurchaseCounts([updated.id]).then((m) => m.get(updated.id) ?? 0),
+        ])
+        return reply.send(storeAdminService.mapStoreItemRow(updated, purchaseCount))
       }
 
-      const parsed = UpdateStoreItemSchema.safeParse(request.body ?? {})
+      const parsed = PatchStoreAdminBodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
         throw new AppError(
           400,
@@ -285,13 +279,16 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
         )
       }
       const updated = await storeService.updateStoreItem(request.params.id, parsed.data)
-      return reply.send(updated)
+      const purchaseCount = await storeAdminRepository
+        .getPurchaseCounts([updated.id])
+        .then((m) => m.get(updated.id) ?? 0)
+      return reply.send(storeAdminService.mapStoreItemRow(updated, purchaseCount))
     },
   )
 
   app.delete<{ Params: { id: string } }>(
     '/store/items/:id',
-    { preHandler: [authenticateAdmin] },
+    { preHandler: preAuth },
     async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       await storeService.softDeleteStoreItem(request.params.id)
       return reply.status(204).send()

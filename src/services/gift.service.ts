@@ -16,6 +16,24 @@ async function invalidateGiftCaches(affectedTags: string[]) {
   }
 }
 
+async function invalidateAllGiftListCaches() {
+  try {
+    await redisClient.del(RedisKeys.giftList())
+    const pattern = 'gifts:tag:*'
+    let cursor = '0'
+    do {
+      const [next, keys] = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 200)
+      cursor = next
+      if (keys.length > 0) {
+        await redisClient.del(...keys)
+      }
+    } while (cursor !== '0')
+    await giftGalleryService.invalidateActiveMonthCaches()
+  } catch {
+    // best-effort
+  }
+}
+
 export const giftService = {
   async listPublic(query: { tag?: string; page: number; limit: number }) {
     const skip = (query.page - 1) * query.limit
@@ -45,9 +63,12 @@ export const giftService = {
       items: items.map((g: GiftWithTags) => ({
         id: g.id,
         name: g.name,
+        code: g.code,
         coinCost: g.coinCost,
         displayImageUrl: g.displayImageUrl,
         effectUrl: g.effectUrl,
+        displayOrder: g.displayOrder,
+        vipOnly: g.vipOnly,
         tags: g.tags.map((t: { tag: string }) => t.tag),
       })),
       total,
@@ -110,5 +131,13 @@ export const giftService = {
     const g = await giftRepository.softDelete(giftId)
     await invalidateGiftCaches(existing.tags.map((t: { tag: string }) => t.tag))
     return g
+  },
+
+  async invalidateCachesForGift(g: GiftWithTags) {
+    await invalidateGiftCaches(g.tags.map((t) => t.tag))
+  },
+
+  async invalidateAllGiftCaches() {
+    await invalidateAllGiftListCaches()
   },
 }

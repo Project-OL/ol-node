@@ -326,6 +326,10 @@ export const RedisKeys = {
   liveStartRateLimit: (hostUserId: string) => `live:rl:start:${hostUserId}`,
   /** Short-lived flag set on admin logout; TTL matches ADMIN_JWT_ACCESS_EXPIRES_IN. */
   adminTokenRevoked: (adminId: string) => `admin:revoked:${adminId}`,
+  /** Admin presence heartbeat — refreshed on every authenticated admin request (TTL ADMIN_ONLINE_TTL). */
+  adminOnline: (adminId: string) => `admin:online:${adminId}`,
+  /** Admin login failure throttle per email (TTL ADMIN_LOGIN_FAIL_TTL). */
+  adminLoginFail: (email: string) => `admin:login:fail:${email.toLowerCase()}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -411,6 +415,17 @@ export const SUPER_HOST_STATUS_TTL = 300
 export const SUPPORT_TICKET_LIST_TTL = 60
 /** Support: ticket detail cache (reserved for future use; invalidated on mutation). */
 export const SUPPORT_TICKET_DETAIL_TTL = 30
+
+/** Admin presence heartbeat TTL — the portal's badge polling (~30s) keeps it alive. */
+export const ADMIN_ONLINE_TTL = 120
+/** Admin login failure throttle window per email (seconds). */
+export const ADMIN_LOGIN_FAIL_TTL = 900
+/** Failures within the throttle window before pre-DB 429s. */
+export const ADMIN_LOGIN_FAIL_LIMIT = 10
+/** Consecutive DB failed-login count that locks the account. */
+export const ADMIN_LOCKOUT_THRESHOLD = 5
+/** Account lock duration in minutes once the threshold is reached. */
+export const ADMIN_LOCKOUT_MINUTES = 15
 
 export const STORE_CATALOG_TTL = 600
 export const STORE_ITEM_TTL = 600
