@@ -1,0 +1,58 @@
+import { z } from 'zod'
+import { OTP_PURPOSES } from './types'
+
+export const OTP_DELIVERY_MEANS = ['email', 'whatsapp', 'sms', 'none'] as const
+export type OtpDeliveryMeans = (typeof OTP_DELIVERY_MEANS)[number]
+
+export const OTP_DELIVERY_AUDIT_STATUSES = ['success', 'failed', 'skipped'] as const
+export type OtpDeliveryAuditStatus = (typeof OTP_DELIVERY_AUDIT_STATUSES)[number]
+
+const isoDateTime = z
+  .string()
+  .datetime({ offset: true })
+  .or(z.string().datetime())
+  .transform((v) => new Date(v))
+
+export const adminListOtpDeliveryAuditsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  purpose: z.enum(OTP_PURPOSES).optional(),
+  means: z.enum(OTP_DELIVERY_MEANS).optional(),
+  status: z.enum(OTP_DELIVERY_AUDIT_STATUSES).optional(),
+  userId: z.string().uuid().optional(),
+  country: z.string().trim().min(1).max(100).optional(),
+  from: isoDateTime.optional(),
+  to: isoDateTime.optional(),
+})
+
+export const adminOtpDeliveryAuditSummaryQuerySchema = z.object({
+  purpose: z.enum(OTP_PURPOSES).optional(),
+  means: z.enum(OTP_DELIVERY_MEANS).optional(),
+  status: z.enum(OTP_DELIVERY_AUDIT_STATUSES).optional(),
+  userId: z.string().uuid().optional(),
+  country: z.string().trim().min(1).max(100).optional(),
+  from: isoDateTime.optional(),
+  to: isoDateTime.optional(),
+})
+
+/** Optional year/month — omit both for current UTC month; supply both for a specific month. */
+export const adminOtpMonthlyCostQuerySchema = z
+  .object({
+    year: z.coerce.number().int().min(2020).max(2100).optional(),
+    month: z.coerce.number().int().min(1).max(12).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if ((val.year === undefined) !== (val.month === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide both year and month, or omit both for the current UTC month',
+        path: val.year === undefined ? ['year'] : ['month'],
+      })
+    }
+  })
+
+export type AdminListOtpDeliveryAuditsQuery = z.infer<typeof adminListOtpDeliveryAuditsQuerySchema>
+export type AdminOtpDeliveryAuditSummaryQuery = z.infer<
+  typeof adminOtpDeliveryAuditSummaryQuerySchema
+>
+export type AdminOtpMonthlyCostQuery = z.infer<typeof adminOtpMonthlyCostQuerySchema>

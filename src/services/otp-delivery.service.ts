@@ -10,6 +10,10 @@ import { AppError } from '../middlewares/errorHandler'
 import type { OtpPurpose } from '../models/types'
 import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
+import {
+  meansFromProvider,
+  otpDeliveryAuditService,
+} from './otp-delivery-audit.service'
 import { otpDeliveryConfigService } from './otp-delivery-config.service'
 import { msg91Provider } from './providers/msg91.provider'
 import { sesProvider } from './providers/ses.provider'
@@ -46,8 +50,15 @@ function logOtpDelivery(
 }
 
 type OtpTarget =
-  | { type: 'email'; value: string; masked: string }
-  | { type: 'phone'; value: string; providerPhone: string; masked: string }
+  | { type: 'email'; value: string; masked: string; country: string | null }
+  | {
+      type: 'phone'
+      value: string
+      providerPhone: string
+      masked: string
+      /** ISO-3166-1 alpha-2 from libphonenumber when known. */
+      country: string | null
+    }
 
 function maskEmail(email: string): string {
   const [local = '', domain = ''] = email.split('@')
@@ -62,7 +73,9 @@ function maskPhone(e164: string): string {
   return `${'*'.repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`
 }
 
-function normalizePhoneTarget(input: string): string | null {
+function normalizePhoneTarget(
+  input: string,
+): { e164: string; country: string | null } | null {
   const cleaned = input.trim().replace(/[\s\-().]/g, '')
   const candidates = cleaned.startsWith('+')
     ? [cleaned]
@@ -72,7 +85,11 @@ function normalizePhoneTarget(input: string): string | null {
 
   for (const candidate of candidates) {
     if (isValidPhoneNumber(candidate)) {
-      return parsePhoneNumber(candidate).number as string
+      const parsed = parsePhoneNumber(candidate)
+      return {
+        e164: parsed.number as string,
+        country: parsed.country ?? null,
+      }
     }
   }
 
@@ -83,16 +100,17 @@ export function detectOtpTarget(targetIdentifier: string): OtpTarget {
   const trimmed = targetIdentifier.trim()
   if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) {
     const value = trimmed.toLowerCase()
-    return { type: 'email', value, masked: maskEmail(value) }
+    return { type: 'email', value, masked: maskEmail(value), country: null }
   }
 
   const phone = normalizePhoneTarget(trimmed)
   if (phone) {
     return {
       type: 'phone',
-      value: phone,
-      providerPhone: phone.replace(/^\+/, ''),
-      masked: maskPhone(phone),
+      value: phone.e164,
+      providerPhone: phone.e164.replace(/^\+/, ''),
+      masked: maskPhone(phone.e164),
+      country: phone.country,
     }
   }
 
@@ -223,6 +241,7 @@ async function bumpPhoneOtpRequestCount(
 async function deliverPhoneOtpViaSms(params: {
   otp: string
   purpose: OtpPurpose
+  userId?: string | null
   target: Extract<OtpTarget, { type: 'phone' }>
   routeReason?: SmsRouteReason
   fallbackFrom?: OtpProviderName
@@ -257,6 +276,19 @@ async function deliverPhoneOtpViaSms(params: {
       target: params.target.masked,
       messageId: smsResult.providerMessageId,
     })
+    otpDeliveryAuditService.record({
+      userId: params.userId,
+      purpose: params.purpose,
+      means: meansFromProvider('msg91_sms'),
+      provider: 'msg91_sms',
+      status: 'success',
+      targetType: 'phone',
+      targetMasked: params.target.masked,
+      country: params.target.country,
+      providerMessageId: smsResult.providerMessageId,
+      fallbackFrom: params.fallbackFrom,
+      routeReason: params.routeReason,
+    })
     return
   }
 
@@ -266,6 +298,19 @@ async function deliverPhoneOtpViaSms(params: {
     provider: 'msg91_sms',
     purpose: params.purpose,
     target: params.target.masked,
+    error: smsResult.error,
+  })
+  otpDeliveryAuditService.record({
+    userId: params.userId,
+    purpose: params.purpose,
+    means: meansFromProvider('msg91_sms'),
+    provider: 'msg91_sms',
+    status: 'failed',
+    targetType: 'phone',
+    targetMasked: params.target.masked,
+    country: params.target.country,
+    fallbackFrom: params.fallbackFrom,
+    routeReason: params.routeReason,
     error: smsResult.error,
   })
   logOtpDelivery(
@@ -288,6 +333,7 @@ export const otpDeliveryService = {
     otp: string
     targetIdentifier: string
     purpose: OtpPurpose
+    userId?: string | null
   }): Promise<void> {
     const target = detectOtpTarget(params.targetIdentifier)
 
@@ -301,6 +347,16 @@ export const otpDeliveryService = {
         },
         'debug',
       )
+      otpDeliveryAuditService.record({
+        userId: params.userId,
+        purpose: params.purpose,
+        means: 'none',
+        provider: null,
+        status: 'skipped',
+        targetType: target.type,
+        targetMasked: target.masked,
+        country: target.country,
+      })
       return
     }
 
@@ -340,6 +396,17 @@ export const otpDeliveryService = {
           target: target.masked,
           messageId: result.providerMessageId,
         })
+        otpDeliveryAuditService.record({
+          userId: params.userId,
+          purpose: params.purpose,
+          means: meansFromProvider('ses_email'),
+          provider: 'ses_email',
+          status: 'success',
+          targetType: 'email',
+          targetMasked: target.masked,
+          country: target.country,
+          providerMessageId: result.providerMessageId,
+        })
         return
       }
 
@@ -349,6 +416,17 @@ export const otpDeliveryService = {
         provider: 'ses_email',
         purpose: params.purpose,
         target: target.masked,
+        error: result.error,
+      })
+      otpDeliveryAuditService.record({
+        userId: params.userId,
+        purpose: params.purpose,
+        means: meansFromProvider('ses_email'),
+        provider: 'ses_email',
+        status: 'failed',
+        targetType: 'email',
+        targetMasked: target.masked,
+        country: target.country,
         error: result.error,
       })
       logOtpDelivery(
@@ -387,6 +465,7 @@ export const otpDeliveryService = {
       await deliverPhoneOtpViaSms({
         otp: params.otp,
         purpose: params.purpose,
+        userId: params.userId,
         target,
         routeReason: 'sms_request_threshold',
       })
@@ -421,12 +500,24 @@ export const otpDeliveryService = {
         target: target.masked,
         messageId: whatsappResult.providerMessageId,
       })
+      otpDeliveryAuditService.record({
+        userId: params.userId,
+        purpose: params.purpose,
+        means: meansFromProvider('msg91_whatsapp'),
+        provider: 'msg91_whatsapp',
+        status: 'success',
+        targetType: 'phone',
+        targetMasked: target.masked,
+        country: target.country,
+        providerMessageId: whatsappResult.providerMessageId,
+      })
       return
     }
 
     await deliverPhoneOtpViaSms({
       otp: params.otp,
       purpose: params.purpose,
+      userId: params.userId,
       target,
       fallbackFrom: 'msg91_whatsapp',
     })

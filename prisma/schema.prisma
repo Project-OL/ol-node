@@ -73,6 +73,7 @@ model User {
   authPassword                  AuthPassword?
   securityPassword              SecurityPassword?
   otpTokens                     OtpToken[]
+  otpDeliveryAudits             OtpDeliveryAudit[]
   sessions                      Session[]
   deviceRegistry                DeviceRegistry[]
   auditLogs                     AuditLog[]
@@ -1505,6 +1506,42 @@ model OtpDeliveryConfig {
   updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
 
   @@map("otp_delivery_config")
+}
+
+/// Durable OTP generation/delivery audit for admin portal (purpose, channel, charged cost).
+model OtpDeliveryAudit {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String?  @map("user_id") @db.Uuid
+  /// Flow that requested the OTP (signup, login, set_security_password, modify_*, …).
+  purpose           String   @db.VarChar(50)
+  /// Delivery means: email | whatsapp | sms | none (skipped / not sent).
+  means             String   @db.VarChar(20)
+  /// Provider id when sent: ses_email | msg91_whatsapp | msg91_sms.
+  provider          String?  @db.VarChar(40)
+  /// success | failed | skipped
+  status            String   @db.VarChar(20)
+  targetType        String   @map("target_type") @db.VarChar(20)
+  targetMasked      String   @map("target_masked") @db.VarChar(255)
+  /// ISO-3166-1 alpha-2 from phone, else users.country when known.
+  country           String?  @db.VarChar(100)
+  /// Cost in minor currency units (e.g. paise when currency=INR); 0 when not charged.
+  chargeMinor       Int      @default(0) @map("charge_minor")
+  chargeCurrency    String   @default("INR") @map("charge_currency") @db.VarChar(3)
+  providerMessageId String?  @map("provider_message_id") @db.VarChar(255)
+  fallbackFrom      String?  @map("fallback_from") @db.VarChar(40)
+  routeReason       String?  @map("route_reason") @db.VarChar(60)
+  error             String?  @db.VarChar(500)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([purpose, createdAt(sort: Desc)])
+  @@index([means, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([country, createdAt(sort: Desc)])
+  @@map("otp_delivery_audits")
 }
 
 model WalletIdempotencyLog {

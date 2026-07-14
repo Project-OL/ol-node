@@ -23,6 +23,18 @@ vi.mock('../../src/services/audit.service', () => ({
   },
 }))
 
+const deliveryAuditRecord = vi.fn()
+vi.mock('../../src/services/otp-delivery-audit.service', () => ({
+  meansFromProvider: (provider: string) => {
+    if (provider === 'ses_email') return 'email'
+    if (provider === 'msg91_whatsapp') return 'whatsapp'
+    return 'sms'
+  },
+  otpDeliveryAuditService: {
+    record: (...args: unknown[]) => deliveryAuditRecord(...args),
+  },
+}))
+
 const logDebug = vi.fn()
 const logInfo = vi.fn()
 const logWarn = vi.fn()
@@ -43,21 +55,34 @@ vi.mock('../../src/utils/rootLogger', () => ({
   },
 }))
 
-const redisExists = vi.fn().mockResolvedValue(0)
-const redisSet = vi.fn().mockResolvedValue('OK')
+const redisIncr = vi.fn().mockResolvedValue(1)
+const redisExpire = vi.fn().mockResolvedValue(1)
 
 vi.mock('../../src/config/redis', () => ({
-  OTP_SMS_PREFERRED_ROUTE_TTL_SEC: 120,
+  OTP_SMS_TRIGGER_AFTER_COUNT: 3,
+  OTP_SMS_TRIGGER_INTERVAL_SEC_DEFAULT: 120,
   RedisKeys: {
-    otpSmsPreferredRoute: (phone: string) => `otp:sms-preferred:${phone}`,
+    otpPhoneRequestCount: (phone: string) => `otp:phone-request-count:${phone}`,
   },
   redisClient: {
-    exists: (...args: unknown[]) => redisExists(...args),
-    set: (...args: unknown[]) => redisSet(...args),
+    incr: (...args: unknown[]) => redisIncr(...args),
+    expire: (...args: unknown[]) => redisExpire(...args),
   },
 }))
 
-const envState = vi.hoisted(() => ({ OTP_DELIVERY_ENABLED: true }))
+vi.mock('../../src/services/otp-delivery-config.service', () => ({
+  otpDeliveryConfigService: {
+    getSmsTriggerIntervalSec: vi.fn().mockResolvedValue(120),
+  },
+}))
+
+const envState = vi.hoisted(() => ({
+  OTP_DELIVERY_ENABLED: true,
+  OTP_COST_CURRENCY: 'INR',
+  OTP_COST_EMAIL_MINOR: 2,
+  OTP_COST_WHATSAPP_MINOR: 25,
+  OTP_COST_SMS_MINOR: 15,
+}))
 
 vi.mock('../../src/config/env', () => ({
   env: envState,
@@ -70,8 +95,8 @@ describe('otpDeliveryService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     envState.OTP_DELIVERY_ENABLED = true
-    redisExists.mockResolvedValue(0)
-    redisSet.mockResolvedValue('OK')
+    redisIncr.mockResolvedValue(1)
+    redisExpire.mockResolvedValue(1)
     whatsappSend.mockResolvedValue({
       success: true,
       providerMessageId: 'wa-1',
@@ -92,16 +117,19 @@ describe('otpDeliveryService', () => {
       type: 'phone',
       value: '+919876543210',
       providerPhone: '919876543210',
+      country: 'IN',
     })
     expect(detectOtpTarget('919876543210')).toMatchObject({
       type: 'phone',
       value: '+919876543210',
       providerPhone: '919876543210',
+      country: 'IN',
     })
     expect(detectOtpTarget('+919876543210')).toMatchObject({
       type: 'phone',
       value: '+919876543210',
       providerPhone: '919876543210',
+      country: 'IN',
     })
   })
 
@@ -110,6 +138,7 @@ describe('otpDeliveryService', () => {
       otp: '12345',
       targetIdentifier: '+919876543210',
       purpose: 'login',
+      userId: '11111111-1111-1111-1111-111111111111',
     })
 
     expect(whatsappSend).toHaveBeenCalledWith({
@@ -124,6 +153,14 @@ describe('otpDeliveryService', () => {
         actionStatus: 'success',
       }),
     )
+    expect(deliveryAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        means: 'whatsapp',
+        status: 'success',
+        purpose: 'login',
+        userId: '11111111-1111-1111-1111-111111111111',
+      }),
+    )
     expect(logInfo).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'otp_delivery_succeeded',
@@ -132,16 +169,10 @@ describe('otpDeliveryService', () => {
       }),
       expect.any(String),
     )
-    expect(redisSet).toHaveBeenCalledWith(
-      'otp:sms-preferred:919876543210',
-      '1',
-      'EX',
-      120,
-    )
   })
 
-  it('uses SMS only while SMS-preferred window is active and extends TTL on each SMS', async () => {
-    redisExists.mockResolvedValue(1)
+  it('uses SMS when request count reaches SMS trigger threshold', async () => {
+    redisIncr.mockResolvedValue(3)
 
     await otpDeliveryService.send({
       otp: '54321',
@@ -155,36 +186,20 @@ describe('otpDeliveryService', () => {
       otp: '54321',
       purpose: 'signup',
     })
-    expect(redisSet).toHaveBeenCalledWith(
-      'otp:sms-preferred:919876543210',
-      '1',
-      'EX',
-      120,
+    expect(deliveryAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        means: 'sms',
+        status: 'success',
+        routeReason: 'sms_request_threshold',
+      }),
     )
     expect(logInfo).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'otp_delivery_started',
         deliveryProvider: 'msg91_sms',
-        routeReason: 'sms_preferred_route',
+        routeReason: 'sms_request_threshold',
       }),
       expect.any(String),
-    )
-  })
-
-  it('extends SMS-preferred window when WhatsApp falls back to SMS', async () => {
-    whatsappSend.mockResolvedValue({ success: false, error: 'wa failed' })
-
-    await otpDeliveryService.send({
-      otp: '12345',
-      targetIdentifier: '+919876543210',
-      purpose: 'login',
-    })
-
-    expect(redisSet).toHaveBeenCalledWith(
-      'otp:sms-preferred:919876543210',
-      '1',
-      'EX',
-      120,
     )
   })
 
@@ -212,18 +227,18 @@ describe('otpDeliveryService', () => {
         actionStatus: 'success',
       }),
     )
+    expect(deliveryAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        means: 'sms',
+        status: 'success',
+        fallbackFrom: 'msg91_whatsapp',
+      }),
+    )
     expect(logInfo).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'otp_delivery_fallback',
         deliveryProvider: 'msg91_sms',
         fallbackFrom: 'msg91_whatsapp',
-      }),
-      expect.any(String),
-    )
-    expect(logInfo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'otp_delivery_succeeded',
-        deliveryProvider: 'msg91_sms',
       }),
       expect.any(String),
     )
@@ -243,13 +258,12 @@ describe('otpDeliveryService', () => {
     })
     expect(whatsappSend).not.toHaveBeenCalled()
     expect(smsSend).not.toHaveBeenCalled()
-    expect(logInfo).toHaveBeenCalledWith(
+    expect(deliveryAuditRecord).toHaveBeenCalledWith(
       expect.objectContaining({
-        event: 'otp_delivery_succeeded',
-        deliveryProvider: 'ses_email',
+        means: 'email',
+        status: 'success',
         purpose: 'reset_password',
       }),
-      expect.any(String),
     )
   })
 
@@ -272,6 +286,12 @@ describe('otpDeliveryService', () => {
     expect(smsSend).not.toHaveBeenCalled()
     expect(emailSend).not.toHaveBeenCalled()
     expect(auditLog).not.toHaveBeenCalled()
+    expect(deliveryAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        means: 'none',
+        status: 'skipped',
+      }),
+    )
     expect(logDebug).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'otp_delivery_skipped' }),
       expect.any(String),
@@ -289,13 +309,10 @@ describe('otpDeliveryService', () => {
       }),
     ).rejects.toMatchObject({ code: 'OTP_DELIVERY_FAILED', statusCode: 502 })
 
-    expect(whatsappSend).not.toHaveBeenCalled()
-    expect(smsSend).not.toHaveBeenCalled()
-    expect(auditLog).toHaveBeenCalledWith(
+    expect(deliveryAuditRecord).toHaveBeenCalledWith(
       expect.objectContaining({
-        actionType: 'OTP_DELIVERY_FAILED',
-        actionStatus: 'failed',
-        actionDetails: expect.objectContaining({ provider: 'ses_email' }),
+        means: 'email',
+        status: 'failed',
       }),
     )
   })
@@ -315,10 +332,11 @@ describe('otpDeliveryService', () => {
       }),
     ).rejects.toMatchObject({ code: 'OTP_DELIVERY_FAILED', statusCode: 502 })
 
-    expect(auditLog).toHaveBeenCalledWith(
+    expect(deliveryAuditRecord).toHaveBeenCalledWith(
       expect.objectContaining({
-        actionType: 'OTP_DELIVERY_FAILED',
-        actionStatus: 'failed',
+        means: 'sms',
+        status: 'failed',
+        fallbackFrom: 'msg91_whatsapp',
       }),
     )
   })

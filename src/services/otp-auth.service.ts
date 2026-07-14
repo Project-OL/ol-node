@@ -66,6 +66,7 @@ export const otpAuthService = {
       otp,
       targetIdentifier: params.targetIdentifier,
       purpose: params.purpose,
+      userId: params.userId,
     })
     return { expiresAt }
   },

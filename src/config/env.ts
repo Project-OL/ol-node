@@ -143,6 +143,14 @@ const envSchema = z
     SES_FROM_EMAIL: z.string().email().optional(),
     SES_ACCESS_KEY_ID: z.string().optional(),
     SES_SECRET_ACCESS_KEY: z.string().optional(),
+    /**
+     * Configured OTP delivery cost snapshot (minor units, e.g. paise for INR).
+     * Captured onto each otp_delivery_audits row at send time for historical accuracy.
+     */
+    OTP_COST_CURRENCY: z.string().length(3).default('INR'),
+    OTP_COST_EMAIL_MINOR: z.coerce.number().int().min(0).default(2),
+    OTP_COST_WHATSAPP_MINOR: z.coerce.number().int().min(0).default(25),
+    OTP_COST_SMS_MINOR: z.coerce.number().int().min(0).default(15),
 
     ALLOWED_ORIGINS: z
       .string()
