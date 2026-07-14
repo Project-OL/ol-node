@@ -1496,6 +1496,17 @@ model WithdrawalPayoutRailConfig {
   @@map("withdrawal_payout_rail_config")
 }
 
+/// Singleton: phone OTP channel routing window (WhatsApp for first N-1, SMS from Nth within interval).
+model OtpDeliveryConfig {
+  id                    Int      @id @default(1)
+  /// Rolling window (seconds) for per-phone OTP request counting used to pick WhatsApp vs SMS.
+  smsTriggerIntervalSec Int      @default(120) @map("sms_trigger_interval_sec")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("otp_delivery_config")
+}
+
 model WalletIdempotencyLog {
   key              String   @id @db.VarChar(200)
   requestHash      String   @map("request_hash") @db.VarChar(128)

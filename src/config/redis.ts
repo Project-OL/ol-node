@@ -92,8 +92,13 @@ export const RedisKeys = {
   /** Visitor cooldown (profileId + visitorId). */
   visitorCooldown: (profileId: string, visitorId: string) =>
     `visitor:cooldown:${profileId}:${visitorId}`,
-  /** Active SMS-only OTP route for a phone; TTL slides on each WhatsApp or SMS delivery. */
-  otpSmsPreferredRoute: (providerPhone: string) => `otp:sms-preferred:${providerPhone}`,
+  /**
+   * Per-phone OTP request counter within the SMS-trigger window.
+   * Value is the request count; TTL = admin-configured smsTriggerIntervalSec (set on first INCR).
+   */
+  otpPhoneRequestCount: (providerPhone: string) => `otp:phone-request-count:${providerPhone}`,
+  /** Cached OTP delivery routing config (interval for SMS trigger). */
+  otpDeliveryConfig: () => 'otp:delivery-config',
   /** Per-user social endpoint rate limit. */
   socialRateLimit: (endpoint: string, userId: string) => `ratelimit:social:${endpoint}:${userId}`,
   /** User level cache. */
@@ -363,8 +368,12 @@ export const TYPING_TTL = 5
 export const WS_TICKET_TTL_SEC = 60 * 15
 /** Messaging: block list per user TTL (1h). */
 export const BLOCK_LIST_TTL = 60 * 60
-/** SMS-only OTP routing window per phone; refreshed on each WhatsApp or SMS delivery. */
-export const OTP_SMS_PREFERRED_ROUTE_TTL_SEC = 120
+/** Default window (seconds) for counting phone OTP requests before preferring SMS. */
+export const OTP_SMS_TRIGGER_INTERVAL_SEC_DEFAULT = 120
+/** Within the window, this many requests to the same phone route to SMS (1..N-1 → WhatsApp). */
+export const OTP_SMS_TRIGGER_AFTER_COUNT = 3
+/** Cached OTP delivery config TTL (5 minutes). */
+export const OTP_DELIVERY_CONFIG_TTL = 300
 
 /** Wallet: cached balance TTL (5 minutes). */
 /** Broadcast progress/pending keys — safety ceiling; normal completion deletes them explicitly. */

@@ -14,7 +14,6 @@ import { walletService } from './wallet.service'
 import { walletLevelService } from './user-level.service'
 import { userRepository } from '../repositories/user.repository'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
-import { countriesMatch } from '../utils/agency-country'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
 type HostEarningsAgg = {
@@ -203,26 +202,16 @@ export const agencyHostService = {
 
     await agencyService.enforcePauseGate(agency.userId)
 
-    const [hostUser, agencyOwner] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: hostUserId },
-        select: {
-          id: true,
-          currentAgencyId: true,
-          isAgent: true,
-          country: true,
-        },
-      }),
-      prisma.user.findUnique({
-        where: { id: agency.userId },
-        select: { country: true },
-      }),
-    ])
+    const hostUser = await prisma.user.findUnique({
+      where: { id: hostUserId },
+      select: {
+        id: true,
+        currentAgencyId: true,
+        isAgent: true,
+      },
+    })
     if (!hostUser) {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
-    }
-    if (!countriesMatch(hostUser.country, agencyOwner?.country)) {
-      throw new AppError(403, 'Agency is not available in your country', 'COUNTRY_MISMATCH')
     }
     if (hostUser.isAgent) {
       throw new AppError(403, 'Agents cannot apply as hosts', 'INVALID_APPLICANT')
@@ -818,7 +807,7 @@ export const agencyHostService = {
     return { ok: true, userId: updated.id, isTagged: updated.isTagged }
   },
 
-  /** Admin bypass: add host to agency without country/cooldown gates. */
+  /** Admin bypass: add host to agency without cooldown gates. */
   async adminAddHost(agencyUserId: string, hostUserId: string, adminUserId: string) {
     const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
     if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')

@@ -1,15 +1,23 @@
 import { parsePhoneNumber, isValidPhoneNumber } from 'libphonenumber-js'
 import { env } from '../config/env'
-import { OTP_SMS_PREFERRED_ROUTE_TTL_SEC, RedisKeys, redisClient } from '../config/redis'
+import {
+  OTP_SMS_TRIGGER_AFTER_COUNT,
+  OTP_SMS_TRIGGER_INTERVAL_SEC_DEFAULT,
+  RedisKeys,
+  redisClient,
+} from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import type { OtpPurpose } from '../models/types'
 import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
+import { otpDeliveryConfigService } from './otp-delivery-config.service'
 import { msg91Provider } from './providers/msg91.provider'
 import { sesProvider } from './providers/ses.provider'
 import type { OtpProviderName, OtpProviderResult } from './providers/provider.types'
 
 const otpDeliveryLog = rootLogger.child({ module: 'otp-delivery' })
+
+type SmsRouteReason = 'sms_request_threshold'
 
 type OtpDeliveryLogContext = {
   purpose: OtpPurpose
@@ -19,7 +27,8 @@ type OtpDeliveryLogContext = {
   providerMessageId?: string
   error?: string
   fallbackFrom?: OtpProviderName
-  routeReason?: 'sms_preferred_route'
+  routeReason?: SmsRouteReason
+  requestCount?: number
 }
 
 function logOtpDelivery(
@@ -72,7 +81,7 @@ function normalizePhoneTarget(input: string): string | null {
 
 export function detectOtpTarget(targetIdentifier: string): OtpTarget {
   const trimmed = targetIdentifier.trim()
-  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+  if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) {
     const value = trimmed.toLowerCase()
     return { type: 'email', value, masked: maskEmail(value) }
   }
@@ -162,7 +171,7 @@ function logDeliverySucceeded(params: {
   targetType: OtpTarget['type']
   providerMessageId?: string
   fallbackFrom?: OtpProviderName
-  routeReason?: 'sms_preferred_route'
+  routeReason?: SmsRouteReason
 }) {
   if (params.fallbackFrom) {
     logOtpDelivery('otp_delivery_fallback', {
@@ -187,32 +196,27 @@ function logDeliverySucceeded(params: {
   })
 }
 
-async function isSmsPreferredRouteActive(providerPhone: string): Promise<boolean> {
+/**
+ * Increment per-phone OTP request count within the SMS-trigger window.
+ * TTL is set only when the key is created (fixed window from first request).
+ */
+async function bumpPhoneOtpRequestCount(
+  providerPhone: string,
+  intervalSec: number,
+): Promise<number> {
+  const key = RedisKeys.otpPhoneRequestCount(providerPhone)
   try {
-    return (await redisClient.exists(RedisKeys.otpSmsPreferredRoute(providerPhone))) === 1
+    const count = await redisClient.incr(key)
+    if (count === 1) {
+      await redisClient.expire(key, intervalSec)
+    }
+    return count
   } catch (err) {
     otpDeliveryLog.warn(
       { err, providerPhone: maskPhone(`+${providerPhone}`) },
-      'OTP delivery: failed to read SMS-preferred route flag; defaulting to WhatsApp-first',
+      'OTP delivery: failed to bump phone request count; defaulting to WhatsApp-first',
     )
-    return false
-  }
-}
-
-/** (Re)start the 2-minute SMS-only window — called after WhatsApp or SMS delivery. */
-async function refreshSmsPreferredRoute(providerPhone: string): Promise<void> {
-  try {
-    await redisClient.set(
-      RedisKeys.otpSmsPreferredRoute(providerPhone),
-      '1',
-      'EX',
-      OTP_SMS_PREFERRED_ROUTE_TTL_SEC,
-    )
-  } catch (err) {
-    otpDeliveryLog.warn(
-      { err, providerPhone: maskPhone(`+${providerPhone}`) },
-      'OTP delivery: failed to refresh SMS-preferred route window',
-    )
+    return 1
   }
 }
 
@@ -220,7 +224,7 @@ async function deliverPhoneOtpViaSms(params: {
   otp: string
   purpose: OtpPurpose
   target: Extract<OtpTarget, { type: 'phone' }>
-  routeReason?: 'sms_preferred_route'
+  routeReason?: SmsRouteReason
   fallbackFrom?: OtpProviderName
 }): Promise<void> {
   const smsResult = await msg91Provider.sendSmsOtp({
@@ -236,7 +240,6 @@ async function deliverPhoneOtpViaSms(params: {
     result: smsResult,
   })
   if (smsResult.success) {
-    await refreshSmsPreferredRoute(params.target.providerPhone)
     logDeliverySucceeded({
       provider: 'msg91_sms',
       purpose: params.purpose,
@@ -366,20 +369,26 @@ export const otpDeliveryService = {
       return
     }
 
-    const preferSmsOnly = await isSmsPreferredRouteActive(target.providerPhone)
-    if (preferSmsOnly) {
+    const intervalSec =
+      (await otpDeliveryConfigService.getSmsTriggerIntervalSec()) ||
+      OTP_SMS_TRIGGER_INTERVAL_SEC_DEFAULT
+    const requestCount = await bumpPhoneOtpRequestCount(target.providerPhone, intervalSec)
+    const preferSms = requestCount >= OTP_SMS_TRIGGER_AFTER_COUNT
+
+    if (preferSms) {
       logOtpDelivery('otp_delivery_started', {
         purpose: params.purpose,
         target: target.masked,
         targetType: target.type,
         deliveryProvider: 'msg91_sms',
-        routeReason: 'sms_preferred_route',
+        routeReason: 'sms_request_threshold',
+        requestCount,
       })
       await deliverPhoneOtpViaSms({
         otp: params.otp,
         purpose: params.purpose,
         target,
-        routeReason: 'sms_preferred_route',
+        routeReason: 'sms_request_threshold',
       })
       return
     }
@@ -397,7 +406,6 @@ export const otpDeliveryService = {
       result: whatsappResult,
     })
     if (whatsappResult.success) {
-      await refreshSmsPreferredRoute(target.providerPhone)
       logDeliverySucceeded({
         provider: 'msg91_whatsapp',
         purpose: params.purpose,
