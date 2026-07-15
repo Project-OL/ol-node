@@ -124,6 +124,11 @@ export const RedisKeys = {
     `typing:throttle:${conversationId}:${userId}`,
   /** Messaging: typing indicator per conversation per user. */
   userTyping: (convId: string, userId: string) => `typing:${convId}:${userId}`,
+  /** Messaging: recording publish throttle (SET NX, 2s). */
+  recordingThrottle: (conversationId: string, userId: string) =>
+    `recording:throttle:${conversationId}:${userId}`,
+  /** Messaging: recording indicator per conversation per user. */
+  userRecording: (convId: string, userId: string) => `recording:${convId}:${userId}`,
   /** Messaging: open WebSocket count per user (presence). */
   presenceCount: (userId: string) => `presence:count:${userId}`,
   /** Messaging: Redis pub/sub for PRESENCE frames for a user (lazy JOIN_PRESENCE). */
@@ -358,6 +363,10 @@ export const PRESENCE_HEARTBEAT_TTL_SEC = 60
 export const TYPING_INDICATOR_TTL_SEC = 8
 /** Messaging: max one typing publish per user per conversation per 2s. */
 export const TYPING_THROTTLE_TTL_SEC = 2
+/** Messaging: recording indicator key TTL (same as typing: 8s). */
+export const RECORDING_INDICATOR_TTL_SEC = 8
+/** Messaging: max one recording publish per user per conversation per 2s. */
+export const RECORDING_THROTTLE_TTL_SEC = 2
 /** Messaging: cached conv membership for typing (60s). */
 export const CONV_MEMBER_CACHE_TTL_SEC = 60
 /** Messaging: coalesce READ WS frames before DB + fan-out (ms). */

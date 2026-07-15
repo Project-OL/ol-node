@@ -296,6 +296,14 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
 
                 frame.isTyping,
               )
+            } else if (frame.t === 'RECORDING') {
+              await messagingService.handleRecordingFrame(
+                userId,
+
+                frame.conversationId,
+
+                frame.isRecording,
+              )
             } else if (frame.t === 'READ') {
               messagingService.scheduleReadReceipt(
                 userId,

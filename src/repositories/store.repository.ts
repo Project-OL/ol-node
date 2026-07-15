@@ -150,6 +150,34 @@ export const storeRepository = {
     )
   },
 
+  /** Unequip whatever is currently in the category slot (idempotent if already empty). */
+  async clearActiveCategory(userId: string, category: StoreItemCategory): Promise<void> {
+    await prisma.$transaction(
+      async (tx) => {
+        await lockActiveStoreCategory(tx, userId, category)
+        const activeRow = await tx.userActiveStoreItems.findUnique({
+          where: { userId_category: { userId, category } },
+        })
+        if (activeRow?.userStoreItemId) {
+          await tx.userStoreItem.updateMany({
+            where: { id: activeRow.userStoreItemId, userId },
+            data: { isApplied: false },
+          })
+        }
+        await tx.userActiveStoreItems.upsert({
+          where: { userId_category: { userId, category } },
+          create: {
+            userId,
+            category,
+            userStoreItemId: null,
+          },
+          update: { userStoreItemId: null },
+        })
+      },
+      { timeout: TX_TIMEOUT_MS },
+    )
+  },
+
   async expireItem(
     userStoreItemId: string,
   ): Promise<{ userId: string; category: StoreItemCategory } | null> {

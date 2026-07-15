@@ -91,6 +91,9 @@ describe("richTierService", () => {
     const out = await richTierService.getCurrentTierForUser("u1");
     expect(out.badgeVisible).toBe(false);
     expect(out.tier).toBe(0);
+    expect(out.level).toBe(0);
+    expect(out.amount).toBe("0");
+    expect(out.currentMonthProgressCoins).toBe("0");
   });
 
   it("getCurrentTierForUser sets badgeVisible when VIP and tier > 0", async () => {
@@ -116,6 +119,9 @@ describe("richTierService", () => {
     });
     const out = await richTierService.getCurrentTierForUser("u1");
     expect(out.tier).toBe(1);
+    expect(out.level).toBe(1);
+    expect(out.amount).toBe("5000000");
+    expect(out.currentMonthProgressCoins).toBe("5000000");
     expect(out.badgeVisible).toBe(true);
   });
 

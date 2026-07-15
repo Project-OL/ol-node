@@ -64,10 +64,14 @@ export function applyRetentionRule(newTier: number): bigint {
 }
 
 export type RichTierSnapshotDto = {
+  /** Rich level 0–10 (alias of `tier` for profile UIs). */
+  level: number
   tier: number
   displayName: string | null
   evaluatedFromYear: number
   evaluatedFromMonth: number
+  /** Progress coins this UTC month (carryover + recharge); alias of `currentMonthProgressCoins`. */
+  amount: string
   currentMonthRechargeCoins: string
   currentMonthCarryoverCoins: string
   currentMonthProgressCoins: string
@@ -76,7 +80,7 @@ export type RichTierSnapshotDto = {
   badgeVisible: boolean
 }
 
-type RichStateCached = Omit<RichTierSnapshotDto, 'badgeVisible'>
+type RichStateCached = Omit<RichTierSnapshotDto, 'badgeVisible' | 'level' | 'amount'>
 
 async function isUserVipActive(userId: string): Promise<boolean> {
   const lastVip = await vipAssignmentRepository.findMostRecent(userId)
@@ -233,6 +237,8 @@ export const richTierService = {
         const parsed = JSON.parse(cached) as RichStateCached
         return {
           ...parsed,
+          level: parsed.tier,
+          amount: parsed.currentMonthProgressCoins,
           badgeVisible: isVip && parsed.tier > 0,
         }
       }
@@ -267,6 +273,8 @@ export const richTierService = {
 
     return {
       ...core,
+      level: core.tier,
+      amount: core.currentMonthProgressCoins,
       badgeVisible: isVip && badgeTier > 0,
     }
   },
@@ -408,19 +416,33 @@ export const richTierService = {
     }
   },
 
-  /** Profile card / search: tier summary with VIP-gated badge. */
+  /** Profile card / search: tier + progress amount with VIP-gated badge. */
   getRichTierCardFields: async (
     userId: string,
   ): Promise<{
+    level: number
     tier: number
     displayName: string | null
     badgeVisible: boolean
+    amount: string
+    currentMonthRechargeCoins: string
+    currentMonthCarryoverCoins: string
+    currentMonthProgressCoins: string
+    nextTierThreshold: string | null
+    nextTierLackingCoins: string | null
   }> => {
     const snap = await richTierService.getCurrentTierForUser(userId)
     return {
+      level: snap.level,
       tier: snap.tier,
       displayName: snap.displayName,
       badgeVisible: snap.badgeVisible,
+      amount: snap.amount,
+      currentMonthRechargeCoins: snap.currentMonthRechargeCoins,
+      currentMonthCarryoverCoins: snap.currentMonthCarryoverCoins,
+      currentMonthProgressCoins: snap.currentMonthProgressCoins,
+      nextTierThreshold: snap.nextTierThreshold,
+      nextTierLackingCoins: snap.nextTierLackingCoins,
     }
   },
 }

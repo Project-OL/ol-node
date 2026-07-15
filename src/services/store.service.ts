@@ -638,6 +638,150 @@ export const storeService = {
     ])
   },
 
+  /**
+   * Batch set equipped cosmetics + rare VIP public ID.
+   * Omitted keys leave the slot unchanged; `null` unequips; UUID equips that ownership row.
+   * All referenced ownership rows are validated before any write.
+   */
+  async setActiveItems(
+    userId: string,
+    input: {
+      RIDE?: string | null
+      AVATAR_FRAME?: string | null
+      CHAT_BUBBLE?: string | null
+      PROFILE_CARD?: string | null
+      rareIdAssignmentId?: string | null
+    },
+  ): Promise<ActiveStoreItemsMap> {
+    const cosmeticSlots: StoreItemCategory[] = [
+      'RIDE',
+      'AVATAR_FRAME',
+      'CHAT_BUBBLE',
+      'PROFILE_CARD',
+    ]
+
+    type CosmeticAction =
+      | { category: StoreItemCategory; action: 'clear' }
+      | { category: StoreItemCategory; action: 'equip'; userStoreItemId: string }
+
+    const cosmeticActions: CosmeticAction[] = []
+    for (const category of cosmeticSlots) {
+      if (!(category in input) || input[category] === undefined) continue
+      const userStoreItemId = input[category]
+      if (userStoreItemId === null) {
+        cosmeticActions.push({ category, action: 'clear' })
+        continue
+      }
+
+      const owned = await storeRepository.findUserStoreItemById(userStoreItemId)
+      if (!owned || owned.userId !== userId) {
+        throw new AppError(404, 'Store item ownership not found', 'STORE_ITEM_NOT_OWNED')
+      }
+      if (owned.storeItem.category !== category) {
+        throw new AppError(
+          400,
+          `Owned item is ${owned.storeItem.category}, not ${category}`,
+          'STORE_ITEM_CATEGORY_MISMATCH',
+        )
+      }
+      if (!owned.isActive || owned.revokedAt) {
+        throw new AppError(400, 'Store item is inactive', 'STORE_ITEM_INACTIVE')
+      }
+      if (owned.expiresAt.getTime() <= Date.now()) {
+        throw new AppError(400, 'Store item has expired', 'STORE_ITEM_EXPIRED')
+      }
+      cosmeticActions.push({ category, action: 'equip', userStoreItemId })
+    }
+
+    let rareAction: 'skip' | 'clear' | { assignmentId: string; publicId: bigint; expiresAt: Date } =
+      'skip'
+    if (input.rareIdAssignmentId !== undefined) {
+      if (input.rareIdAssignmentId === null) {
+        rareAction = 'clear'
+      } else {
+        const assignment = await prismaRead.userVipAssignment.findUnique({
+          where: { id: input.rareIdAssignmentId },
+          select: {
+            id: true,
+            userId: true,
+            publicId: true,
+            isActive: true,
+            revokedAt: true,
+            expiresAt: true,
+          },
+        })
+        if (!assignment || assignment.userId !== userId) {
+          throw new AppError(404, 'Rare ID ownership not found', 'RARE_ID_NOT_OWNED')
+        }
+        if (!assignment.isActive || assignment.revokedAt) {
+          throw new AppError(400, 'Rare ID is inactive', 'RARE_ID_INACTIVE')
+        }
+        if (assignment.expiresAt.getTime() <= Date.now()) {
+          throw new AppError(400, 'Rare ID has expired', 'RARE_ID_EXPIRED')
+        }
+        rareAction = {
+          assignmentId: assignment.id,
+          publicId: assignment.publicId,
+          expiresAt: assignment.expiresAt,
+        }
+      }
+    }
+
+    for (const step of cosmeticActions) {
+      if (step.action === 'clear') {
+        await storeRepository.clearActiveCategory(userId, step.category)
+      } else {
+        await storeRepository.activateItem(userId, step.userStoreItemId, step.category)
+      }
+    }
+
+    if (rareAction === 'clear') {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          currentVipPublicId: null,
+          vipPublicIdExpiresAt: null,
+        },
+      })
+      try {
+        await redisClient.del(RedisKeys.userActiveVipId(userId))
+      } catch {
+        /* ignore */
+      }
+    } else if (rareAction !== 'skip') {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          currentVipPublicId: rareAction.publicId,
+          vipPublicIdExpiresAt: rareAction.expiresAt,
+        },
+      })
+
+      const ttlSeconds = Math.max(
+        1,
+        Math.floor((rareAction.expiresAt.getTime() - Date.now()) / 1000),
+      )
+      try {
+        await redisClient.set(
+          RedisKeys.userActiveVipId(userId),
+          rareAction.publicId.toString(),
+          'EX',
+          ttlSeconds,
+        )
+      } catch {
+        /* ignore */
+      }
+    }
+
+    await Promise.all([
+      cacheRedisService.del(RedisKeys.userActiveStore(userId)),
+      cacheRedisService.delByKeyPrefix(RedisKeys.userStoreItems(userId)),
+      cacheRedisService.del(RedisKeys.userMe(userId), RedisKeys.userProfile(userId)),
+    ])
+
+    return this.getActiveItemsForUser(userId)
+  },
+
   async listOwnedItems(
     userId: string,
     opts: { category?: StoreItemCategory; isActive?: boolean; cursor?: string; limit?: number },

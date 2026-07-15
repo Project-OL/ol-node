@@ -16,6 +16,8 @@ import {
   CONV_MEMBER_CACHE_TTL_SEC,
   TYPING_THROTTLE_TTL_SEC,
   TYPING_INDICATOR_TTL_SEC,
+  RECORDING_THROTTLE_TTL_SEC,
+  RECORDING_INDICATOR_TTL_SEC,
   READ_RECEIPT_DEBOUNCE_MS,
 } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
@@ -766,6 +768,43 @@ export const messagingService = {
       conversationId,
       userId,
       isTyping,
+    })
+  },
+
+  async handleRecordingFrame(
+    userId: string,
+    conversationId: string,
+    isRecording: boolean,
+  ): Promise<void> {
+    const ok = await this.ensureConvMemberForTyping(userId, conversationId)
+    if (!ok) return
+
+    const throttleKey = RedisKeys.recordingThrottle(conversationId, userId)
+    const firstInWindow = await redisClient.set(
+      throttleKey,
+      '1',
+      'EX',
+      RECORDING_THROTTLE_TTL_SEC,
+      'NX',
+    )
+    if (firstInWindow === null) return
+
+    if (isRecording) {
+      await redisClient.set(
+        RedisKeys.userRecording(conversationId, userId),
+        '1',
+        'EX',
+        RECORDING_INDICATOR_TTL_SEC,
+      )
+    } else {
+      await redisClient.del(RedisKeys.userRecording(conversationId, userId))
+    }
+
+    await publishServerFrameToConversation(conversationId, {
+      t: 'RECORDING',
+      conversationId,
+      userId,
+      isRecording,
     })
   },
 

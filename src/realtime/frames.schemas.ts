@@ -20,6 +20,11 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
     isTyping: z.boolean(),
   }),
   z.object({
+    t: z.literal('RECORDING'),
+    conversationId: cuid,
+    isRecording: z.boolean(),
+  }),
+  z.object({
     t: z.literal('PING'),
     ts: z.number(),
   }),

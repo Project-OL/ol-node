@@ -226,10 +226,12 @@ describe('meService', () => {
       rareId: null,
     })
     getCurrentTierForUserRich.mockResolvedValue({
+      level: 0,
       tier: 0,
       displayName: null,
       evaluatedFromYear: 0,
       evaluatedFromMonth: 0,
+      amount: '0',
       currentMonthRechargeCoins: '0',
       currentMonthCarryoverCoins: '0',
       currentMonthProgressCoins: '0',
@@ -288,10 +290,12 @@ describe('meService', () => {
       rareId: null,
     },
     richTier: {
+      level: 0,
       tier: 0,
       displayName: null,
       evaluatedFromYear: 0,
       evaluatedFromMonth: 0,
+      amount: '0',
       currentMonthRechargeCoins: '0',
       currentMonthCarryoverCoins: '0',
       currentMonthProgressCoins: '0',

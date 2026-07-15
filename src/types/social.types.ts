@@ -22,11 +22,20 @@ export type UserCard = {
   age: number | null
   livestreamLevel: number
   wealthLevel: number
-  /** Monthly Rich (Elite) tier; badge gated by VIP. */
+  /** Monthly Rich (Elite) tier; badge gated by VIP. Amount fields are decimal strings. */
   richTier?: {
+    /** Rich level 0–10 (same as `tier`). */
+    level: number
     tier: number
     displayName: string | null
     badgeVisible: boolean
+    /** Current-month progress coins (carryover + recharge); same as `amount`. */
+    amount: string
+    currentMonthRechargeCoins: string
+    currentMonthCarryoverCoins: string
+    currentMonthProgressCoins: string
+    nextTierThreshold: string | null
+    nextTierLackingCoins: string | null
   }
   subscriberCount: number
   isFollowing: boolean

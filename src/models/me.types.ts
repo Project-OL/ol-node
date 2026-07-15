@@ -4,10 +4,14 @@ import type { ActiveStoreItemsMap } from './store.types'
 
 /** Monthly Rich (Elite) tier snapshot for GET /users/me. */
 export interface RichTierMeDto {
+  /** Rich level 0–10 (alias of `tier` for profile UIs). */
+  level: number
   tier: number
   displayName: string | null
   evaluatedFromYear: number
   evaluatedFromMonth: number
+  /** Progress coins this UTC month (carryover + recharge); alias of `currentMonthProgressCoins`. */
+  amount: string
   currentMonthRechargeCoins: string
   currentMonthCarryoverCoins: string
   currentMonthProgressCoins: string

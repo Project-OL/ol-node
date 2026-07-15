@@ -130,6 +130,54 @@ export default async function storeRoutes(app: FastifyInstance) {
     },
   )
 
+  const SlotIdSchema = z.string().uuid().nullable()
+  const SetActiveItemsBodySchema = z
+    .object({
+      RIDE: SlotIdSchema.optional(),
+      AVATAR_FRAME: SlotIdSchema.optional(),
+      CHAT_BUBBLE: SlotIdSchema.optional(),
+      PROFILE_CARD: SlotIdSchema.optional(),
+      /** Owned `user_vip_assignments.id`; `null` clears equipped rare VIP public ID. */
+      rareIdAssignmentId: SlotIdSchema.optional(),
+    })
+    .refine(
+      (v) =>
+        v.RIDE !== undefined ||
+        v.AVATAR_FRAME !== undefined ||
+        v.CHAT_BUBBLE !== undefined ||
+        v.PROFILE_CARD !== undefined ||
+        v.rareIdAssignmentId !== undefined,
+      'Provide at least one active slot',
+    )
+
+  app.get(
+    '/active',
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId
+      if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      return reply.send(await storeService.getActiveItemsForUser(userId))
+    },
+  )
+
+  app.put(
+    '/active',
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = SetActiveItemsBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const userId = request.userId
+      if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      return reply.send(await storeService.setActiveItems(userId, parsed.data))
+    },
+  )
+
   app.post<{ Params: { userStoreItemId: string } }>(
     '/activate/:userStoreItemId',
     { preHandler: [authenticate] },

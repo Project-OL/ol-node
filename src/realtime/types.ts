@@ -44,6 +44,12 @@ export type ServerFrame =
       isTyping: boolean
     }
   | {
+      t: 'RECORDING'
+      conversationId: string
+      userId: string
+      isRecording: boolean
+    }
+  | {
       t: 'READ'
       conversationId: string
       userId: string
@@ -101,6 +107,7 @@ export type ClientFrame =
   | { t: 'JOIN'; conversationId: string }
   | { t: 'LEAVE'; conversationId: string }
   | { t: 'TYPING'; conversationId: string; isTyping: boolean }
+  | { t: 'RECORDING'; conversationId: string; isRecording: boolean }
   | { t: 'PING'; ts: number }
   | { t: 'READ'; conversationId: string; lastReadMessageId: string }
   | { t: 'JOIN_PRESENCE'; userIds: string[] }
