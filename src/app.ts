@@ -77,6 +77,10 @@ import coinTradingRoutes from './routes/v1/coin-trading.routes'
 import { paymentMethodRoutes } from './routes/v1/payment-method.routes'
 import { withdrawalRoutes } from './routes/v1/withdrawal.routes'
 import { webhooksRoutes } from './routes/v1/webhooks.routes'
+import bannerRoutes from './routes/v1/banner.routes'
+import bannerAdminRoutes from './routes/v1/banner-admin.routes'
+import customGiftRoutes from './routes/v1/custom-gift.routes'
+import customGiftAdminRoutes from './routes/v1/custom-gift-admin.routes'
 import { schedulePublicIdPregen } from './queues/public-id-pregen.queue'
 import { publicIdPreGenerationService } from './services/public-id-pre-generation.service'
 import { rootLogger } from './utils/rootLogger'
@@ -236,6 +240,8 @@ export async function buildApp() {
       await adminApp.register(questionnaireAdminRoutes, { prefix: '/questionnaires' })
       await adminApp.register(csaAdminRoutes, { prefix: '/support' })
       await adminApp.register(supportAdminRoutes, { prefix: '/support' })
+      await adminApp.register(bannerAdminRoutes)
+      await adminApp.register(customGiftAdminRoutes)
     },
     { prefix: `${prefix}/admin` },
   )
@@ -254,6 +260,8 @@ export async function buildApp() {
   await app.register(faceVerificationRoutes, { prefix: `${prefix}/face-verification` })
   await app.register(faceRegistrationRoutes, { prefix: `${prefix}/face-registration` })
   await app.register(livePhotoRoutes, { prefix: `${prefix}/live-photo` })
+  await app.register(bannerRoutes, { prefix: `${prefix}/banners` })
+  await app.register(customGiftRoutes, { prefix: `${prefix}/custom-gifts` })
 
   registerRealtimeGateway(app)
 

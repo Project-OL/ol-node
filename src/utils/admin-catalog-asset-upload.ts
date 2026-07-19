@@ -3,7 +3,7 @@ import { storageService } from '../services/storage.service'
 import { AppError } from '../middlewares/errorHandler'
 import { env } from '../config/env'
 
-export type AdminCatalogDomain = 'gift' | 'store'
+export type AdminCatalogDomain = 'gift' | 'store' | 'banner'
 export type AdminCatalogAssetRole = 'display' | 'effect'
 
 /** Gift catalog assets (display + effect). */
@@ -34,10 +34,22 @@ export const STORE_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
   riv: 'application/octet-stream',
 }
 
+/** Banner slider images (static display only). */
+export const BANNER_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  gif: 'image/gif',
+}
+
 const PRESIGNED_URL_EXPIRES_IN = 300
 
 function extMapForDomain(domain: AdminCatalogDomain): Record<string, string> {
-  return domain === 'gift' ? GIFT_ADMIN_EXT_TO_CONTENT_TYPE : STORE_ADMIN_EXT_TO_CONTENT_TYPE
+  if (domain === 'gift') return GIFT_ADMIN_EXT_TO_CONTENT_TYPE
+  if (domain === 'banner') return BANNER_ADMIN_EXT_TO_CONTENT_TYPE
+  return STORE_ADMIN_EXT_TO_CONTENT_TYPE
 }
 
 export function extFromFilename(filename: string): string {
@@ -60,7 +72,12 @@ export function resolveAdminCatalogAssetContentType(
   const extMap = extMapForDomain(domain)
   if (!ext || !extMap[ext]) {
     const allowed = [...new Set(Object.keys(extMap))].sort().join(', ')
-    const code = domain === 'gift' ? 'INVALID_GIFT_ASSET_TYPE' : 'INVALID_STORE_ASSET_TYPE'
+    const code =
+      domain === 'gift'
+        ? 'INVALID_GIFT_ASSET_TYPE'
+        : domain === 'banner'
+          ? 'INVALID_BANNER_ASSET_TYPE'
+          : 'INVALID_STORE_ASSET_TYPE'
     throw new AppError(
       400,
       `Unsupported file type .${ext || '(none)'}. Allowed: ${allowed}`,
@@ -81,7 +98,9 @@ export function buildAdminCatalogAssetKey(params: {
   const prefix =
     params.domain === 'gift'
       ? `gifts/admin/${id}/${params.role}-${safe}`
-      : `store/admin/items/${id}/${params.role}-${safe}`
+      : params.domain === 'banner'
+        ? `banners/admin/${id}/${params.role}-${safe}`
+        : `store/admin/items/${id}/${params.role}-${safe}`
   return { key: prefix, contentType }
 }
 

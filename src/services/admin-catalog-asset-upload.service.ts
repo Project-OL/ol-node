@@ -19,4 +19,14 @@ export const adminCatalogAssetUploadService = {
       sizeBytes: input.sizeBytes,
     })
   },
+
+  /** Banner slider images are always the display asset. */
+  getBannerUploadUrl(input: { fileName: string; sizeBytes?: number }) {
+    return generatePresignedAdminCatalogAssetUpload({
+      domain: 'banner',
+      role: 'display',
+      fileName: input.fileName,
+      sizeBytes: input.sizeBytes,
+    })
+  },
 }

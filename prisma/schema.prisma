@@ -129,6 +129,7 @@ model User {
   vipMembershipPurchases        VipMembershipPurchase[]
   vipDailyClaims                VipDailyClaim[]
   vipDailyQuotas                VipDailyQuota[]
+  customGiftRequests            CustomGiftRequest[]
   questionnaireAttempts         UserQuestionnaireAttempt[]
   faceProfile                   UserFaceProfile?
   faceVerificationAttempts      FaceVerificationAttempt[]
@@ -1016,6 +1017,8 @@ enum CoinTxType {
   STORE_ITEM_PURCHASE
   VIP_MEMBERSHIP_PURCHASE
   POINT_EXCHANGE_TO_COINS
+  CUSTOM_GIFT_REQUEST
+  CUSTOM_GIFT_REFUND
 }
 
 enum PointTxType {
@@ -1109,6 +1112,8 @@ model CoinLedgerEntry {
   wallet                 Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
   vipMembershipPurchases VipMembershipPurchase[]
   vipDailyClaims         VipDailyClaim[]
+  customGiftRequestDebits  CustomGiftRequest[]   @relation("CustomGiftRequestDebit")
+  customGiftRequestRefunds CustomGiftRequest[]   @relation("CustomGiftRequestRefund")
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([walletId, txType, createdAt(sort: Desc)])
@@ -1716,6 +1721,7 @@ model Gift {
   gallerySectionItems GiftGallerySectionItem[]
   transactions        GiftTransaction[]
   galleryProgressRows GiftGalleryProgress[]
+  customGiftRequests  CustomGiftRequest[]
 
   @@index([isActive])
   @@index([categoryId])
@@ -2547,4 +2553,68 @@ model AdminSession {
   @@index([adminId])
   @@index([tokenHash])
   @@map("admin_sessions")
+}
+
+model Banner {
+  id               String   @id @default(uuid()) @db.Uuid
+  title            String   @db.VarChar(200)
+  imageUrl         String   @map("image_url") @db.Text
+  position         String   @db.VarChar(100)
+  startAt          DateTime @map("start_at")
+  endAt            DateTime @map("end_at")
+  enabled          Boolean  @default(true)
+  createdByAdminId String?  @map("created_by_admin_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([enabled, startAt, endAt])
+  @@index([position])
+  @@index([createdAt(sort: Desc)])
+  @@map("banners")
+}
+
+enum CustomGiftRequestStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model CustomGiftConfig {
+  id               Int      @id @default(1)
+  coinCost         BigInt   @default(100000) @map("coin_cost")
+  enabled          Boolean  @default(true)
+  description      String?  @db.Text
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  updatedByAdminId String?  @map("updated_by_admin_id") @db.Uuid
+
+  @@map("custom_gift_config")
+}
+
+model CustomGiftRequest {
+  id                  String                  @id @default(uuid()) @db.Uuid
+  userId              String                  @map("user_id") @db.Uuid
+  whatsappNumber      String                  @map("whatsapp_number") @db.VarChar(32)
+  note                String?                 @db.Text
+  coinCost            BigInt                  @map("coin_cost")
+  ledgerEntryId       String                  @map("ledger_entry_id") @db.Uuid
+  status              CustomGiftRequestStatus @default(PENDING)
+  giftId              String?                 @map("gift_id") @db.Uuid
+  adminNote           String?                 @map("admin_note") @db.Text
+  failureReason       String?                 @map("failure_reason") @db.Text
+  refunded            Boolean                 @default(false)
+  refundLedgerEntryId String?                 @map("refund_ledger_entry_id") @db.Uuid
+  resolvedByAdminId   String?                 @map("resolved_by_admin_id") @db.Uuid
+  resolvedAt          DateTime?               @map("resolved_at")
+  createdAt           DateTime                @default(now()) @map("created_at")
+  updatedAt           DateTime                @updatedAt @map("updated_at")
+
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntry       CoinLedgerEntry  @relation("CustomGiftRequestDebit", fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+  refundLedgerEntry CoinLedgerEntry? @relation("CustomGiftRequestRefund", fields: [refundLedgerEntryId], references: [id], onDelete: Restrict)
+  gift              Gift?            @relation(fields: [giftId], references: [id], onDelete: SetNull)
+
+  @@unique([ledgerEntryId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("custom_gift_requests")
 }
