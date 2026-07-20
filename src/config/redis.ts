@@ -340,6 +340,8 @@ export const RedisKeys = {
   adminOnline: (adminId: string) => `admin:online:${adminId}`,
   /** Admin login failure throttle per email (TTL ADMIN_LOGIN_FAIL_TTL). */
   adminLoginFail: (email: string) => `admin:login:fail:${email.toLowerCase()}`,
+  /** Cached per-admin view permission snapshot (JSON; TTL ADMIN_VIEW_ACCESS_TTL). */
+  adminViewAccess: (adminId: string) => `admin:views:access:${adminId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -436,6 +438,8 @@ export const SUPPORT_TICKET_DETAIL_TTL = 30
 
 /** Admin presence heartbeat TTL — the portal's badge polling (~30s) keeps it alive. */
 export const ADMIN_ONLINE_TTL = 120
+/** Per-admin view permission snapshot TTL — busted on assignment/view changes. */
+export const ADMIN_VIEW_ACCESS_TTL = 120
 /** Admin login failure throttle window per email (seconds). */
 export const ADMIN_LOGIN_FAIL_TTL = 900
 /** Failures within the throttle window before pre-DB 429s. */

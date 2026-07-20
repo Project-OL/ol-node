@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify'
 import { authenticateAdmin, requireAdminRole } from '../../middlewares/adminAuth.middleware'
 import { parseRequest } from '../../utils/zod-request'
 import { csaManagementService } from '../../services/csaManagement.service'
+import { adminViewService } from '../../services/adminView.service'
+import { AssignViewsSchema } from '../../models/admin-view.schemas'
 import {
   CreateCsaSchema,
   UpdateCsaSchema,
@@ -69,5 +71,22 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
     const { adminId } = parseRequest(CsaIdParamsSchema, req.params)
     const stats = await csaManagementService.getCsaStats(adminId)
     return reply.send({ adminId, stats })
+  })
+
+  // Views assigned to this CSA (empty = unrestricted legacy role-based access).
+  app.get('/csas/:adminId/views', { preHandler: preAuth }, async (req, reply) => {
+    const { adminId } = parseRequest(CsaIdParamsSchema, req.params)
+    await csaManagementService.assertCsa(adminId)
+    const result = await adminViewService.getAssignedViews(adminId)
+    return reply.send({ adminId, ...result })
+  })
+
+  // Replace the CSA's assigned view set; [] clears all assignments.
+  app.put('/csas/:adminId/views', { preHandler: preAuth }, async (req, reply) => {
+    const { adminId } = parseRequest(CsaIdParamsSchema, req.params)
+    const body = parseRequest(AssignViewsSchema, req.body)
+    await csaManagementService.assertCsa(adminId)
+    const result = await adminViewService.assignViews(adminId, body.views, req.adminUser!.id)
+    return reply.send(result)
   })
 }

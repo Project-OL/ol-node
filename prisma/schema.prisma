@@ -979,6 +979,19 @@ model BroadcastReminder {
   @@map("broadcast_reminders")
 }
 
+/// Live-stream chat messages (shared with livestream backend). PG table name is "LiveMessage".
+model LiveMessage {
+  id               String   @id @default(uuid())
+  streamId         String
+  senderId         String
+  message          String
+  createdAt        DateTime @default(now())
+  replyToMessageId String?  @map("reply_to_message_id")
+  replyToUserId    String?  @map("reply_to_user_id")
+  replyToUsername  String?  @map("reply_to_username")
+  replyToText      String?  @map("reply_to_text")
+}
+
 // ── Wallet: coins & points ───────────────────────────────────────────────────
 
 enum WalletCurrencyType {
@@ -1675,13 +1688,54 @@ model VideoCallSession {
   endedAt       DateTime? @map("ended_at")
   endReason     String?   @map("end_reason") @db.VarChar(100)
 
-  caller  User @relation("CallSessionCaller", fields: [callerId], references: [id])
-  creator User @relation("CallSessionCreator", fields: [creatorId], references: [id])
+  caller         User                     @relation("CallSessionCaller", fields: [callerId], references: [id])
+  creator        User                     @relation("CallSessionCreator", fields: [creatorId], references: [id])
+  moderationLogs VideoCallModerationLog[]
 
   @@index([callerId, status])
   @@index([creatorId, status])
   @@index([livekitRoom])
   @@map("video_call_sessions")
+}
+
+model BannedWord {
+  id        String   @id @default(uuid()) @db.Uuid
+  word      String   @unique @db.VarChar(100)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("banned_words")
+}
+
+model LiveStreamModerationLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  streamId      String   @map("stream_id")
+  detectedLabel String   @map("detected_label") @db.VarChar(255)
+  confidence    Float
+  action        String   @db.VarChar(50)
+  s3Key         String?  @map("s3_key") @db.VarChar(512)
+  s3Bucket      String?  @map("s3_bucket") @db.VarChar(255)
+  checkedAt     DateTime @default(now()) @map("checked_at")
+
+  @@index([streamId])
+  @@map("live_stream_moderation_logs")
+}
+
+model VideoCallModerationLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  sessionId     String   @map("session_id")
+  detectedLabel String   @map("detected_label") @db.VarChar(255)
+  confidence    Float
+  action        String   @db.VarChar(50)
+  s3Key         String?  @map("s3_key") @db.VarChar(512)
+  s3Bucket      String?  @map("s3_bucket") @db.VarChar(255)
+  checkedAt     DateTime @default(now()) @map("checked_at")
+
+  session VideoCallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("video_call_moderation_logs")
 }
 
 // ── Gifts, gallery, fan ranking ───────────────────────────────────────────────
@@ -2535,8 +2589,39 @@ model SystemAdmin {
   ticketNotes     SupportTicketNote[]
   notifications   CsaNotification[]
   reviewedReports MessageReport[]     @relation("ReportReviewer")
+  viewAssignments AdminViewAssignment[]
 
   @@map("system_admins")
+}
+
+// Named group of admin endpoints ("METHOD /admin/path") the panel renders as one view.
+// SUPER_ADMIN always sees everything; other admins with >=1 assignment are restricted
+// to (and granted) exactly the endpoints of their assigned views.
+model AdminView {
+  id               String   @id @default(uuid())
+  name             String   @unique @db.VarChar(100)
+  endpoints        String[] @default([])
+  createdByAdminId String?  @map("created_by_admin_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  assignments AdminViewAssignment[]
+
+  @@map("admin_views")
+}
+
+model AdminViewAssignment {
+  id                String      @id @default(uuid())
+  adminId           String      @map("admin_id")
+  admin             SystemAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  viewId            String      @map("view_id")
+  view              AdminView   @relation(fields: [viewId], references: [id], onDelete: Cascade)
+  assignedByAdminId String?     @map("assigned_by_admin_id")
+  createdAt         DateTime    @default(now()) @map("created_at")
+
+  @@unique([adminId, viewId])
+  @@index([viewId])
+  @@map("admin_view_assignments")
 }
 
 model AdminSession {

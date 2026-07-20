@@ -81,6 +81,7 @@ import bannerRoutes from './routes/v1/banner.routes'
 import bannerAdminRoutes from './routes/v1/banner-admin.routes'
 import customGiftRoutes from './routes/v1/custom-gift.routes'
 import customGiftAdminRoutes from './routes/v1/custom-gift-admin.routes'
+import adminViewRoutes from './routes/v1/admin-view.routes'
 import { schedulePublicIdPregen } from './queues/public-id-pregen.queue'
 import { publicIdPreGenerationService } from './services/public-id-pre-generation.service'
 import { rootLogger } from './utils/rootLogger'
@@ -242,6 +243,7 @@ export async function buildApp() {
       await adminApp.register(supportAdminRoutes, { prefix: '/support' })
       await adminApp.register(bannerAdminRoutes)
       await adminApp.register(customGiftAdminRoutes)
+      await adminApp.register(adminViewRoutes)
     },
     { prefix: `${prefix}/admin` },
   )

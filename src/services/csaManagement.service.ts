@@ -52,6 +52,11 @@ async function findCsaOrThrow(adminId: string) {
 }
 
 export const csaManagementService = {
+  /** 404 CSA_NOT_FOUND unless adminId is an existing CUSTOMER_SUPPORT admin. */
+  async assertCsa(adminId: string) {
+    await findCsaOrThrow(adminId)
+  },
+
   async createCsa(input: CreateCsaInput) {
     const admin = await systemAdminService.createAdmin({
       email: input.email,
