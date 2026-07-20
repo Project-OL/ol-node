@@ -161,6 +161,7 @@ model User {
   paymentMethods               UserPaymentMethod[]
   payrollAssignmentsAsAgent    WithdrawalPayrollAssignment[] @relation("AgencyPayrollAssignments")
   hostLiveSessions             HostLiveSession[]
+  hostStreamBans               HostStreamBan[]                @relation("UserHostBans")
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -1720,6 +1721,31 @@ model LiveStreamModerationLog {
 
   @@index([streamId])
   @@map("live_stream_moderation_logs")
+}
+
+model CountryLanguageMapping {
+  id        String   @id @default(uuid()) @db.Uuid
+  country   String   @unique @db.VarChar(100)
+  language  String   @db.VarChar(10) // e.g. "en", "ru", "es", "hi"
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("country_language_mappings")
+}
+
+model HostStreamBan {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  streamId       String   @map("stream_id") @db.Uuid
+  banNumber      Int      @map("ban_number")
+  banDuration    Int      @map("ban_duration_hours")
+  suspendedUntil DateTime @map("suspended_until")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user User @relation("UserHostBans", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("host_stream_bans")
 }
 
 model VideoCallModerationLog {
