@@ -36,16 +36,17 @@ function mapLabels(
 
 /**
  * Reusable nudity / suggestive content check for registration, verification, and live-photo flows.
+ * Pass `forceEnabled: true` for callers with their own feature flag (e.g. live photo).
  */
 export async function checkImageForNudity(
   s3Key: string,
-  options?: { strictMode?: boolean },
+  options?: { strictMode?: boolean; forceEnabled?: boolean },
 ): Promise<{
   isNudityDetected: boolean
   labels: ModerationLabelHit[]
   failureReason?: string
 }> {
-  if (!env.FACE_CONTENT_MODERATION_ENABLED) {
+  if (!options?.forceEnabled && !env.FACE_CONTENT_MODERATION_ENABLED) {
     return { isNudityDetected: false, labels: [] }
   }
   const strict = options?.strictMode ?? env.FACE_MODERATION_STRICT_MODE
@@ -67,13 +68,16 @@ export async function checkImageForNudity(
   return { isNudityDetected: false, labels }
 }
 
-export async function checkContentPolicy(s3Key: string): Promise<{
+export async function checkContentPolicy(
+  s3Key: string,
+  options?: { forceEnabled?: boolean },
+): Promise<{
   violated: boolean
   labels: ModerationLabelHit[]
   isViolenceOrWeapons: boolean
   isHateSymbols: boolean
 }> {
-  if (!env.FACE_CONTENT_MODERATION_ENABLED) {
+  if (!options?.forceEnabled && !env.FACE_CONTENT_MODERATION_ENABLED) {
     return { violated: false, labels: [], isViolenceOrWeapons: false, isHateSymbols: false }
   }
   const res = await fetchModerationLabels(s3Key)

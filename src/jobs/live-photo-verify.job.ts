@@ -13,10 +13,24 @@ import { storageService } from '../services/storage.service'
 import { bustLivePhotoCaches } from '../services/live-photo/live-photo-cache'
 import { livePhotoPreCompareHooks } from '../services/live-photo/live-photo-extension.hooks'
 import { livePhotoMetrics } from '../services/live-photo/live-photo.metrics'
-import { LIVE_PHOTO_S3_PURGE_JOB, LIVE_PHOTO_VERIFY_JOB } from '../queues/live-photo.constants'
+import { FACE_REGISTRATION_ERRORS } from '../constants/face-registration-errors'
+import {
+  LIVE_PHOTO_S3_PURGE_JOB,
+  LIVE_PHOTO_VERIFY_JOB,
+} from '../queues/live-photo.constants'
+import { enqueueLivePhotoS3Purge } from '../queues/live-photo.queue'
 import { rootLogger } from '../utils/rootLogger'
 
 const log = rootLogger.child({ module: 'live-photo-verify.job' })
+
+const MODERATION_REJECT_REASONS = new Set<string>([
+  FACE_REGISTRATION_ERRORS.FACE_QUALITY_INDECENT,
+  FACE_REGISTRATION_ERRORS.FACE_QUALITY_CONTENT_POLICY,
+])
+
+function isLivePhotoModerationEnabled(): boolean {
+  return env.LIVE_PHOTO_CONTENT_MODERATION_ENABLED || env.FACE_CONTENT_MODERATION_ENABLED
+}
 
 function parseTargetFaceQuality(
   face: NonNullable<Awaited<ReturnType<typeof detectFacesQuality>>['FaceDetails']>[number],
@@ -46,6 +60,13 @@ function parseTargetFaceQuality(
   return { ok: true }
 }
 
+function isReplaceJob(
+  row: NonNullable<Awaited<ReturnType<typeof livePhotoRepository.findByUserId>>>,
+  jobS3Key: string,
+): boolean {
+  return row.pendingS3Key === jobS3Key && row.verifiedAt != null
+}
+
 export async function processLivePhotoVerifyJob(
   job: Job<{ userId: string; s3Key: string; generation: number; requestId?: string }>,
 ): Promise<void> {
@@ -61,33 +82,59 @@ export async function processLivePhotoVerifyJob(
   }
   try {
     const row = await livePhotoRepository.findByUserId(userId)
+    const matchesTarget = !!row && (row.s3Key === s3Key || row.pendingS3Key === s3Key)
     if (!row || row.verifyGeneration !== generation || row.verificationState !== 'PROCESSING') {
       log.info({ userId, generation, requestId }, 'live_photo_verify_stale_job')
       livePhotoMetrics.verifyStaleSkipped += 1
       return
     }
-    if (row.s3Key !== s3Key) {
+    if (!matchesTarget) {
       log.warn(
-        { userId, generation, requestId, jobS3Key: s3Key, rowS3Key: row.s3Key },
+        { userId, generation, requestId, jobS3Key: s3Key, rowS3Key: row.s3Key, pending: row.pendingS3Key },
         'live_photo_verify_job_s3_key_mismatch_superseded',
       )
       livePhotoMetrics.verifyStaleSkipped += 1
       return
     }
 
-    if (env.FACE_CONTENT_MODERATION_ENABLED) {
-      const { checkImageForNudity } =
+    if (isLivePhotoModerationEnabled()) {
+      const { checkImageForNudity, checkContentPolicy } =
         await import('../services/face-registration/face-registration-moderation.service')
-      const nudity = await checkImageForNudity(s3Key)
+      const nudity = await checkImageForNudity(s3Key, { forceEnabled: true })
       if (nudity.isNudityDetected) {
-        await failAndAudit(userId, row.id, 'FACE_QUALITY_INDECENT', null, t0, null)
+        await failAndAudit(
+          userId,
+          row.id,
+          s3Key,
+          FACE_REGISTRATION_ERRORS.FACE_QUALITY_INDECENT,
+          null,
+          t0,
+          null,
+          null,
+          { moderationLabels: nudity.labels },
+        )
+        return
+      }
+      const policy = await checkContentPolicy(s3Key, { forceEnabled: true })
+      if (policy.violated) {
+        await failAndAudit(
+          userId,
+          row.id,
+          s3Key,
+          FACE_REGISTRATION_ERRORS.FACE_QUALITY_CONTENT_POLICY,
+          null,
+          t0,
+          null,
+          null,
+          { moderationLabels: policy.labels },
+        )
         return
       }
     }
 
     const face = await faceVerificationRepository.getProfileByUserId(userId)
     if (!face || face.status !== 'INDEXED' || !face.s3KeyReference?.trim()) {
-      await failAndAudit(userId, row.id, 'face_profile_not_indexed', null, t0, null)
+      await failAndAudit(userId, row.id, s3Key, 'face_profile_not_indexed', null, t0, null)
       return
     }
 
@@ -95,7 +142,7 @@ export async function processLivePhotoVerifyJob(
     try {
       head = await storageService.headObjectMetadata(s3Key)
     } catch {
-      await failAndAudit(userId, row.id, 'live_object_missing', null, t0, null)
+      await failAndAudit(userId, row.id, s3Key, 'live_object_missing', null, t0, null)
       return
     }
 
@@ -109,7 +156,7 @@ export async function processLivePhotoVerifyJob(
         targetContentType: head.contentType,
       })
       if (!r.pass) {
-        await failAndAudit(userId, row.id, r.reason, null, t0, null, null, { hook: true })
+        await failAndAudit(userId, row.id, s3Key, r.reason, null, t0, null, null, { hook: true })
         return
       }
     }
@@ -136,26 +183,26 @@ export async function processLivePhotoVerifyJob(
           },
           'live_photo_rekognition_invalid_live_image_format',
         )
-        await failAndAudit(userId, row.id, 'invalid_image_format', null, t0, null)
+        await failAndAudit(userId, row.id, s3Key, 'invalid_image_format', null, t0, null)
         return
       }
       log.error({ err, userId, requestId, s3Key }, 'live_photo_detect_faces_error')
-      await failAndAudit(userId, row.id, 'rekognition_detect_error', null, t0, null)
+      await failAndAudit(userId, row.id, s3Key, 'rekognition_detect_error', null, t0, null)
       return
     }
     const detectMs = Date.now() - detectT0
     const faces = detectRes.FaceDetails ?? []
     if (faces.length === 0) {
-      await failAndAudit(userId, row.id, 'no_face_in_live_image', null, t0, null)
+      await failAndAudit(userId, row.id, s3Key, 'no_face_in_live_image', null, t0, null)
       return
     }
     if (faces.length > 1) {
-      await failAndAudit(userId, row.id, 'multiple_faces_in_live_image', null, t0, null)
+      await failAndAudit(userId, row.id, s3Key, 'multiple_faces_in_live_image', null, t0, null)
       return
     }
     const q = parseTargetFaceQuality(faces[0]!)
     if (!q.ok) {
-      await failAndAudit(userId, row.id, q.reason, null, t0, null)
+      await failAndAudit(userId, row.id, s3Key, q.reason, null, t0, null)
       return
     }
 
@@ -179,11 +226,11 @@ export async function processLivePhotoVerifyJob(
           },
           'live_photo_rekognition_invalid_image_format_compare',
         )
-        await failAndAudit(userId, row.id, 'invalid_image_format', null, t0, Date.now() - cmpT0)
+        await failAndAudit(userId, row.id, s3Key, 'invalid_image_format', null, t0, Date.now() - cmpT0)
         return
       }
       log.error({ err, userId, requestId }, 'compare_faces_error')
-      await failAndAudit(userId, row.id, 'rekognition_compare_error', null, t0, Date.now() - cmpT0)
+      await failAndAudit(userId, row.id, s3Key, 'rekognition_compare_error', null, t0, Date.now() - cmpT0)
       return
     }
     const rekMs = Date.now() - cmpT0
@@ -198,6 +245,7 @@ export async function processLivePhotoVerifyJob(
       await failAndAudit(
         userId,
         row.id,
+        s3Key,
         'below_similarity_threshold',
         requestIdRek,
         t0,
@@ -208,11 +256,15 @@ export async function processLivePhotoVerifyJob(
     }
 
     const imageUrl = storageService.getCdnOrS3PublicUrl(s3Key)
-    await livePhotoRepository.markVerified(userId, {
+    const { previousS3KeyToPurge } = await livePhotoRepository.completeVerification(userId, {
       imageUrl,
       similarityScore: similarity,
       faceProfileId: face.id,
+      verifiedS3Key: s3Key,
     })
+    if (previousS3KeyToPurge) {
+      await enqueueLivePhotoS3Purge([previousS3KeyToPurge])
+    }
     await livePhotoRepository.createAttempt({
       userId,
       livePhotoId: row.id,
@@ -222,7 +274,7 @@ export async function processLivePhotoVerifyJob(
       failureReason: null,
       processingLatencyMs: Date.now() - t0,
       rekognitionLatencyMs: rekMs,
-      metadata: { detectFacesMs: detectMs },
+      metadata: { detectFacesMs: detectMs, replace: isReplaceJob(row, s3Key) },
     })
     livePhotoMetrics.verifyJobsCompleted += 1
     log.info(
@@ -233,6 +285,7 @@ export async function processLivePhotoVerifyJob(
         rekognitionMs: rekMs,
         totalMs: Date.now() - t0,
         requestId,
+        replaced: !!previousS3KeyToPurge,
       },
       'live_photo_verified',
     )
@@ -245,6 +298,7 @@ export async function processLivePhotoVerifyJob(
 async function failAndAudit(
   userId: string,
   livePhotoId: string,
+  jobS3Key: string,
   reason: string,
   rekognitionRequestId: string | null,
   t0: number,
@@ -252,7 +306,26 @@ async function failAndAudit(
   similarityScore: number | null = null,
   metadata?: Prisma.InputJsonValue,
 ): Promise<void> {
-  await livePhotoRepository.markFailed(userId, reason)
+  const current = await livePhotoRepository.findByUserId(userId)
+  const replace = current ? isReplaceJob(current, jobS3Key) : false
+
+  if (replace) {
+    const { pendingKeyToPurge } = await livePhotoRepository.abortReplace(userId, reason)
+    if (pendingKeyToPurge) {
+      await enqueueLivePhotoS3Purge([pendingKeyToPurge])
+    }
+  } else if (MODERATION_REJECT_REASONS.has(reason)) {
+    await livePhotoRepository.markRejected(userId, reason)
+  } else {
+    await livePhotoRepository.markFailed(userId, reason)
+  }
+
+  const attemptMeta: Prisma.InputJsonValue = {
+    replace,
+    ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)
+      : {}),
+  }
   try {
     await recordAttemptEnd({
       userId,
@@ -263,7 +336,7 @@ async function failAndAudit(
       failureReason: reason,
       processingLatencyMs: Date.now() - t0,
       rekognitionLatencyMs,
-      metadata,
+      metadata: attemptMeta,
     })
   } catch (err) {
     log.error({ err, userId, livePhotoId, reason }, 'live_photo_record_attempt_failed')

@@ -94,6 +94,11 @@ const envSchema = z
     FACE_GENDER_AUTO_UPDATE_ENABLED: z.coerce.boolean().default(false),
     FACE_DUPLICATE_CHECK_ENABLED: z.coerce.boolean().default(true),
     FACE_CONTENT_MODERATION_ENABLED: z.coerce.boolean().default(false),
+    /**
+     * Live-photo verify worker: DetectModerationLabels (nudity + content policy).
+     * Independent of face-registration; also honored when FACE_CONTENT_MODERATION_ENABLED is true.
+     */
+    LIVE_PHOTO_CONTENT_MODERATION_ENABLED: z.coerce.boolean().default(true),
     /** HSL saturation in face region above this → garish makeup heuristic. */
     FACE_GARISH_SATURATION_MAX: z.coerce.number().min(0).max(100).default(85),
     /** Image histogram avg saturation below this → monochrome. */

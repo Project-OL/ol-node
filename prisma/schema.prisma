@@ -2336,6 +2336,11 @@ model UserLivePhoto {
   verifiedAt        DateTime?                  @map("verified_at")
   failedReason      String?                    @map("failed_reason") @db.Text
   faceProfileId     String?                    @map("face_profile_id") @db.Uuid
+  /// Next replacement object; verified `s3Key`/`imageUrl` stay until this key passes verify.
+  pendingS3Key      String?                    @map("pending_s3_key") @db.Text
+  pendingS3Bucket   String?                    @map("pending_s3_bucket") @db.VarChar(255)
+  /// Last failed replace attempt while still VERIFIED (cleared on new upload-url / success).
+  replaceFailedReason String?                  @map("replace_failed_reason") @db.Text
   /// Incremented on each verify enqueue; worker ignores stale generations (latest upload wins).
   verifyGeneration  Int                        @default(0) @map("verify_generation")
   createdAt         DateTime                   @default(now()) @map("created_at")
