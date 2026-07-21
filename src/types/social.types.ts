@@ -57,6 +57,11 @@ export type UserCard = {
   }
   /** Face registration indexed in Rekognition, or agency KYC `face_verified`. */
   faceVerified?: boolean
+  /**
+   * Whether this user wants to receive video calls right now.
+   * Default `true` when they have never configured call settings.
+   */
+  acceptVideoCalls?: boolean
   /** Platform-admin labels (e.g. VIP, risk). */
   adminTags?: string[]
   /** Paid VIP membership (Diamond/SVIP); cosmetic flags mirror `isActive`. */

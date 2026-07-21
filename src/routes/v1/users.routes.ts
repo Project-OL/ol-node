@@ -12,6 +12,8 @@ import { env } from '../../config/env'
 import { subscriptionService } from '../../services/subscription.service'
 import { setPresenceBodySchema, bulkPresenceBodySchema } from '../../models/presence.schemas'
 import { presenceService } from '../../services/presence.service'
+import { updateAcceptVideoCallsSchema } from '../../models/call.schemas'
+import { videoCallSettingsService } from '../../services/video-call.service'
 
 const PATCH_ME_ALLOWED_FIELDS = new Set(['name', 'dob', 'bio'])
 
@@ -69,6 +71,27 @@ export default async function usersRoutes(app: FastifyInstance) {
         await presenceService.setUserOffline(userId)
       }
       return reply.send({ ok: true, online: body.online })
+    },
+  )
+
+  app.put(
+    '/me/video-calls',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Global video-call availability toggle. `acceptVideoCalls: false` means the user does not want to receive video calls right now. Also returned on GET /users/me and GET /call/settings.',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const body = updateAcceptVideoCallsSchema.parse(request.body ?? {})
+      const updated = await videoCallSettingsService.setAcceptVideoCalls(
+        userId,
+        body.acceptVideoCalls,
+      )
+      return reply.send({ acceptVideoCalls: updated.acceptVideoCalls })
     },
   )
 

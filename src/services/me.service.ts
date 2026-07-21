@@ -40,6 +40,7 @@ import { vipMembershipService } from './vip-membership.service'
 import { agencyService } from './agency.service'
 import { livePhotoService } from './livePhoto.service'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
+import { videoCallSettingsService } from './video-call.service'
 
 const displayNameSchema = z
   .string()
@@ -115,6 +116,7 @@ function buildMeResponse(
     agency: Awaited<ReturnType<typeof agencyService.buildMeAgencyBlock>>
     livePhoto: Awaited<ReturnType<typeof livePhotoService.buildMeLivePhotoBlock>>
     faceVerified: boolean
+    acceptVideoCalls: boolean
   },
 ): MeResponseDto {
   const usernameEligibility = freeUsernameChangeEligibility(profile.usernameUpdatedAt)
@@ -130,6 +132,7 @@ function buildMeResponse(
     livePhoto: extras.livePhoto,
     faceVerified: extras.faceVerified,
     vipMembership: extras.vipMembership,
+    acceptVideoCalls: extras.acceptVideoCalls,
     canChangeUsername: usernameEligibility.canChangeUsername,
     usernameNextChangeAt: usernameEligibility.usernameNextChangeAt,
   }
@@ -236,6 +239,7 @@ export const meService = {
       agency,
       livePhoto,
       faceVerified,
+      acceptVideoCalls,
       activeVipRaw,
     ] = await Promise.all([
       walletDataPromise,
@@ -250,6 +254,7 @@ export const meService = {
       agencyService.buildMeAgencyBlock(userId),
       livePhotoService.buildMeLivePhotoBlock(userId),
       faceVerificationRepository.isVerifiedForUser(userId),
+      videoCallSettingsService.getAcceptVideoCalls(userId),
       getRedisForRead()
         .get(RedisKeys.userActiveVipId(userId))
         .catch(() => null),
@@ -263,6 +268,7 @@ export const meService = {
       agency,
       livePhoto,
       faceVerified,
+      acceptVideoCalls,
     })
     if (activeVipRaw) {
       // Prefer live equipped rare-ID marker over cached profile displayPublicId.
@@ -430,6 +436,7 @@ export const meService = {
       agency,
       livePhoto,
       faceVerified,
+      acceptVideoCalls,
     ] = await Promise.all([
       walletDataPromise,
       giftGalleryService.getCompletionSummaryForUser(userId),
@@ -443,6 +450,7 @@ export const meService = {
       agencyService.buildMeAgencyBlock(userId),
       livePhotoService.buildMeLivePhotoBlock(userId),
       faceVerificationRepository.isVerifiedForUser(userId),
+      videoCallSettingsService.getAcceptVideoCalls(userId),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
       isSuperHost,
@@ -453,6 +461,7 @@ export const meService = {
       agency,
       livePhoto,
       faceVerified,
+      acceptVideoCalls,
     })
 
     const displayName = displayNameFromUser(fresh)

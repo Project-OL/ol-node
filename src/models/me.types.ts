@@ -117,6 +117,11 @@ export interface MeResponseDto extends MeProfileCache {
   }
   /** Face registration indexed in Rekognition, or agency KYC `face_verified`. */
   faceVerified: boolean
+  /**
+   * Global video-call availability: `true` = willing to receive calls right now.
+   * Default `true` when the user has never configured call settings.
+   */
+  acceptVideoCalls: boolean
 }
 
 export interface PatchMeResponseDto {

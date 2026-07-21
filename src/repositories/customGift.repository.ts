@@ -74,6 +74,7 @@ export const customGiftRepository = {
       userId: string
       whatsappNumber: string
       note?: string
+      validityDays?: number
       coinCost: bigint
       ledgerEntryId: string
     },

@@ -29,6 +29,40 @@ import { utcDayFromTimestamp } from '../utils/datetime'
 import { callerCoinDebitForCall } from '../config/host-revenue-shares'
 import { assertPositiveIntMultiple, VIDEO_CALL_PRICE_STEP } from '../utils/transaction-amount-steps'
 
+/** Public call-settings shape — always populated (virtual defaults when no DB row). */
+export type VideoCallSettingsDto = {
+  userId: string
+  pricePerMin: number
+  blockLv5: boolean
+  blockLv10: boolean
+  acceptVideoCalls: boolean
+}
+
+const DEFAULT_CALL_SETTINGS = {
+  pricePerMin: MIN_CALL_PRICE,
+  blockLv5: false,
+  blockLv10: false,
+  acceptVideoCalls: true,
+} as const
+
+function toPublicSettings(
+  userId: string,
+  row: {
+    pricePerMin?: number | null
+    blockLv5?: boolean | null
+    blockLv10?: boolean | null
+    acceptVideoCalls?: boolean | null
+  } | null,
+): VideoCallSettingsDto {
+  return {
+    userId,
+    pricePerMin: row?.pricePerMin ?? DEFAULT_CALL_SETTINGS.pricePerMin,
+    blockLv5: row?.blockLv5 ?? DEFAULT_CALL_SETTINGS.blockLv5,
+    blockLv10: row?.blockLv10 ?? DEFAULT_CALL_SETTINGS.blockLv10,
+    acceptVideoCalls: row?.acceptVideoCalls ?? DEFAULT_CALL_SETTINGS.acceptVideoCalls,
+  }
+}
+
 // ── LiveKit helpers ───────────────────────────────────────────────────────────
 
 function getLivekitClient(): RoomServiceClient {
@@ -53,9 +87,19 @@ async function buildToken(userId: string, roomName: string): Promise<string> {
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export const videoCallSettingsService = {
-  async get(userId: string) {
+  /**
+   * Effective settings for a user. Users without a `video_call_settings` row get:
+   * `{ pricePerMin: 1800, blockLv5: false, blockLv10: false, acceptVideoCalls: true }`.
+   */
+  async get(userId: string): Promise<VideoCallSettingsDto> {
     const settings = await videoCallRepository.getSettings(userId)
-    return settings ?? { userId, pricePerMin: MIN_CALL_PRICE, blockLv5: false, blockLv10: false }
+    return toPublicSettings(userId, settings)
+  },
+
+  /** Whether the user currently wants to receive video calls (default true). */
+  async getAcceptVideoCalls(userId: string): Promise<boolean> {
+    const settings = await videoCallRepository.getSettings(userId)
+    return settings?.acceptVideoCalls ?? DEFAULT_CALL_SETTINGS.acceptVideoCalls
   },
 
   /** Returns the full call-price cap table so the client can display it. */
@@ -72,7 +116,7 @@ export const videoCallSettingsService = {
     ]
   },
 
-  async update(userId: string, input: UpdateCallSettingsInput) {
+  async update(userId: string, input: UpdateCallSettingsInput): Promise<VideoCallSettingsDto> {
     if (input.pricePerMin !== undefined) {
       assertPositiveIntMultiple(input.pricePerMin, VIDEO_CALL_PRICE_STEP, {
         belowMinCode: 'MIN_CALL_PRICE',
@@ -93,7 +137,13 @@ export const videoCallSettingsService = {
       }
     }
 
-    return videoCallRepository.upsertSettings(userId, input)
+    const row = await videoCallRepository.upsertSettings(userId, input)
+    return toPublicSettings(userId, row)
+  },
+
+  async setAcceptVideoCalls(userId: string, acceptVideoCalls: boolean): Promise<VideoCallSettingsDto> {
+    const row = await videoCallRepository.upsertSettings(userId, { acceptVideoCalls })
+    return toPublicSettings(userId, row)
   },
 }
 
@@ -114,6 +164,13 @@ export const videoCallSessionService = {
 
     // Get creator call settings
     const settings = await videoCallRepository.getSettings(creator.id)
+    if (settings?.acceptVideoCalls === false) {
+      throw new AppError(
+        403,
+        'This user is not accepting video calls right now',
+        'VIDEO_CALLS_DISABLED',
+      )
+    }
     const pricePerMin = settings?.pricePerMin ?? MIN_CALL_PRICE
 
     // Check caller is not already in an active session with this creator

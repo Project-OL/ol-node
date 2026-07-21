@@ -25,15 +25,26 @@ export const UpdateCallSettingsSchema = z
     pricePerMin: z.number().int().min(MIN_CALL_PRICE).optional(),
     blockLv5: z.boolean().optional(),
     blockLv10: z.boolean().optional(),
+    /** Global availability: false = do not receive video calls right now. */
+    acceptVideoCalls: z.boolean().optional(),
   })
   .refine(
-    (d) => d.pricePerMin !== undefined || d.blockLv5 !== undefined || d.blockLv10 !== undefined,
+    (d) =>
+      d.pricePerMin !== undefined ||
+      d.blockLv5 !== undefined ||
+      d.blockLv10 !== undefined ||
+      d.acceptVideoCalls !== undefined,
     { message: 'At least one field required' },
   )
+
+export const updateAcceptVideoCallsSchema = z.object({
+  acceptVideoCalls: z.boolean(),
+})
 
 export const InitiateCallSchema = z.object({
   creatorPublicId: z.string().min(1),
 })
 
 export type UpdateCallSettingsInput = z.infer<typeof UpdateCallSettingsSchema>
+export type UpdateAcceptVideoCallsInput = z.infer<typeof updateAcceptVideoCallsSchema>
 export type InitiateCallInput = z.infer<typeof InitiateCallSchema>

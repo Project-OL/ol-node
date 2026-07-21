@@ -9,7 +9,12 @@ export const videoCallRepository = {
 
   async upsertSettings(
     userId: string,
-    data: { pricePerMin?: number; blockLv5?: boolean; blockLv10?: boolean },
+    data: {
+      pricePerMin?: number
+      blockLv5?: boolean
+      blockLv10?: boolean
+      acceptVideoCalls?: boolean
+    },
   ) {
     return prisma.videoCallSettings.upsert({
       where: { userId },
@@ -18,6 +23,7 @@ export const videoCallRepository = {
         pricePerMin: data.pricePerMin ?? 1800,
         blockLv5: data.blockLv5 ?? false,
         blockLv10: data.blockLv10 ?? false,
+        acceptVideoCalls: data.acceptVideoCalls ?? true,
       },
       update: data,
     })

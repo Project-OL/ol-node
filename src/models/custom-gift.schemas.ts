@@ -10,6 +10,8 @@ export const CreateCustomGiftRequestBodySchema = z.object({
   whatsappNumber: WhatsappNumberSchema,
   /** What the user wants (shown to the CS agent / admin). */
   note: z.string().trim().min(1).max(2000).optional(),
+  /** Requested gift validity in days (CS uses when creating the catalog gift). */
+  validityDays: z.number().int().min(1).max(3650).optional(),
   /** Stable client key: a network-timeout retry replays the original result instead of double-debiting. */
   idempotencyKey: z.string().min(8).max(128).optional(),
 })

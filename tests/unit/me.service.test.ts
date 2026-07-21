@@ -144,6 +144,13 @@ vi.mock('../../src/repositories/faceVerification.repository', () => ({
   },
 }))
 
+const getAcceptVideoCalls = vi.fn()
+vi.mock('../../src/services/video-call.service', () => ({
+  videoCallSettingsService: {
+    getAcceptVideoCalls: (...a: unknown[]) => getAcceptVideoCalls(...a),
+  },
+}))
+
 vi.mock('../../src/config/redis', () => ({
   redisClient: {
     get: vi.fn().mockResolvedValue(null),
@@ -257,6 +264,8 @@ describe('meService', () => {
       verifiedAt: null,
     })
     isFaceVerifiedForUser.mockResolvedValue(false)
+    getAcceptVideoCalls.mockReset()
+    getAcceptVideoCalls.mockResolvedValue(true)
     getCoinBalance.mockResolvedValue(20_000n)
     getPointBalance.mockResolvedValue(0n)
     walletUserLevelGetByUser.mockResolvedValue(null)
@@ -323,6 +332,7 @@ describe('meService', () => {
       verifiedAt: null,
     },
     faceVerified: false,
+    acceptVideoCalls: true,
   }
 
   it('getMe returns cached payload on Redis HIT', async () => {

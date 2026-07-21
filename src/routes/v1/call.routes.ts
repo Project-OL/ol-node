@@ -33,7 +33,8 @@ export default async function callRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Video Call'],
-        description: 'Update video call price and caller restrictions',
+        description:
+          'Update video call price, caller restrictions, and/or global acceptVideoCalls availability toggle',
       },
     },
     async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {

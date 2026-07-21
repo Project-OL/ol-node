@@ -20,6 +20,8 @@ export interface CustomGiftRequestDto {
   id: string
   whatsappNumber: string
   note: string | null
+  /** Requested gift validity in days; null when the user did not specify. */
+  validityDays: number | null
   coinCost: string
   status: CustomGiftRequestStatus
   failureReason: string | null
@@ -34,6 +36,7 @@ export function toRequestDto(row: CustomGiftRequestWithGift): CustomGiftRequestD
     id: row.id,
     whatsappNumber: row.whatsappNumber,
     note: row.note,
+    validityDays: row.validityDays,
     coinCost: row.coinCost.toString(),
     status: row.status,
     failureReason: row.failureReason,
@@ -115,7 +118,10 @@ export const customGiftService = {
             {
               idempotencyKey,
               description: 'Custom gift request',
-              metadata: { whatsappNumber: body.whatsappNumber },
+              metadata: {
+                whatsappNumber: body.whatsappNumber,
+                ...(body.validityDays != null ? { validityDays: body.validityDays } : {}),
+              },
               applyWealthXp: true,
             },
           )
@@ -130,6 +136,7 @@ export const customGiftService = {
               userId,
               whatsappNumber: body.whatsappNumber,
               note: body.note,
+              validityDays: body.validityDays,
               coinCost,
               ledgerEntryId,
             },

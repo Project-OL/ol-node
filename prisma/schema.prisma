@@ -162,6 +162,7 @@ model User {
   payrollAssignmentsAsAgent    WithdrawalPayrollAssignment[] @relation("AgencyPayrollAssignments")
   hostLiveSessions             HostLiveSession[]
   hostStreamBans               HostStreamBan[]                @relation("UserHostBans")
+  liveStreams                  LiveStream[]
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -1662,13 +1663,15 @@ model WalletUserLevel {
 // ── Video Call ────────────────────────────────────────────────────────────────
 
 model VideoCallSettings {
-  id          String   @id @default(cuid())
-  userId      String   @unique @map("user_id") @db.Uuid
-  pricePerMin Int      @default(1800) @map("price_per_min") // coins per minute, min 1800
-  blockLv5    Boolean  @default(false) @map("block_lv5") // block callers with wealthLevel ≤ 5
-  blockLv10   Boolean  @default(false) @map("block_lv10") // block callers with wealthLevel ≤ 10
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(cuid())
+  userId           String   @unique @map("user_id") @db.Uuid
+  pricePerMin      Int      @default(1800) @map("price_per_min") // coins per minute, min 1800
+  blockLv5         Boolean  @default(false) @map("block_lv5") // block callers with wealthLevel ≤ 5
+  blockLv10        Boolean  @default(false) @map("block_lv10") // block callers with wealthLevel ≤ 10
+  /// When false, the user does not want to receive video calls right now (global availability toggle).
+  acceptVideoCalls Boolean  @default(true) @map("accept_video_calls")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1746,6 +1749,29 @@ model HostStreamBan {
 
   @@index([userId])
   @@map("host_stream_bans")
+}
+
+/// Host live-stream session metadata (shared with livestream backend). Schema-only — no HTTP routes yet.
+model LiveStream {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  title         String
+  heading       String?   @db.VarChar(100)
+  coverImageUrl String?   @map("cover_image_url")
+  streamId      String    @unique @map("stream_id")
+  streamKey     String    @map("stream_key")
+  playbackId    String?   @map("playback_id")
+  isLive        Boolean   @default(false) @map("is_live")
+  startedAt     DateTime? @map("started_at")
+  endedAt       DateTime? @map("ended_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isLive])
+  @@map("live_streams")
 }
 
 model VideoCallModerationLog {
@@ -2711,6 +2737,8 @@ model CustomGiftRequest {
   userId              String                  @map("user_id") @db.Uuid
   whatsappNumber      String                  @map("whatsapp_number") @db.VarChar(32)
   note                String?                 @db.Text
+  /// Requested gift validity in days (optional; CS uses when creating the catalog gift).
+  validityDays        Int?                    @map("validity_days")
   coinCost            BigInt                  @map("coin_cost")
   ledgerEntryId       String                  @map("ledger_entry_id") @db.Uuid
   status              CustomGiftRequestStatus @default(PENDING)

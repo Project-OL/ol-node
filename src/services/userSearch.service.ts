@@ -14,6 +14,7 @@ import { vipMembershipService } from './vip-membership.service'
 import { prismaRead } from '../config/database'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { presenceService } from './presence.service'
+import { videoCallSettingsService } from './video-call.service'
 
 export type ResolvedPublicIdentity = {
   userId: string
@@ -104,6 +105,7 @@ export const userSearchService = {
       richTier,
       vipMembership,
       faceVerified,
+      acceptVideoCalls,
     ] = await Promise.all([
       followRepository.existsFollow(requesterId, user.id),
       followRepository.existsFollow(user.id, requesterId),
@@ -116,6 +118,7 @@ export const userSearchService = {
       richTierService.getRichTierCardFields(user.id),
       vipMembershipService.getActiveMembershipSummary(user.id),
       faceVerificationRepository.isVerifiedForUser(user.id),
+      videoCallSettingsService.getAcceptVideoCalls(user.id),
     ])
     const isFriend = isFollowing && isFollowedBy
 
@@ -195,6 +198,7 @@ export const userSearchService = {
       galleryCompletion,
       vipMembership,
       faceVerified,
+      acceptVideoCalls,
       agencyTag,
       adminTags: user.adminTags ?? [],
     }
