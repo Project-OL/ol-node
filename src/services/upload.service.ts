@@ -237,4 +237,65 @@ export const uploadService = {
     }
     return result
   },
+
+  /** Additive v2: image + video evidence (the original count-only endpoint stays image/jpeg-only for old clients). */
+  async getReportEvidenceUploadUrlsV2(
+    userId: string,
+    files: Array<{ mediaType: 'IMAGE' | 'VIDEO'; fileName: string; mimeType: string; sizeBytes: number }>,
+  ): Promise<
+    Array<{ s3Key: string; uploadUrl: string; publicUrl: string; mediaType: string; expiresInSec: number }>
+  > {
+    const IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+    const VIDEO_MIME = ['video/mp4', 'video/quicktime', 'video/webm']
+    const IMAGE_MAX_BYTES = 10 * 1024 * 1024
+    const VIDEO_MAX_BYTES = 100 * 1024 * 1024
+    const presignTtl = 300
+    const result: Array<{
+      s3Key: string
+      uploadUrl: string
+      publicUrl: string
+      mediaType: string
+      expiresInSec: number
+    }> = []
+    for (const file of files) {
+      if (file.mediaType === 'IMAGE') {
+        if (file.sizeBytes > IMAGE_MAX_BYTES) {
+          throw new AppError(400, 'Image max 10MB each', 'INVALID_REQUEST', { field: 'files' })
+        }
+        if (!IMAGE_MIME.includes(file.mimeType)) {
+          throw new AppError(
+            400,
+            `Image mimeType must be one of: ${IMAGE_MIME.join(', ')}`,
+            'INVALID_REQUEST',
+            { field: 'files' },
+          )
+        }
+      } else {
+        if (file.sizeBytes > VIDEO_MAX_BYTES) {
+          throw new AppError(400, 'Video max 100MB each', 'INVALID_REQUEST', { field: 'files' })
+        }
+        if (!VIDEO_MIME.includes(file.mimeType)) {
+          throw new AppError(
+            400,
+            `Video mimeType must be one of: ${VIDEO_MIME.join(', ')}`,
+            'INVALID_REQUEST',
+            { field: 'files' },
+          )
+        }
+      }
+      const ext =
+        file.mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') ||
+        file.fileName.split('.').pop() ||
+        'bin'
+      const s3Key = `reports/${userId}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+      const uploadUrl = await storageService.getPresignedPutUrl(
+        s3Key,
+        file.mimeType.split(';')[0]!.trim(),
+        presignTtl,
+      )
+      const publicUrl = storageService.getCdnOrS3PublicUrl(s3Key)
+      result.push({ s3Key, uploadUrl, publicUrl, mediaType: file.mediaType, expiresInSec: presignTtl })
+    }
+    return result
+  },
 }

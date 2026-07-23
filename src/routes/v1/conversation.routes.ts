@@ -12,6 +12,8 @@ import {
   SendMessageSchema,
   MuteConversationSchema,
   GetUploadUrlsSchema,
+  BulkDeleteConversationsSchema,
+  SearchMessagesSchema,
 } from '../../models/messaging.schemas'
 import { messagingService } from '../../services/messaging.service'
 import { uploadService } from '../../services/upload.service'
@@ -281,6 +283,135 @@ export default async function conversationRoutes(app: FastifyInstance) {
         parsed.data.mutedUntil,
       )
       return reply.send({ success: true })
+    },
+  )
+
+  app.post(
+    '/read-all',
+    {
+      preHandler: preAuthWithTimeout,
+      schema: {
+        tags: ['Conversations'],
+        description: 'Mark all unread messages as read across every conversation',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const result = await messagingService.markAllRead(userId)
+      return reply.send(result)
+    },
+  )
+
+  app.delete(
+    '/history',
+    {
+      preHandler: preAuthWithTimeout,
+      schema: {
+        tags: ['Conversations'],
+        description: 'Clear chat history for every conversation (removes them from the list)',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const result = await messagingService.clearAllChatHistory(userId)
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Body: unknown }>(
+    '/delete-bulk',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Conversations'],
+        description: 'Delete up to 10 selected conversations (removes them from the list)',
+      },
+    },
+    async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
+      const userId = request.userId!
+      const parsed = BulkDeleteConversationsSchema.safeParse(request.body)
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await messagingService.deleteConversationsBulk(
+        userId,
+        parsed.data.conversationIds,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/search',
+    {
+      preHandler: preAuthWithTimeout,
+      schema: {
+        tags: ['Conversations'],
+        description: 'Search message text across every conversation the caller is a member of',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const parsed = SearchMessagesSchema.safeParse(request.query)
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await messagingService.searchMessages(userId, parsed.data.q, {
+        limit: parsed.data.limit,
+        cursor: parsed.data.cursor,
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.delete<{ Params: { conversationId: string } }>(
+    '/:conversationId/messages',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Conversations'],
+        description:
+          'Clear message history for this conversation only, keeping it in the list (unlike /history)',
+        params: {
+          type: 'object',
+          required: ['conversationId'],
+          properties: { conversationId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { conversationId: string } }>, reply: FastifyReply) => {
+      const userId = request.userId!
+      await messagingService.clearMessagesOnly(userId, request.params.conversationId)
+      return reply.code(204).send()
+    },
+  )
+
+  app.get<{ Params: { conversationId: string } }>(
+    '/:conversationId/peer-settings',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Conversations'],
+        description: 'Mute, live-notify, and blacklist state for the peer in this conversation',
+        params: {
+          type: 'object',
+          required: ['conversationId'],
+          properties: { conversationId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { conversationId: string } }>, reply: FastifyReply) => {
+      const userId = request.userId!
+      const result = await messagingService.getPeerSettings(userId, request.params.conversationId)
+      return reply.send(result)
     },
   )
 }

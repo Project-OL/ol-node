@@ -69,8 +69,22 @@ export const AddReactionSchema = z.object({
   emoji: z.string().min(1).max(10),
 })
 
+export const EditMessageSchema = z.object({
+  content: z.string().min(1).max(4000),
+})
+
 export const MuteConversationSchema = z.object({
   mutedUntil: z.string().datetime().nullable().optional(),
+})
+
+export const BulkDeleteConversationsSchema = z.object({
+  conversationIds: z.array(z.string().cuid()).min(1).max(10),
+})
+
+export const SearchMessagesSchema = z.object({
+  q: z.string().min(1).max(200),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().optional(),
 })
 
 export const BlockUserSchema = z.object({
@@ -102,6 +116,11 @@ export const CreateReportSchema = z
       'FAKE_ACCOUNT',
       'VIOLENCE',
       'OTHER',
+      'GIFT_FRAUD',
+      'MULTIPLE_ACCOUNT',
+      'TOP_UP_FRAUD',
+      'LIVE_BROADCAST_VIOLATION',
+      'CHILD_SAFETY_VIOLATION',
     ]),
     additionalInfo: z.string().max(1000).optional(),
     evidenceS3Keys: z.array(z.string().min(1)).max(5).optional(),
@@ -146,9 +165,27 @@ export const GetUploadUrlsSchema = z
     }
   })
 
+export const GetReportEvidenceUploadUrlsSchema = z.object({
+  files: z
+    .array(
+      z.object({
+        mediaType: z.enum(['IMAGE', 'VIDEO']),
+        fileName: z.string().min(1).max(255),
+        mimeType: z.string().min(1).max(100),
+        sizeBytes: z.number().int().positive(),
+      }),
+    )
+    .min(1)
+    .max(5),
+})
+
 export const SetBroadcastReminderSchema = z.object({
   creatorPublicId: z.string().min(1),
   remindAt: z.string().datetime(),
+})
+
+export const SetLiveNotifySchema = z.object({
+  enabled: z.boolean(),
 })
 
 export type CreateDMInput = z.infer<typeof CreateDMSchema>
@@ -156,6 +193,7 @@ export type SendMessageInput = z.infer<typeof SendMessageSchema>
 export type ListMessagesInput = z.infer<typeof ListMessagesSchema>
 export type ListConversationsInput = z.infer<typeof ListConversationsSchema>
 export type AddReactionInput = z.infer<typeof AddReactionSchema>
+export type EditMessageInput = z.infer<typeof EditMessageSchema>
 export type MuteConversationInput = z.infer<typeof MuteConversationSchema>
 export type BlockUserInput = z.infer<typeof BlockUserSchema>
 export type BulkUnblockInput = z.infer<typeof BulkUnblockSchema>

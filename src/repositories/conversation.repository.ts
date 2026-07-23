@@ -354,6 +354,84 @@ export async function isActiveConversationMember(
   return m != null
 }
 
+/** Bulk read-cursor update: every active conversation with at least one message. */
+export async function markAllConversationsRead(
+  userId: string,
+): Promise<Array<{ conversationId: string; lastReadMessageId: string }>> {
+  const rows = await prisma.$queryRaw<
+    { conversation_id: string; last_read_message_id: string | null }[]
+  >`
+    UPDATE conversation_members cm
+    SET last_read_at = now(),
+        last_read_message_id = (
+          SELECT m.id FROM messages m
+          WHERE m.conversation_id = cm.conversation_id
+          ORDER BY m.seq DESC
+          LIMIT 1
+        )
+    WHERE cm.user_id = ${userId}::uuid
+      AND cm.is_deleted = false
+      AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = cm.conversation_id)
+    RETURNING cm.conversation_id, cm.last_read_message_id
+  `
+  return rows
+    .filter((r) => r.last_read_message_id !== null)
+    .map((r) => ({
+      conversationId: r.conversation_id,
+      lastReadMessageId: r.last_read_message_id!,
+    }))
+}
+
+/** Soft-deletes every active membership row for a user — removes all conversations from their list. */
+export async function markAllConversationsDeleted(userId: string): Promise<string[]> {
+  const now = new Date()
+  const memberships = await prisma.conversationMember.findMany({
+    where: { userId, isDeleted: false },
+    select: { conversationId: true },
+  })
+  const conversationIds = memberships.map((m) => m.conversationId)
+  if (conversationIds.length === 0) return []
+  await prisma.conversationMember.updateMany({
+    where: { userId, conversationId: { in: conversationIds } },
+    data: { isDeleted: true, deletedAt: now },
+  })
+  return conversationIds
+}
+
+/** Soft-deletes only the caller-supplied conversation ids the user is actually an active member of. */
+export async function markConversationsDeletedBulk(
+  userId: string,
+  conversationIds: string[],
+): Promise<string[]> {
+  const now = new Date()
+  const memberships = await prisma.conversationMember.findMany({
+    where: { userId, conversationId: { in: conversationIds }, isDeleted: false },
+    select: { conversationId: true },
+  })
+  const validIds = memberships.map((m) => m.conversationId)
+  if (validIds.length === 0) return []
+  await prisma.conversationMember.updateMany({
+    where: { userId, conversationId: { in: validIds } },
+    data: { isDeleted: true, deletedAt: now },
+  })
+  return validIds
+}
+
+/**
+ * Clears message history for the caller only (`deletedAt` cutoff, same field `listMessages`
+ * already filters on) WITHOUT setting `isDeleted` — the conversation stays in their list,
+ * unlike `markConversationDeleted` which hides it too.
+ */
+export async function clearMessagesKeepConversation(
+  conversationId: string,
+  userId: string,
+): Promise<void> {
+  await prisma.conversationMember.updateMany({
+    where: { conversationId, userId },
+    data: { deletedAt: new Date() },
+  })
+}
+
 export const conversationRepository = {
   createConversation,
   createPlatformConversation,
@@ -367,4 +445,8 @@ export const conversationRepository = {
   updateMuteStatus,
   getConversationLastSeq,
   isActiveConversationMember,
+  markAllConversationsRead,
+  markAllConversationsDeleted,
+  markConversationsDeletedBulk,
+  clearMessagesKeepConversation,
 }

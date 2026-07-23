@@ -143,6 +143,12 @@ export const RedisKeys = {
   notifyBroadcastPending: (campaignId: string) => `notify:broadcast:pending:${campaignId}`,
   /** Admin notification broadcast: set of campaignIds with batches still in flight (sweep scans this). */
   notifyBroadcastActive: () => 'notify:broadcast:active',
+  /** Admin push broadcast: per-campaign progress hash (mirrors notifyBroadcastState for FCM push). */
+  pushBroadcastState: (campaignId: string) => `push:broadcast:state:${campaignId}`,
+  /** Admin push broadcast: pending batch payloads (field = batchIndex, value = JSON userIds). */
+  pushBroadcastPending: (campaignId: string) => `push:broadcast:pending:${campaignId}`,
+  /** Admin push broadcast: set of campaignIds with batches still in flight (sweep scans this). */
+  pushBroadcastActive: () => 'push:broadcast:active',
   /**
    * Messaging: Redis pub/sub channel for conversation realtime frames (`ServerFrame` JSON).
    * Same logical channel as legacy `conv:{id}:events`; migrated name for clarity.
@@ -252,6 +258,7 @@ export const RedisKeys = {
   vipmConfig: () => `vipm:config`,
   ratelimitVipmPurchase: (userId: string) => `ratelimit:vip-membership:purchase:${userId}`,
   ratelimitVipmClaim: (userId: string) => `ratelimit:vip-membership:claim:${userId}`,
+  ratelimitLivestreamRewardClaim: (userId: string) => `ratelimit:livestream-reward:claim:${userId}`,
   /** Agency: GET /users/me agency block cache bust target */
   agencyMe: (userId: string) => `agency:me:${userId}`,
   agencyByPublicId: (publicId: string) => `agency:pub:${publicId}`,

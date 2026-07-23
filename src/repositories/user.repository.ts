@@ -121,6 +121,29 @@ export const userRepository = {
     })
   },
 
+  /**
+   * Primary-DB lean row for JWT verify gate (ban/suspend must be visible without replica lag).
+   */
+  async findAuthGateById(userId: string) {
+    return withDbRetry(prisma, () =>
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+          publicId: true,
+          avatarUrl: true,
+          passwordSet: true,
+          status: true,
+          suspendedUntil: true,
+          isSupport: true,
+        },
+      }),
+    )
+  },
+
   async updateProfile(
     id: string,
     data: {
@@ -202,6 +225,13 @@ export const userRepository = {
     return prisma.user.update({
       where: { id },
       data,
+    })
+  },
+
+  async updateFcmToken(id: string, token: string): Promise<void> {
+    await prisma.user.update({
+      where: { id },
+      data: { fcmToken: token, fcmTokenUpdatedAt: new Date() },
     })
   },
 

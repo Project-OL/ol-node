@@ -1,6 +1,9 @@
 import { conversationRepository } from '../repositories/conversation.repository'
 import { messageRepository, type MessageWithDetails } from '../repositories/message.repository'
 import { blockRepository } from '../repositories/block.repository'
+import { blockService } from './block.service'
+import { resolveDisplayPublicId } from '../utils/user-display'
+import { prisma } from '../config/database'
 import { followRepository } from '../repositories/follow.repository'
 import { userSettingsService } from './userSettings.service'
 import { followService } from './follow.service'
@@ -594,6 +597,144 @@ export const messagingService = {
     })
   },
 
+  async markAllRead(userId: string): Promise<{ updatedCount: number }> {
+    const updates = await conversationRepository.markAllConversationsRead(userId)
+    for (const { conversationId, lastReadMessageId } of updates) {
+      await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
+      await publishServerFrameToConversation(conversationId, {
+        t: 'READ',
+        conversationId,
+        userId,
+        lastReadMessageId,
+      })
+    }
+    return { updatedCount: updates.length }
+  },
+
+  async clearAllChatHistory(userId: string): Promise<{ clearedCount: number }> {
+    const conversationIds = await conversationRepository.markAllConversationsDeleted(userId)
+    await cacheService.delete(RedisKeys.userConversations(userId))
+    for (const conversationId of conversationIds) {
+      await redisClient.del(RedisKeys.convMessages(conversationId))
+    }
+    await auditService.log({
+      actionType: 'CLEAR_ALL_CHATS',
+      actionStatus: 'success',
+      userId,
+      actionDetails: { conversationCount: conversationIds.length },
+    })
+    return { clearedCount: conversationIds.length }
+  },
+
+  async deleteConversationsBulk(
+    userId: string,
+    conversationIds: string[],
+  ): Promise<{ deletedCount: number }> {
+    const deletedIds = await conversationRepository.markConversationsDeletedBulk(
+      userId,
+      conversationIds,
+    )
+    await cacheService.delete(RedisKeys.userConversations(userId))
+    for (const conversationId of deletedIds) {
+      await redisClient.del(RedisKeys.convMessages(conversationId))
+    }
+    await auditService.log({
+      actionType: 'BULK_DELETE_CONVERSATIONS',
+      actionStatus: 'success',
+      userId,
+      actionDetails: { conversationIds: deletedIds },
+    })
+    return { deletedCount: deletedIds.length }
+  },
+
+  async getPeerSettings(
+    userId: string,
+    conversationId: string,
+  ): Promise<{
+    peerPublicId: string
+    isMuted: boolean
+    mutedUntil: string | null
+    notifyOnLive: boolean
+    isBlocked: boolean
+  }> {
+    const conv = await conversationRepository.findConversationById(conversationId, userId)
+    if (!conv) {
+      throw new AppError(403, 'Not a member', 'FORBIDDEN')
+    }
+    const selfMember = conv.members.find((m) => m.userId === userId)
+    const peerMember = conv.members.find((m) => m.userId !== userId)
+    if (!selfMember || !peerMember) {
+      throw new AppError(404, 'Peer not found', 'NOT_FOUND')
+    }
+    const peerPublicId = resolveDisplayPublicId(peerMember.user)
+
+    const [reminder, block] = await Promise.all([
+      prisma.broadcastReminder.findUnique({
+        where: { userId_creatorId: { userId, creatorId: peerMember.userId } },
+        select: { notifyOnLive: true },
+      }),
+      blockService.checkBlock(userId, peerPublicId),
+    ])
+
+    return {
+      peerPublicId,
+      isMuted: selfMember.isMuted,
+      mutedUntil: selfMember.mutedUntil ? selfMember.mutedUntil.toISOString() : null,
+      notifyOnLive: reminder?.notifyOnLive ?? false,
+      isBlocked: block.isBlocked,
+    }
+  },
+
+  async clearMessagesOnly(userId: string, conversationId: string): Promise<void> {
+    const conv = await conversationRepository.findConversationById(conversationId, userId)
+    if (!conv) {
+      throw new AppError(403, 'Not a member', 'FORBIDDEN')
+    }
+    await conversationRepository.clearMessagesKeepConversation(conversationId, userId)
+    await redisClient.del(RedisKeys.convMessages(conversationId))
+    await auditService.log({
+      actionType: 'CLEAR_MESSAGES_KEEP_CONVERSATION',
+      actionStatus: 'success',
+      userId,
+      actionDetails: { conversationId },
+    })
+  },
+
+  async searchMessages(
+    userId: string,
+    query: string,
+    opts: { limit: number; cursor?: string },
+  ): Promise<{
+    results: Array<{
+      messageId: string
+      conversationId: string
+      senderId: string
+      type: string
+      content: string | null
+      createdAt: string
+    }>
+    nextCursor: string | null
+  }> {
+    const trimmed = query.trim()
+    if (!trimmed) return { results: [], nextCursor: null }
+    const rows = await messageRepository.searchMessages(userId, trimmed, opts)
+    const hasMore = rows.length > opts.limit
+    const page = hasMore ? rows.slice(0, opts.limit) : rows
+    const last = page[page.length - 1]
+    const nextCursor = hasMore && last ? last.createdAt.toISOString() : null
+    return {
+      results: page.map((r) => ({
+        messageId: r.id,
+        conversationId: r.conversationId,
+        senderId: r.senderId,
+        type: r.type,
+        content: r.content,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      nextCursor,
+    }
+  },
+
   async addReaction(userId: string, messageId: string, emoji: string): Promise<void> {
     const msg = await messageRepository.findMessageById(messageId)
     if (!msg) {
@@ -635,6 +776,25 @@ export const messagingService = {
       conversationId: msg.conversationId,
       messageId,
     })
+  },
+
+  async editMessage(
+    userId: string,
+    messageId: string,
+    content: string,
+  ): Promise<{ id: string; content: string | null; editedAt: string }> {
+    const msg = await messageRepository.editMessage(messageId, userId, content)
+    await cacheService.delete(RedisKeys.convMessages(msg.conversationId))
+    await redisClient.del(RedisKeys.convMessages(msg.conversationId))
+    const editedAt = msg.editedAt!.toISOString()
+    await publishToConversation(msg.conversationId, {
+      type: 'MESSAGE_EDITED',
+      conversationId: msg.conversationId,
+      messageId,
+      content: msg.content ?? '',
+      editedAt,
+    })
+    return { id: msg.id, content: msg.content, editedAt }
   },
 
   async getDmContacts(userId: string): Promise<DmContact[]> {

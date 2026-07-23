@@ -56,6 +56,7 @@ import storeAdminRoutes from './routes/v1/store-admin.routes'
 import giftAdminRoutes from './routes/v1/gift-admin.routes'
 import { richTierRoutes } from './routes/v1/rich-tier.routes'
 import vipMembershipRoutes from './routes/v1/vip-membership.routes'
+import rewardsRoutes from './routes/v1/rewards.routes'
 import agencyRoutes from './routes/v1/agency.routes'
 import agencyAdminRoutes from './routes/v1/agency-admin.routes'
 import questionnaireRoutes from './routes/v1/questionnaire.routes'
@@ -64,6 +65,7 @@ import csaAdminRoutes from './routes/v1/csa-admin.routes'
 import supportAdminRoutes from './routes/v1/support-admin.routes'
 import userAdminRoutes from './routes/v1/user-admin.routes'
 import platformMessageAdminRoutes from './routes/v1/platform-message-admin.routes'
+import pushNotificationAdminRoutes from './routes/v1/push-notification-admin.routes'
 import adminUserWalletRoutes from './routes/v1/admin-user-wallet.routes'
 import adminUserModerationRoutes from './routes/v1/admin-user-moderation.routes'
 import postAdminRoutes from './routes/v1/post-admin.routes'
@@ -113,9 +115,9 @@ export async function buildApp() {
       openapi: {
         openapi: '3.0.3',
         info: {
-          title: 'Vone REST API',
+          title: 'Offoo REST API',
           version: env.API_VERSION,
-          description: 'Vone VoIP REST API',
+          description: 'Offoo VoIP REST API',
         },
         servers: [{ url: `/api/${env.API_VERSION}`, description: 'API v1' }],
       },
@@ -235,6 +237,7 @@ export async function buildApp() {
       await adminApp.register(adminUserModerationRoutes)
       await adminApp.register(userAdminRoutes)
       await adminApp.register(platformMessageAdminRoutes)
+      await adminApp.register(pushNotificationAdminRoutes)
       await adminApp.register(postAdminRoutes)
       await adminApp.register(faceVerificationAdminRoutes)
       await adminApp.register(agencyAdminRoutes, { prefix: '/agency' })
@@ -251,6 +254,7 @@ export async function buildApp() {
   await app.register(storeRoutes, { prefix: `${prefix}/store` })
   await app.register(richTierRoutes, { prefix: `${prefix}/rich-tier` })
   await app.register(vipMembershipRoutes, { prefix: `${prefix}/vip-membership` })
+  await app.register(rewardsRoutes, { prefix: `${prefix}/rewards` })
   await app.register(agencyRoutes, { prefix: `${prefix}/agency` })
   await app.register(agencyKycRoutes, { prefix: `${prefix}/agency/kyc` })
   await app.register(agencyCoinsellerRoutes, { prefix: `${prefix}/agency/coinseller` })

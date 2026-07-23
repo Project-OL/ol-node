@@ -357,6 +357,19 @@ export default async function authRoutes(app: FastifyInstance) {
     },
   )
 
+  /**
+   * JWT verify probe: runs `authenticate` (signature, tokenVersion, session, device ban)
+   * then confirms the user row is still allowed to authenticate. Useful for clients /
+   * other services that need an explicit “is this token + user still valid?” check.
+   */
+  app.get('/verify', { preHandler: [authenticate] }, async (request, reply) => {
+    const userId = (request as { userId?: string }).userId
+    if (!userId) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    const payload = request.user as JwtAccessPayload
+    const result = await authV2Service.verifyAuthenticatedUser(userId, payload)
+    return reply.send(result)
+  })
+
   // ----- Phase 4: Settings, password set/change, devices, email/phone bind & modify -----
   app.get('/settings', { preHandler: [authenticate] }, async (request, reply) => {
     const userId = (request as { userId?: string }).userId

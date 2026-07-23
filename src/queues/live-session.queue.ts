@@ -26,3 +26,21 @@ export async function enqueueLiveSessionSafetyNet(
     },
   )
 }
+
+/** Fans out an in-app NOTIFICATION to everyone subscribed to this host's "notify when live" toggle. */
+export async function enqueueNotifyLiveSubscribers(
+  hostUserId: string,
+  sessionId: string,
+): Promise<void> {
+  await liveSessionQueue.add(
+    LIVE_SESSION_JOBS.NOTIFY_LIVE_SUBSCRIBERS,
+    { hostUserId, sessionId },
+    {
+      jobId: `notify-live-subscribers-${sessionId}`,
+      removeOnComplete: true,
+      removeOnFail: 50,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+    },
+  )
+}

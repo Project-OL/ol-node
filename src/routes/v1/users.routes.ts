@@ -14,6 +14,7 @@ import { setPresenceBodySchema, bulkPresenceBodySchema } from '../../models/pres
 import { presenceService } from '../../services/presence.service'
 import { updateAcceptVideoCallsSchema } from '../../models/call.schemas'
 import { videoCallSettingsService } from '../../services/video-call.service'
+import { SetFcmTokenSchema } from '../../models/push-notification.schemas'
 
 const PATCH_ME_ALLOWED_FIELDS = new Set(['name', 'dob', 'bio'])
 
@@ -193,6 +194,30 @@ export default async function usersRoutes(app: FastifyInstance) {
         statusCode: 200,
       })
       return reply.status(200).send(result)
+    },
+  )
+
+  app.put<{ Body: unknown }>(
+    '/me/fcm-token',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description: 'Register/update the caller\'s FCM push token (per-user, single token — a new device login overwrites it)',
+      },
+    },
+    async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
+      const userId = request.userId!
+      const parsed = SetFcmTokenSchema.safeParse(request.body)
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          'INVALID_REQUEST',
+        )
+      }
+      await userRepository.updateFcmToken(userId, parsed.data.token)
+      return reply.send({ success: true })
     },
   )
 

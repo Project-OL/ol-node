@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { rateLimitReaction } from '../../middlewares/rateLimitAuth'
-import { AddReactionSchema } from '../../models/messaging.schemas'
+import { AddReactionSchema, EditMessageSchema } from '../../models/messaging.schemas'
 import { messagingService } from '../../services/messaging.service'
 import { AppError } from '../../middlewares/errorHandler'
 
@@ -79,7 +79,7 @@ export default async function messageRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Messages'],
-        description: 'Delete own message',
+        description: 'Delete own message (only within 1 hour of sending)',
         params: {
           type: 'object',
           required: ['messageId'],
@@ -91,6 +91,48 @@ export default async function messageRoutes(app: FastifyInstance) {
       const userId = request.userId!
       await messagingService.deleteMessage(userId, request.params.messageId)
       return reply.code(204).send()
+    },
+  )
+
+  app.patch<{
+    Params: { messageId: string }
+    Body: unknown
+  }>(
+    '/:messageId',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Messages'],
+        description: 'Edit own message content (only within 1 hour of sending)',
+        params: {
+          type: 'object',
+          required: ['messageId'],
+          properties: { messageId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{
+        Params: { messageId: string }
+        Body: unknown
+      }>,
+      reply: FastifyReply,
+    ) => {
+      const userId = request.userId!
+      const parsed = EditMessageSchema.safeParse(request.body)
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await messagingService.editMessage(
+        userId,
+        request.params.messageId,
+        parsed.data.content,
+      )
+      return reply.code(200).send(result)
     },
   )
 }

@@ -34,7 +34,7 @@ const envSchema = z
     ADMIN_JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
     ADMIN_INITIAL_EMAIL: z.string().email().optional(),
     ADMIN_INITIAL_PASSWORD: z.string().min(12).optional(),
-    /** Optional override for inbox sender (`users.id`). When unset, server uses or creates `vone_platform`. */
+    /** Optional override for inbox sender (`users.id`). When unset, server uses or creates `offoo_platform`. */
     PLATFORM_SENDER_USER_ID: z.string().uuid().optional(),
     /** HMAC key for device binding fingerprint. Min 32 chars. Required in production. */
     DEVICE_FINGERPRINT_SECRET: z.string().min(32).optional(),

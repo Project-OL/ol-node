@@ -113,6 +113,21 @@ import { LIVE_SESSION_JOBS, LIVE_SESSION_QUEUE } from './queues/live-session.con
 import { liveSessionQueue } from './queues/live-session.queue'
 import { liveSessionRepository } from './repositories/liveSession.repository'
 import { liveSessionService } from './services/liveSession.service'
+import { platformMessagingService } from './services/platformMessaging.service'
+import {
+  PUSH_BROADCAST_BATCH_JOB,
+  PUSH_BROADCAST_JOB,
+  PUSH_BROADCAST_SWEEP_JOB,
+  PUSH_NOTIFICATION_QUEUE,
+} from './queues/push-notification.constants'
+import { pushNotificationQueue, registerPushBroadcastSweep } from './queues/push-notification.queue'
+import {
+  processPushBroadcastBatchJob,
+  processPushBroadcastJob,
+  sweepStalePushBroadcasts,
+  type PushBroadcastBatchJobData,
+  type PushBroadcastJobData,
+} from './jobs/push-notification.job'
 
 const ACCOUNT_DELETION_QUEUE = 'account-deletion'
 
@@ -126,6 +141,7 @@ async function main() {
 
   await registerMessageOutboxScheduledJobs()
   await registerPlatformBroadcastSweep()
+  await registerPushBroadcastSweep()
 
   const accountDeletionQueue = new Queue(ACCOUNT_DELETION_QUEUE, {
     connection,
@@ -353,6 +369,20 @@ async function main() {
     { connection, concurrency: 10 },
   )
 
+  const pushNotificationWorker = new Worker(
+    PUSH_NOTIFICATION_QUEUE,
+    async (job: Job) => {
+      if (job.name === PUSH_BROADCAST_JOB) {
+        await processPushBroadcastJob(job as Job<PushBroadcastJobData>)
+      } else if (job.name === PUSH_BROADCAST_BATCH_JOB) {
+        await processPushBroadcastBatchJob(job as Job<PushBroadcastBatchJobData>)
+      } else if (job.name === PUSH_BROADCAST_SWEEP_JOB) {
+        await sweepStalePushBroadcasts()
+      }
+    },
+    { connection, concurrency: 10 },
+  )
+
   const messageOutboxWorker = new Worker(
     MESSAGE_OUTBOX_QUEUE,
     async (job: Job<{ outboxId?: string }>) => {
@@ -443,7 +473,40 @@ async function main() {
   const liveSessionWorker = new Worker(
     LIVE_SESSION_QUEUE,
     async (job: Job<{ sessionId?: string; hostUserId?: string }>) => {
-      if (job.name === LIVE_SESSION_JOBS.SAFETY_NET_SESSION) {
+      if (job.name === LIVE_SESSION_JOBS.NOTIFY_LIVE_SUBSCRIBERS) {
+        const { hostUserId, sessionId } = job.data
+        if (!hostUserId || !sessionId) return
+
+        const subscribers = await prisma.broadcastReminder.findMany({
+          where: { creatorId: hostUserId, notifyOnLive: true },
+          select: { userId: true },
+        })
+        if (subscribers.length === 0) return
+
+        const host = await prisma.user.findUnique({
+          where: { id: hostUserId },
+          select: { username: true },
+        })
+        const hostName = host?.username ?? 'Someone you follow'
+
+        for (const sub of subscribers) {
+          try {
+            await platformMessagingService.sendPlatformMessage({
+              targetUserId: sub.userId,
+              type: 'NOTIFICATION',
+              content: `${hostName} is live now!`,
+              metadata: { category: 'notification', refId: sessionId },
+              clientMessageId: `live-notify:${sessionId}:${sub.userId}`,
+            })
+          } catch (err) {
+            console.error('[Live session] Failed to notify live subscriber', {
+              err,
+              hostUserId,
+              subscriberId: sub.userId,
+            })
+          }
+        }
+      } else if (job.name === LIVE_SESSION_JOBS.SAFETY_NET_SESSION) {
         const { sessionId, hostUserId } = job.data
         if (!sessionId || !hostUserId) return
 
@@ -558,13 +621,19 @@ async function main() {
     console.error('[Live session] Job failed:', job?.id, err)
   })
 
+  pushNotificationWorker.on('failed', (job, err) => {
+    console.error('[Push notification] Job failed:', job?.id, err)
+  })
+
   console.info(
-    'Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; agency-auto-reply; message-outbox; message-media-audio; epay-webhook-retry; live-session-safety-net (face: `npm run worker:face-index` — live-photo-verify, face-registration, PENDING_INDEX poll)',
+    'Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; agency-auto-reply; message-outbox; message-media-audio; push-notification; epay-webhook-retry; live-session-safety-net (face: `npm run worker:face-index` — live-photo-verify, face-registration, PENDING_INDEX poll)',
   )
 
   const shutdown = async () => {
     await liveSessionWorker.close()
     await liveSessionQueue.close()
+    await pushNotificationWorker.close()
+    await pushNotificationQueue.close()
     await payrollSlaWorker.close()
     await payrollSlaQueue.close()
     await epayWebhookRetryWorker.close()

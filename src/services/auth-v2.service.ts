@@ -1069,6 +1069,35 @@ export const authV2Service = {
     )
   },
 
+  /**
+   * After `authenticate` middleware succeeds: confirm the user still exists and may use the API
+   * (not banned / suspended / deleted / deactivating). Returns a compact verified identity DTO.
+   */
+  async verifyAuthenticatedUser(userId: string, payload: JwtAccessPayload) {
+    const user = await userRepository.findAuthGateById(userId)
+    if (!user) {
+      throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+    }
+    await ensureUserMayAuthenticate(user)
+
+    return {
+      valid: true as const,
+      userId: user.id,
+      publicId: Number(user.publicId),
+      name: displayNameFromUser(user),
+      avatarUrl: user.avatarUrl,
+      passwordSet: user.passwordSet,
+      status: user.status,
+      isSupport: user.isSupport,
+      sessionId: payload.sessionId ?? null,
+      deviceId: payload.deviceId ?? null,
+      tokenVersion: payload.tokenVersion ?? 0,
+      sessionTokenVersion: payload.sessionTokenVersion ?? null,
+      expiresAt:
+        typeof payload.exp === 'number' ? new Date(payload.exp * 1000).toISOString() : null,
+    }
+  },
+
   // ----- OAuth bind / unbind (Phase 5) -----
   async googleBind(userId: string, idToken: string) {
     const userInfo = await verifyGoogleToken(idToken)

@@ -6,11 +6,11 @@ import { rootLogger } from '../utils/rootLogger'
 const log = rootLogger.child({ module: 'platform-sender' })
 
 /** Stable username for the auto-provisioned inbox sender (not used for login). */
-export const PLATFORM_SENDER_USERNAME = 'vone_platform'
+export const PLATFORM_SENDER_USERNAME = 'offoo_platform'
 
 /**
  * Resolves the user row that sends SYSTEM / NOTIFICATION / TRANSACTIONAL inbox messages.
- * Auto-creates `vone_platform` when none exists — admins never need a manual support-user seed.
+ * Auto-creates `offoo_platform` when none exists — admins never need a manual support-user seed.
  */
 export async function getOrCreatePlatformSenderUser(): Promise<{ id: string }> {
   const configuredId = env.PLATFORM_SENDER_USER_ID?.trim()
@@ -73,7 +73,7 @@ export async function getOrCreatePlatformSenderUser(): Promise<{ id: string }> {
         originalPublicId: publicId,
         status: 'active',
         isSupport: true,
-        firstName: 'Vone',
+        firstName: 'Offoo',
         lastName: 'Platform',
       },
       select: { id: true },

@@ -2,7 +2,7 @@ import { prisma } from '../config/database'
 import { env } from '../config/env'
 import { LIVE_ACTIVE_SESSION_TTL, RedisKeys, redisClient } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
-import { enqueueLiveSessionSafetyNet } from '../queues/live-session.queue'
+import { enqueueLiveSessionSafetyNet, enqueueNotifyLiveSubscribers } from '../queues/live-session.queue'
 import { liveSessionRepository } from '../repositories/liveSession.repository'
 import { utcStartOfDay } from '../utils/datetime'
 
@@ -52,6 +52,7 @@ export const liveSessionService = {
     )
 
     await enqueueLiveSessionSafetyNet(session.id, data.hostUserId, env.LIVE_SESSION_TIMEOUT_HOURS)
+    await enqueueNotifyLiveSubscribers(data.hostUserId, session.id)
 
     return { alreadyActive: false, session }
   },

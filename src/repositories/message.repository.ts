@@ -454,6 +454,43 @@ export async function findMessageById(id: string): Promise<Message | null> {
   })
 }
 
+export type MessageSearchRow = {
+  id: string
+  conversationId: string
+  senderId: string
+  type: MessageType
+  content: string | null
+  createdAt: Date
+}
+
+/** Text search over message content, scoped to the caller's active memberships and their per-conversation clear cutoff (same rule `listMessages` applies). */
+export async function searchMessages(
+  userId: string,
+  query: string,
+  opts: { limit: number; cursor?: string },
+): Promise<MessageSearchRow[]> {
+  const cursorCondition = opts.cursor
+    ? Prisma.sql`AND m.created_at < ${new Date(opts.cursor)}`
+    : Prisma.empty
+  return prismaRead.$queryRaw<MessageSearchRow[]>`
+    SELECT m.id, m.conversation_id AS "conversationId", m.sender_id AS "senderId",
+           m.type, m.content, m.created_at AS "createdAt"
+    FROM messages m
+    INNER JOIN conversation_members cm
+      ON cm.conversation_id = m.conversation_id AND cm.user_id = ${userId}::uuid
+    WHERE cm.is_deleted = false
+      AND m.is_deleted = false
+      AND m.content ILIKE '%' || ${query} || '%'
+      AND (cm.deleted_at IS NULL OR m.created_at > cm.deleted_at)
+      ${cursorCondition}
+    ORDER BY m.created_at DESC
+    LIMIT ${opts.limit + 1}
+  `
+}
+
+/** Sender may edit or delete their own message only within this window of sending it. */
+export const MESSAGE_ACTION_WINDOW_MS = 60 * 60 * 1000
+
 export async function softDeleteMessage(id: string, requestingUserId: string): Promise<Message> {
   const msg = await prisma.message.findUnique({
     where: { id },
@@ -462,10 +499,37 @@ export async function softDeleteMessage(id: string, requestingUserId: string): P
   if (msg.senderId !== requestingUserId) {
     throw new AppError(403, 'Forbidden', 'FORBIDDEN')
   }
+  if (Date.now() - msg.createdAt.getTime() > MESSAGE_ACTION_WINDOW_MS) {
+    throw new AppError(403, 'Delete window has expired', 'MESSAGE_DELETE_WINDOW_EXPIRED')
+  }
   const now = new Date()
   return prisma.message.update({
     where: { id },
     data: { isDeleted: true, deletedAt: now },
+  })
+}
+
+export async function editMessage(
+  id: string,
+  requestingUserId: string,
+  content: string,
+): Promise<Message> {
+  const msg = await prisma.message.findUnique({
+    where: { id },
+  })
+  if (!msg) throw new AppError(404, 'Message not found', 'NOT_FOUND')
+  if (msg.senderId !== requestingUserId) {
+    throw new AppError(403, 'Forbidden', 'FORBIDDEN')
+  }
+  if (msg.isDeleted) {
+    throw new AppError(409, 'Message has been deleted', 'MESSAGE_ALREADY_DELETED')
+  }
+  if (Date.now() - msg.createdAt.getTime() > MESSAGE_ACTION_WINDOW_MS) {
+    throw new AppError(403, 'Edit window has expired', 'MESSAGE_EDIT_WINDOW_EXPIRED')
+  }
+  return prisma.message.update({
+    where: { id },
+    data: { content, editedAt: new Date() },
   })
 }
 
@@ -584,6 +648,8 @@ export const messageRepository = {
   findMessageById,
   conversationHasTextCoins,
   softDeleteMessage,
+  editMessage,
+  searchMessages,
   upsertReaction,
   removeReaction,
   markAsRead,

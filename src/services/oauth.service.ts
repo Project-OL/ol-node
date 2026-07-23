@@ -2,11 +2,12 @@
  * OAuth token verification (Google, Facebook, Apple) and link/unlink to user.
  */
 
-import * as admin from 'firebase-admin'
+import type * as admin from 'firebase-admin'
 import { OAuth2Client } from 'google-auth-library'
 import axios from 'axios'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env'
+import { getFirebaseApp } from '../config/firebase'
 import { prisma } from '../config/database'
 import { authIdentifierRepository } from '../repositories/auth-identifier.repository'
 import { publicIdService } from '../services/public-id.service'
@@ -29,20 +30,11 @@ export interface OAuthUserInfo {
 }
 
 function getFirebaseAuth(): admin.auth.Auth {
-  if (!admin.apps.length) {
-    if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
-      throw new AppError(503, 'OAuth not configured', 'OAUTH_NOT_CONFIGURED')
-    }
-    const privateKey = env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: env.FIREBASE_PROJECT_ID,
-        clientEmail: env.FIREBASE_CLIENT_EMAIL,
-        privateKey,
-      }),
-    })
+  try {
+    return getFirebaseApp().auth()
+  } catch {
+    throw new AppError(503, 'OAuth not configured', 'OAUTH_NOT_CONFIGURED')
   }
-  return admin.auth()
 }
 
 function googleIdTokenIss(idToken: string): string | null {

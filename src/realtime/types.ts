@@ -18,6 +18,14 @@ export type ServerFrame =
       seq: number
     }
   | {
+      t: 'MESSAGE_EDITED'
+      conversationId: string
+      messageId: string
+      content: string
+      editedAt: string
+      seq: number
+    }
+  | {
       t: 'REACTION_ADDED'
       conversationId: string
       messageId: string

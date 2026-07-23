@@ -7,6 +7,13 @@ export type WsEvent =
   | { type: 'NEW_MESSAGE'; conversationId: string; message: unknown }
   | { type: 'MESSAGE_DELETED'; conversationId: string; messageId: string }
   | {
+      type: 'MESSAGE_EDITED'
+      conversationId: string
+      messageId: string
+      content: string
+      editedAt: string
+    }
+  | {
       type: 'REACTION_ADDED'
       conversationId: string
       messageId: string
@@ -46,6 +53,15 @@ function wsEventToServerFrame(event: WsEvent): ServerFrame {
         t: 'MESSAGE_DELETED',
         conversationId: event.conversationId,
         messageId: event.messageId,
+        seq: LEGACY_SEQ_PLACEHOLDER,
+      }
+    case 'MESSAGE_EDITED':
+      return {
+        t: 'MESSAGE_EDITED',
+        conversationId: event.conversationId,
+        messageId: event.messageId,
+        content: event.content,
+        editedAt: event.editedAt,
         seq: LEGACY_SEQ_PLACEHOLDER,
       }
     case 'REACTION_ADDED':

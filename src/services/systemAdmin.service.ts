@@ -19,14 +19,14 @@ const BCRYPT_ROUNDS = 12
 interface AdminAccessPayload {
   sub: string
   role: AdminRole
-  iss: 'vone-admin'
+  iss: 'offoo-admin'
   type: 'access'
 }
 
 interface AdminRefreshPayload {
   sub: string
   sessionId: string
-  iss: 'vone-admin'
+  iss: 'offoo-admin'
   type: 'refresh'
 }
 
@@ -40,7 +40,7 @@ function accessTokenTtlSeconds(): number {
 
 function signAccessToken(adminId: string, role: AdminRole): string {
   return jwt.sign(
-    { sub: adminId, role, iss: 'vone-admin', type: 'access' } satisfies AdminAccessPayload,
+    { sub: adminId, role, iss: 'offoo-admin', type: 'access' } satisfies AdminAccessPayload,
     env.ADMIN_JWT_SECRET,
     { expiresIn: env.ADMIN_JWT_ACCESS_EXPIRES_IN, algorithm: 'HS256' } as jwt.SignOptions,
   )
@@ -48,7 +48,7 @@ function signAccessToken(adminId: string, role: AdminRole): string {
 
 function signRefreshToken(adminId: string, sessionId: string): string {
   return jwt.sign(
-    { sub: adminId, sessionId, iss: 'vone-admin', type: 'refresh' } satisfies AdminRefreshPayload,
+    { sub: adminId, sessionId, iss: 'offoo-admin', type: 'refresh' } satisfies AdminRefreshPayload,
     env.ADMIN_JWT_REFRESH_SECRET,
     { expiresIn: env.ADMIN_JWT_REFRESH_EXPIRES_IN, algorithm: 'HS256' } as jwt.SignOptions,
   )
@@ -166,7 +166,7 @@ export const systemAdminService = {
       throw new AppError(401, 'Invalid or expired refresh token', 'ADMIN_TOKEN_INVALID')
     }
 
-    if (payload.iss !== 'vone-admin' || payload.type !== 'refresh') {
+    if (payload.iss !== 'offoo-admin' || payload.type !== 'refresh') {
       throw new AppError(401, 'Invalid token type', 'ADMIN_TOKEN_INVALID')
     }
 
@@ -197,7 +197,7 @@ export const systemAdminService = {
   async verifyAccessToken(token: string): Promise<AdminAccessPayload> {
     try {
       const payload = jwt.verify(token, env.ADMIN_JWT_SECRET) as AdminAccessPayload
-      if (payload.iss !== 'vone-admin' || payload.type !== 'access') {
+      if (payload.iss !== 'offoo-admin' || payload.type !== 'access') {
         throw new Error('wrong token type')
       }
 
