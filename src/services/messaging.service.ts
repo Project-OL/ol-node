@@ -332,8 +332,11 @@ export const messagingService = {
     conversationId: string,
     input: SendMessageInput,
   ): Promise<MessageWithDetails> {
-    const conv = await conversationRepository.findConversationById(conversationId, senderId)
-    if (!conv) {
+    // Unfiltered fetch (no userId arg) so a sender who previously cleared this chat
+    // (`isDeleted=true`) isn't treated as a non-member — clearing history shouldn't
+    // permanently lock the conversation; sending resumes it (see reactivateConversationMembers below).
+    const conv = await conversationRepository.findConversationById(conversationId)
+    if (!conv || !conv.members.some((m) => m.userId === senderId)) {
       throw new AppError(403, 'Not a member', 'FORBIDDEN')
     }
     const otherMemberIds = conv.members.filter((m) => m.userId !== senderId).map((m) => m.userId)
@@ -374,6 +377,10 @@ export const messagingService = {
       mediaItems: mediaItemsPrepared,
     })
     const msg = result.message
+
+    if (isSendCreated(result)) {
+      await conversationRepository.reactivateConversationMembers(conversationId)
+    }
 
     await Promise.all(
       conv.members.map((m: { userId: string }) =>
@@ -562,6 +569,9 @@ export const messagingService = {
     if (!conv) {
       throw new AppError(403, 'Not a member', 'FORBIDDEN')
     }
+    if (conv.type !== 'DIRECT') {
+      throw new AppError(403, 'Only direct conversations can be cleared', 'NOT_DIRECT_CONVERSATION')
+    }
     await conversationRepository.markConversationDeleted(conversationId, userId)
     await cacheService.delete(RedisKeys.userConversations(userId))
     await redisClient.del(RedisKeys.convMessages(conversationId))
@@ -690,7 +700,11 @@ export const messagingService = {
     if (!conv) {
       throw new AppError(403, 'Not a member', 'FORBIDDEN')
     }
+    if (conv.type !== 'DIRECT') {
+      throw new AppError(403, 'Only direct conversations can be cleared', 'NOT_DIRECT_CONVERSATION')
+    }
     await conversationRepository.clearMessagesKeepConversation(conversationId, userId)
+    await cacheService.delete(RedisKeys.userConversations(userId))
     await redisClient.del(RedisKeys.convMessages(conversationId))
     await auditService.log({
       actionType: 'CLEAR_MESSAGES_KEEP_CONVERSATION',

@@ -20,18 +20,33 @@ export async function publishMessageOutboxRow(outboxId: bigint): Promise<void> {
   const parsed = JSON.parse(payloadStr) as {
     t?: string
     seq?: number
-    message?: { senderId?: string }
+    message?: {
+      id?: string
+      senderId?: string
+      type?: string
+      content?: string | null
+      createdAt?: string
+      isDeleted?: boolean
+    }
   }
   if (parsed.t === 'NEW_MESSAGE' && parsed.message?.senderId && parsed.seq !== undefined) {
     const members = await prisma.conversationMember.findMany({
       where: { conversationId: row.conversationId, isDeleted: false },
       select: { userId: true },
     })
+    const msg = parsed.message
     const digestStr = JSON.stringify({
       t: 'MESSAGE_DIGEST',
       conversationId: row.conversationId,
       seq: parsed.seq,
-      senderId: parsed.message.senderId,
+      senderId: msg.senderId,
+      message: {
+        id: msg.id,
+        type: msg.type,
+        content: typeof msg.content === 'string' ? msg.content.slice(0, 100) : (msg.content ?? null),
+        createdAt: msg.createdAt,
+        isDeleted: msg.isDeleted ?? false,
+      },
     })
     for (const m of members) {
       if (m.userId === parsed.message.senderId) continue

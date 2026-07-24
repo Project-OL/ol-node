@@ -63,12 +63,23 @@ export type ServerFrame =
       userId: string
       lastReadMessageId: string
     }
-  /** Thin fan-out on `msg:user:{userId}` for badge/list when not watching conv channel (Phase 7). */
+  /**
+   * Thin fan-out on `msg:user:{userId}` for badge/list when not watching conv channel (Phase 7).
+   * Carries a `lastMessage`-shaped preview so the client can patch its conversation list in place
+   * (conversationId + message + time) without a REST round-trip.
+   */
   | {
       t: 'MESSAGE_DIGEST'
       conversationId: string
       seq: number
       senderId: string
+      message: {
+        id: string
+        type: string
+        content: string | null
+        createdAt: string
+        isDeleted: boolean
+      }
     }
   /** Server answer to RESUME — compare `afterSeq` with REST fetch (Phase 5). */
   | {

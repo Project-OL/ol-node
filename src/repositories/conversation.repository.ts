@@ -285,18 +285,19 @@ export async function listConversationsForUser(
       defaultPublicId: m.user.defaultPublicId.toString(),
       displayPublicId: resolveDisplayPublicId(m.user),
     })),
-    lastMessage: c.messages[0]
-      ? {
-          id: c.messages[0].id,
-          type: c.messages[0].type,
-          content: c.messages[0].content
-            ? c.messages[0].content.slice(0, 100)
-            : c.messages[0].content,
-          createdAt: c.messages[0].createdAt,
-          senderId: c.messages[0].senderId,
-          isDeleted: c.messages[0].isDeleted,
-        }
-      : null,
+    lastMessage: (() => {
+      const clearedAt = c.members.find((m) => m.userId === userId)?.deletedAt ?? null
+      const msg = c.messages[0]
+      if (!msg || (clearedAt && msg.createdAt <= clearedAt)) return null
+      return {
+        id: msg.id,
+        type: msg.type,
+        content: msg.content ? msg.content.slice(0, 100) : msg.content,
+        createdAt: msg.createdAt,
+        senderId: msg.senderId,
+        isDeleted: msg.isDeleted,
+      }
+    })(),
   }))
   return {
     conversations: previews,
@@ -320,6 +321,25 @@ export async function markConversationDeleted(
     where: { conversationId, userId },
     data: { isDeleted: true, deletedAt: now },
   })
+}
+
+/**
+ * Re-activates every soft-cleared (`isDeleted=true`) membership on a conversation — called when a
+ * new message flows through it, so a cleared conversation "reappears" for whoever cleared it
+ * (sender or recipient), per the clear-chat-history contract. `deletedAt` is left untouched so
+ * history predating the clear stays hidden; only the list/send gate (`isDeleted`) is lifted.
+ */
+export async function reactivateConversationMembers(conversationId: string): Promise<string[]> {
+  const cleared = await prisma.conversationMember.findMany({
+    where: { conversationId, isDeleted: true },
+    select: { userId: true },
+  })
+  if (cleared.length === 0) return []
+  await prisma.conversationMember.updateMany({
+    where: { conversationId, isDeleted: true },
+    data: { isDeleted: false },
+  })
+  return cleared.map((m) => m.userId)
 }
 
 export async function updateMuteStatus(
@@ -382,11 +402,11 @@ export async function markAllConversationsRead(
     }))
 }
 
-/** Soft-deletes every active membership row for a user — removes all conversations from their list. */
+/** Soft-deletes every active DIRECT-conversation membership row for a user — removes those conversations from their list (platform/system/notification/transactional threads are untouched). */
 export async function markAllConversationsDeleted(userId: string): Promise<string[]> {
   const now = new Date()
   const memberships = await prisma.conversationMember.findMany({
-    where: { userId, isDeleted: false },
+    where: { userId, isDeleted: false, conversation: { type: 'DIRECT' } },
     select: { conversationId: true },
   })
   const conversationIds = memberships.map((m) => m.conversationId)
@@ -398,14 +418,19 @@ export async function markAllConversationsDeleted(userId: string): Promise<strin
   return conversationIds
 }
 
-/** Soft-deletes only the caller-supplied conversation ids the user is actually an active member of. */
+/** Soft-deletes only the caller-supplied conversation ids the user is actually an active DIRECT-conversation member of (non-DIRECT ids are silently dropped, same as ids the caller isn't a member of). */
 export async function markConversationsDeletedBulk(
   userId: string,
   conversationIds: string[],
 ): Promise<string[]> {
   const now = new Date()
   const memberships = await prisma.conversationMember.findMany({
-    where: { userId, conversationId: { in: conversationIds }, isDeleted: false },
+    where: {
+      userId,
+      conversationId: { in: conversationIds },
+      isDeleted: false,
+      conversation: { type: 'DIRECT' },
+    },
     select: { conversationId: true },
   })
   const validIds = memberships.map((m) => m.conversationId)
@@ -449,4 +474,5 @@ export const conversationRepository = {
   markAllConversationsDeleted,
   markConversationsDeletedBulk,
   clearMessagesKeepConversation,
+  reactivateConversationMembers,
 }
