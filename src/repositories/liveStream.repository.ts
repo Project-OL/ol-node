@@ -11,4 +11,15 @@ export const liveStreamRepository = {
       select: { id: true, startedAt: true, endedAt: true, isLive: true },
     })
   },
+
+  /** All sessions for `userId` whose `startedAt` falls within `[rangeStartUtc, rangeEndUtc)`, spanning multiple calendar days. */
+  async getSessionsForUserInRange(userId: string, rangeStartUtc: Date, rangeEndUtc: Date) {
+    return prismaRead.liveStream.findMany({
+      where: {
+        userId,
+        startedAt: { gte: rangeStartUtc, lt: rangeEndUtc },
+      },
+      select: { id: true, startedAt: true, endedAt: true, isLive: true },
+    })
+  },
 }

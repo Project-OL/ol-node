@@ -14,6 +14,13 @@ export const livestreamRewardRepository = {
     })
   },
 
+  /** All claims for `userId` whose `claimDate` falls within `[fromDate, toDateExclusive)`. */
+  async getClaimsForDateRange(userId: string, fromDate: Date, toDateExclusive: Date) {
+    return prismaRead.liveStreamRewardClaim.findMany({
+      where: { userId, claimDate: { gte: fromDate, lt: toDateExclusive } },
+    })
+  },
+
   async insertClaim(
     row: {
       userId: string

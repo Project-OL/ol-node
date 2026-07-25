@@ -23,11 +23,21 @@ export type LivestreamRewardPartDto = {
   claimed: boolean
 }
 
+/** One past day (1..7) of the reward window, with each part's final unlocked/claimed status for that day. */
+export type LivestreamRewardDayDto = {
+  dayIndex: number
+  date: string
+  parts: LivestreamRewardPartDto[]
+}
+
 export type LivestreamRewardStatusDto = {
   eligible: boolean
   dayIndex: number
   streamedMinutesToday: number
+  /** Today's parts. Empty once `eligible` is false (past the first-7-days window). */
   parts: LivestreamRewardPartDto[]
+  /** Prior days in the window, oldest first. On day N (2..7) this covers days 1..N-1; once the window has closed it always covers all 7 days. */
+  previousRewards: LivestreamRewardDayDto[]
 }
 
 /** 1-indexed day of membership, e.g. join day itself is day 1. */
@@ -57,7 +67,7 @@ async function streamedMinutesForUserOnDate(userId: string, dayStartUtc: Date): 
 }
 
 function buildParts(
-  streamedMinutesToday: number,
+  streamedMinutes: number,
   claims: { part: number }[],
 ): LivestreamRewardPartDto[] {
   const claimedParts = new Set(claims.map((c) => c.part))
@@ -65,12 +75,61 @@ function buildParts(
     part,
     thresholdMinutes: LIVESTREAM_REWARD_PART_THRESHOLDS_MIN[part]!,
     points: LIVESTREAM_REWARD_PART_POINTS.toString(),
-    unlocked: streamedMinutesToday >= LIVESTREAM_REWARD_PART_THRESHOLDS_MIN[part]!,
+    unlocked: streamedMinutes >= LIVESTREAM_REWARD_PART_THRESHOLDS_MIN[part]!,
     claimed: claimedParts.has(part),
   }))
 }
 
+/** Builds the day-1..dayCount breakdown (oldest first) from one range query each for sessions and claims. */
+async function buildPreviousRewards(
+  userId: string,
+  joinDay: Date,
+  dayCount: number,
+): Promise<LivestreamRewardDayDto[]> {
+  const rangeEnd = addUtcDays(joinDay, dayCount)
+  const [sessions, claims] = await Promise.all([
+    liveStreamRepository.getSessionsForUserInRange(userId, joinDay, rangeEnd),
+    livestreamRewardRepository.getClaimsForDateRange(userId, joinDay, rangeEnd),
+  ])
+
+  const now = Date.now()
+  const streamedMsByDate = new Map<string, number>()
+  for (const s of sessions) {
+    if (!s.startedAt) continue
+    const dateKey = utcDateString(s.startedAt)
+    const start = s.startedAt.getTime()
+    const end = s.endedAt ? s.endedAt.getTime() : s.isLive ? now : start
+    streamedMsByDate.set(dateKey, (streamedMsByDate.get(dateKey) ?? 0) + Math.max(0, end - start))
+  }
+
+  const claimsByDate = new Map<string, { part: number }[]>()
+  for (const c of claims) {
+    const dateKey = utcDateString(c.claimDate)
+    const list = claimsByDate.get(dateKey)
+    if (list) list.push(c)
+    else claimsByDate.set(dateKey, [c])
+  }
+
+  const days: LivestreamRewardDayDto[] = []
+  for (let dayIndex = 1; dayIndex <= dayCount; dayIndex++) {
+    const date = addUtcDays(joinDay, dayIndex - 1)
+    const dateKey = utcDateString(date)
+    const streamedMinutes = Math.floor((streamedMsByDate.get(dateKey) ?? 0) / 60_000)
+    days.push({
+      dayIndex,
+      date: dateKey,
+      parts: buildParts(streamedMinutes, claimsByDate.get(dateKey) ?? []),
+    })
+  }
+  return days
+}
+
 export const livestreamRewardService = {
+  /**
+   * `parts` covers today only (empty once the window has closed). `previousRewards` covers
+   * completed days in the window: days 1..dayIndex-1 while eligible, or all 7 once
+   * `dayIndex` has moved past the window — so history stays visible after day 7.
+   */
   async getStatus(userId: string): Promise<LivestreamRewardStatusDto> {
     const user = await prismaRead.user.findUnique({
       where: { id: userId },
@@ -79,21 +138,30 @@ export const livestreamRewardService = {
     if (!user) throw new AppError(404, 'User not found', 'NOT_FOUND')
 
     const today = utcStartOfDay(new Date())
+    const joinDay = utcStartOfDay(user.createdAt)
     const dayIndex = dayIndexSinceJoin(user.createdAt, today)
     const eligible = dayIndex >= 1 && dayIndex <= LIVESTREAM_REWARD_WINDOW_DAYS
 
-    if (!eligible) {
-      return { eligible: false, dayIndex, streamedMinutesToday: 0, parts: buildParts(0, []) }
+    let streamedMinutesToday = 0
+    let parts: LivestreamRewardPartDto[] = []
+    if (eligible) {
+      streamedMinutesToday = await streamedMinutesForUserOnDate(userId, today)
+      const claims = await livestreamRewardRepository.getClaimsForDate(userId, today)
+      parts = buildParts(streamedMinutesToday, claims)
     }
 
-    const streamedMinutesToday = await streamedMinutesForUserOnDate(userId, today)
-    const claims = await livestreamRewardRepository.getClaimsForDate(userId, today)
+    const previousDayCount = eligible
+      ? Math.min(dayIndex - 1, LIVESTREAM_REWARD_WINDOW_DAYS)
+      : LIVESTREAM_REWARD_WINDOW_DAYS
+    const previousRewards =
+      previousDayCount > 0 ? await buildPreviousRewards(userId, joinDay, previousDayCount) : []
 
     return {
-      eligible: true,
+      eligible,
       dayIndex,
       streamedMinutesToday,
-      parts: buildParts(streamedMinutesToday, claims),
+      parts,
+      previousRewards,
     }
   },
 
