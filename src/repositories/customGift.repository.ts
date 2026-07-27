@@ -42,6 +42,8 @@ export const customGiftRepository = {
 
   updateConfig(data: {
     coinCost?: bigint
+    coinCost1Month?: bigint
+    coinCost3Months?: bigint
     enabled?: boolean
     description?: string | null
     updatedByAdminId: string

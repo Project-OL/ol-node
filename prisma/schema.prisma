@@ -2755,7 +2755,12 @@ enum CustomGiftRequestStatus {
 
 model CustomGiftConfig {
   id               Int      @id @default(1)
+  /// Legacy / default price (= 1-month package). Kept for older clients.
   coinCost         BigInt   @default(100000) @map("coin_cost")
+  /// Coins for a 1-month custom gift request.
+  coinCost1Month   BigInt   @default(100000) @map("coin_cost_1_month")
+  /// Coins for a 3-month custom gift request.
+  coinCost3Months  BigInt   @default(200000) @map("coin_cost_3_months")
   enabled          Boolean  @default(true)
   description      String?  @db.Text
   updatedAt        DateTime @updatedAt @map("updated_at")

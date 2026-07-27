@@ -13,6 +13,13 @@ import { walletService } from './wallet.service'
 import { syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
 import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 import type { CreateCustomGiftRequestBody } from '../models/custom-gift.schemas'
+import {
+  buildCustomGiftPackages,
+  coinCostForDuration,
+  resolveCustomGiftDuration,
+  validityDaysForDuration,
+  type CustomGiftDurationMonths,
+} from '../utils/custom-gift-pricing'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
@@ -22,6 +29,8 @@ export interface CustomGiftRequestDto {
   note: string | null
   /** Requested gift validity in days; null when the user did not specify. */
   validityDays: number | null
+  /** Package duration that was charged (1 or 3). Null on legacy rows. */
+  durationMonths: CustomGiftDurationMonths | null
   coinCost: string
   status: CustomGiftRequestStatus
   failureReason: string | null
@@ -31,12 +40,19 @@ export interface CustomGiftRequestDto {
   resolvedAt: string | null
 }
 
+function inferDurationMonths(validityDays: number | null): CustomGiftDurationMonths | null {
+  if (validityDays === 90) return 3
+  if (validityDays === 30) return 1
+  return null
+}
+
 export function toRequestDto(row: CustomGiftRequestWithGift): CustomGiftRequestDto {
   return {
     id: row.id,
     whatsappNumber: row.whatsappNumber,
     note: row.note,
     validityDays: row.validityDays,
+    durationMonths: inferDurationMonths(row.validityDays),
     coinCost: row.coinCost.toString(),
     status: row.status,
     failureReason: row.failureReason,
@@ -55,20 +71,31 @@ export function toRequestDto(row: CustomGiftRequestWithGift): CustomGiftRequestD
 }
 
 export const customGiftService = {
-  /** Public config: what a custom gift request costs and whether the feature is on. */
-  async getConfig(): Promise<{ coinCost: string; enabled: boolean; description: string | null }> {
+  /**
+   * Public config: duration packages (1 month / 3 months) with coin costs,
+   * plus legacy `coinCost` (= 1-month price) for older clients.
+   */
+  async getConfig(): Promise<{
+    coinCost: string
+    enabled: boolean
+    description: string | null
+    packages: ReturnType<typeof buildCustomGiftPackages>
+  }> {
     const config = await customGiftRepository.getOrCreateConfig()
+    const packages = buildCustomGiftPackages(config)
     return {
-      coinCost: config.coinCost.toString(),
+      coinCost: packages[0]!.coinCost,
       enabled: config.enabled,
       description: config.description,
+      packages,
     }
   },
 
   /**
-   * Raise a custom gift request: debits the configured coin cost immediately
-   * (this is the "payment"), then CS reaches out on WhatsApp. One PENDING
-   * request per user (partial unique index backstops the pre-check).
+   * Raise a custom gift request: debits the package coin cost for the selected
+   * duration (1 or 3 months) immediately (this is the "payment"), then CS reaches
+   * out on WhatsApp. One PENDING request per user (partial unique index backstops
+   * the pre-check).
    *
    * Read Committed: the buyer's COIN wallet FOR UPDATE inside `debit` is the
    * serializer; the ledger idempotency key makes retries replay (the request
@@ -83,7 +110,13 @@ export const customGiftService = {
     if (!config.enabled) {
       throw new AppError(403, 'Custom gift requests are currently disabled', 'CUSTOM_GIFT_DISABLED')
     }
-    const coinCost = config.coinCost
+
+    const durationMonths = resolveCustomGiftDuration({
+      durationMonths: body.durationMonths,
+      validityDays: body.validityDays,
+    })
+    const validityDays = validityDaysForDuration(durationMonths)
+    const coinCost = coinCostForDuration(config, durationMonths)
     const idempotencyKey = `custom-gift:${userId}:${body.idempotencyKey ?? randomUUID()}`
 
     let wealthResult: LevelApplyResult | null = null
@@ -117,10 +150,11 @@ export const customGiftService = {
             tx,
             {
               idempotencyKey,
-              description: 'Custom gift request',
+              description: `Custom gift request (${durationMonths} month${durationMonths === 1 ? '' : 's'})`,
               metadata: {
                 whatsappNumber: body.whatsappNumber,
-                ...(body.validityDays != null ? { validityDays: body.validityDays } : {}),
+                durationMonths,
+                validityDays,
               },
               applyWealthXp: true,
             },
@@ -136,7 +170,7 @@ export const customGiftService = {
               userId,
               whatsappNumber: body.whatsappNumber,
               note: body.note,
-              validityDays: body.validityDays,
+              validityDays,
               coinCost,
               ledgerEntryId,
             },

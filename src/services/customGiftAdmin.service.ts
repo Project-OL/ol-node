@@ -14,6 +14,7 @@ import type {
   FailCustomGiftRequestBody,
   UpdateCustomGiftConfigBody,
 } from '../models/custom-gift.schemas'
+import { buildCustomGiftPackages } from '../utils/custom-gift-pricing'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
@@ -53,18 +54,31 @@ function toAdminDto(row: CustomGiftRequestWithUserAndGift): AdminCustomGiftReque
 export const customGiftAdminService = {
   async getConfig() {
     const config = await customGiftRepository.getOrCreateConfig()
+    const packages = buildCustomGiftPackages(config)
     return {
-      coinCost: config.coinCost.toString(),
+      coinCost: packages[0]!.coinCost,
+      coinCost1Month: packages[0]!.coinCost,
+      coinCost3Months: packages[1]!.coinCost,
       enabled: config.enabled,
       description: config.description,
+      packages,
       updatedAt: config.updatedAt.toISOString(),
       updatedByAdminId: config.updatedByAdminId,
     }
   },
 
   async updateConfig(body: UpdateCustomGiftConfigBody, adminId: string) {
+    // Legacy `coinCost` updates the 1-month package (and keeps coinCost column in sync).
+    const oneMonth =
+      body.coinCost1Month != null
+        ? body.coinCost1Month
+        : body.coinCost != null
+          ? body.coinCost
+          : undefined
+
     await customGiftRepository.updateConfig({
-      ...(body.coinCost != null ? { coinCost: body.coinCost } : {}),
+      ...(oneMonth != null ? { coinCost: oneMonth, coinCost1Month: oneMonth } : {}),
+      ...(body.coinCost3Months != null ? { coinCost3Months: body.coinCost3Months } : {}),
       ...(body.enabled != null ? { enabled: body.enabled } : {}),
       ...(body.description !== undefined ? { description: body.description } : {}),
       updatedByAdminId: adminId,
