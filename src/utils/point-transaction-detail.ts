@@ -27,7 +27,7 @@ export type PointTransactionStatus =
   | 'FAILED'
   | 'REFUNDED'
   | 'DISPUTED'
-  | 'CANCELLED'
+  | 'REJECTED'
 
 export type PointTransactionPaymentDetails = {
   method: string
@@ -115,10 +115,13 @@ export function resolvePointTransactionStatus(
       return { status: 'PENDING', statusLabel: 'Withdrawal Processing' }
     case 'FAILED':
       return { status: 'FAILED', statusLabel: 'Withdrawal Failed' }
-    case 'CANCELLED':
-      return { status: 'CANCELLED', statusLabel: 'Withdrawal Cancelled' }
+    case 'REJECTED':
+      return { status: 'REJECTED', statusLabel: 'Withdrawal Rejected' }
     case 'DISPUTED':
       return { status: 'DISPUTED', statusLabel: 'Withdrawal Disputed' }
+    case 'KYC_CHECK':
+    case 'APPROVED':
+      return { status: 'PENDING', statusLabel: 'Withdrawal Processing' }
     default:
       return { status: 'PENDING', statusLabel: 'Withdrawal Processing' }
   }
