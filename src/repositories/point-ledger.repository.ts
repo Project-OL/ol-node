@@ -1,5 +1,9 @@
 import { prismaRead } from '../config/database'
 import { PointTxType, LedgerDirection, Prisma } from '@prisma/client'
+import {
+  matchesPointTransactionOrderNumber,
+  parseOrderNumberTimestamp,
+} from '../utils/point-transaction-order'
 
 export type PointLedgerFilter = {
   walletId: string
@@ -42,6 +46,29 @@ export const pointLedgerRepository = {
   },
 
   /** All ledger rows for this wallet matching canonical business refId. */
+  async findByOrderNumberForWallet(walletId: string, orderNumber: string) {
+    const anchor = parseOrderNumberTimestamp(orderNumber)
+    if (!anchor) return null
+
+    const from = new Date(anchor.getTime() - 2_000)
+    const to = new Date(anchor.getTime() + 2_000)
+
+    const candidates = await prismaRead.pointLedgerEntry.findMany({
+      where: {
+        walletId,
+        createdAt: { gte: from, lte: to },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    })
+
+    return (
+      candidates.find((entry) =>
+        matchesPointTransactionOrderNumber(entry.id, entry.createdAt, orderNumber),
+      ) ?? null
+    )
+  },
+
   async findByRefForWallet(walletId: string, refId: string) {
     const byColumn = await prismaRead.pointLedgerEntry.findMany({
       where: { walletId, refId },

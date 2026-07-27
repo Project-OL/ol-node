@@ -20,6 +20,14 @@ import {
   loadWithdrawalAmountContext,
   resolvePointLedgerRefId,
 } from '../utils/point-transaction-amounts'
+import {
+  buildPointTransactionPaymentDetails,
+  buildPointTransactionReportHint,
+  POINT_WITHDRAWAL_TX_TYPES,
+  resolvePointTransactionKind,
+  resolvePointTransactionStatus,
+} from '../utils/point-transaction-detail'
+import { formatPointTransactionOrderNumber } from '../utils/point-transaction-order'
 import { inferRefIdEntityType } from '../config/point-ledger-ref-id'
 import type { PointLedgerEntry } from '@prisma/client'
 import {
@@ -28,6 +36,7 @@ import {
   sumCreditsByCategory,
 } from '../config/point-earnings-categories'
 import { withdrawalService } from './withdrawal.service'
+import { supportService } from './support.service'
 import { getTransactionName } from '../config/transaction-display-names'
 import {
   buildCounterpartyDetailsMap,
@@ -71,6 +80,18 @@ function mapLedgerParticipant(user: LedgerUserRow) {
 
 type PointLedgerDetailRow = PointLedgerEntry
 
+async function loadWithdrawalPaymentContext(refId: string | null) {
+  if (!refId) return null
+  const row = await prismaRead.withdrawal.findUnique({
+    where: { id: refId },
+    select: {
+      status: true,
+      paymentMethod: true,
+    },
+  })
+  return row
+}
+
 async function buildPointTransactionDetail(
   entry: PointLedgerDetailRow,
   selfRow: LedgerUserRow,
@@ -78,6 +99,8 @@ async function buildPointTransactionDetail(
 ) {
   const transactionDateTime = entry.createdAt.toISOString()
   const refId = resolvePointLedgerRefId(entry.refId, entry.metadata)
+  const orderNumber = formatPointTransactionOrderNumber(entry.id, entry.createdAt)
+  const transactionKind = resolvePointTransactionKind(entry.txType)
 
   const payrollConfig = await prismaRead.payrollConfig.findUnique({
     where: { id: 1 },
@@ -87,7 +110,11 @@ async function buildPointTransactionDetail(
     ? new Prisma.Decimal(payrollConfig.inrPerUsd.toString()).toNumber()
     : 86
 
-  const withdrawal = refId ? await loadWithdrawalAmountContext(refId, entry.txType) : null
+  const withdrawalAmount = refId ? await loadWithdrawalAmountContext(refId, entry.txType) : null
+  const withdrawalRow =
+    refId && POINT_WITHDRAWAL_TX_TYPES.has(entry.txType)
+      ? await loadWithdrawalPaymentContext(refId)
+      : null
 
   const amountDetails = buildPointAmountBreakdown(
     {
@@ -95,7 +122,7 @@ async function buildPointTransactionDetail(
       amount: entry.amount,
       refId,
       metadata: entry.metadata,
-      withdrawal,
+      withdrawal: withdrawalAmount,
     },
     inrPerUsd,
   )
@@ -117,16 +144,47 @@ async function buildPointTransactionDetail(
     selfRow.id,
   )
 
+  const counterpartyForPayment = counterpartyRow
+    ? {
+        publicId: counterpartyRow.publicId.toString(),
+        displayName: ledgerUserDisplayName(counterpartyRow),
+      }
+    : null
+
+  const { status, statusLabel } = resolvePointTransactionStatus(
+    entry.txType,
+    withdrawalRow?.status ?? null,
+  )
+
+  const paymentDetails = buildPointTransactionPaymentDetails({
+    txType: entry.txType,
+    counterparty: counterpartyForPayment,
+    paymentMethod: withdrawalRow?.paymentMethod ?? null,
+  })
+
+  const report = buildPointTransactionReportHint({
+    entry,
+    businessRefId: refId,
+  })
+
   return {
     id: entry.id,
     direction: entry.direction,
     txType: entry.txType,
     transactionName: getTransactionName('POINT', entry.txType, entry.direction),
+    transactionKind,
+    platformId: selfRow.publicId.toString(),
+    orderNumber,
+    orderTime: transactionDateTime,
+    status,
+    statusLabel,
     amount: entry.amount.toString(),
     balanceAfter: entry.balanceAfter.toString(),
     refId,
     refIdEntityType: inferRefIdEntityType(entry.txType),
     amountDetails,
+    paymentDetails,
+    report,
     transactionDateTime,
     description: entry.description,
     metadata: entry.metadata,
@@ -434,6 +492,44 @@ export const pointWalletService = {
     const counterpartyRow = entry.counterpartyId ? (byId.get(entry.counterpartyId) ?? null) : null
 
     return buildPointTransactionDetail(entry, selfRow, counterpartyRow)
+  },
+
+  async getTransactionDetailByOrderNumber(userId: string, orderNumber: string) {
+    const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
+    const entry = await pointLedgerRepository.findByOrderNumberForWallet(wallet.id, orderNumber)
+    if (!entry) {
+      throw new AppError(404, 'Point transaction not found', 'NOT_FOUND')
+    }
+    return pointWalletService.getTransactionDetail(userId, entry.id)
+  },
+
+  async reportTransaction(
+    userId: string,
+    input: { orderNumber: string; description: string; imageUrl?: string },
+  ) {
+    const detail = await pointWalletService.getTransactionDetailByOrderNumber(
+      userId,
+      input.orderNumber,
+    )
+
+    if (!detail.report?.allowed) {
+      throw new AppError(400, 'This transaction cannot be reported', 'TRANSACTION_NOT_REPORTABLE')
+    }
+
+    const ticket = await supportService.createTicket(userId, {
+      type: detail.report.supportType,
+      subType: detail.report.supportSubType,
+      description: input.description,
+      imageUrl: input.imageUrl,
+      transactionRef: detail.report.transactionRef,
+    })
+
+    return {
+      ticket,
+      orderNumber: detail.orderNumber,
+      transactionKind: detail.transactionKind,
+      entryId: detail.id,
+    }
   },
 
   /**

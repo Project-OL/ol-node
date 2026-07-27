@@ -8,6 +8,8 @@ import {
   PointSummaryQuerySchema,
   PointLedgerEntryParamsSchema,
   PointLedgerRefParamsSchema,
+  PointOrderNumberParamsSchema,
+  ReportPointTransactionSchema,
 } from '../../models/wallet.schemas'
 
 export async function walletPointsRoutes(app: FastifyInstance) {
@@ -78,6 +80,29 @@ export async function walletPointsRoutes(app: FastifyInstance) {
         limit: query.limit,
       })
       return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/history/by-order/:orderNumber',
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { orderNumber } = PointOrderNumberParamsSchema.parse(request.params)
+      const result = await pointWalletService.getTransactionDetailByOrderNumber(
+        request.userId!,
+        orderNumber,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post(
+    '/transactions/report',
+    { preHandler: [authenticate] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const body = ReportPointTransactionSchema.parse(request.body ?? {})
+      const result = await pointWalletService.reportTransaction(request.userId!, body)
+      return reply.status(201).send(result)
     },
   )
 

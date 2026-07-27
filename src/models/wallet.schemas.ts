@@ -121,6 +121,17 @@ export const PointLedgerRefParamsSchema = z.object({
   refId: z.string().min(1).max(255),
 })
 
+/** Display order number from point transaction detail (`YYMMDDHHmmss` + suffix). */
+export const PointOrderNumberParamsSchema = z.object({
+  orderNumber: z.string().regex(/^\d{15,20}$/),
+})
+
+export const ReportPointTransactionSchema = z.object({
+  orderNumber: z.string().regex(/^\d{15,20}$/),
+  description: z.string().min(1).max(250),
+  imageUrl: z.string().url().optional(),
+})
+
 import { grossPointsFromUsd } from '../utils/withdrawal-amount'
 
 export const WithdrawInitiateSchema = z
