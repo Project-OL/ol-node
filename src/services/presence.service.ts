@@ -1,4 +1,9 @@
-import { PRESENCE_HEARTBEAT_TTL_SEC, redisClient, RedisKeys } from '../config/redis'
+import {
+  PRESENCE_HEARTBEAT_TTL_SEC,
+  PRESENCE_LAST_ACTIVE_THROTTLE_TTL_SEC,
+  redisClient,
+  RedisKeys,
+} from '../config/redis'
 import { prismaRead } from '../config/database'
 import { touchUserLastActive } from '../middlewares/lastActiveTracker.middleware'
 import { privacyService } from './privacy.service'
@@ -15,6 +20,17 @@ end
 return v
 `
 
+/** Atomically INCR socket count and return previous online flag (1/0) for publish decisions. */
+const INCR_PRESENCE_AND_PEEK_ONLINE = `
+local count = redis.call('INCR', KEYS[1])
+local was = redis.call('GET', KEYS[2])
+redis.call('SET', KEYS[2], '1', 'EX', tonumber(ARGV[1]))
+if was == '1' then
+  return {count, 1}
+end
+return {count, 0}
+`
+
 function presenceFrame(userId: string, online: boolean): ServerFrame {
   return { t: 'PRESENCE', userId, online }
 }
@@ -27,20 +43,34 @@ function publishPresence(userId: string, online: boolean): Promise<number> {
   )
 }
 
+async function touchPresenceLastActive(userId: string): Promise<void> {
+  await touchUserLastActive(userId, {
+    throttleSec: PRESENCE_LAST_ACTIVE_THROTTLE_TTL_SEC,
+    presenceGate: true,
+  })
+}
+
 export const presenceService = {
   /**
-   * One WebSocket connected for this user. INCR count; on 0→1 set `online` and publish.
+   * One WebSocket connected for this user.
+   * Always refreshes `online:{userId}` + last-active — not only on 0→1 — so orphaned
+   * `presence:count` (crash / missed disconnect) cannot leave the user stuck offline until PING.
    */
   async recordSocketConnected(userId: string): Promise<void> {
-    const n = await redisClient.incr(RedisKeys.presenceCount(userId))
-    if (n === 1) {
-      await redisClient.set(
-        RedisKeys.userOnlineStatus(userId),
-        '1',
-        'EX',
-        PRESENCE_HEARTBEAT_TTL_SEC,
-      )
-      await touchUserLastActive(userId)
+    const result = (await redisClient.eval(
+      INCR_PRESENCE_AND_PEEK_ONLINE,
+      2,
+      RedisKeys.presenceCount(userId),
+      RedisKeys.userOnlineStatus(userId),
+      String(PRESENCE_HEARTBEAT_TTL_SEC),
+    )) as [number, number]
+    const n = Number(result[0])
+    const wasOnline = Number(result[1]) === 1
+
+    await touchPresenceLastActive(userId)
+
+    // Publish when first socket arrives, or when online was already expired while count > 0.
+    if (n === 1 || !wasOnline) {
       await publishPresence(userId, true)
     }
   },
@@ -62,8 +92,13 @@ export const presenceService = {
 
   /** PING / HTTP heartbeat: refresh `online:{userId}` so DM / presence stay warm. */
   async refreshOnlineHeartbeat(userId: string): Promise<void> {
+    const wasOnline = await redisClient.get(RedisKeys.userOnlineStatus(userId))
     await redisClient.set(RedisKeys.userOnlineStatus(userId), '1', 'EX', PRESENCE_HEARTBEAT_TTL_SEC)
-    await touchUserLastActive(userId)
+    await touchPresenceLastActive(userId)
+    // Orphaned count > 0 with expired online: PING must re-announce so subscribers catch up.
+    if (wasOnline !== '1') {
+      await publishPresence(userId, true)
+    }
   },
 
   /** HTTP or foreground app: mark online + refresh last-active timestamp. */
@@ -75,7 +110,7 @@ export const presenceService = {
       'EX',
       PRESENCE_HEARTBEAT_TTL_SEC,
     )
-    await touchUserLastActive(userId)
+    await touchPresenceLastActive(userId)
     if (wasOnline !== '1') {
       await publishPresence(userId, true)
     }

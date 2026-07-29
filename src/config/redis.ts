@@ -266,7 +266,10 @@ export const RedisKeys = {
   agencyRanking: (country: string, period: string, limit: number, cursor: string) =>
     `agency:ranking:v5:${country}:${period}:${limit}:${cursor}`,
   /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
+  /** Throttle gate for HTTP `lastActiveTracker` writes to `users.last_active_at`. */
   userLastActive: (userId: string) => `user:lastActive:${userId}`,
+  /** Separate gate for WS connect/PING / HTTP presence so last-seen can refresh while online. */
+  userLastActivePresence: (userId: string) => `user:lastActive:presence:${userId}`,
   ratelimitAgencyApply: (userId: string) => `ratelimit:agency:apply:${userId}`,
   ratelimitAgencyLeaveApply: (userId: string) => `ratelimit:agency:leave:apply:${userId}`,
   /** Agency Phase 2: level ladder + derived rates (60s) */
@@ -368,6 +371,11 @@ export const CONV_LIST_TTL = 60 * 5
 export const ONLINE_STATUS_TTL = 30
 /** Messaging: PING heartbeat refresh for `online:{userId}` (Phase 3 presence). */
 export const PRESENCE_HEARTBEAT_TTL_SEC = 60
+/**
+ * Throttle for `users.last_active_at` writes driven by WS connect / PING / HTTP presence.
+ * Shorter than {@link USER_LAST_ACTIVE_THROTTLE_TTL} so last-seen stays fresher while online.
+ */
+export const PRESENCE_LAST_ACTIVE_THROTTLE_TTL_SEC = 60
 /** Messaging: typing indicator key TTL (Phase 3 spec: 8s). */
 export const TYPING_INDICATOR_TTL_SEC = 8
 /** Messaging: max one typing publish per user per conversation per 2s. */
