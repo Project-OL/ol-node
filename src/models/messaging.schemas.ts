@@ -52,6 +52,17 @@ export const SendMessageSchema = z
     mediaItems: z.array(sendMessageMediaItemSchema).max(10).optional(),
     /** Required when type is GIFT — catalog gift UUID. */
     giftId: z.string().uuid().optional(),
+    /**
+     * GIFT only: how many of the same catalog gift to send in one message.
+     * Coins debited / points credited / agency commission scale by this count. Default 1.
+     * App UI multipliers (1 / 10 / 50 / 100) map to this field (or `multiplier`).
+     */
+    quantity: z.coerce.number().int().min(1).max(100).optional(),
+    /**
+     * GIFT only: alias for `quantity` (same meaning as the picker multiplier).
+     * If both are sent they must match.
+     */
+    multiplier: z.coerce.number().int().min(1).max(100).optional(),
   })
   .superRefine((d, ctx) => {
     if (d.type === 'GIFT') {
@@ -76,7 +87,28 @@ export const SendMessageSchema = z
           path: ['content'],
         })
       }
+      if (d.quantity != null && d.multiplier != null && d.quantity !== d.multiplier) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'quantity and multiplier must match when both are sent',
+          path: ['multiplier'],
+        })
+      }
       return
+    }
+    if (d.quantity != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'quantity is only allowed for GIFT messages',
+        path: ['quantity'],
+      })
+    }
+    if (d.multiplier != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'multiplier is only allowed for GIFT messages',
+        path: ['multiplier'],
+      })
     }
     if (!(d.content?.trim() || (d.mediaItems && d.mediaItems.length > 0))) {
       ctx.addIssue({

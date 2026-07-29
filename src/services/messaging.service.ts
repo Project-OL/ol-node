@@ -467,15 +467,21 @@ export const messagingService = {
       throw new AppError(404, 'Gift not found', 'NOT_FOUND')
     }
 
+    // UI multiplier pills (1/10/50/100) → quantity; `multiplier` is an accepted alias.
+    const quantity = input.quantity ?? input.multiplier ?? 1
+
     const giftResult = (await giftTransactionService.sendGift({
       senderUserId: senderId,
       receiverUserId,
       giftId,
       context: 'direct',
+      quantity,
       idempotencyKey: `gift-msg:${input.clientMessageId}`,
     })) as {
       transactionId: string
       giftName: string
+      quantity: number
+      unitCoinCost: number
       coinCost: number
       pointsAwarded: number
       senderCoinsRemaining: number
@@ -490,6 +496,8 @@ export const messagingService = {
       code: gift.code,
       displayImageUrl: gift.displayImageUrl,
       effectUrl: gift.effectUrl,
+      quantity: giftResult.quantity,
+      unitCoinCost: giftResult.unitCoinCost,
       coinCost: giftResult.coinCost,
       pointsAwarded: giftResult.pointsAwarded,
       vipOnly: gift.vipOnly,

@@ -54,12 +54,19 @@ type SendGiftParams = {
   receiverUserId: string
   giftId: string
   context: 'direct' | 'livestream'
+  /** Number of the same catalog gift in one send. Default 1; max 100 (UI: 1/10/50/100). */
+  quantity?: number
   idempotencyKey?: string
 }
 
 async function executeSendGift(params: SendGiftParams, idemBase: string) {
   if (params.senderUserId === params.receiverUserId) {
     throw new AppError(400, 'Cannot send a gift to yourself', 'INVALID_REQUEST')
+  }
+
+  const quantity = params.quantity ?? 1
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 100) {
+    throw new AppError(400, 'quantity must be an integer between 1 and 100', 'INVALID_REQUEST')
   }
 
   await assertNotBlockedEitherWay(params.senderUserId, params.receiverUserId)
@@ -74,8 +81,10 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
     throw new AppError(403, 'VIP membership required for this gift', 'VIP_MEMBERSHIP_REQUIRED')
   }
 
-  const coinCost = gift.coinCost
+  const unitCoinCost = gift.coinCost
+  const coinCost = unitCoinCost * quantity
   const pointsAwarded = Number(hostPointsFromGift(BigInt(coinCost)))
+  const giftLabel = quantity > 1 ? `${gift.name} ×${quantity}` : gift.name
   const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys()
 
   type LevelRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>
@@ -120,8 +129,13 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
           amount: cost,
           balanceAfter: coinBal - cost,
           counterpartyId: params.receiverUserId,
-          description: `Gift: ${gift.name}`,
-          metadata: { giftId: params.giftId, context: params.context },
+          description: `Gift: ${giftLabel}`,
+          metadata: {
+            giftId: params.giftId,
+            context: params.context,
+            quantity,
+            unitCoinCost,
+          },
           idempotencyKey: `${idemBase}-coin`,
         })
         await walletRepository.bumpVersion(tx, senderCoinWallet.id)
@@ -155,8 +169,13 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
             balanceAfter: ptBal + pt,
             refId: giftTxRefId,
             counterpartyId: params.senderUserId,
-            description: `Gift received: ${gift.name}`,
-            metadata: { giftId: params.giftId, context: params.context },
+            description: `Gift received: ${giftLabel}`,
+            metadata: {
+              giftId: params.giftId,
+              context: params.context,
+              quantity,
+              unitCoinCost,
+            },
             idempotencyKey: `${idemBase}-point`,
           })
           await walletRepository.bumpVersion(tx, receiverPointWallet.id)
@@ -309,6 +328,8 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
   return {
     transactionId: txResult.transactionId,
     giftName: gift.name,
+    quantity,
+    unitCoinCost,
     coinCost,
     pointsAwarded,
     senderCoinsRemaining: Number(senderCoinsRemaining),

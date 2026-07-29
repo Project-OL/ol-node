@@ -52,7 +52,13 @@ export type GiftMessageSnapshot = {
   code: string | null
   displayImageUrl: string
   effectUrl: string | null
+  /** How many of this catalog gift were sent in this message (default 1). */
+  quantity: number
+  /** Catalog coin price for one gift. */
+  unitCoinCost: number
+  /** Total coins debited from sender (= unitCoinCost × quantity). */
   coinCost: number
+  /** Total points credited to receiver (60% of coinCost). */
   pointsAwarded: number
   vipOnly: boolean
 }
@@ -126,6 +132,23 @@ export function giftSnapshotFromMetadata(metadata: unknown): GiftMessageSnapshot
         ? m.giftImageUrl
         : null
   if (!giftId || !giftTransactionId || !name || !displayImageUrl) return undefined
+  const coinCost = typeof m.coinCost === 'number' ? m.coinCost : Number(m.coinCost) || 0
+  const quantityRaw =
+    typeof m.quantity === 'number' ? m.quantity : m.quantity != null ? Number(m.quantity) : 1
+  const quantity =
+    Number.isFinite(quantityRaw) && quantityRaw >= 1 ? Math.floor(quantityRaw) : 1
+  const unitFromMeta =
+    typeof m.unitCoinCost === 'number'
+      ? m.unitCoinCost
+      : m.unitCoinCost != null
+        ? Number(m.unitCoinCost)
+        : NaN
+  const unitCoinCost =
+    Number.isFinite(unitFromMeta) && unitFromMeta >= 0
+      ? Math.floor(unitFromMeta)
+      : quantity > 0
+        ? Math.floor(coinCost / quantity)
+        : coinCost
   return {
     giftId,
     giftTransactionId,
@@ -138,7 +161,9 @@ export function giftSnapshotFromMetadata(metadata: unknown): GiftMessageSnapshot
         : typeof m.giftEffectUrl === 'string'
           ? m.giftEffectUrl
           : null,
-    coinCost: typeof m.coinCost === 'number' ? m.coinCost : Number(m.coinCost) || 0,
+    quantity,
+    unitCoinCost,
+    coinCost,
     pointsAwarded:
       typeof m.pointsAwarded === 'number' ? m.pointsAwarded : Number(m.pointsAwarded) || 0,
     vipOnly: Boolean(m.vipOnly),
