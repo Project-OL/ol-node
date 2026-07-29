@@ -10,7 +10,11 @@ export const POINT_EARNINGS_CATEGORIES = {
   ],
   commission: [PointTxType.AGENT_COMMISSION, PointTxType.PAYROLL_HOST_PAYOUT],
   transfer: [PointTxType.AGENT_POINT_TRANSFER, PointTxType.TRANSFER_OUT],
-  platform_reward: [PointTxType.PAYROLL_PROCESSING_REWARD, PointTxType.PLATFORM_REWARD],
+  platform_reward: [
+    PointTxType.PAYROLL_PROCESSING_REWARD,
+    PointTxType.PLATFORM_REWARD,
+    PointTxType.LIVESTREAM_STREAK_REWARD, // rewards section: first-7-days livestream daily parts
+  ],
   subscription: [PointTxType.SUBSCRIPTION, PointTxType.GUARDIAN_PURCHASE],
   withdraw: [
     PointTxType.WITHDRAWAL_ESCROW,

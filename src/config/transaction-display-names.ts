@@ -22,6 +22,7 @@ const POINT_NAMES: Partial<Record<PointTxType, Partial<Record<DirectionKey, stri
   },
   WITHDRAWAL_REFUND: { CREDIT: 'Withdrawal refund' },
   PLATFORM_REWARD: { CREDIT: 'Platform reward' },
+  LIVESTREAM_STREAK_REWARD: { CREDIT: 'Livestream daily reward' },
   ADJUSTMENT: { CREDIT: 'Admin point credit' },
   WITHDRAWAL_ESCROW: { DEBIT: 'Withdraw requested' },
   WITHDRAWAL_ESCROW_SETTLED: { DEBIT: 'Withdraw settled' },
