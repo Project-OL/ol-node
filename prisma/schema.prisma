@@ -47,8 +47,10 @@ model User {
   privacyInvisibleVisitor Boolean   @default(false) @map("privacy_invisible_visitor")
   privacyMysteryLive      Boolean   @default(false) @map("privacy_mystery_live")
   privacyMysteryRank      Boolean   @default(false) @map("privacy_mystery_rank")
-  privacyInvisibleOnline  Boolean   @default(false) @map("privacy_invisible_online")
-  hideMicStatus           Boolean   @default(false) @map("hide_mic_status")
+  privacyInvisibleOnline   Boolean   @default(false) @map("privacy_invisible_online")
+  /// When invisible-online was last enabled; frozen last-seen for others while VIP + flag are active.
+  privacyInvisibleOnlineAt DateTime? @map("privacy_invisible_online_at")
+  hideMicStatus            Boolean   @default(false) @map("hide_mic_status")
   isSupport               Boolean   @default(false) @map("is_support")
   privacyUpdatedAt        DateTime? @map("privacy_updated_at")
 
@@ -760,6 +762,7 @@ enum MessageType {
   SYSTEM
   TRANSACTIONAL
   NOTIFICATION
+  GIFT
 }
 
 enum MediaType {

@@ -1,5 +1,9 @@
 import { conversationRepository } from '../repositories/conversation.repository'
-import { messageRepository, type MessageWithDetails } from '../repositories/message.repository'
+import {
+  messageRepository,
+  attachGiftFromMetadata,
+  type MessageWithDetails,
+} from '../repositories/message.repository'
 import { blockRepository } from '../repositories/block.repository'
 import { blockService } from './block.service'
 import { resolveDisplayPublicId } from '../utils/user-display'
@@ -41,6 +45,8 @@ import {
   assertMessageTypeMediaAlignment,
   prepareMediaItemsForSend,
 } from './message-send-media.service'
+import { giftTransactionService } from './gift-transaction.service'
+import { giftRepository } from '../repositories/gift.repository'
 
 import { presenceService } from './presence.service'
 
@@ -196,7 +202,7 @@ function parseHotCacheMessages(raw: string[]): MessageWithDetails[] {
     if (typeof json !== 'string') continue
     const parsed = JSON.parse(json) as MessageWithDetails & { createdAt: string }
     parsed.createdAt = new Date(parsed.createdAt) as any
-    messages.push(parsed as MessageWithDetails)
+    messages.push(attachGiftFromMetadata(parsed as MessageWithDetails))
   }
   return messages
 }
@@ -221,13 +227,24 @@ async function applyNewMessageSideEffects(params: {
   }
 }
 
+async function clearUnreadAndConvListCache(userId: string, conversationId: string): Promise<void> {
+  await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
+  // List payload embeds unreadCount; must bust or GET /conversations keeps stale counts for CONV_LIST_TTL.
+  await cacheService.delete(RedisKeys.userConversations(userId))
+}
+
 async function markConversationReadOnView(
   userId: string,
   conversationId: string,
   messages: MessageWithDetails[],
 ): Promise<void> {
-  await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
-  const latest = messages[0]
+  await clearUnreadAndConvListCache(userId, conversationId)
+  // Newest-first pages: prefer highest seq so we never advance the cursor to an older row.
+  const latest = messages.reduce<MessageWithDetails | undefined>((best, msg) => {
+    if (!msg?.id) return best
+    if (!best) return msg
+    return Number(msg.seq) > Number(best.seq) ? msg : best
+  }, undefined)
   if (!latest?.id) return
   try {
     const updated = await messageRepository.updateReadCursor(conversationId, userId, latest.id)
@@ -356,6 +373,10 @@ export const messagingService = {
     }
     assertMessageTypeMediaAlignment(input.type as any, input.mediaItems)
 
+    if (input.type === 'GIFT') {
+      return this.sendGiftMessage(senderId, conversationId, conv, otherMemberIds, input)
+    }
+
     let mediaItemsPrepared: MediaItemInput[] | undefined
     if (input.mediaItems && input.mediaItems.length > 0) {
       mediaItemsPrepared = await prepareMediaItemsForSend({
@@ -405,6 +426,103 @@ export const messagingService = {
         void maybeEnqueueAutoReply(conversationId, msg.seq).catch((err) => {
           messagingLog.warn({ err, conversationId }, 'TEXT_COINS auto-reply enqueue failed')
         })
+      })
+    }
+
+    return msg
+  },
+
+  /**
+   * Gift-first then message: standard gift wallet flow (coins/points/commission), then
+   * a GIFT message with a durable display snapshot in metadata (+ top-level `gift` on DTO).
+   */
+  async sendGiftMessage(
+    senderId: string,
+    conversationId: string,
+    conv: Awaited<ReturnType<typeof conversationRepository.findConversationById>>,
+    otherMemberIds: string[],
+    input: SendMessageInput,
+  ): Promise<MessageWithDetails> {
+    if (!conv) {
+      throw new AppError(403, 'Not a member', 'FORBIDDEN')
+    }
+    if (conv.type !== 'DIRECT') {
+      throw new AppError(
+        403,
+        'Gifts can only be sent in direct conversations',
+        'NOT_DIRECT_CONVERSATION',
+      )
+    }
+    if (otherMemberIds.length !== 1 || !otherMemberIds[0]) {
+      throw new AppError(400, 'Gift messages require exactly one recipient', 'INVALID_REQUEST')
+    }
+    const receiverUserId = otherMemberIds[0]
+    const giftId = input.giftId
+    if (!giftId) {
+      throw new AppError(400, 'giftId is required for GIFT messages', 'INVALID_REQUEST')
+    }
+
+    const gift = await giftRepository.findById(giftId)
+    if (!gift || !gift.isActive) {
+      throw new AppError(404, 'Gift not found', 'NOT_FOUND')
+    }
+
+    const giftResult = (await giftTransactionService.sendGift({
+      senderUserId: senderId,
+      receiverUserId,
+      giftId,
+      context: 'direct',
+      idempotencyKey: `gift-msg:${input.clientMessageId}`,
+    })) as {
+      transactionId: string
+      giftName: string
+      coinCost: number
+      pointsAwarded: number
+      senderCoinsRemaining: number
+      galleryUpdated: boolean
+      galleryNowFull: boolean
+    }
+
+    const giftSnapshot = {
+      giftId: gift.id,
+      giftTransactionId: giftResult.transactionId,
+      name: gift.name,
+      code: gift.code,
+      displayImageUrl: gift.displayImageUrl,
+      effectUrl: gift.effectUrl,
+      coinCost: giftResult.coinCost,
+      pointsAwarded: giftResult.pointsAwarded,
+      vipOnly: gift.vipOnly,
+    }
+
+    const result = await messageRepository.sendMessageWithOutbox({
+      conversationId,
+      senderId,
+      clientMessageId: input.clientMessageId,
+      type: 'GIFT',
+      content: input.content?.trim() || undefined,
+      replyToId: input.replyToId,
+      metadata: giftSnapshot,
+    })
+    const msg = attachGiftFromMetadata(result.message)
+
+    if (isSendCreated(result)) {
+      await conversationRepository.reactivateConversationMembers(conversationId)
+    }
+
+    await Promise.all(
+      conv.members.map((m: { userId: string }) =>
+        cacheService.delete(RedisKeys.userConversations(m.userId)),
+      ),
+    )
+
+    if (isSendCreated(result)) {
+      await applyNewMessageSideEffects({
+        conversationId,
+        msg,
+        outboxId: result.outboxId,
+        otherMemberIds,
+        senderId,
       })
     }
 
@@ -512,7 +630,11 @@ export const messagingService = {
       }
     }
 
-    await markConversationReadOnView(userId, conversationId, result.messages)
+    // Only mark-read on the latest page (no cursor). Cursor pages are older history and must
+    // not zero Redis unread / regress the read cursor via a non-latest messages[0].
+    if (!cursor) {
+      await markConversationReadOnView(userId, conversationId, result.messages)
+    }
     return result
   },
 
@@ -617,6 +739,9 @@ export const messagingService = {
         userId,
         lastReadMessageId,
       })
+    }
+    if (updates.length > 0) {
+      await cacheService.delete(RedisKeys.userConversations(userId))
     }
     return { updatedCount: updates.length }
   },
@@ -1009,7 +1134,7 @@ export const messagingService = {
         lastReadMessageId,
       )
       if (!updated) return
-      await redisClient.set(RedisKeys.unreadCount(userId, conversationId), '0', 'EX', 86400)
+      await clearUnreadAndConvListCache(userId, conversationId)
       await publishServerFrameToConversation(conversationId, {
         t: 'READ',
         conversationId,

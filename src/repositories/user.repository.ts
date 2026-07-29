@@ -208,6 +208,7 @@ export const userRepository = {
       privacyMysteryLive?: boolean
       privacyMysteryRank?: boolean
       privacyInvisibleOnline?: boolean
+      privacyInvisibleOnlineAt?: Date | null
       privacyUpdatedAt?: Date | null
       status?: string
       suspendedUntil?: Date | null
@@ -374,6 +375,8 @@ export const userRepository = {
         privacyMysteryLive: true,
         privacyMysteryRank: true,
         privacyInvisibleOnline: true,
+        privacyInvisibleOnlineAt: true,
+        privacyUpdatedAt: true,
       },
     })
   },

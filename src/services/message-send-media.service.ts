@@ -55,9 +55,9 @@ export function assertMessageTypeMediaAlignment(
   type: MessageType,
   items: MediaRow[] | undefined,
 ): void {
-  if (type === 'TEXT_COINS') {
+  if (type === 'TEXT_COINS' || type === 'GIFT') {
     if (items?.length) {
-      throw new AppError(400, 'TEXT_COINS must not include media', 'INVALID_REQUEST')
+      throw new AppError(400, `${type} must not include media`, 'INVALID_REQUEST')
     }
     return
   }

@@ -115,12 +115,14 @@ export const presenceService = {
       const rawOnline = onlineValues[i] === '1'
 
       if (hidden && viewerId !== userId) {
+        const frozenAt = privacyFlags.get(userId)?.invisibleOnlineLastSeenAt ?? null
+        const lastOnline = formatLastOnline(frozenAt)
         result.set(userId, {
           userId,
           isOnline: false,
-          lastActiveAt: null,
-          lastOnlineSeconds: null,
-          lastOnlineLabel: null,
+          lastActiveAt: lastOnline.lastActiveAt,
+          lastOnlineSeconds: lastOnline.lastOnlineSeconds,
+          lastOnlineLabel: lastOnline.lastOnlineLabel,
         })
         continue
       }

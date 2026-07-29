@@ -1,5 +1,5 @@
 /**
- * Privacy toggles: four booleans stored on User. Anyone may change their own raw flags;
+ * Privacy toggles: four booleans stored on User. Enabling requires active paid VIP;
  * effect application (hiding visitors, ranks, online, live identity) is gated at read sites
  * via `getEffectiveFlags` / `getEffectiveFlagsBulk` (raw flag AND active paid VIP membership).
  */
@@ -10,8 +10,12 @@ import { cacheService } from './cache.service'
 import { auditService } from './audit.service'
 import { AppError } from '../middlewares/errorHandler'
 import { vipMembershipService } from './vip-membership.service'
+import {
+  buildEffectivePrivacyFlags,
+  type EffectivePrivacyFlags,
+} from '../utils/privacy-effective-flags'
 
-const PRIVACY_CACHE_TTL_SEC = 3600 // 1 hour
+export type { EffectivePrivacyFlags } from '../utils/privacy-effective-flags'
 
 export interface PrivacySettings {
   invisibleVisitor: boolean
@@ -21,13 +25,7 @@ export interface PrivacySettings {
   hideMicStatus?: boolean
 }
 
-/** Raw DB flags AND active paid VIP — use for filtering / hiding only. */
-export interface EffectivePrivacyFlags {
-  invisibleVisitor: boolean
-  mysteryInLive: boolean
-  mysteryOnRank: boolean
-  invisibleOnline: boolean
-}
+const PRIVACY_CACHE_TTL_SEC = 3600 // 1 hour
 
 export interface PrivacyFeatureInfo {
   enabled: boolean
@@ -52,8 +50,16 @@ const FEATURE_DESCRIPTIONS: Record<PrivacyToggleKey, { description: string; effe
   },
   invisibleOnline: {
     description: 'Hide online status',
-    effect: "Others can't see when you're online or your last seen time",
+    effect: "Others see you as offline with a frozen last-seen from when you enabled this",
   },
+}
+
+async function assertVipForPrivacyEnable(userId: string, enabled: boolean): Promise<void> {
+  if (!enabled) return
+  const active = await vipMembershipService.hasActive(userId)
+  if (!active) {
+    throw new AppError(403, 'VIP membership required', 'VIP_MEMBERSHIP_REQUIRED')
+  }
 }
 
 type PrivacyField =
@@ -69,6 +75,7 @@ interface UserPrivacyRow {
   privacyMysteryLive: boolean
   privacyMysteryRank: boolean
   privacyInvisibleOnline: boolean
+  privacyInvisibleOnlineAt: Date | null
   hideMicStatus: boolean
   privacyUpdatedAt: Date | null
   updatedAt?: Date
@@ -141,6 +148,7 @@ export const privacyService = {
     message: string
     updatedAt: Date
   }> {
+    await assertVipForPrivacyEnable(userId, enabled)
     const updated = await this.updatePrivacyField(userId, 'privacyInvisibleVisitor', enabled)
     await this.invalidatePrivacyCaches(userId)
 
@@ -170,6 +178,7 @@ export const privacyService = {
     message: string
     updatedAt: Date
   }> {
+    await assertVipForPrivacyEnable(userId, enabled)
     const updated = await this.updatePrivacyField(userId, 'privacyMysteryLive', enabled)
     await this.invalidatePrivacyCaches(userId)
 
@@ -199,6 +208,7 @@ export const privacyService = {
     message: string
     updatedAt: Date
   }> {
+    await assertVipForPrivacyEnable(userId, enabled)
     const updated = await this.updatePrivacyField(userId, 'privacyMysteryRank', enabled)
     await this.invalidatePrivacyCaches(userId)
 
@@ -228,7 +238,10 @@ export const privacyService = {
     message: string
     updatedAt: Date
   }> {
-    const updated = await this.updatePrivacyField(userId, 'privacyInvisibleOnline', enabled)
+    await assertVipForPrivacyEnable(userId, enabled)
+    const updated = await this.updatePrivacyField(userId, 'privacyInvisibleOnline', enabled, {
+      setInvisibleOnlineAt: enabled,
+    })
     await this.invalidatePrivacyCaches(userId)
 
     await auditService.log({
@@ -253,6 +266,7 @@ export const privacyService = {
     userId: string,
     field: PrivacyField,
     value: boolean,
+    options?: { setInvisibleOnlineAt?: boolean },
   ): Promise<{ privacyUpdatedAt: Date }> {
     const user = (await userRepository.findById(userId)) as UserPrivacyRow | null
     if (!user) {
@@ -260,10 +274,15 @@ export const privacyService = {
     }
 
     const now = new Date()
-    await userRepository.update(userId, {
+    const data: Record<string, unknown> = {
       [field]: value,
       privacyUpdatedAt: now,
-    })
+    }
+    if (options?.setInvisibleOnlineAt) {
+      data.privacyInvisibleOnlineAt = now
+    }
+
+    await userRepository.update(userId, data)
     return { privacyUpdatedAt: now }
   },
 
@@ -281,21 +300,7 @@ export const privacyService = {
       vipMembershipService.hasActive(userId),
     ])
     const r = rows[0]
-    if (!r) {
-      return {
-        invisibleVisitor: false,
-        mysteryInLive: false,
-        mysteryOnRank: false,
-        invisibleOnline: false,
-      }
-    }
-    const a = active
-    return {
-      invisibleVisitor: r.privacyInvisibleVisitor && a,
-      mysteryInLive: r.privacyMysteryLive && a,
-      mysteryOnRank: r.privacyMysteryRank && a,
-      invisibleOnline: r.privacyInvisibleOnline && a,
-    }
+    return buildEffectivePrivacyFlags(r, active)
   },
 
   async getEffectiveFlagsBulk(userIds: string[]): Promise<Map<string, EffectivePrivacyFlags>> {
@@ -309,21 +314,7 @@ export const privacyService = {
     for (const id of userIds) {
       const r = byId.get(id)
       const a = activeMap.get(id) ?? false
-      if (!r) {
-        m.set(id, {
-          invisibleVisitor: false,
-          mysteryInLive: false,
-          mysteryOnRank: false,
-          invisibleOnline: false,
-        })
-        continue
-      }
-      m.set(id, {
-        invisibleVisitor: r.privacyInvisibleVisitor && a,
-        mysteryInLive: r.privacyMysteryLive && a,
-        mysteryOnRank: r.privacyMysteryRank && a,
-        invisibleOnline: r.privacyInvisibleOnline && a,
-      })
+      m.set(id, buildEffectivePrivacyFlags(r, a))
     }
     return m
   },

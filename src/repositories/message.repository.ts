@@ -45,8 +45,22 @@ const senderSelect = {
   avatarUrl: true,
 } as const
 
+export type GiftMessageSnapshot = {
+  giftId: string
+  giftTransactionId: string
+  name: string
+  code: string | null
+  displayImageUrl: string
+  effectUrl: string | null
+  coinCost: number
+  pointsAwarded: number
+  vipOnly: boolean
+}
+
 export type MessageWithDetails = Message & {
   metadata: unknown | null
+  /** Present when type === 'GIFT' — hydrated from metadata snapshot for clients. */
+  gift?: GiftMessageSnapshot
   sender: {
     id: string
     username: string
@@ -96,6 +110,48 @@ export type MessageWithDetails = Message & {
     count: number
     reactedByMe: boolean
   }>
+}
+
+/** Build / parse the durable gift snapshot stored in `messages.metadata`. */
+export function giftSnapshotFromMetadata(metadata: unknown): GiftMessageSnapshot | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined
+  const m = metadata as Record<string, unknown>
+  const giftId = typeof m.giftId === 'string' ? m.giftId : null
+  const giftTransactionId = typeof m.giftTransactionId === 'string' ? m.giftTransactionId : null
+  const name = typeof m.name === 'string' ? m.name : typeof m.giftName === 'string' ? m.giftName : null
+  const displayImageUrl =
+    typeof m.displayImageUrl === 'string'
+      ? m.displayImageUrl
+      : typeof m.giftImageUrl === 'string'
+        ? m.giftImageUrl
+        : null
+  if (!giftId || !giftTransactionId || !name || !displayImageUrl) return undefined
+  return {
+    giftId,
+    giftTransactionId,
+    name,
+    code: typeof m.code === 'string' ? m.code : null,
+    displayImageUrl,
+    effectUrl:
+      typeof m.effectUrl === 'string'
+        ? m.effectUrl
+        : typeof m.giftEffectUrl === 'string'
+          ? m.giftEffectUrl
+          : null,
+    coinCost: typeof m.coinCost === 'number' ? m.coinCost : Number(m.coinCost) || 0,
+    pointsAwarded:
+      typeof m.pointsAwarded === 'number' ? m.pointsAwarded : Number(m.pointsAwarded) || 0,
+    vipOnly: Boolean(m.vipOnly),
+  }
+}
+
+export function attachGiftFromMetadata<T extends { type: MessageType; metadata?: unknown | null }>(
+  msg: T,
+): T & { gift?: GiftMessageSnapshot } {
+  if (msg.type !== 'GIFT') return msg
+  const gift = giftSnapshotFromMetadata(msg.metadata)
+  if (!gift) return msg
+  return { ...msg, gift }
 }
 
 const fullMessageInclude = {
@@ -337,7 +393,7 @@ function mapToMessageWithDetails(
       streamingUrl: url,
     }
   })
-  return {
+  return attachGiftFromMetadata({
     ...msg,
     sender: {
       id: msg.sender.id,
@@ -354,7 +410,7 @@ function mapToMessageWithDetails(
     mediaItems: mediaItemsWithUrl,
     replyTo: msg.replyTo,
     reactions,
-  } as MessageWithDetails
+  } as MessageWithDetails)
 }
 
 export async function listMessages(

@@ -46,13 +46,45 @@ export const SendMessageSchema = z
     /** UUID v4 from client — idempotent retries must reuse the same value per logical send. */
     clientMessageId: z.string().uuid(),
     content: z.string().max(4000).optional(),
-    type: z.enum(['TEXT', 'TEXT_COINS', 'IMAGE', 'VIDEO', 'AUDIO', 'FILE']),
+    type: z.enum(['TEXT', 'TEXT_COINS', 'IMAGE', 'VIDEO', 'AUDIO', 'FILE', 'GIFT']),
     // Client payloads often send null for "no reply"; normalize to undefined.
     replyToId: z.preprocess((v) => (v === null ? undefined : v), z.string().cuid().optional()),
     mediaItems: z.array(sendMessageMediaItemSchema).max(10).optional(),
+    /** Required when type is GIFT — catalog gift UUID. */
+    giftId: z.string().uuid().optional(),
   })
-  .refine((d) => d.content?.trim() || (d.mediaItems && d.mediaItems.length > 0), {
-    message: 'Message must have text content or at least one media item',
+  .superRefine((d, ctx) => {
+    if (d.type === 'GIFT') {
+      if (!d.giftId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'giftId is required for GIFT messages',
+          path: ['giftId'],
+        })
+      }
+      if (d.mediaItems && d.mediaItems.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'GIFT messages must not include mediaItems',
+          path: ['mediaItems'],
+        })
+      }
+      if (d.content != null && d.content.length > 200) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'GIFT caption must be at most 200 characters',
+          path: ['content'],
+        })
+      }
+      return
+    }
+    if (!(d.content?.trim() || (d.mediaItems && d.mediaItems.length > 0))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Message must have text content or at least one media item',
+        path: ['content'],
+      })
+    }
   })
 
 export const ListMessagesSchema = z.object({
