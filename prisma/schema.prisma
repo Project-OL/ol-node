@@ -75,6 +75,7 @@ model User {
   fcmToken          String?   @map("fcm_token") @db.Text
   fcmTokenUpdatedAt DateTime? @map("fcm_token_updated_at")
 
+  pushDeliveryLogs              PushDeliveryLog[]
   authIdentifiers               AuthIdentifier[]
   authPassword                  AuthPassword?
   securityPassword              SecurityPassword?
@@ -2801,4 +2802,42 @@ model CustomGiftRequest {
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
   @@map("custom_gift_requests")
+}
+
+// ─── FCM push delivery log (admin + product pushes) ───
+enum PushDeliveryStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum PushDeliverySource {
+  ADMIN_SINGLE
+  ADMIN_BROADCAST
+  TRANSACTION
+  NEW_MESSAGE
+}
+
+model PushDeliveryLog {
+  id          String              @id @default(uuid()) @db.Uuid
+  userId      String              @map("user_id") @db.Uuid
+  /// SystemAdmin id when source is admin — not FK (admins live in system_admins).
+  adminUserId String?             @map("admin_user_id") @db.Uuid
+  source      PushDeliverySource
+  status      PushDeliveryStatus
+  campaignId  String?             @map("campaign_id") @db.VarChar(128)
+  title       String              @db.VarChar(200)
+  body        String              @db.VarChar(1000)
+  data        Json?
+  errorCode   String?             @map("error_code") @db.VarChar(100)
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([source, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([campaignId])
+  @@map("push_delivery_logs")
 }

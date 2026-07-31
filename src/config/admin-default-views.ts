@@ -76,6 +76,14 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/users/:userId/messages/notification',
     'POST /admin/messages/notifications/broadcast',
   ],
+  PushNotificationsView: [
+    'GET /admin/notifications/push/users',
+    'GET /admin/notifications/push/stats/today',
+    'GET /admin/notifications/push/deliveries',
+    'POST /admin/notifications/push/user/:userId',
+    'POST /admin/notifications/push/broadcast',
+    'GET /admin/users/search',
+  ],
   GiftAdminView: [
     'GET /admin/gifts/analytics',
     'GET /admin/gifts',

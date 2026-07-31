@@ -1,7 +1,7 @@
 import type { Job } from 'bullmq'
 import { randomUUID } from 'crypto'
 import { prismaRead } from '../config/database'
-import { pushNotificationService } from '../services/pushNotification.service'
+import { pushNotificationService, type PushRecipient } from '../services/pushNotification.service'
 import { auditService } from '../services/audit.service'
 import { rootLogger } from '../utils/rootLogger'
 import { NOTIFY_BROADCAST_STATE_TTL, RedisKeys, redisClient } from '../config/redis'
@@ -30,13 +30,27 @@ export type PushBroadcastBatchJobData = {
   title: string
   body: string
   data?: Record<string, string>
-  tokens: string[]
+  adminUserId?: string
+  /** Preferred: userId+token pairs for per-user delivery logs. */
+  recipients?: PushRecipient[]
+  /** Legacy in-flight jobs may still carry tokens only. */
+  tokens?: string[]
+}
+
+function parsePendingBatch(raw: string): PushRecipient[] {
+  const parsed = JSON.parse(raw) as unknown
+  if (!Array.isArray(parsed) || parsed.length === 0) return []
+  if (typeof parsed[0] === 'string') {
+    // Legacy token-only batches — resolve userIds by token before send/log.
+    return (parsed as string[]).map((token) => ({ userId: '', token }))
+  }
+  return parsed as PushRecipient[]
 }
 
 /**
  * Fan-out planner: resolves the recipient token set (explicit userIds, a country
  * segment, or all active non-support users — always filtered to a non-null fcmToken),
- * persists per-batch token lists in Redis, and enqueues one short batch job per
+ * persists per-batch recipient lists in Redis, and enqueues one short batch job per
  * BROADCAST_BATCH_SIZE recipients. Mirrors `processPlatformNotificationBroadcastJob`.
  */
 export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): Promise<void> {
@@ -46,27 +60,28 @@ export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): P
 
   if ((await redisClient.exists(stateKey)) === 1) {
     const pending = await redisClient.hgetall(pendingKey)
-    for (const [batchIndex, tokens] of Object.entries(pending)) {
+    for (const [batchIndex, raw] of Object.entries(pending)) {
       await enqueuePushBroadcastBatch({
         campaignId,
         batchIndex: Number(batchIndex),
         title: job.data.title,
         body: job.data.body,
         data: job.data.data,
-        tokens: JSON.parse(tokens) as string[],
+        adminUserId: job.data.adminUserId,
+        recipients: parsePendingBatch(raw),
       })
     }
     log.info({ campaignId, reEnqueued: Object.keys(pending).length }, 'push broadcast plan replayed')
     return
   }
 
-  let tokens: string[]
+  let recipients: PushRecipient[]
   if (job.data.userIds) {
     const rows = await prismaRead.user.findMany({
       where: { id: { in: job.data.userIds }, fcmToken: { not: null } },
-      select: { fcmToken: true },
+      select: { id: true, fcmToken: true },
     })
-    tokens = rows.map((r) => r.fcmToken!)
+    recipients = rows.map((r) => ({ userId: r.id, token: r.fcmToken! }))
   } else {
     const rows = await prismaRead.user.findMany({
       where: {
@@ -75,15 +90,15 @@ export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): P
         fcmToken: { not: null },
         ...(job.data.country ? { country: { equals: job.data.country, mode: 'insensitive' } } : {}),
       },
-      select: { fcmToken: true },
+      select: { id: true, fcmToken: true },
       take: 50_000,
     })
-    tokens = rows.map((r) => r.fcmToken!)
+    recipients = rows.map((r) => ({ userId: r.id, token: r.fcmToken! }))
   }
 
-  const batches: string[][] = []
-  for (let i = 0; i < tokens.length; i += BROADCAST_BATCH_SIZE) {
-    batches.push(tokens.slice(i, i + BROADCAST_BATCH_SIZE))
+  const batches: PushRecipient[][] = []
+  for (let i = 0; i < recipients.length; i += BROADCAST_BATCH_SIZE) {
+    batches.push(recipients.slice(i, i + BROADCAST_BATCH_SIZE))
   }
 
   if (batches.length === 0) {
@@ -102,7 +117,7 @@ export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): P
     adminUserId: job.data.adminUserId,
     title: job.data.title,
     body: job.data.body,
-    total: tokens.length,
+    total: recipients.length,
     remaining: batches.length,
     sent: 0,
     createdAt: Date.now(),
@@ -120,11 +135,15 @@ export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): P
       title: job.data.title,
       body: job.data.body,
       data: job.data.data,
-      tokens: batches[i]!,
+      adminUserId: job.data.adminUserId,
+      recipients: batches[i]!,
     })
   }
 
-  log.info({ campaignId, total: tokens.length, batches: batches.length }, 'push broadcast batched')
+  log.info(
+    { campaignId, total: recipients.length, batches: batches.length },
+    'push broadcast batched',
+  )
 }
 
 const CLAIM_BATCH_LUA = `
@@ -137,11 +156,40 @@ return -1`
 export async function processPushBroadcastBatchJob(
   job: Job<PushBroadcastBatchJobData>,
 ): Promise<void> {
-  const { campaignId, batchIndex, title, body, data, tokens } = job.data
+  const { campaignId, batchIndex, title, body, data, adminUserId } = job.data
+  let recipients = job.data.recipients ?? []
+  if (recipients.length === 0 && job.data.tokens?.length) {
+    recipients = job.data.tokens.map((token) => ({ userId: '', token }))
+  }
 
-  const result = await pushNotificationService.sendMulticast(tokens, { title, body, data })
+  // Resolve userIds for legacy token-only batches so delivery logs can attach user detail.
+  if (recipients.some((r) => !r.userId)) {
+    const tokens = recipients.map((r) => r.token)
+    const rows = await prismaRead.user.findMany({
+      where: { fcmToken: { in: tokens } },
+      select: { id: true, fcmToken: true },
+    })
+    const byToken = new Map(rows.map((r) => [r.fcmToken!, r.id]))
+    recipients = recipients.map((r) => ({
+      userId: r.userId || byToken.get(r.token) || '',
+      token: r.token,
+    }))
+  }
 
   const stateKey = RedisKeys.pushBroadcastState(campaignId)
+  const resolvedAdminId =
+    adminUserId ?? (await redisClient.hget(stateKey, 'adminUserId')) ?? undefined
+
+  const result = await pushNotificationService.sendMulticastToRecipients(
+    recipients,
+    { title, body, data },
+    {
+      source: 'ADMIN_BROADCAST',
+      adminUserId: resolvedAdminId,
+      campaignId,
+    },
+  )
+
   const pendingKey = RedisKeys.pushBroadcastPending(campaignId)
   const remaining = (await redisClient.eval(
     CLAIM_BATCH_LUA,
@@ -156,9 +204,9 @@ export async function processPushBroadcastBatchJob(
     const [totalStr, sentStr] = await redisClient.hmget(stateKey, 'total', 'sent')
     const total = Number(totalStr ?? 0)
     const totalSent = Number(sentStr ?? 0)
-    const adminUserId = (await redisClient.hget(stateKey, 'adminUserId')) ?? ''
+    const auditAdminId = resolvedAdminId ?? ''
     auditService.log({
-      userId: adminUserId,
+      userId: auditAdminId,
       actionType: 'ADMIN_PUSH_BROADCAST',
       actionStatus: 'success',
       actionDetails: { campaignId, recipientCount: total, sent: totalSent },
@@ -187,7 +235,7 @@ export async function sweepStalePushBroadcasts(): Promise<void> {
     if (Date.now() - Number(state.createdAt) < BROADCAST_STALE_MS) continue
 
     const pending = await redisClient.hgetall(pendingKey)
-    for (const [batchIndex, tokens] of Object.entries(pending)) {
+    for (const [batchIndex, raw] of Object.entries(pending)) {
       const existing = await pushNotificationQueue.getJob(
         pushBroadcastBatchJobId(campaignId, Number(batchIndex)),
       )
@@ -203,7 +251,8 @@ export async function sweepStalePushBroadcasts(): Promise<void> {
         batchIndex: Number(batchIndex),
         title: state.title ?? '',
         body: state.body ?? '',
-        tokens: JSON.parse(tokens) as string[],
+        adminUserId: state.adminUserId,
+        recipients: parsePendingBatch(raw),
       })
       log.warn({ campaignId, batchIndex }, 'push broadcast batch re-enqueued by sweep')
     }

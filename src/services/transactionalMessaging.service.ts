@@ -11,6 +11,7 @@ import {
   buildCounterpartyDetailsMap,
 } from '../utils/ledger-transaction-enrichment'
 import { platformMessagingService } from './platformMessaging.service'
+import { pushNotificationService } from './pushNotification.service'
 import type { PlatformMessageMetadata } from '../models/platform-message.schemas'
 import { buildUserDisplayName } from '../utils/user-display'
 import { rootLogger } from '../utils/rootLogger'
@@ -56,6 +57,54 @@ function counterpartyFromDetails(
 
 function buildLedgerClientMessageId(kind: 'coin' | 'point', entryId: string): string {
   return `txn:${kind}:${entryId}`
+}
+
+function transactionPushTitle(
+  currency: 'COIN' | 'POINT' | 'TRADING_COIN',
+  direction: 'CREDIT' | 'DEBIT',
+): string {
+  const label =
+    currency === 'POINT' ? 'Points' : currency === 'TRADING_COIN' ? 'Trading coins' : 'Coins'
+  return direction === 'CREDIT' ? `${label} credited` : `${label} debited`
+}
+
+/** Fire-and-forget FCM for a wallet credit/debit — never throws into the ledger message path. */
+async function pushTransactionalNotification(params: {
+  userId: string
+  title: string
+  body: string
+  conversationId?: string
+  messageId?: string
+  metadata: PlatformMessageMetadata
+}): Promise<void> {
+  const data: Record<string, string> = {
+    type: 'TRANSACTION',
+    category: 'transactional',
+  }
+  if (params.conversationId) data.conversationId = params.conversationId
+  if (params.messageId) data.messageId = params.messageId
+  if (params.metadata.walletCurrency) data.walletCurrency = params.metadata.walletCurrency
+  if (params.metadata.direction) data.direction = params.metadata.direction
+  if (params.metadata.txType) data.txType = String(params.metadata.txType)
+  if (params.metadata.amount) data.amount = params.metadata.amount
+  if (params.metadata.balanceAfter) data.balanceAfter = params.metadata.balanceAfter
+  if (params.metadata.ledgerEntryId) data.ledgerEntryId = params.metadata.ledgerEntryId
+  if (params.metadata.withdrawalId) data.withdrawalId = params.metadata.withdrawalId
+  if (params.metadata.withdrawalEvent) data.withdrawalEvent = params.metadata.withdrawalEvent
+
+  try {
+    await pushNotificationService.sendToUser(
+      params.userId,
+      {
+        title: params.title,
+        body: params.body,
+        data,
+      },
+      { source: 'TRANSACTION' },
+    )
+  } catch (err) {
+    log.warn({ err, userId: params.userId }, 'transactional push failed')
+  }
 }
 
 export const transactionalMessagingService = {
@@ -120,13 +169,23 @@ export const transactionalMessagingService = {
       counterparty: cp,
     }
 
-    await platformMessagingService.sendPlatformMessage({
+    const sent = await platformMessagingService.sendPlatformMessage({
       targetUserId: selfUserId,
       type: 'TRANSACTIONAL',
       content,
       metadata,
       clientMessageId: buildLedgerClientMessageId('coin', entry.id),
     })
+    if (sent.created) {
+      await pushTransactionalNotification({
+        userId: selfUserId,
+        title: transactionPushTitle(walletCurrency, direction),
+        body: content,
+        conversationId: sent.conversationId || undefined,
+        messageId: sent.messageId || undefined,
+        metadata,
+      })
+    }
   },
 
   async sendFromPointLedgerEntry(entryId: string): Promise<void> {
@@ -178,13 +237,23 @@ export const transactionalMessagingService = {
       counterparty: cp,
     }
 
-    await platformMessagingService.sendPlatformMessage({
+    const sent = await platformMessagingService.sendPlatformMessage({
       targetUserId: selfUserId,
       type: 'TRANSACTIONAL',
       content,
       metadata,
       clientMessageId: buildLedgerClientMessageId('point', entry.id),
     })
+    if (sent.created) {
+      await pushTransactionalNotification({
+        userId: selfUserId,
+        title: transactionPushTitle('POINT', direction),
+        body: content,
+        conversationId: sent.conversationId || undefined,
+        messageId: sent.messageId || undefined,
+        metadata,
+      })
+    }
   },
 
   async sendWithdrawalEvent(params: {
@@ -261,13 +330,23 @@ export const transactionalMessagingService = {
     const clientMessageId = `txn:withdrawal:${params.withdrawalId}:${params.event}`
 
     try {
-      await platformMessagingService.sendPlatformMessage({
+      const sent = await platformMessagingService.sendPlatformMessage({
         targetUserId: params.hostUserId,
         type: 'TRANSACTIONAL',
         content,
         metadata,
         clientMessageId,
       })
+      if (sent.created) {
+        await pushTransactionalNotification({
+          userId: params.hostUserId,
+          title: 'Withdrawal update',
+          body: content,
+          conversationId: sent.conversationId || undefined,
+          messageId: sent.messageId || undefined,
+          metadata,
+        })
+      }
     } catch (err) {
       log.warn({ err, withdrawalId: params.withdrawalId }, 'withdrawal platform message failed')
     }

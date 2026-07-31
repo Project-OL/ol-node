@@ -45,7 +45,8 @@ export async function enqueuePushBroadcastBatch(data: {
   title: string
   body: string
   data?: Record<string, string>
-  tokens: string[]
+  adminUserId?: string
+  recipients: Array<{ userId: string; token: string }>
 }): Promise<void> {
   await pushNotificationQueue.add(PUSH_BROADCAST_BATCH_JOB, data, {
     ...jobOpts,
