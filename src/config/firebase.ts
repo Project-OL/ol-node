@@ -1,3 +1,6 @@
+import fs from 'fs'
+import path from 'path'
+import { createPrivateKey } from 'crypto'
 import * as admin from 'firebase-admin'
 import { getMessaging, type Messaging } from 'firebase-admin/messaging'
 import { env } from './env'
@@ -5,6 +8,13 @@ import { AppError } from '../middlewares/errorHandler'
 import { rootLogger } from '../utils/rootLogger'
 
 const log = rootLogger.child({ module: 'firebase' })
+
+type ServiceAccountFields = {
+  projectId: string
+  clientEmail: string
+  privateKey: string
+  source: 'file' | 'env'
+}
 
 /**
  * Normalize a Firebase service-account private key from env.
@@ -26,7 +36,7 @@ export function normalizeFirebasePrivateKey(raw: string): string {
   return key
 }
 
-function assertPrivateKeyLooksValid(privateKey: string): void {
+function assertPrivateKeyCryptoValid(privateKey: string): void {
   const hasBegin = privateKey.includes('BEGIN PRIVATE KEY')
   const hasEnd = privateKey.includes('END PRIVATE KEY')
   if (!hasBegin || !hasEnd) {
@@ -36,48 +46,121 @@ function assertPrivateKeyLooksValid(privateKey: string): void {
       'FIREBASE_PRIVATE_KEY_INVALID',
     )
   }
-  // A real PKCS8 service-account key is typically >1600 chars once unescaped.
   if (privateKey.length < 1200) {
     throw new AppError(
       503,
-      `FIREBASE_PRIVATE_KEY looks truncated (length ${privateKey.length}). Paste the full private_key from the firebase-adminsdk JSON.`,
+      `FIREBASE_PRIVATE_KEY looks truncated (length ${privateKey.length}). Prefer FIREBASE_SERVICE_ACCOUNT_PATH pointing at the firebase-adminsdk JSON.`,
       'FIREBASE_PRIVATE_KEY_INVALID',
     )
   }
+  try {
+    createPrivateKey(privateKey)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new AppError(
+      503,
+      `FIREBASE_PRIVATE_KEY is not a valid RSA PEM (${message}). Use FIREBASE_SERVICE_ACCOUNT_PATH=/path/to/firebase-adminsdk.json instead of pasting the key into .env.`,
+      'FIREBASE_PRIVATE_KEY_INVALID',
+      { reason: message },
+    )
+  }
+}
+
+function loadServiceAccountFromFile(filePath: string): ServiceAccountFields {
+  const resolved = path.resolve(filePath)
+  if (!fs.existsSync(resolved)) {
+    throw new AppError(
+      503,
+      `FIREBASE_SERVICE_ACCOUNT_PATH not found: ${resolved}`,
+      'FIREBASE_NOT_CONFIGURED',
+    )
+  }
+  let parsed: {
+    project_id?: string
+    client_email?: string
+    private_key?: string
+  }
+  try {
+    parsed = JSON.parse(fs.readFileSync(resolved, 'utf8')) as typeof parsed
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new AppError(
+      503,
+      `FIREBASE_SERVICE_ACCOUNT_PATH is not valid JSON (${message})`,
+      'FIREBASE_PRIVATE_KEY_INVALID',
+      { reason: message },
+    )
+  }
+  if (!parsed.project_id || !parsed.client_email || !parsed.private_key) {
+    throw new AppError(
+      503,
+      'FIREBASE_SERVICE_ACCOUNT_PATH JSON must include project_id, client_email, private_key',
+      'FIREBASE_NOT_CONFIGURED',
+    )
+  }
+  const privateKey = normalizeFirebasePrivateKey(parsed.private_key)
+  assertPrivateKeyCryptoValid(privateKey)
+  return {
+    projectId: parsed.project_id,
+    clientEmail: parsed.client_email,
+    privateKey,
+    source: 'file',
+  }
+}
+
+function loadServiceAccountFromEnv(): ServiceAccountFields {
+  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
+    throw new AppError(
+      503,
+      'Firebase not configured — set FIREBASE_SERVICE_ACCOUNT_PATH (recommended) or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY',
+      'FIREBASE_NOT_CONFIGURED',
+    )
+  }
+  const privateKey = normalizeFirebasePrivateKey(env.FIREBASE_PRIVATE_KEY)
+  assertPrivateKeyCryptoValid(privateKey)
+  return {
+    projectId: env.FIREBASE_PROJECT_ID,
+    clientEmail: env.FIREBASE_CLIENT_EMAIL,
+    privateKey,
+    source: 'env',
+  }
+}
+
+function resolveServiceAccount(): ServiceAccountFields {
+  if (env.FIREBASE_SERVICE_ACCOUNT_PATH?.trim()) {
+    return loadServiceAccountFromFile(env.FIREBASE_SERVICE_ACCOUNT_PATH.trim())
+  }
+  return loadServiceAccountFromEnv()
 }
 
 /** Shared Firebase Admin app instance — used for OAuth token verification and FCM push. */
 export function getFirebaseApp(): admin.app.App {
   if (!admin.apps.length) {
-    if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
-      throw new AppError(503, 'Firebase not configured', 'FIREBASE_NOT_CONFIGURED')
-    }
-    const privateKey = normalizeFirebasePrivateKey(env.FIREBASE_PRIVATE_KEY)
-    assertPrivateKeyLooksValid(privateKey)
+    const sa = resolveServiceAccount()
     try {
       admin.initializeApp({
         credential: admin.credential.cert({
-          projectId: env.FIREBASE_PROJECT_ID,
-          clientEmail: env.FIREBASE_CLIENT_EMAIL,
-          privateKey,
+          projectId: sa.projectId,
+          clientEmail: sa.clientEmail,
+          privateKey: sa.privateKey,
         }),
-        projectId: env.FIREBASE_PROJECT_ID,
+        projectId: sa.projectId,
       })
       log.info(
         {
-          projectId: env.FIREBASE_PROJECT_ID,
-          clientEmail: env.FIREBASE_CLIENT_EMAIL,
-          privateKeyLength: privateKey.length,
+          projectId: sa.projectId,
+          clientEmail: sa.clientEmail,
+          privateKeyLength: sa.privateKey.length,
+          source: sa.source,
         },
         'Firebase Admin initialized',
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      // Surface the common PEM / RS256 misconfig clearly instead of a vague FCM 502.
       if (/asymmetric key|PEM|DECODER|private key|then/i.test(message)) {
         throw new AppError(
           503,
-          `Firebase private key is invalid (${message}). Re-copy private_key from offoolive-d3f9f-firebase-adminsdk-*.json into FIREBASE_PRIVATE_KEY (one quoted line with \\n), then pm2 restart ol-api --update-env.`,
+          `Firebase private key is invalid (${message}). Prefer FIREBASE_SERVICE_ACCOUNT_PATH to the firebase-adminsdk JSON file.`,
           'FIREBASE_PRIVATE_KEY_INVALID',
           { reason: message },
         )
@@ -111,7 +194,7 @@ export async function assertFirebaseCredentials(): Promise<void> {
     if (!token?.access_token) {
       throw new AppError(
         503,
-        'Firebase credential returned no access token — check FIREBASE_PRIVATE_KEY / client email',
+        'Firebase credential returned no access token — check FIREBASE_SERVICE_ACCOUNT_PATH / FIREBASE_PRIVATE_KEY',
         'FIREBASE_PRIVATE_KEY_INVALID',
       )
     }
@@ -120,7 +203,7 @@ export async function assertFirebaseCredentials(): Promise<void> {
     const message = err instanceof Error ? err.message : String(err)
     throw new AppError(
       503,
-      `Firebase credential check failed (${message}). Fix FIREBASE_PRIVATE_KEY from the firebase-adminsdk JSON and restart with --update-env.`,
+      `Firebase credential check failed (${message}). Use FIREBASE_SERVICE_ACCOUNT_PATH=/abs/path/to/firebase-adminsdk.json and restart PM2.`,
       'FIREBASE_PRIVATE_KEY_INVALID',
       { reason: message },
     )

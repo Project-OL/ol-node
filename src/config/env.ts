@@ -122,6 +122,12 @@ const envSchema = z
     FIREBASE_PROJECT_ID: z.string().optional(),
     FIREBASE_CLIENT_EMAIL: z.string().optional(),
     FIREBASE_PRIVATE_KEY: z.string().optional(),
+    /**
+     * Preferred: absolute path to the firebase-adminsdk JSON on disk.
+     * Avoids .env PEM escaping issues (RS256 "asymmetric key" errors).
+     * When set, PROJECT_ID / CLIENT_EMAIL / PRIVATE_KEY are optional.
+     */
+    FIREBASE_SERVICE_ACCOUNT_PATH: z.string().min(1).optional(),
     /** Web OAuth client ID (e.g. client_type 3 in google-services.json). Verifies Google Sign-In ID tokens when `iss` is accounts.google.com. */
     GOOGLE_OAUTH_WEB_CLIENT_ID: z.string().optional(),
     /** Android OAuth client ID (client_type 1). Add if ID tokens use this as `aud`. */
