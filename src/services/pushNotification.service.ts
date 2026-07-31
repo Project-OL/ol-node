@@ -40,6 +40,36 @@ function statusFromResult(result: {
   return PushDeliveryStatus.FAILED
 }
 
+/** Firebase Admin puts the machine code on `errorInfo.code` more often than top-level `code`. */
+function extractFirebaseError(err: unknown): { code: string; message: string } {
+  if (!err || typeof err !== 'object') {
+    return { code: 'unknown', message: String(err ?? 'unknown') }
+  }
+  const e = err as {
+    code?: string
+    message?: string
+    errorInfo?: { code?: string; message?: string }
+    status?: string | number
+  }
+  const code =
+    e.errorInfo?.code ||
+    e.code ||
+    (typeof e.status === 'string' ? e.status : undefined) ||
+    'unknown'
+  const message = e.errorInfo?.message || e.message || code
+  return { code: String(code), message: String(message) }
+}
+
+/** FCM data values must be strings — coerce defensively before send. */
+function normalizeData(data?: Record<string, string>): Record<string, string> | undefined {
+  if (!data) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(data)) {
+    out[k] = v == null ? '' : String(v)
+  }
+  return out
+}
+
 export const pushNotificationService = {
   /**
    * Looks up the user's FCM token and sends. No-ops (skipped) when the user has no token
@@ -49,13 +79,18 @@ export const pushNotificationService = {
     userId: string,
     payload: PushPayload,
     ctx?: PushSendContext,
-  ): Promise<{ success: boolean; skipped?: boolean; error?: string }> {
+  ): Promise<{ success: boolean; skipped?: boolean; error?: string; errorMessage?: string }> {
     const user = await prismaRead.user.findUnique({
       where: { id: userId },
       select: { fcmToken: true },
     })
     if (!user?.fcmToken) {
-      const result = { success: false, skipped: true, error: 'NO_PUSH_TOKEN' as const }
+      const result = {
+        success: false,
+        skipped: true,
+        error: 'NO_PUSH_TOKEN' as const,
+        errorMessage: 'User has no registered FCM token',
+      }
       if (ctx && ctx.logDelivery !== false) {
         await pushDeliveryLogService.record({
           userId,
@@ -80,28 +115,48 @@ export const pushNotificationService = {
     token: string,
     payload: PushPayload,
     ctx?: PushSendContext,
-  ): Promise<{ success: boolean; skipped?: boolean; error?: string }> {
-    let result: { success: boolean; skipped?: boolean; error?: string }
+  ): Promise<{ success: boolean; skipped?: boolean; error?: string; errorMessage?: string }> {
+    let result: {
+      success: boolean
+      skipped?: boolean
+      error?: string
+      errorMessage?: string
+    }
+    const data = normalizeData(payload.data)
     try {
       await getFirebaseApp().messaging().send({
         token,
         notification: { title: payload.title, body: payload.body },
-        data: payload.data,
+        data,
       })
       result = { success: true }
     } catch (err) {
       if (err instanceof AppError && err.code === 'FIREBASE_NOT_CONFIGURED') {
         log.debug({ userId }, 'push skipped: Firebase not configured')
-        result = { success: false, skipped: true, error: 'FIREBASE_NOT_CONFIGURED' }
+        result = {
+          success: false,
+          skipped: true,
+          error: 'FIREBASE_NOT_CONFIGURED',
+          errorMessage: 'Firebase Admin credentials are not configured on this server',
+        }
       } else {
-        const code = (err as { code?: string } | null)?.code
-        if (code && STALE_TOKEN_ERROR_CODES.has(code)) {
+        const { code, message } = extractFirebaseError(err)
+        if (STALE_TOKEN_ERROR_CODES.has(code)) {
           await prisma.user
             .update({ where: { id: userId }, data: { fcmToken: null, fcmTokenUpdatedAt: new Date() } })
             .catch(() => {})
         }
-        log.warn({ err, userId }, 'push send failed')
-        result = { success: false, error: code ?? 'unknown' }
+        log.warn(
+          {
+            err,
+            userId,
+            fcmCode: code,
+            fcmMessage: message,
+            tokenPrefix: token.slice(0, 12),
+          },
+          'push send failed',
+        )
+        result = { success: false, error: code, errorMessage: message }
       }
     }
 
@@ -150,22 +205,23 @@ export const pushNotificationService = {
       return { successCount: 0, failureCount: 0, results: [] }
     }
     const tokens = recipients.map((r) => r.token)
+    const data = normalizeData(payload.data)
     try {
       const result = await getFirebaseApp().messaging().sendEachForMulticast({
         tokens,
         notification: { title: payload.title, body: payload.body },
-        data: payload.data,
+        data,
       })
       const results = recipients.map((r, i) => {
         const resp = result.responses[i]
         if (resp?.success) return { userId: r.userId, success: true }
-        const code = resp?.error?.code
-        return { userId: r.userId, success: false, error: code ?? 'unknown' }
+        const extracted = extractFirebaseError(resp?.error)
+        return { userId: r.userId, success: false, error: extracted.code }
       })
 
       for (let i = 0; i < recipients.length; i++) {
-        const code = result.responses[i]?.error?.code
-        if (code && STALE_TOKEN_ERROR_CODES.has(code) && recipients[i]!.userId) {
+        const code = extractFirebaseError(result.responses[i]?.error).code
+        if (STALE_TOKEN_ERROR_CODES.has(code) && recipients[i]!.userId) {
           await prisma.user
             .update({
               where: { id: recipients[i]!.userId },
@@ -225,6 +281,11 @@ export const pushNotificationService = {
         }
         return { successCount: 0, failureCount: recipients.length, results }
       }
+      const extracted = extractFirebaseError(err)
+      log.warn(
+        { err, fcmCode: extracted.code, fcmMessage: extracted.message },
+        'multicast push failed',
+      )
       throw err
     }
   },

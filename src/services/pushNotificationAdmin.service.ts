@@ -140,7 +140,10 @@ export const pushNotificationAdminService = {
       },
     )
     if (!result.success) {
-      throw new AppError(502, 'Push send failed', 'PUSH_SEND_FAILED', { reason: result.error })
+      throw new AppError(502, 'Push send failed', 'PUSH_SEND_FAILED', {
+        reason: result.error,
+        message: result.errorMessage,
+      })
     }
     return { success: true }
   },
