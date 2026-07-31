@@ -140,6 +140,17 @@ export const pushNotificationAdminService = {
       },
     )
     if (!result.success) {
+      if (
+        result.error === 'FIREBASE_NOT_CONFIGURED' ||
+        result.error === 'FIREBASE_PRIVATE_KEY_INVALID'
+      ) {
+        throw new AppError(
+          503,
+          result.errorMessage ?? 'Firebase not configured',
+          result.error,
+          { reason: result.error, message: result.errorMessage },
+        )
+      }
       throw new AppError(502, 'Push send failed', 'PUSH_SEND_FAILED', {
         reason: result.error,
         message: result.errorMessage,

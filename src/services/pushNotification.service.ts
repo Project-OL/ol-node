@@ -1,4 +1,4 @@
-import { getFirebaseApp } from '../config/firebase'
+import { getFirebaseMessaging, assertFirebaseCredentials } from '../config/firebase'
 import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { PushDeliverySource, PushDeliveryStatus } from '@prisma/client'
@@ -124,20 +124,30 @@ export const pushNotificationService = {
     }
     const data = normalizeData(payload.data)
     try {
-      await getFirebaseApp().messaging().send({
+      await assertFirebaseCredentials()
+      const sendResult = getFirebaseMessaging().send({
         token,
         notification: { title: payload.title, body: payload.body },
         data,
       })
+      if (sendResult == null || typeof (sendResult as Promise<string>).then !== 'function') {
+        throw new Error(
+          'Firebase messaging().send() did not return a Promise — usually a bad FIREBASE_PRIVATE_KEY or stale Node process; restart ol-api with --update-env',
+        )
+      }
+      await sendResult
       result = { success: true }
     } catch (err) {
-      if (err instanceof AppError && err.code === 'FIREBASE_NOT_CONFIGURED') {
-        log.debug({ userId }, 'push skipped: Firebase not configured')
+      if (
+        err instanceof AppError &&
+        (err.code === 'FIREBASE_NOT_CONFIGURED' || err.code === 'FIREBASE_PRIVATE_KEY_INVALID')
+      ) {
+        log.debug({ userId, code: err.code }, 'push skipped: Firebase not configured')
         result = {
           success: false,
           skipped: true,
-          error: 'FIREBASE_NOT_CONFIGURED',
-          errorMessage: 'Firebase Admin credentials are not configured on this server',
+          error: err.code,
+          errorMessage: err.message,
         }
       } else {
         const { code, message } = extractFirebaseError(err)
@@ -207,7 +217,8 @@ export const pushNotificationService = {
     const tokens = recipients.map((r) => r.token)
     const data = normalizeData(payload.data)
     try {
-      const result = await getFirebaseApp().messaging().sendEachForMulticast({
+      await assertFirebaseCredentials()
+      const result = await getFirebaseMessaging().sendEachForMulticast({
         tokens,
         notification: { title: payload.title, body: payload.body },
         data,
@@ -255,12 +266,15 @@ export const pushNotificationService = {
         results,
       }
     } catch (err) {
-      if (err instanceof AppError && err.code === 'FIREBASE_NOT_CONFIGURED') {
-        log.debug('multicast push skipped: Firebase not configured')
+      if (
+        err instanceof AppError &&
+        (err.code === 'FIREBASE_NOT_CONFIGURED' || err.code === 'FIREBASE_PRIVATE_KEY_INVALID')
+      ) {
+        log.debug({ code: err.code }, 'multicast push skipped: Firebase not configured')
         const results = recipients.map((r) => ({
           userId: r.userId,
           success: false,
-          error: 'FIREBASE_NOT_CONFIGURED',
+          error: err.code,
         }))
         if (ctx && ctx.logDelivery !== false) {
           await pushDeliveryLogService.recordMany(
