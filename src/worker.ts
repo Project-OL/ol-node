@@ -128,6 +128,9 @@ import {
   type PushBroadcastBatchJobData,
   type PushBroadcastJobData,
 } from './jobs/push-notification.job'
+import { LEDGER_AUDIT_JOB, LEDGER_AUDIT_QUEUE } from './queues/ledger-audit.constants'
+import { processLedgerAuditJob } from './jobs/ledger-audit.job'
+import type { LedgerAuditJobData } from './queues/ledger-audit.queue'
 
 const ACCOUNT_DELETION_QUEUE = 'account-deletion'
 
@@ -160,6 +163,26 @@ async function main() {
       removeOnComplete: true,
       removeOnFail: false, // keep failed jobs for audit
     },
+  )
+
+  const ledgerAuditQueue = new Queue(LEDGER_AUDIT_QUEUE, { connection })
+  await ledgerAuditQueue.add(
+    LEDGER_AUDIT_JOB,
+    {} satisfies LedgerAuditJobData,
+    {
+      jobId: 'ledger-audit-daily-3am-utc',
+      repeat: { pattern: '0 3 * * *', tz: 'UTC' },
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 60_000 },
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    },
+  )
+
+  const ledgerAuditWorker = new Worker(
+    LEDGER_AUDIT_QUEUE,
+    async (job: Job<LedgerAuditJobData>) => processLedgerAuditJob(job),
+    { connection, concurrency: 1 },
   )
 
   const accountDeletionWorker = new Worker(
@@ -625,8 +648,12 @@ async function main() {
     console.error('[Push notification] Job failed:', job?.id, err)
   })
 
+  ledgerAuditWorker.on('failed', (job, err) => {
+    console.error('[Ledger audit] Job failed:', job?.id, err)
+  })
+
   console.info(
-    'Worker started: account-deletion; wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; agency-auto-reply; message-outbox; message-media-audio; push-notification; epay-webhook-retry; live-session-safety-net (face: `npm run worker:face-index` — live-photo-verify, face-registration, PENDING_INDEX poll)',
+    'Worker started: account-deletion; ledger-audit (03:00 UTC); wallet-withdrawals; wallet-level-backfill; subscription-renewal; subscription-grace; guardian-expiry; store-item-expiry (incl. rare-id); public-id-pregen; rich-tier-rollover; vip-membership-expiry; agency-level-recompute; agency-leave-auto-approve; payroll-sla; agency-auto-reply; message-outbox; message-media-audio; push-notification; epay-webhook-retry; live-session-safety-net (face: `npm run worker:face-index` — live-photo-verify, face-registration, PENDING_INDEX poll)',
   )
 
   const shutdown = async () => {
@@ -634,6 +661,8 @@ async function main() {
     await liveSessionQueue.close()
     await pushNotificationWorker.close()
     await pushNotificationQueue.close()
+    await ledgerAuditWorker.close()
+    await ledgerAuditQueue.close()
     await payrollSlaWorker.close()
     await payrollSlaQueue.close()
     await epayWebhookRetryWorker.close()

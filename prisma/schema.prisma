@@ -76,6 +76,7 @@ model User {
   fcmTokenUpdatedAt DateTime? @map("fcm_token_updated_at")
 
   pushDeliveryLogs              PushDeliveryLog[]
+  ledgerAuditFlags              LedgerAuditFlag[]
   authIdentifiers               AuthIdentifier[]
   authPassword                  AuthPassword?
   securityPassword              SecurityPassword?
@@ -2840,4 +2841,57 @@ model PushDeliveryLog {
   @@index([userId, createdAt(sort: Desc)])
   @@index([campaignId])
   @@map("push_delivery_logs")
+}
+
+// ─── LEDGER / VIP AUDIT FLAGS (overnight irregularity scan) ───
+
+enum LedgerAuditCategory {
+  VIP
+  COIN
+  POINT
+  TRADING_COIN
+}
+
+enum LedgerAuditSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum LedgerAuditStatus {
+  OPEN
+  ACKNOWLEDGED
+  DISMISSED
+}
+
+model LedgerAuditFlag {
+  id                 String               @id @default(uuid()) @db.Uuid
+  userId             String               @map("user_id") @db.Uuid
+  category           LedgerAuditCategory
+  code               String               @db.VarChar(64)
+  severity           LedgerAuditSeverity
+  status             LedgerAuditStatus    @default(OPEN)
+  fingerprint        String               @unique @db.VarChar(255)
+  summary            String               @db.Text
+  evidence           Json
+  ledgerEntryId      String?              @map("ledger_entry_id") @db.Uuid
+  pointLedgerEntryId String?              @map("point_ledger_entry_id") @db.Uuid
+  vipPurchaseId      String?              @map("vip_purchase_id") @db.Uuid
+  windowStart        DateTime             @map("window_start")
+  windowEnd          DateTime             @map("window_end")
+  resolvedAt         DateTime?            @map("resolved_at")
+  /// SystemAdmin id — not FK (admins live in system_admins).
+  resolvedByAdminId  String?              @map("resolved_by_admin_id") @db.Uuid
+  resolutionNote     String?              @map("resolution_note") @db.Text
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([category, createdAt(sort: Desc)])
+  @@index([code, createdAt(sort: Desc)])
+  @@index([severity, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("ledger_audit_flags")
 }
