@@ -38,6 +38,16 @@ export const userRepository = {
     )
   },
 
+  /** Status fields only — used when invalidating access after ban/suspend/revoke-all. */
+  async findAuthStatusById(id: string) {
+    return withDbRetry(prismaRead, () =>
+      prismaRead.user.findUnique({
+        where: { id },
+        select: { id: true, status: true, suspendedUntil: true },
+      }),
+    )
+  },
+
   /** Lean display rows for batch enrichment (guardian summaries, list cards) — one query. */
   async findDisplayRowsByIds(ids: string[]) {
     if (ids.length === 0) return []

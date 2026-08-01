@@ -806,6 +806,8 @@ export const pointWalletService = {
       }
     }
 
+    await assertPointsDebitAllowed(userId)
+
     const wallet = await tx.wallet.upsert({
       where: {
         userId_currencyType: {

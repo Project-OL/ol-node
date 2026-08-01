@@ -47,8 +47,8 @@ export const adminUserModerationService = {
       })
     })
 
+    // revokeAllSessions already bumps users.token_version + busts the Redis TV cache.
     await sessionService.revokeAllSessions(params.targetUserId)
-    await userRepository.incrementTokenVersion(params.targetUserId)
 
     auditService.log({
       userId: params.adminUserId,

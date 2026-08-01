@@ -12,6 +12,8 @@ import { displayNameFromUser } from '../utils/profileDisplay'
 import { computeDeviceBindingHash, hashIp, hashUserAgent } from '../utils/deviceFingerprint'
 import { authSessionMetrics } from './auth-observability'
 import { auditService } from './audit.service'
+import { cacheService } from './cache.service'
+import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 const REFRESH_DAYS = 7
 const REFRESH_SEC = REFRESH_DAYS * 24 * 60 * 60
@@ -284,6 +286,13 @@ export const sessionService = {
         throw new AppError(401, 'Session revoked or invalid', 'SESSION_INVALID')
       }
 
+      try {
+        await ensureUserMayAuthenticate(session.user)
+      } catch (e) {
+        authSessionMetrics.refreshFail += 1
+        throw e
+      }
+
       const newRefreshToken = signRefresh({
         userId: payload.userId,
         sessionId: session.id,
@@ -466,6 +475,7 @@ export const sessionService = {
     }
     await userRepository.incrementTokenVersion(userId)
     await invalidateUserTokenVersionCache(userId)
+    await cacheService.invalidateUserDevicesAndSessions(userId)
     authSessionMetrics.bumpRevoke()
   },
 

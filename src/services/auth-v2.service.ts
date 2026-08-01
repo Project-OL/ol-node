@@ -29,7 +29,6 @@ import {
   verifyAppleToken,
 } from './oauth.service'
 import { AppError } from '../middlewares/errorHandler'
-import { invalidateUserTokenVersionCache } from './session.service'
 import { emailSchema, phoneSchema } from '../models/schemas'
 import type { AuthProvider, CheckAvailabilityResult, JwtAccessPayload } from '../models/types'
 import { deviceService } from './device.service'
@@ -593,8 +592,8 @@ export const authV2Service = {
   },
 
   /**
-   * Confirm password reset: validate token, update password and revoke all sessions in one transaction,
-   * then clear Redis token and session cache. Audits on success.
+   * Confirm password reset: update password, then revoke-all sessions (same path as password change).
+   * Subsequent requests with old JWTs get SESSION_INVALID (logout), not TOKEN_VERSION_MISMATCH.
    */
   async passwordResetConfirm(resetToken: string, newPassword: string) {
     const userId = await redisClient.get(RedisKeys.passwordResetToken(resetToken))
@@ -607,24 +606,15 @@ export const authV2Service = {
       if (same) throw new AppError(409, 'New password same as old password', 'SAME_PASSWORD')
     }
     const passwordHash = await passwordService.hash(newPassword)
-    const sessionIds = await prisma.session.findMany({ where: { userId }, select: { id: true } })
     await prisma.$transaction(async (tx) => {
       await tx.authPassword.upsert({
         where: { userId },
         create: { userId, passwordHash, previousPasswordHashes: [] },
         update: { passwordHash, lastChangedAt: new Date() },
       })
-      await tx.session.updateMany({
-        where: { userId },
-        data: { isActive: false, isRevoked: true, revokedAt: new Date() },
-      })
-      await tx.user.update({
-        where: { id: userId },
-        data: { tokenVersion: { increment: 1 } },
-      })
     })
-    for (const s of sessionIds) await redisClient.del(RedisKeys.session(s.id))
-    await invalidateUserTokenVersionCache(userId)
+    // Shared logout-all: revoke sessions + bump tokenVersion + clear Redis session/device caches.
+    await sessionService.revokeAllSessions(userId)
     await redisClient.del(RedisKeys.passwordResetToken(resetToken))
     await auditService.log({
       userId,

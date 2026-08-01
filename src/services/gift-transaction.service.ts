@@ -24,6 +24,7 @@ import { fanSpendIncrementForGift } from './vip-membership.helpers'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { assertNotBlockedEitherWay } from '../utils/block-relationship'
 import { isSerializationAbort, isUniqueViolation } from '../utils/txRetry'
+import { assertCoinDebitAllowed } from './wallet-freeze.service'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 /** Serialization/deadlock aborts are expected under concurrent sends - bounded retry. */
@@ -70,6 +71,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
   }
 
   await assertNotBlockedEitherWay(params.senderUserId, params.receiverUserId)
+  await assertCoinDebitAllowed(params.senderUserId, WalletCurrencyType.COIN)
 
   const gift = await giftRepository.findById(params.giftId)
   if (!gift || !gift.isActive) {

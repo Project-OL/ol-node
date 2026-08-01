@@ -203,6 +203,7 @@ export const coinWalletService = {
     firstName: string,
     lastName: string | null,
   ): Promise<void> {
+    await assertCoinDebitAllowed(userId, WalletCurrencyType.COIN)
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
     const idempotencyKey = `username-change:${userId}:${crypto.randomUUID()}`
 
@@ -269,6 +270,7 @@ export const coinWalletService = {
     },
     tx?: Prisma.TransactionClient,
   ): Promise<LevelApplyResult | null> {
+    await assertCoinDebitAllowed(userId, WalletCurrencyType.COIN)
     let wealthLevelResult: LevelApplyResult | null = null
     const run = async (inner: Prisma.TransactionClient) => {
       const wallet = await inner.wallet.upsert({
@@ -343,6 +345,7 @@ export const coinWalletService = {
     },
     tx?: Prisma.TransactionClient,
   ): Promise<LevelApplyResult | null> {
+    await assertCoinDebitAllowed(userId, WalletCurrencyType.COIN)
     let wealthLevelResult: LevelApplyResult | null = null
     const run = async (inner: Prisma.TransactionClient) => {
       const wallet = await inner.wallet.upsert({
@@ -411,6 +414,7 @@ export const coinWalletService = {
     },
     tx?: Prisma.TransactionClient,
   ): Promise<LevelApplyResult | null> {
+    await assertCoinDebitAllowed(userId, WalletCurrencyType.COIN)
     let wealthLevelResult: LevelApplyResult | null = null
     const run = async (inner: Prisma.TransactionClient) => {
       const wallet = await inner.wallet.upsert({
@@ -479,6 +483,7 @@ export const coinWalletService = {
     },
     tx?: Prisma.TransactionClient,
   ): Promise<LevelApplyResult | null> {
+    await assertCoinDebitAllowed(userId, WalletCurrencyType.COIN)
     let wealthLevelResult: LevelApplyResult | null = null
     const run = async (inner: Prisma.TransactionClient) => {
       const wallet = await inner.wallet.upsert({

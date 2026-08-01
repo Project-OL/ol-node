@@ -111,16 +111,31 @@ export async function createConversation(data: {
 export async function findPlatformConversationForUser(
   userId: string,
   type: PlatformConversationType,
+  opts?: { includeDeletedMembership?: boolean },
 ): Promise<Conversation | null> {
   return prismaRead.conversation.findFirst({
     where: {
       type,
       members: {
-        some: { userId, isDeleted: false },
+        some: opts?.includeDeletedMembership
+          ? { userId }
+          : { userId, isDeleted: false },
       },
     },
     orderBy: { createdAt: 'asc' },
   })
+}
+
+/** Re-list a soft-deleted platform membership so the thread shows in GET /conversations again. */
+export async function reactivateMember(
+  conversationId: string,
+  userId: string,
+): Promise<boolean> {
+  const result = await prisma.conversationMember.updateMany({
+    where: { conversationId, userId, isDeleted: true },
+    data: { isDeleted: false },
+  })
+  return result.count > 0
 }
 
 export async function createPlatformConversation(data: {
@@ -238,12 +253,18 @@ export async function listConversationsForUser(
   if (convIds.length === 0) {
     return { conversations: [], nextCursor: null }
   }
+  // Exclude never-messaged shells (`lastMessageAt` null). Postgres DESC sorts NULLs
+  // first by default, which buried real DMs under empty create-without-send threads.
+  // Platform SYSTEM/NOTIFICATION/TRANSACTIONAL rows set lastMessageAt on create, so
+  // they still appear.
   const conversations = await prismaRead.conversation.findMany({
     where: {
       id: { in: convIds },
-      ...(cursor ? { lastMessageAt: { lt: new Date(cursor) } } : {}),
+      lastMessageAt: cursor
+        ? { not: null, lt: new Date(cursor) }
+        : { not: null },
     },
-    orderBy: { lastMessageAt: 'desc' },
+    orderBy: { lastMessageAt: { sort: 'desc', nulls: 'last' } },
     take: limit + 1,
     include: {
       members: {
@@ -461,6 +482,7 @@ export const conversationRepository = {
   createConversation,
   createPlatformConversation,
   findPlatformConversationForUser,
+  reactivateMember,
   findDirectConversation,
   findDirectConversationIdsWith,
   findConversationById,

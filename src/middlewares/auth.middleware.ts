@@ -4,6 +4,8 @@ import { lastActiveTracker } from './lastActiveTracker.middleware'
 import type { JwtAccessPayload } from '../models/types'
 import { resolveUserTokenVersion, sessionService } from '../services/session.service'
 import { deviceBanService } from '../services/device-ban.service'
+import { userRepository } from '../repositories/user.repository'
+import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -34,7 +36,14 @@ async function applyVerifiedAccessPayload(
   const tvInToken = payload.tokenVersion ?? 0
   const userTv = await resolveUserTokenVersion(resolvedUserId)
   if (tvInToken !== userTv) {
-    throw new AppError(401, 'Token version mismatch', 'TOKEN_VERSION_MISMATCH')
+    // Ban / suspend / password-reset bump tokenVersion to force logout. Prefer
+    // account-status errors when applicable; otherwise SESSION_INVALID so clients
+    // clear tokens instead of surfacing TOKEN_VERSION_MISMATCH.
+    const statusRow = await userRepository.findAuthStatusById(resolvedUserId)
+    if (statusRow) {
+      await ensureUserMayAuthenticate(statusRow)
+    }
+    throw new AppError(401, 'Session revoked. Please log in again.', 'SESSION_INVALID')
   }
 
   if (payload.sessionId != null) {

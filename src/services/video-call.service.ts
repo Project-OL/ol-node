@@ -28,6 +28,7 @@ import {
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { callerCoinDebitForCall } from '../config/host-revenue-shares'
 import { assertPositiveIntMultiple, VIDEO_CALL_PRICE_STEP } from '../utils/transaction-amount-steps'
+import { assertCoinDebitAllowed } from './wallet-freeze.service'
 
 /** Public call-settings shape — always populated (virtual defaults when no DB row). */
 export type VideoCallSettingsDto = {
@@ -202,6 +203,7 @@ export const videoCallSessionService = {
 
     // Check caller has enough coins for the first minute. The host sets `pricePerMin`
     // in POINTS; the caller is charged coins at the markup rate.
+    await assertCoinDebitAllowed(callerId, WalletCurrencyType.COIN)
     const callerBalance = await walletService.getCoinBalance(callerId)
     const firstMinuteCoinCost = callerCoinDebitForCall(BigInt(pricePerMin))
     if (callerBalance < firstMinuteCoinCost) {
@@ -265,6 +267,15 @@ export const videoCallSessionService = {
     const callerDebit = callerCoinDebitForCall(hostPricePerMin)
     const minuteNum = session.minsCharged + 1
     const idemBase = `videocall-${sessionId}-min-${minuteNum}`
+
+    try {
+      await assertCoinDebitAllowed(session.callerId, WalletCurrencyType.COIN)
+    } catch (e) {
+      if (e instanceof AppError && e.code === 'PERSONAL_COINS_FROZEN') {
+        await this.endInternal(sessionId, 'ENDED', 'Caller personal coins frozen')
+      }
+      throw e
+    }
 
     // Debit coins from caller
     const callerCoinWallet = await walletRepository.getOrCreate(

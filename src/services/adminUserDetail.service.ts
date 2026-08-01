@@ -291,8 +291,8 @@ export const adminUserDetailService = {
     }
 
     if (statusChanged) {
+      // revokeAllSessions already bumps users.token_version + busts the Redis TV cache.
       await sessionService.revokeAllSessions(userId)
-      await userRepository.incrementTokenVersion(userId)
     }
 
     return adminUserDetailService.getUserDetail(userId)
