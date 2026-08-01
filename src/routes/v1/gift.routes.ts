@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { authenticate } from '../../middlewares/auth.middleware'
+import { authenticate, authenticateOptional } from '../../middlewares/auth.middleware'
 import { requireAdmin } from '../../middlewares/requireAdmin'
 import { giftSendRateLimit } from '../../middlewares/rateLimitAuth'
 import {
@@ -12,11 +12,15 @@ import { giftService } from '../../services/gift.service'
 import { giftTransactionService } from '../../services/gift-transaction.service'
 
 export default async function giftRoutes(app: FastifyInstance) {
-  app.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
-    const q = GiftListQuerySchema.parse(request.query)
-    const result = await giftService.listPublic(q)
-    return reply.send(result)
-  })
+  app.get(
+    '/',
+    { preHandler: [authenticateOptional] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const q = GiftListQuerySchema.parse(request.query)
+      const result = await giftService.listPublic(q, { userId: request.userId })
+      return reply.send(result)
+    },
+  )
 
   app.post(
     '/',

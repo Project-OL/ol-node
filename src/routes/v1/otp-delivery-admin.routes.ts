@@ -112,7 +112,7 @@ export default async function otpDeliveryAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'OTP delivery'],
         description:
-          'Paginated OTP generation/delivery audit log: flow (purpose), means (email/whatsapp/sms), charge incurred.',
+          'Paginated OTP delivery audit log. Timestamps and year/month filters are UTC. Optional year+month uses the same UTC calendar month window as costs endpoints.',
         querystring: {
           type: 'object',
           properties: {
@@ -137,6 +137,8 @@ export default async function otpDeliveryAdminRoutes(app: FastifyInstance) {
             country: { type: 'string' },
             from: { type: 'string', format: 'date-time' },
             to: { type: 'string', format: 'date-time' },
+            year: { type: 'integer', minimum: 2020, maximum: 2100 },
+            month: { type: 'integer', minimum: 1, maximum: 12 },
           },
         },
       },
@@ -155,7 +157,7 @@ export default async function otpDeliveryAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'OTP delivery'],
         description:
-          'Aggregated OTP delivery counts and total charge by means and by flow (purpose).',
+          'Aggregated OTP delivery counts/charges. Timestamps and year/month filters are UTC (same month window as costs).',
         querystring: {
           type: 'object',
           properties: {
@@ -178,6 +180,8 @@ export default async function otpDeliveryAdminRoutes(app: FastifyInstance) {
             country: { type: 'string' },
             from: { type: 'string', format: 'date-time' },
             to: { type: 'string', format: 'date-time' },
+            year: { type: 'integer', minimum: 2020, maximum: 2100 },
+            month: { type: 'integer', minimum: 1, maximum: 12 },
           },
         },
       },

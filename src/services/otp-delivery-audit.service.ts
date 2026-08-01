@@ -220,11 +220,32 @@ export const otpDeliveryAuditService = {
     country?: string
     from?: Date
     to?: Date
+    year?: number
+    month?: number
     page: number
     limit: number
   }) {
-    const { total, rows } = await otpDeliveryAuditRepository.list(filters)
+    const range = resolveUtcListRange(filters)
+    const { total, rows } = await otpDeliveryAuditRepository.list({
+      ...filters,
+      from: range.from,
+      to: range.to,
+    })
     return {
+      timezone: 'UTC' as const,
+      ...(range.year != null && range.month != null
+        ? {
+            year: range.year,
+            month: range.month,
+            from: range.from!.toISOString(),
+            to: range.to!.toISOString(),
+          }
+        : range.from || range.to
+          ? {
+              ...(range.from ? { from: range.from.toISOString() } : {}),
+              ...(range.to ? { to: range.to.toISOString() } : {}),
+            }
+          : {}),
       page: filters.page,
       limit: filters.limit,
       total,
@@ -240,10 +261,31 @@ export const otpDeliveryAuditService = {
     country?: string
     from?: Date
     to?: Date
+    year?: number
+    month?: number
   }) {
-    const { byMeans, byPurpose, totals } = await otpDeliveryAuditRepository.summarize(filters)
+    const range = resolveUtcListRange(filters)
+    const { byMeans, byPurpose, totals } = await otpDeliveryAuditRepository.summarize({
+      ...filters,
+      from: range.from,
+      to: range.to,
+    })
     const currency = otpDeliveryCostRates().currency
     return {
+      timezone: 'UTC' as const,
+      ...(range.year != null && range.month != null
+        ? {
+            year: range.year,
+            month: range.month,
+            from: range.from!.toISOString(),
+            to: range.to!.toISOString(),
+          }
+        : range.from || range.to
+          ? {
+              ...(range.from ? { from: range.from.toISOString() } : {}),
+              ...(range.to ? { to: range.to.toISOString() } : {}),
+            }
+          : {}),
       currency,
       totalCount: totals._count._all,
       totalChargeMinor: totals._sum.chargeMinor ?? 0,
@@ -270,6 +312,7 @@ export const otpDeliveryAuditService = {
     const rows = await otpDeliveryAuditRepository.costsByMeansInRange(from, to)
     const { byMeans, totalCount, totalChargeMinor } = fillMeansBuckets(rows)
     return {
+      timezone: 'UTC' as const,
       year,
       month,
       from: from.toISOString(),
@@ -328,6 +371,7 @@ export const otpDeliveryAuditService = {
     const monthTotals = fillMeansBuckets(rows)
 
     return {
+      timezone: 'UTC' as const,
       year,
       month,
       from: from.toISOString(),
@@ -339,4 +383,18 @@ export const otpDeliveryAuditService = {
       countries,
     }
   },
+}
+
+/** Resolve list/summary time window. Prefer year+month (UTC calendar month) over from/to. */
+function resolveUtcListRange(filters: {
+  from?: Date
+  to?: Date
+  year?: number
+  month?: number
+}): { from?: Date; to?: Date; year?: number; month?: number } {
+  if (filters.year != null && filters.month != null) {
+    const r = utcMonthRange(filters.year, filters.month)
+    return { from: r.from, to: r.to, year: r.year, month: r.month }
+  }
+  return { from: filters.from, to: filters.to }
 }

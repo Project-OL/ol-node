@@ -60,6 +60,15 @@ export const giftCategoryRepository = {
     return prismaRead.gift.count({ where: { categoryId } })
   },
 
+  /** Soft-disable every gift currently assigned to this category. Returns how many were active. */
+  async disableGiftsInCategory(categoryId: string): Promise<number> {
+    const result = await prisma.gift.updateMany({
+      where: { categoryId, isActive: true },
+      data: { isActive: false },
+    })
+    return result.count
+  },
+
   async reorder(orderedIds: string[]) {
     return prisma.$transaction(
       orderedIds.map((id, index) =>
@@ -118,11 +127,17 @@ export const giftAdminRepository = {
   },
 
   async getSendCounts(todayStart: Date) {
-    const [totalGiftsSentAllTime, totalGiftsSentToday] = await Promise.all([
-      prismaRead.giftTransaction.count(),
-      prismaRead.giftTransaction.count({ where: { createdAt: { gte: todayStart } } }),
+    const [allTime, today] = await Promise.all([
+      prismaRead.giftTransaction.aggregate({ _sum: { quantity: true } }),
+      prismaRead.giftTransaction.aggregate({
+        where: { createdAt: { gte: todayStart } },
+        _sum: { quantity: true },
+      }),
     ])
-    return { totalGiftsSentAllTime, totalGiftsSentToday }
+    return {
+      totalGiftsSentAllTime: allTime._sum.quantity ?? 0,
+      totalGiftsSentToday: today._sum.quantity ?? 0,
+    }
   },
 
   async getRevenueAggregates(bounds: {
@@ -159,9 +174,8 @@ export const giftAdminRepository = {
   async getMostSentGifts(limit: number) {
     const grouped = await prismaRead.giftTransaction.groupBy({
       by: ['giftId'],
-      _count: { _all: true },
-      _sum: { coinCost: true },
-      orderBy: { _count: { giftId: 'desc' } },
+      _sum: { quantity: true, coinCost: true },
+      orderBy: { _sum: { quantity: 'desc' } },
       take: limit,
     })
     if (grouped.length === 0) return []
@@ -189,7 +203,7 @@ export const giftAdminRepository = {
           code: gift.code,
           displayImageUrl: gift.displayImageUrl,
           coinCost: gift.coinCost,
-          timesSent: g._count._all,
+          timesSent: g._sum.quantity ?? 0,
           revenue: g._sum.coinCost ?? 0,
         }
       })
@@ -244,10 +258,10 @@ export const giftAdminRepository = {
       const grouped = await prismaRead.giftTransaction.groupBy({
         by: ['giftId'],
         where: { giftId: { in: giftIds } },
-        _count: { _all: true },
+        _sum: { quantity: true },
       })
       for (const row of grouped) {
-        sendCounts.set(row.giftId, row._count._all)
+        sendCounts.set(row.giftId, row._sum.quantity ?? 0)
       }
     }
 

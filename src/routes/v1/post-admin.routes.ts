@@ -115,9 +115,32 @@ export default async function postAdminRoutes(app: FastifyInstance) {
     },
   )
 
+  /** Preferred name for clearing ban/suspension (alias of `/posting/restore`). */
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/posting/activate',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Posts'],
+        description: 'Re-enable posting after a ban or timed suspension.',
+      },
+    },
+    async (request, reply) => {
+      return reply.send(
+        await adminPostService.restorePosting(request.params.userId, request.adminUser!.id),
+      )
+    },
+  )
+
   app.post<{ Params: { userId: string } }>(
     '/users/:userId/posting/restore',
-    { preHandler: preAuth, schema: { tags: ['Admin', 'Posts'] } },
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Posts'],
+        description: 'Alias of `/posting/activate` — clear ban + suspension.',
+      },
+    },
     async (request, reply) => {
       return reply.send(
         await adminPostService.restorePosting(request.params.userId, request.adminUser!.id),

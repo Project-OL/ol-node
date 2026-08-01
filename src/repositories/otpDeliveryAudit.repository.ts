@@ -40,7 +40,8 @@ function buildWhere(filters: Omit<OtpDeliveryAuditListFilters, 'page' | 'limit'>
       ? {
           createdAt: {
             ...(filters.from ? { gte: filters.from } : {}),
-            ...(filters.to ? { lte: filters.to } : {}),
+            // Half-open [from, to) — same as costs/by-country UTC month windows.
+            ...(filters.to ? { lt: filters.to } : {}),
           },
         }
       : {}),

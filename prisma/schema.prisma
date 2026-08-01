@@ -1956,6 +1956,8 @@ model GiftTransaction {
   giftId         String   @map("gift_id") @db.Uuid
   coinCost       Int      @map("coin_cost")
   pointsAwarded  Int      @map("points_awarded")
+  /// Units of the catalog gift in this send (combo quantity). Default 1.
+  quantity       Int      @default(1)
   context        String   @default("direct") @db.VarChar(32)
   createdAt      DateTime @default(now()) @map("created_at")
 

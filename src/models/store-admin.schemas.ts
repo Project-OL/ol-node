@@ -13,7 +13,7 @@ export const StoreAdminListQuerySchema = z.object({
 
 export const CreateStoreAdminBodySchema = z.object({
   name: z.string().min(1).max(255),
-  description: z.string().max(2000).optional(),
+  description: z.string().max(2000).nullable().optional(),
   category: z.nativeEnum(StoreItemCategory),
   coinCost: z.coerce.number().int().positive(),
   validityDays: z.coerce.number().int().positive().max(365).optional(),
@@ -37,7 +37,10 @@ export const PatchStoreAdminBodySchema = z.object({
 /** Form fields for multipart create (values are strings). */
 export const CreateStoreAdminMultipartFieldsSchema = z.object({
   name: z.string().min(1).max(255),
-  description: z.preprocess((v) => (v === '' ? undefined : v), z.string().max(2000).optional()),
+  description: z.preprocess(
+    (v) => (v === '' || v === undefined ? null : v),
+    z.string().max(2000).nullable().optional(),
+  ),
   category: z.nativeEnum(StoreItemCategory),
   coinCost: z.coerce.number().int().positive(),
   validityDays: z.preprocess(

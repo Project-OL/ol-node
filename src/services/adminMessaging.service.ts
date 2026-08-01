@@ -15,6 +15,10 @@ export const adminMessagingService = {
     adminUserId: string
     message: string
     auditActionType?: string
+    /** Merged into SYSTEM message metadata (e.g. postId for moderation warnings). */
+    metadataExtras?: Omit<PlatformMessageMetadata, 'category' | 'adminUserId'>
+    /** Extra fields merged into the audit `actionDetails` payload. */
+    auditDetails?: Record<string, unknown>
   }) {
     const target = await userRepository.findById(params.targetUserId)
     if (!target) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
@@ -23,6 +27,7 @@ export const adminMessagingService = {
     const metadata: PlatformMessageMetadata = {
       category: 'system',
       adminUserId: params.adminUserId,
+      ...params.metadataExtras,
     }
 
     const clientMessageId = `admin-system:${params.adminUserId}:${randomUUID()}`
@@ -42,6 +47,7 @@ export const adminMessagingService = {
         targetUserId: params.targetUserId,
         conversationId: result.conversationId,
         messageId: result.messageId,
+        ...params.auditDetails,
       },
     })
 
@@ -50,6 +56,7 @@ export const adminMessagingService = {
       conversationId: result.conversationId,
       messageId: result.messageId,
       content,
+      ...(params.metadataExtras?.postId ? { postId: params.metadataExtras.postId } : {}),
     }
   },
 
@@ -113,7 +120,7 @@ export const adminMessagingService = {
     }
   },
 
-  /** @deprecated Use sendSystemMessage — kept for post moderation warnings. */
+  /** Post-moderation warning via SYSTEM inbox; optional `postId` is stored on message metadata. */
   async sendPlatformWarning(params: {
     targetUserId: string
     adminUserId: string
@@ -121,27 +128,15 @@ export const adminMessagingService = {
     postId?: string
   }) {
     const content = (params.message?.trim() || DEFAULT_WARNING).slice(0, 4000)
-    const result = await this.sendSystemMessage({
+    return this.sendSystemMessage({
       targetUserId: params.targetUserId,
       adminUserId: params.adminUserId,
       message: content,
       auditActionType: 'ADMIN_USER_WARNING',
+      metadataExtras: params.postId
+        ? { postId: params.postId, refType: 'post' as const }
+        : undefined,
+      auditDetails: params.postId ? { postId: params.postId } : undefined,
     })
-
-    if (params.postId) {
-      auditService.log({
-        userId: params.adminUserId,
-        actionType: 'ADMIN_USER_WARNING',
-        actionStatus: 'success',
-        actionDetails: {
-          targetUserId: params.targetUserId,
-          postId: params.postId,
-          conversationId: result.conversationId,
-          messageId: result.messageId,
-        },
-      })
-    }
-
-    return result
   },
 }

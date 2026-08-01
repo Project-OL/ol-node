@@ -212,6 +212,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
           coinCost,
           pointsAwarded,
           context: params.context,
+          quantity,
         })
 
         const coinIncrement = fanSpendIncrementForGift(

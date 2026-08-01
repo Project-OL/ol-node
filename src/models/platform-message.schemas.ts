@@ -21,6 +21,10 @@ export type PlatformMessageMetadata = {
   balanceAfter?: string
   ledgerEntryId?: string
   refId?: string
+  /** When set, client can deep-link to this post (e.g. moderation warning). */
+  postId?: string
+  /** Optional discriminator for linked entities (`post`, etc.). */
+  refType?: 'post'
   counterparty?: {
     userId?: string
     displayName?: string

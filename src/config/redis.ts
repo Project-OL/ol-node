@@ -196,8 +196,8 @@ export const RedisKeys = {
   userLivestreamLevel: (userId: string) => `level:stream:${userId}`,
   levelConfigWealth: () => `level:config:wealth`,
   levelConfigStream: () => `level:config:stream`,
-  giftList: () => `gifts:list`,
-  giftByTag: (tag: string) => `gifts:tag:${tag}`,
+  giftList: (audience: 'vip' | 'novip' = 'novip') => `gifts:list:${audience}`,
+  giftByTag: (tag: string, audience: 'vip' | 'novip' = 'novip') => `gifts:tag:${tag}:${audience}`,
   /** Global gallery structure for a UTC month (admin-defined template). */
   giftGalleryTemplate: (year: number, month: number) => `gallery:template:${year}:${month}`,
   /** Per-host merged payload (template + that host's progress). */

@@ -54,7 +54,7 @@ function parsePendingBatch(raw: string): PushRecipient[] {
  * BROADCAST_BATCH_SIZE recipients. Mirrors `processPlatformNotificationBroadcastJob`.
  */
 export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): Promise<void> {
-  const campaignId = job.data.campaignId ?? `push-broadcast:${randomUUID()}`
+  const campaignId = job.data.campaignId ?? `push-broadcast-${randomUUID()}`
   const stateKey = RedisKeys.pushBroadcastState(campaignId)
   const pendingKey = RedisKeys.pushBroadcastPending(campaignId)
 
@@ -117,6 +117,8 @@ export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): P
     adminUserId: job.data.adminUserId,
     title: job.data.title,
     body: job.data.body,
+    // Persist data so sweep re-enqueues keep FCM data payload.
+    ...(job.data.data ? { data: JSON.stringify(job.data.data) } : {}),
     total: recipients.length,
     remaining: batches.length,
     sent: 0,
@@ -246,11 +248,20 @@ export async function sweepStalePushBroadcasts(): Promise<void> {
         }
         continue
       }
+      let data: Record<string, string> | undefined
+      if (state.data) {
+        try {
+          data = JSON.parse(state.data) as Record<string, string>
+        } catch {
+          data = undefined
+        }
+      }
       await enqueuePushBroadcastBatch({
         campaignId,
         batchIndex: Number(batchIndex),
         title: state.title ?? '',
         body: state.body ?? '',
+        data,
         adminUserId: state.adminUserId,
         recipients: parsePendingBatch(raw),
       })

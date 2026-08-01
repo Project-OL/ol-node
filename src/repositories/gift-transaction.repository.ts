@@ -11,11 +11,15 @@ export const giftTransactionRepository = {
       coinCost: number
       pointsAwarded: number
       context: string
+      /** Combo quantity (default 1). One ledger row still; admin counts sum this. */
+      quantity?: number
     },
   ) {
-    const { id, ...rest } = data
+    const { id, quantity, ...rest } = data
     return tx.giftTransaction.create({
-      data: id ? { id, ...rest } : rest,
+      data: id
+        ? { id, ...rest, quantity: quantity ?? 1 }
+        : { ...rest, quantity: quantity ?? 1 },
     })
   },
 }

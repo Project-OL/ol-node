@@ -21,7 +21,7 @@ export const GIFT_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
   webm: 'video/webm',
 }
 
-/** Store catalog assets (display + effect). */
+/** Store catalog assets (display + effect). Effect may be image, Lottie/Rive, or video. */
 export const STORE_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -32,6 +32,8 @@ export const STORE_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
   json: 'application/json',
   lottie: 'application/zip',
   riv: 'application/octet-stream',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
 }
 
 /** Banner slider images (static display only). */

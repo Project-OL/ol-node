@@ -52,7 +52,8 @@ export async function enqueuePlatformNotificationBroadcast(data: {
   // Mint the effective campaignId at enqueue time: per-recipient clientMessageIds
   // (`notify:{campaignId}:{userId}`) derive from it, so it must be stable across
   // BullMQ retries of the job or every retry would re-send the whole broadcast.
-  const campaignId = data.campaignId ?? `broadcast:${randomUUID()}`
+  // Hyphenated campaignId so derived batch jobIds stay BullMQ-safe (no stray `:`).
+  const campaignId = data.campaignId ?? `broadcast-${randomUUID()}`
   await platformMessageQueue.add(
     PLATFORM_NOTIFICATION_BROADCAST_JOB,
     { ...data, campaignId },
@@ -60,8 +61,13 @@ export async function enqueuePlatformNotificationBroadcast(data: {
   )
 }
 
+/**
+ * Deterministic batch jobId for dedupe on planner retry / sweep.
+ * BullMQ rejects custom jobIds that contain `:` unless they split into exactly 3
+ * segments. Campaign ids historically used `:`, so strip colons here.
+ */
 export function broadcastBatchJobId(campaignId: string, batchIndex: number): string {
-  return `notify-batch:${campaignId}:${batchIndex}`
+  return `notify-batch-${campaignId.replace(/:/g, '-')}-${batchIndex}`
 }
 
 /**

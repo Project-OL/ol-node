@@ -251,6 +251,12 @@ export const giftCategoryService = {
     }
 
     const c = await giftCategoryRepository.update(categoryId, input)
+
+    let giftsDisabled = 0
+    if (input.isActive === false) {
+      giftsDisabled = await giftCategoryRepository.disableGiftsInCategory(categoryId)
+    }
+
     await giftService.invalidateAllGiftCaches()
 
     const giftCount = await giftCategoryRepository.countGifts(categoryId)
@@ -262,6 +268,7 @@ export const giftCategoryService = {
       status: c.isActive ? ('active' as const) : ('hidden' as const),
       giftCount,
       createdAt: c.createdAt.toISOString(),
+      ...(input.isActive === false ? { giftsDisabled } : {}),
     }
   },
 

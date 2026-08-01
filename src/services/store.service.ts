@@ -956,7 +956,7 @@ export const storeService = {
 
   async createStoreItem(data: {
     name: string
-    description?: string
+    description?: string | null
     category: StoreItemCategory
     coinCost: number
     validityDays?: number
@@ -968,6 +968,7 @@ export const storeService = {
     const created = await prisma.storeItem.create({
       data: {
         ...data,
+        description: data.description ?? null,
         isActive: data.isActive ?? true,
       },
     })

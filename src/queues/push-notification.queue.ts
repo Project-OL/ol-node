@@ -30,13 +30,20 @@ export async function enqueuePushBroadcast(data: {
 }): Promise<string> {
   // Mint the effective campaignId at enqueue time — per-recipient batching keys derive
   // from it, so it must be stable across BullMQ retries of the planner job.
-  const campaignId = data.campaignId ?? `push-broadcast:${randomUUID()}`
+  // Use hyphens (not `:`) so derived batch jobIds stay BullMQ-safe.
+  const campaignId = data.campaignId ?? `push-broadcast-${randomUUID()}`
   await pushNotificationQueue.add(PUSH_BROADCAST_JOB, { ...data, campaignId }, jobOpts)
   return campaignId
 }
 
+/**
+ * Deterministic batch jobId for dedupe on planner retry / sweep.
+ * BullMQ rejects custom jobIds that contain `:` unless they split into exactly 3
+ * segments (repeatable-job format). Campaign ids historically used `:`, so strip
+ * colons here — otherwise every batch enqueue throws and broadcasts never send.
+ */
 export function pushBroadcastBatchJobId(campaignId: string, batchIndex: number): string {
-  return `push-notify-batch:${campaignId}:${batchIndex}`
+  return `push-notify-batch-${campaignId.replace(/:/g, '-')}-${batchIndex}`
 }
 
 export async function enqueuePushBroadcastBatch(data: {

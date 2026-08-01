@@ -72,7 +72,7 @@ export async function processPlatformNotificationBroadcastJob(
 ): Promise<void> {
   // New enqueues always carry campaignId; the fallback only covers jobs enqueued
   // before batching shipped (their retries pre-dated stable campaignIds anyway).
-  const campaignId = job.data.campaignId ?? `broadcast:${randomUUID()}`
+  const campaignId = job.data.campaignId ?? `broadcast-${randomUUID()}`
   const stateKey = RedisKeys.notifyBroadcastState(campaignId)
   const pendingKey = RedisKeys.notifyBroadcastPending(campaignId)
 
