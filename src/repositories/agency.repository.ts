@@ -125,6 +125,27 @@ export const agencyRepository = {
     })
   },
 
+  /**
+   * Admin grant/revoke payroll privilege.
+   * Revoke always forces agent accept-toggle off.
+   */
+  async setPayrollPrivilegeGranted(
+    userId: string,
+    payrollPrivilegeGranted: boolean,
+    tx?: Prisma.TransactionClient,
+  ) {
+    const client = tx ?? prisma
+    return client.agency.update({
+      where: { userId },
+      data: payrollPrivilegeGranted
+        ? { payrollPrivilegeGranted: true }
+        : {
+            payrollPrivilegeGranted: false,
+            payrollEnabled: false,
+          },
+    })
+  },
+
   async incrementHostCount(userId: string, delta: number, tx: Prisma.TransactionClient) {
     return tx.agency.update({
       where: { userId },
@@ -207,6 +228,7 @@ export const agencyRepository = {
         totalHostsCount: true,
         currentLevel: true,
         payrollEnabled: true,
+        payrollPrivilegeGranted: true,
         pausedAt: true,
         pausedUntil: true,
         createdAt: true,

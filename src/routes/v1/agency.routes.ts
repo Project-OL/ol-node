@@ -121,6 +121,7 @@ export default async function agencyRoutes(app: FastifyInstance) {
             totalHostsCount: view.owned.totalHostsCount,
             currentLevel: view.owned.currentLevel,
             payrollEnabled: view.owned.payrollEnabled,
+            payrollPrivilegeGranted: view.owned.payrollPrivilegeGranted,
             paused: view.owned.pausedAt != null,
             pendingJoinApplications: view.pendingJoinInbox,
             pendingLeaveApplications: view.pendingLeaveInbox,
@@ -432,7 +433,12 @@ export default async function agencyRoutes(app: FastifyInstance) {
         throw new AppError(403, 'Not an agency owner', 'FORBIDDEN')
       }
       await agencyService.setPayrollEnabled(userId, parsed.data.payrollEnabled)
-      return reply.send({ ok: true, payrollEnabled: parsed.data.payrollEnabled })
+      const agency = await agencyService.getAgencyByOwnerId(userId)
+      return reply.send({
+        ok: true,
+        payrollEnabled: agency?.payrollEnabled ?? parsed.data.payrollEnabled,
+        payrollPrivilegeGranted: agency?.payrollPrivilegeGranted ?? false,
+      })
     },
   )
 

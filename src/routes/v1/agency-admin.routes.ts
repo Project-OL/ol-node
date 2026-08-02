@@ -250,10 +250,16 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       const agency = await agencyAdminService.resolveAgencyByIdentifier(
         request.params.agencyIdentifier,
       )
-      const updated = await agencyService.setPayrollEnabled(agency.userId, body.payrollEnabled)
+      const updated = await agencyService.setPayrollPrivilegeGranted(
+        agency.userId,
+        body.payrollEnabled,
+      )
       return reply.send({
         ok: true as const,
         agencyUserId: updated.userId,
+        /** Admin privilege grant (agent cannot enable accept without this). */
+        payrollPrivilegeGranted: updated.payrollPrivilegeGranted,
+        /** Agent accept-toggle; forced false when privilege is revoked. */
         payrollEnabled: updated.payrollEnabled,
       })
     },

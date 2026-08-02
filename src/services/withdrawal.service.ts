@@ -248,7 +248,7 @@ export const withdrawalService = {
       await Promise.all([
         prismaRead.agency.findUnique({
           where: { userId: agencyUserId },
-          select: { payrollEnabled: true, pausedAt: true },
+          select: { payrollEnabled: true, payrollPrivilegeGranted: true, pausedAt: true },
         }),
         prismaRead.pointLedgerEntry.aggregate({
           where: {
@@ -310,9 +310,11 @@ export const withdrawalService = {
     }
 
     const result = {
-      takeOrderEnabled: agency.payrollEnabled && !agency.pausedAt,
-      payrollEnabled: agency.payrollEnabled,
-      isPaused: !!agency.pausedAt,
+      takeOrderEnabled:
+        !!agency?.payrollPrivilegeGranted && !!agency.payrollEnabled && !agency.pausedAt,
+      payrollEnabled: agency?.payrollEnabled ?? false,
+      payrollPrivilegeGranted: agency?.payrollPrivilegeGranted ?? false,
+      isPaused: !!agency?.pausedAt,
       totalRewardPoints: (rewardSummary._sum.amount ?? 0n).toString(),
       tabCounts,
       pendingCount: tabCounts.pending,
@@ -572,6 +574,7 @@ export const withdrawalService = {
               where: {
                 userId: opts.overrideAgencyUserId,
                 payrollEnabled: true,
+                payrollPrivilegeGranted: true,
                 OR: [{ pausedAt: null }, { pausedUntil: { lte: new Date() } }],
                 user: { country: hostCountry },
               },

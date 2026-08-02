@@ -371,6 +371,7 @@ export const agencyService = {
             totalHostsCount: owned.totalHostsCount,
             currentLevel: owned.currentLevel,
             payrollEnabled: owned.payrollEnabled,
+            payrollPrivilegeGranted: owned.payrollPrivilegeGranted,
             paused: owned.pausedAt != null,
             ...commissionExtras,
           }
@@ -452,7 +453,26 @@ export const agencyService = {
   async setPayrollEnabled(userId: string, enabled: boolean) {
     const agency = await agencyRepository.getAgencyByUserId(userId)
     if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
+    if (enabled && !agency.payrollPrivilegeGranted) {
+      throw new AppError(
+        403,
+        'Payroll privilege is disabled by admin',
+        'PAYROLL_PRIVILEGE_DENIED',
+      )
+    }
     const updated = await agencyRepository.setPayrollEnabled(userId, enabled)
+    await agencyService.onAgencyMutation(userId)
+    return updated
+  },
+
+  /**
+   * Admin: grant or revoke payroll privilege.
+   * Revoke forces accept-toggle off so the agency stops receiving assignments immediately.
+   */
+  async setPayrollPrivilegeGranted(userId: string, granted: boolean) {
+    const agency = await agencyRepository.getAgencyByUserId(userId)
+    if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
+    const updated = await agencyRepository.setPayrollPrivilegeGranted(userId, granted)
     await agencyService.onAgencyMutation(userId)
     return updated
   },
@@ -491,7 +511,7 @@ export const agencyService = {
     const [agency, rewardSummary, tabCounts] = await Promise.all([
       prismaRead.agency.findUnique({
         where: { userId: agencyUserId },
-        select: { payrollEnabled: true, pausedAt: true },
+        select: { payrollEnabled: true, payrollPrivilegeGranted: true, pausedAt: true },
       }),
       prismaRead.pointLedgerEntry.aggregate({
         where: {
@@ -507,8 +527,10 @@ export const agencyService = {
     if (!agency) throw new AppError(404, 'Agency not found', 'NOT_FOUND')
 
     const result = {
-      takeOrderEnabled: agency.payrollEnabled && !agency.pausedAt,
+      takeOrderEnabled:
+        agency.payrollPrivilegeGranted && agency.payrollEnabled && !agency.pausedAt,
       payrollEnabled: agency.payrollEnabled,
+      payrollPrivilegeGranted: agency.payrollPrivilegeGranted,
       isPaused: !!agency.pausedAt,
       totalRewardPoints: (rewardSummary._sum.amount ?? BigInt(0)).toString(),
       tabCounts,

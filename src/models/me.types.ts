@@ -84,6 +84,8 @@ export interface MeResponseDto extends MeProfileCache {
       totalHostsCount: number
       currentLevel: string
       payrollEnabled: boolean
+      /** Admin must grant this before the agent accept-toggle can be turned on. */
+      payrollPrivilegeGranted: boolean
       paused: boolean
     }
     asHost?: {

@@ -2026,6 +2026,8 @@ model Agency {
   userId                     String    @id @map("user_id") @db.Uuid
   defaultPublicId            BigInt    @unique @map("default_public_id")
   displayName                String    @map("display_name") @db.VarChar(255)
+  /// Admin-granted right to participate in payroll. When false, agent cannot enable accept-toggle.
+  payrollPrivilegeGranted    Boolean   @default(false) @map("payroll_privilege_granted")
   payrollEnabled             Boolean   @default(false) @map("payroll_enabled")
   pausedAt                   DateTime? @map("paused_at")
   pausedUntil                DateTime? @map("paused_until")
@@ -2047,6 +2049,7 @@ model Agency {
 
   @@index([payrollEnabled, pausedAt])
   @@index([payrollEnabled, pausedAt, lastPayrollAssignedAt])
+  @@index([payrollPrivilegeGranted, payrollEnabled, pausedAt])
   @@index([currentLevel, currentWindowTotalPoints(sort: Desc)])
   @@index([totalHostsCount(sort: Desc)])
   @@map("agencies")

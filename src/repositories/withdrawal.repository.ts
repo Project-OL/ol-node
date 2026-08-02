@@ -201,6 +201,7 @@ export const withdrawalRepository = {
         GROUP BY agency_user_id
       ) open ON open.agency_user_id = a.user_id
       WHERE a.payroll_enabled = true
+        AND a.payroll_privilege_granted = true
         AND (
           a.paused_at IS NULL
           OR (a.paused_until IS NOT NULL AND a.paused_until <= NOW())
