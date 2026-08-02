@@ -11,6 +11,19 @@ export const platformNotificationBroadcastBodySchema = z.object({
   campaignId: z.string().min(1).max(128).optional(),
 })
 
+/** Durable post card for SYSTEM moderation warnings (survives post delete). */
+export type PlatformPostRefSnapshot = {
+  id: string
+  caption: string | null
+  /** ISO-8601 */
+  createdAt: string
+  /** Primary media (image or video). */
+  mediaUrl: string
+  /** Best-effort preview image (thumbnail for video; often null for images). */
+  thumbnailUrl?: string | null
+  mediaType?: 'IMAGE' | 'VIDEO'
+}
+
 export type PlatformMessageMetadata = {
   category: 'transactional' | 'system' | 'notification'
   walletCurrency?: 'COIN' | 'POINT' | 'TRADING_COIN'
@@ -25,6 +38,8 @@ export type PlatformMessageMetadata = {
   postId?: string
   /** Optional discriminator for linked entities (`post`, etc.). */
   refType?: 'post'
+  /** Snapshot of the warned post for inbox UI (caption, time, image, id). */
+  post?: PlatformPostRefSnapshot
   counterparty?: {
     userId?: string
     displayName?: string

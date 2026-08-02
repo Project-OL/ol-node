@@ -4,10 +4,32 @@ import { AppError } from '../middlewares/errorHandler'
 import { auditService } from './audit.service'
 import { platformMessagingService } from './platformMessaging.service'
 import { enqueuePlatformNotificationBroadcast } from '../queues/platform-message.queue'
-import type { PlatformMessageMetadata } from '../models/platform-message.schemas'
+import type {
+  PlatformMessageMetadata,
+  PlatformPostRefSnapshot,
+} from '../models/platform-message.schemas'
 
 const DEFAULT_WARNING =
   'Your account has received a warning from platform moderation. Please review our community guidelines.'
+
+function toPostRefSnapshot(post: {
+  id: string
+  caption: string | null
+  createdAt: Date | string
+  mediaUrl: string
+  thumbnailUrl?: string | null
+  mediaType?: 'IMAGE' | 'VIDEO'
+}): PlatformPostRefSnapshot {
+  return {
+    id: post.id,
+    caption: post.caption,
+    createdAt:
+      typeof post.createdAt === 'string' ? post.createdAt : post.createdAt.toISOString(),
+    mediaUrl: post.mediaUrl,
+    thumbnailUrl: post.thumbnailUrl ?? null,
+    ...(post.mediaType ? { mediaType: post.mediaType } : {}),
+  }
+}
 
 export const adminMessagingService = {
   async sendSystemMessage(params: {
@@ -15,7 +37,7 @@ export const adminMessagingService = {
     adminUserId: string
     message: string
     auditActionType?: string
-    /** Merged into SYSTEM message metadata (e.g. postId for moderation warnings). */
+    /** Merged into SYSTEM message metadata (e.g. post snapshot for moderation warnings). */
     metadataExtras?: Omit<PlatformMessageMetadata, 'category' | 'adminUserId'>
     /** Extra fields merged into the audit `actionDetails` payload. */
     auditDetails?: Record<string, unknown>
@@ -57,6 +79,7 @@ export const adminMessagingService = {
       messageId: result.messageId,
       content,
       ...(params.metadataExtras?.postId ? { postId: params.metadataExtras.postId } : {}),
+      ...(params.metadataExtras?.post ? { post: params.metadataExtras.post } : {}),
     }
   },
 
@@ -120,23 +143,43 @@ export const adminMessagingService = {
     }
   },
 
-  /** Post-moderation warning via SYSTEM inbox; optional `postId` is stored on message metadata. */
+  /**
+   * Post-moderation warning via SYSTEM inbox.
+   * When `post` is provided, metadata stores a durable snapshot (id, caption, createdAt, media)
+   * plus `postId` / `refType: "post"` for deep-link.
+   */
   async sendPlatformWarning(params: {
     targetUserId: string
     adminUserId: string
     message?: string
+    /** @deprecated Prefer `post` snapshot; kept for callers that only know the id. */
     postId?: string
+    post?: {
+      id: string
+      caption: string | null
+      createdAt: Date | string
+      mediaUrl: string
+      thumbnailUrl?: string | null
+      mediaType?: 'IMAGE' | 'VIDEO'
+    }
   }) {
     const content = (params.message?.trim() || DEFAULT_WARNING).slice(0, 4000)
+    const postSnap = params.post ? toPostRefSnapshot(params.post) : undefined
+    const postId = postSnap?.id ?? params.postId
+
     return this.sendSystemMessage({
       targetUserId: params.targetUserId,
       adminUserId: params.adminUserId,
       message: content,
       auditActionType: 'ADMIN_USER_WARNING',
-      metadataExtras: params.postId
-        ? { postId: params.postId, refType: 'post' as const }
+      metadataExtras: postId
+        ? {
+            postId,
+            refType: 'post' as const,
+            ...(postSnap ? { post: postSnap } : {}),
+          }
         : undefined,
-      auditDetails: params.postId ? { postId: params.postId } : undefined,
+      auditDetails: postId ? { postId } : undefined,
     })
   },
 }

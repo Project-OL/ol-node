@@ -63,10 +63,21 @@ export type GiftMessageSnapshot = {
   vipOnly: boolean
 }
 
+export type PostMessageSnapshot = {
+  id: string
+  caption: string | null
+  createdAt: string
+  mediaUrl: string
+  thumbnailUrl?: string | null
+  mediaType?: 'IMAGE' | 'VIDEO'
+}
+
 export type MessageWithDetails = Message & {
   metadata: unknown | null
   /** Present when type === 'GIFT' — hydrated from metadata snapshot for clients. */
   gift?: GiftMessageSnapshot
+  /** Present on SYSTEM post-moderation warnings — hydrated from `metadata.post`. */
+  post?: PostMessageSnapshot
   sender: {
     id: string
     username: string
@@ -177,6 +188,42 @@ export function attachGiftFromMetadata<T extends { type: MessageType; metadata?:
   const gift = giftSnapshotFromMetadata(msg.metadata)
   if (!gift) return msg
   return { ...msg, gift }
+}
+
+/** Build / parse durable post snapshot from SYSTEM warn metadata (`metadata.post`). */
+export function postSnapshotFromMetadata(metadata: unknown): PostMessageSnapshot | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined
+  const m = metadata as Record<string, unknown>
+  const nested = m.post
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return undefined
+  const p = nested as Record<string, unknown>
+  const id = typeof p.id === 'string' ? p.id : null
+  const mediaUrl = typeof p.mediaUrl === 'string' ? p.mediaUrl : null
+  const createdAt = typeof p.createdAt === 'string' ? p.createdAt : null
+  if (!id || !mediaUrl || !createdAt) return undefined
+  return {
+    id,
+    caption: typeof p.caption === 'string' ? p.caption : null,
+    createdAt,
+    mediaUrl,
+    thumbnailUrl: typeof p.thumbnailUrl === 'string' ? p.thumbnailUrl : null,
+    mediaType: p.mediaType === 'IMAGE' || p.mediaType === 'VIDEO' ? p.mediaType : undefined,
+  }
+}
+
+export function attachPostFromMetadata<T extends { metadata?: unknown | null }>(
+  msg: T,
+): T & { post?: PostMessageSnapshot } {
+  const post = postSnapshotFromMetadata(msg.metadata)
+  if (!post) return msg
+  return { ...msg, post }
+}
+
+/** Gift + post moderation snapshots from message metadata. */
+export function attachMessageExtrasFromMetadata<
+  T extends { type: MessageType; metadata?: unknown | null },
+>(msg: T): T & { gift?: GiftMessageSnapshot; post?: PostMessageSnapshot } {
+  return attachPostFromMetadata(attachGiftFromMetadata(msg))
 }
 
 const fullMessageInclude = {
@@ -418,7 +465,7 @@ function mapToMessageWithDetails(
       streamingUrl: url,
     }
   })
-  return attachGiftFromMetadata({
+  return attachMessageExtrasFromMetadata({
     ...msg,
     sender: {
       id: msg.sender.id,

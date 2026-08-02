@@ -73,7 +73,14 @@ export const adminPostService = {
       targetUserId: post.user.id,
       adminUserId: params.adminUserId,
       message: params.message,
-      postId: params.postId,
+      post: {
+        id: post.id,
+        caption: post.caption ?? null,
+        createdAt: post.createdAt,
+        mediaUrl: post.mediaUrl,
+        thumbnailUrl: post.thumbnailUrl,
+        mediaType: post.mediaType,
+      },
     })
   },
 

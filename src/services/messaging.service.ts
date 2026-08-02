@@ -2,6 +2,7 @@ import { conversationRepository } from '../repositories/conversation.repository'
 import {
   messageRepository,
   attachGiftFromMetadata,
+  attachMessageExtrasFromMetadata,
   type MessageWithDetails,
 } from '../repositories/message.repository'
 import { blockRepository } from '../repositories/block.repository'
@@ -202,7 +203,7 @@ function parseHotCacheMessages(raw: string[]): MessageWithDetails[] {
     if (typeof json !== 'string') continue
     const parsed = JSON.parse(json) as MessageWithDetails & { createdAt: string }
     parsed.createdAt = new Date(parsed.createdAt) as any
-    messages.push(attachGiftFromMetadata(parsed as MessageWithDetails))
+    messages.push(attachMessageExtrasFromMetadata(parsed as MessageWithDetails))
   }
   return messages
 }

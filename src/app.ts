@@ -68,6 +68,7 @@ import platformMessageAdminRoutes from './routes/v1/platform-message-admin.route
 import pushNotificationAdminRoutes from './routes/v1/push-notification-admin.routes'
 import ledgerAuditAdminRoutes from './routes/v1/ledger-audit-admin.routes'
 import adminUserWalletRoutes from './routes/v1/admin-user-wallet.routes'
+import adminTransactionsRoutes from './routes/v1/admin-transactions.routes'
 import adminUserModerationRoutes from './routes/v1/admin-user-moderation.routes'
 import postAdminRoutes from './routes/v1/post-admin.routes'
 import faceVerificationAdminRoutes from './routes/v1/face-verification-admin.routes'
@@ -235,6 +236,7 @@ export async function buildApp() {
       await adminApp.register(storeAdminRoutes)
       await adminApp.register(giftAdminRoutes)
       await adminApp.register(adminUserWalletRoutes)
+      await adminApp.register(adminTransactionsRoutes)
       await adminApp.register(adminUserModerationRoutes)
       await adminApp.register(userAdminRoutes)
       await adminApp.register(platformMessageAdminRoutes)

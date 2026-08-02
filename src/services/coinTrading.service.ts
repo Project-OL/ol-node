@@ -794,38 +794,60 @@ export const coinTradingService = {
     if (transfer.reversedAt)
       throw new AppError(409, 'Transfer already reversed', 'TRANSFER_ALREADY_REVERSED')
     const recipientWalletType = walletTypeFromTransferRecord(transfer.recipientWalletType)
-    await prisma.$transaction(
-      async (tx) => {
-        await coinWalletService.credit(
-          transfer.senderAgentUserId,
-          transfer.tradingCoinsDebited,
-          CoinTxType.TRADING_TRANSFER_REVERSAL,
-          tx,
-          {
-            idempotencyKey: `trading-reversal:${transfer.id}:sender`,
-            description: 'Admin fraud reversal credit',
-            applyWealthCredit: false,
-            currencyType: WalletCurrencyType.TRADING_COIN,
-          },
+    try {
+      await prisma.$transaction(
+        async (tx) => {
+          // Debit receiver first, then credit sender (required order for safe revert).
+          await coinWalletService.debit(
+            transfer.recipientUserId,
+            transfer.coinsCredited,
+            CoinTxType.TRADING_TRANSFER_REVERSAL,
+            tx,
+            {
+              idempotencyKey: `trading-reversal:${transfer.id}:recipient`,
+              description: 'Admin fraud reversal debit',
+              currencyType: recipientWalletType,
+              applyWealthXp: false,
+            },
+          )
+          await coinWalletService.credit(
+            transfer.senderAgentUserId,
+            transfer.tradingCoinsDebited,
+            CoinTxType.TRADING_TRANSFER_REVERSAL,
+            tx,
+            {
+              idempotencyKey: `trading-reversal:${transfer.id}:sender`,
+              description: 'Admin fraud reversal credit',
+              applyWealthCredit: false,
+              currencyType: WalletCurrencyType.TRADING_COIN,
+            },
+          )
+          await coinTradingRepository.reverseTransfer(
+            { id: transfer.id, reversedByUserId: adminUserId, reason },
+            tx,
+          )
+        },
+        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      )
+    } catch (err) {
+      if (err instanceof AppError && err.code === 'INSUFFICIENT_COINS') {
+        if (recipientWalletType === WalletCurrencyType.TRADING_COIN) {
+          throw new AppError(
+            402,
+            'Insufficient trading coins on receiver to revert',
+            'INSUFFICIENT_TRADING_COINS',
+            err.details,
+          )
+        }
+        throw new AppError(
+          402,
+          'Insufficient coins on receiver to revert',
+          'INSUFFICIENT_COINS',
+          err.details,
         )
-        await coinWalletService.debit(
-          transfer.recipientUserId,
-          transfer.coinsCredited,
-          CoinTxType.TRADING_TRANSFER_REVERSAL,
-          tx,
-          {
-            idempotencyKey: `trading-reversal:${transfer.id}:recipient`,
-            description: 'Admin fraud reversal debit',
-            currencyType: recipientWalletType,
-          },
-        )
-        await coinTradingRepository.reverseTransfer(
-          { id: transfer.id, reversedByUserId: adminUserId, reason },
-          tx,
-        )
-      },
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
-    )
+      }
+      throw err
+    }
     await invalidateTradingTransferCaches(
       transfer.senderAgentUserId,
       transfer.recipientUserId,
