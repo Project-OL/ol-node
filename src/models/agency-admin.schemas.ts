@@ -48,3 +48,11 @@ export const suspendAgencyBodySchema = z
   .refine((b) => b.pausedUntil != null || b.suspendDays != null, {
     message: 'Either pausedUntil or suspendDays is required',
   })
+
+export const setAgencyPayrollBodySchema = z.object({
+  payrollEnabled: z.boolean(),
+})
+
+export const banAgencyBodySchema = z.object({
+  reason: z.string().max(1000).optional(),
+})

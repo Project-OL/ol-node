@@ -117,7 +117,11 @@ export const agencyRepository = {
     const client = tx ?? prisma
     return client.agency.update({
       where: { userId },
-      data: { payrollEnabled },
+      data: {
+        payrollEnabled,
+        // Jump to front of LRA queue when accepting payroll (NULLS FIRST).
+        ...(payrollEnabled ? { lastPayrollAssignedAt: null } : {}),
+      },
     })
   },
 
@@ -202,6 +206,7 @@ export const agencyRepository = {
         defaultPublicId: true,
         totalHostsCount: true,
         currentLevel: true,
+        payrollEnabled: true,
         pausedAt: true,
         pausedUntil: true,
         createdAt: true,

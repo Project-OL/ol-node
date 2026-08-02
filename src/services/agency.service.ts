@@ -200,6 +200,14 @@ export const agencyService = {
 
     await agencyKycService.validateKycComplete(params.applicantUserId)
 
+    const barred = await prisma.user.findUnique({
+      where: { id: params.applicantUserId },
+      select: { agencyBarredAt: true },
+    })
+    if (barred?.agencyBarredAt) {
+      throw new AppError(403, 'User is barred from operating an agency', 'AGENCY_BARRED')
+    }
+
     let initialLevel = 'D'
     if (params.commissionTier != null && params.commissionTier.trim() !== '') {
       const tierRow = await agencyCommissionRepository.getLevelRow(params.commissionTier.trim())
@@ -395,19 +403,37 @@ export const agencyService = {
     return updated
   },
 
-  async unpauseAgency(userId: string) {
+  async unpauseAgency(userId: string, opts?: { unfreezeWallets?: boolean; adminUserId?: string }) {
     const updated = await prisma.$transaction(
       async (tx) => agencyRepository.setPause(userId, { pausedAt: null, pausedUntil: null }, tx),
       { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
     )
+    if (opts?.unfreezeWallets !== false) {
+      const { adminWalletService } = await import('./adminWallet.service')
+      await adminWalletService.setAllWalletsFrozen(
+        userId,
+        false,
+        opts?.adminUserId ?? userId,
+      )
+    }
     await agencyService.onAgencyMutation(userId)
     return updated
   },
 
-  async suspendAgencyUntil(agencyUserId: string, pausedUntil: Date) {
+  async suspendAgencyUntil(
+    agencyUserId: string,
+    pausedUntil: Date,
+    opts?: { adminUserId?: string },
+  ) {
     const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
     if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
     await agencyService.pauseAgency(agencyUserId, 'ADMIN', undefined, { pausedUntil })
+    const { adminWalletService } = await import('./adminWallet.service')
+    await adminWalletService.setAllWalletsFrozen(
+      agencyUserId,
+      true,
+      opts?.adminUserId ?? agencyUserId,
+    )
     return { ok: true as const, pausedUntil: pausedUntil.toISOString() }
   },
 
@@ -424,6 +450,8 @@ export const agencyService = {
   },
 
   async setPayrollEnabled(userId: string, enabled: boolean) {
+    const agency = await agencyRepository.getAgencyByUserId(userId)
+    if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
     const updated = await agencyRepository.setPayrollEnabled(userId, enabled)
     await agencyService.onAgencyMutation(userId)
     return updated
@@ -437,9 +465,20 @@ export const agencyService = {
     await agencyService.bustRankingCache()
   },
 
-  async enforcePauseGate(agencyUserId: string) {
+  /** Clear pause + unfreeze when pausedUntil has elapsed. Returns true if still paused. */
+  async clearExpiredPauseIfNeeded(agencyUserId: string): Promise<boolean> {
     const ag = await agencyRepository.getAgencyByUserId(agencyUserId)
-    if (ag?.pausedAt != null) {
+    if (!ag?.pausedAt) return false
+    if (ag.pausedUntil && ag.pausedUntil.getTime() <= Date.now()) {
+      await agencyService.unpauseAgency(agencyUserId)
+      return false
+    }
+    return true
+  },
+
+  async enforcePauseGate(agencyUserId: string) {
+    const stillPaused = await agencyService.clearExpiredPauseIfNeeded(agencyUserId)
+    if (stillPaused) {
       throw new AppError(403, 'Agency is paused', 'AGENCY_PAUSED')
     }
   },

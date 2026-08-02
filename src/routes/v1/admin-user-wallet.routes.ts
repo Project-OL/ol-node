@@ -6,6 +6,8 @@ import { adminUserTransactionsService } from '../../services/adminUserTransactio
 import {
   adminTransactionListQuerySchema,
   adminWalletAmountBodySchema,
+  adminSetLevelBodySchema,
+  adminLevelTypeParamSchema,
 } from '../../models/admin-user-wallet.schemas'
 
 const preAuth = [authenticateAdmin]
@@ -293,6 +295,41 @@ export default async function adminUserWalletRoutes(app: FastifyInstance) {
           false,
           request.adminUser!.id,
         ),
+      )
+    },
+  )
+
+  app.post<{ Params: { userId: string; type: string } }>(
+    '/users/:userId/levels/:type',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Wallet'],
+        description:
+          'Increase-only set wealth or livestream level to targetLevel (raises cumulative XP to that level threshold).',
+      },
+    },
+    async (request, reply) => {
+      const typeParsed = adminLevelTypeParamSchema.safeParse(request.params.type)
+      if (!typeParsed.success) {
+        throw new AppError(400, 'type must be wealth or livestream', 'INVALID_REQUEST')
+      }
+      const bodyParsed = adminSetLevelBodySchema.safeParse(request.body ?? {})
+      if (!bodyParsed.success) {
+        throw new AppError(
+          400,
+          bodyParsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await adminWalletService.setLevelIncreaseOnly({
+          adminUserId: request.adminUser!.id,
+          targetUserId: request.params.userId,
+          type: typeParsed.data,
+          targetLevel: bodyParsed.data.targetLevel,
+          reason: bodyParsed.data.reason,
+        }),
       )
     },
   )

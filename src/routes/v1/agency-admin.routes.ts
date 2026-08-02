@@ -7,10 +7,12 @@ import {
   addHostBodySchema,
   agencyAdminListQuerySchema,
   approveApplicationBodySchema,
+  banAgencyBodySchema,
   editCommissionTierBodySchema,
   pendingApplicationsQuerySchema,
   rejectApplicationBodySchema,
   sendAgencyMessageBodySchema,
+  setAgencyPayrollBodySchema,
   suspendAgencyBodySchema,
   transferHostsBodySchema,
 } from '../../models/agency-admin.schemas'
@@ -233,7 +235,56 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       const pausedUntil = body.pausedUntil
         ? new Date(body.pausedUntil)
         : addUtcDays(utcNow(), body.suspendDays!)
-      const result = await agencyService.suspendAgencyUntil(agency.userId, pausedUntil)
+      const result = await agencyService.suspendAgencyUntil(agency.userId, pausedUntil, {
+        adminUserId: request.adminUser?.id,
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.patch<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/payroll',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const body = setAgencyPayrollBodySchema.parse(request.body ?? {})
+      const agency = await agencyAdminService.resolveAgencyByIdentifier(
+        request.params.agencyIdentifier,
+      )
+      const updated = await agencyService.setPayrollEnabled(agency.userId, body.payrollEnabled)
+      return reply.send({
+        ok: true as const,
+        agencyUserId: updated.userId,
+        payrollEnabled: updated.payrollEnabled,
+      })
+    },
+  )
+
+  app.post<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/ban',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = banAgencyBodySchema.parse(request.body ?? {})
+      const agency = await agencyAdminService.resolveAgencyByIdentifier(
+        request.params.agencyIdentifier,
+      )
+      const result = await agencyAdminService.banAgencyByAdmin(
+        agency.userId,
+        adminUserId,
+        body.reason,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/barred/:userId/unbar',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await agencyAdminService.unbarUser(request.params.userId, adminUserId)
       return reply.send(result)
     },
   )
@@ -344,7 +395,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     '/:userId/unpause',
     { preHandler: [authenticateAdmin] },
     async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
-      await agencyService.unpauseAgency(request.params.userId)
+      await agencyService.unpauseAgency(request.params.userId, {
+        adminUserId: request.adminUser?.id,
+      })
       return reply.send({ ok: true })
     },
   )
@@ -536,7 +589,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     '/coin-trading/unlock/:userId',
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
-      await agencyService.unpauseAgency(request.params.userId)
+      await agencyService.unpauseAgency(request.params.userId, {
+        adminUserId: request.adminUser?.id,
+      })
       return reply.send({ ok: true })
     },
   )

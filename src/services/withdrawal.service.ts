@@ -516,6 +516,7 @@ export const withdrawalService = {
     let assignmentIdOut: string | null = null
     let expiresAtOut: Date | null = null
     let countryMismatch = false
+    let selfAssignBlocked = false
 
     await prisma.$transaction(
       async (tx) => {
@@ -525,9 +526,11 @@ export const withdrawalService = {
 
         const host = await tx.user.findUnique({
           where: { id: w.userId },
-          select: { country: true },
+          select: { country: true, currentAgencyId: true },
         })
         const hostCountry = host?.country ?? null
+        const withdrawerUserId = w.userId
+        const excludeAgencyUserId = host?.currentAgencyId ?? null
 
         const cfgCap = await tx.payrollConfig.findUnique({ where: { id: 1 } })
         const maxAttempts = cfgCap?.maxAssignmentAttempts ?? 5
@@ -555,23 +558,37 @@ export const withdrawalService = {
         if (!hostCountry) {
           agencyUserId = null
         } else if (opts?.overrideAgencyUserId) {
-          const ag = await tx.agency.findFirst({
-            where: {
-              userId: opts.overrideAgencyUserId,
-              payrollEnabled: true,
-              pausedAt: null,
-              user: { country: hostCountry },
-            },
-          })
-          if (ag) {
-            agencyUserId = ag.userId
-            await withdrawalRepository.touchAgencyPayrollTimestamp(agencyUserId, tx)
-          } else if (opts.rejectOnIneligibleOverride) {
-            countryMismatch = true
-            return
+          if (
+            opts.overrideAgencyUserId === withdrawerUserId ||
+            opts.overrideAgencyUserId === excludeAgencyUserId
+          ) {
+            if (opts.rejectOnIneligibleOverride) {
+              selfAssignBlocked = true
+              return
+            }
+            agencyUserId = null
+          } else {
+            const ag = await tx.agency.findFirst({
+              where: {
+                userId: opts.overrideAgencyUserId,
+                payrollEnabled: true,
+                OR: [{ pausedAt: null }, { pausedUntil: { lte: new Date() } }],
+                user: { country: hostCountry },
+              },
+            })
+            if (ag) {
+              agencyUserId = ag.userId
+              await withdrawalRepository.touchAgencyPayrollTimestamp(agencyUserId, tx)
+            } else if (opts.rejectOnIneligibleOverride) {
+              countryMismatch = true
+              return
+            }
           }
         } else {
-          agencyUserId = await withdrawalRepository.getNextEligibleAgency(tx, hostCountry)
+          agencyUserId = await withdrawalRepository.getNextEligibleAgency(tx, hostCountry, {
+            withdrawerUserId,
+            excludeAgencyUserId,
+          })
         }
 
         if (!agencyUserId) {
@@ -612,6 +629,14 @@ export const withdrawalService = {
       },
       { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
     )
+
+    if (selfAssignBlocked) {
+      throw new AppError(
+        400,
+        'Payroll cannot be assigned to the withdrawer or their own agency',
+        'PAYROLL_SELF_ASSIGN_FORBIDDEN',
+      )
+    }
 
     if (countryMismatch) {
       throw new AppError(

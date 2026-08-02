@@ -1,6 +1,8 @@
 import { LevelType, Prisma } from '@prisma/client'
+import { prisma } from '../config/database'
 import { redisClient } from '../config/redis'
 import { RedisKeys, USER_LEVEL_TTL, LEVEL_CONFIG_TTL } from '../config/redis'
+import { AppError } from '../middlewares/errorHandler'
 import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
 
 export type LevelSnapshot = {
@@ -282,6 +284,106 @@ export const walletLevelService = {
 
   async getLevelTable(levelType: LevelType) {
     return getThresholds(levelType)
+  },
+
+  /**
+   * Admin-only: raise cumulative XP to the threshold of `targetLevel` (increase-only).
+   * Leaves the user at the start of that level so further XP progresses from there.
+   */
+  async setLevelIncreaseOnly(params: {
+    userId: string
+    levelType: LevelType
+    targetLevel: number
+  }): Promise<{
+    levelType: LevelType
+    previousLevel: number
+    previousCumulative: string
+    currentLevel: number
+    cumulativeTotal: string
+    snapshot: LevelSnapshot
+  }> {
+    const thresholds = await getThresholds(params.levelType)
+    if (thresholds.length === 0) {
+      throw new AppError(500, 'Level thresholds not configured', 'CONFIG_ERROR')
+    }
+    const maxLevel = thresholds[thresholds.length - 1]!.level
+    if (
+      !Number.isInteger(params.targetLevel) ||
+      params.targetLevel < 1 ||
+      params.targetLevel > maxLevel
+    ) {
+      throw new AppError(
+        400,
+        `targetLevel must be an integer between 1 and ${maxLevel}`,
+        'INVALID_TARGET_LEVEL',
+      )
+    }
+    const targetThreshold = thresholds.find((t) => t.level === params.targetLevel)?.threshold
+    if (targetThreshold == null) {
+      throw new AppError(400, 'Unknown target level', 'INVALID_TARGET_LEVEL')
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const current = await tx.walletUserLevel.upsert({
+        where: {
+          userId_levelType: { userId: params.userId, levelType: params.levelType },
+        },
+        create: {
+          userId: params.userId,
+          levelType: params.levelType,
+          currentLevel: 1,
+          cumulativeTotal: 0n,
+        },
+        update: {},
+      })
+
+      if (current.cumulativeTotal >= targetThreshold) {
+        throw new AppError(
+          400,
+          'User is already at or above the target level',
+          'LEVEL_ALREADY_AT_OR_ABOVE',
+        )
+      }
+
+      const newCumulative = targetThreshold
+      const newLevel = computeLevel(newCumulative, thresholds)
+      const previousLevel = current.currentLevel
+
+      await tx.walletUserLevel.update({
+        where: {
+          userId_levelType: { userId: params.userId, levelType: params.levelType },
+        },
+        data: {
+          cumulativeTotal: newCumulative,
+          currentLevel: newLevel,
+        },
+      })
+
+      return {
+        previousLevel,
+        previousCumulative: current.cumulativeTotal.toString(),
+        currentLevel: newLevel,
+        cumulativeTotal: newCumulative.toString(),
+        newCumulative,
+      }
+    })
+
+    const snapshot = await walletLevelService.refreshCache(
+      params.userId,
+      params.levelType,
+      result.newCumulative,
+      result.currentLevel,
+      result.previousLevel,
+    )
+
+    return {
+      levelType: params.levelType,
+      previousLevel: result.previousLevel,
+      previousCumulative: result.previousCumulative,
+      currentLevel: result.currentLevel,
+      cumulativeTotal: result.cumulativeTotal,
+      snapshot,
+    }
   },
 
   /**

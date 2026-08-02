@@ -177,22 +177,45 @@ export const withdrawalRepository = {
 
   /**
    * Round-robin pick (FOR UPDATE SKIP LOCKED). Updates last_payroll_assigned_at in same tx.
-   * Only agencies whose owner `users.country` matches `hostCountry` are eligible.
+   * Prefers agencies with fewer open PENDING/WAITING assignments, then least-recently-assigned
+   * (NULLS FIRST = newly enabled payroll). Same-country only; excludes withdrawer and their
+   * current agency.
    */
   async getNextEligibleAgency(
     tx: Prisma.TransactionClient,
     hostCountry: string,
+    opts: {
+      withdrawerUserId: string
+      excludeAgencyUserId?: string | null
+    },
   ): Promise<string | null> {
+    const excludeAgencyUserId = opts.excludeAgencyUserId ?? null
     const rows = await tx.$queryRaw<Array<{ user_id: string }>>`
       SELECT a.user_id
       FROM agencies a
       INNER JOIN users u ON u.id = a.user_id
+      LEFT JOIN (
+        SELECT agency_user_id, COUNT(*)::int AS open_cnt
+        FROM withdrawal_payroll_assignments
+        WHERE status IN ('PENDING', 'WAITING')
+        GROUP BY agency_user_id
+      ) open ON open.agency_user_id = a.user_id
       WHERE a.payroll_enabled = true
-        AND a.paused_at IS NULL
+        AND (
+          a.paused_at IS NULL
+          OR (a.paused_until IS NOT NULL AND a.paused_until <= NOW())
+        )
         AND u.country = ${hostCountry}
-      ORDER BY a.last_payroll_assigned_at ASC NULLS FIRST, a.user_id ASC
+        AND a.user_id <> ${opts.withdrawerUserId}::uuid
+        AND (
+          ${excludeAgencyUserId}::uuid IS NULL
+          OR a.user_id <> ${excludeAgencyUserId}::uuid
+        )
+      ORDER BY COALESCE(open.open_cnt, 0) ASC,
+               a.last_payroll_assigned_at ASC NULLS FIRST,
+               a.user_id ASC
       LIMIT 1
-      FOR UPDATE SKIP LOCKED
+      FOR UPDATE OF a SKIP LOCKED
     `
     if (!rows.length) return null
     const uid = rows[0].user_id

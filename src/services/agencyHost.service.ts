@@ -710,13 +710,17 @@ export const agencyHostService = {
     if (row) await agencyService.onAgencyMutation(row.agencyUserId)
   },
 
-  async handleAgentAccountDeletion(agentUserId: string, tx: Prisma.TransactionClient) {
+  async handleAgentAccountDeletion(
+    agentUserId: string,
+    tx: Prisma.TransactionClient,
+    reason: AgencyHostHistoryReason = 'AGENT_DELETED',
+  ) {
     const hostIds = await tx.agencyHost.findMany({
       where: { agencyUserId: agentUserId },
       select: { hostUserId: true },
     })
     for (const h of hostIds) {
-      await finalizeAgencyHostExit(agentUserId, h.hostUserId, 'AGENT_DELETED', tx)
+      await finalizeAgencyHostExit(agentUserId, h.hostUserId, reason, tx)
     }
     await tx.agency.deleteMany({ where: { userId: agentUserId } })
     await tx.user.update({

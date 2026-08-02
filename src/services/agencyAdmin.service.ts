@@ -10,6 +10,7 @@ import { storageService } from './storage.service'
 import { agencyCommissionService } from './agencyCommission.service'
 import { displayNameFromUser } from '../utils/profileDisplay'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatPointsAsUsd } from '../utils/points-currency'
 import {
   addUtcDays,
   agencyCommissionRollingWindowDays,
@@ -171,7 +172,9 @@ export const agencyAdminService = {
         totalHosts: row.totalHostsCount,
         country: row.user.country,
         earningsThisMonthPoints: earnings.toString(),
+        earningsThisMonthUsd: formatPointsAsUsd(earnings),
         commissionTier: row.currentLevel,
+        payrollEnabled: row.payrollEnabled,
         status: agencyStatusLabel(row),
         approvedAt: row.createdAt.toISOString(),
       }
@@ -264,8 +267,11 @@ export const agencyAdminService = {
       totalHosts: agency.totalHostsCount,
       totalEarningHosts: earningHostsCount,
       totalEarningsPoints: lifetimePoints.toString(),
+      totalEarningsUsd: formatPointsAsUsd(lifetimePoints),
       thisMonthEarningsPoints: monthPoints.toString(),
+      thisMonthEarningsUsd: formatPointsAsUsd(monthPoints),
       commissionTier: agency.currentLevel,
+      payrollEnabled: agency.payrollEnabled,
       status: agencyStatusLabel(agency),
       pausedUntil: agency.pausedUntil?.toISOString() ?? null,
     }
@@ -530,5 +536,120 @@ export const agencyAdminService = {
     await agencyService.bustRankingCache()
 
     return { ok: true as const, agencyUserId, adminUserId }
+  },
+
+  /**
+   * Ban/bar agency: freeze owner wallets, expire open payroll, free hosts, delete agency,
+   * bar re-application. User login remains active.
+   */
+  async banAgencyByAdmin(
+    agencyUserId: string,
+    adminUserId: string,
+    reason?: string,
+  ) {
+    const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
+    if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
+
+    const { agencyHostService } = await import('./agencyHost.service')
+    const { agencyService } = await import('./agency.service')
+    const { agencyCoinsellerService } = await import('./agencyCoinseller.service')
+    const { adminWalletService } = await import('./adminWallet.service')
+    const { withdrawalService } = await import('./withdrawal.service')
+    const { payrollAssignmentRepository } = await import('../repositories/payrollAssignment.repository')
+    const { withdrawalRepository } = await import('../repositories/withdrawal.repository')
+    const { removePayrollSla, removePayrollWaiting } = await import('../queues/payroll.queue')
+
+    await adminWalletService.setAllWalletsFrozen(agencyUserId, true, adminUserId)
+
+    const openAssignments = await prisma.withdrawalPayrollAssignment.findMany({
+      where: {
+        agencyUserId,
+        status: { in: ['PENDING', 'WAITING'] },
+      },
+      select: { id: true, withdrawalId: true, status: true },
+    })
+
+    const withdrawalIdsToReassign: string[] = []
+    await prisma.$transaction(
+      async (tx) => {
+        const now = new Date()
+        for (const a of openAssignments) {
+          await payrollAssignmentRepository.updateStatus(
+            {
+              id: a.id,
+              status: 'EXPIRED',
+              rejectionReason: reason?.trim() || 'Agency banned by admin',
+            },
+            tx,
+          )
+          await withdrawalRepository.incrementAssignmentCount(a.withdrawalId, tx)
+          await withdrawalRepository.updateStatus(
+            { id: a.withdrawalId, status: 'PENDING' },
+            tx,
+          )
+          withdrawalIdsToReassign.push(a.withdrawalId)
+          void now
+        }
+
+        await agencyHostService.handleAgentAccountDeletion(
+          agencyUserId,
+          tx,
+          'AGENCY_BANNED',
+        )
+
+        await tx.user.update({
+          where: { id: agencyUserId },
+          data: {
+            agencyBarredAt: new Date(),
+            agencyBarredReason: reason?.trim() || null,
+          },
+        })
+      },
+      { isolationLevel: 'Serializable', timeout: 30_000 },
+    )
+
+    for (const a of openAssignments) {
+      await removePayrollSla(a.id).catch(() => {})
+      if (a.status === 'WAITING') {
+        await removePayrollWaiting(a.id).catch(() => {})
+      }
+    }
+
+    for (const wid of [...new Set(withdrawalIdsToReassign)]) {
+      await withdrawalService.assignToAgency(wid).catch(() => {})
+    }
+
+    await agencyService.bustCachesForAgency(agencyUserId, agency.defaultPublicId)
+    await agencyCoinsellerService._bustCache(agencyUserId)
+    await agencyService.bustRankingCache()
+
+    return {
+      ok: true as const,
+      agencyUserId,
+      agencyPublicId: agency.defaultPublicId.toString(),
+      barred: true as const,
+      adminUserId,
+    }
+  },
+
+  async unbarUser(userId: string, adminUserId: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, agencyBarredAt: true },
+    })
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    if (!user.agencyBarredAt) {
+      throw new AppError(400, 'User is not agency-barred', 'NOT_AGENCY_BARRED')
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { agencyBarredAt: null, agencyBarredReason: null },
+    })
+
+    const { adminWalletService } = await import('./adminWallet.service')
+    await adminWalletService.setAllWalletsFrozen(userId, false, adminUserId)
+
+    return { ok: true as const, userId, barred: false as const }
   },
 }

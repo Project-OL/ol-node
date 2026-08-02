@@ -10,6 +10,8 @@ import { pointWalletService } from './point-wallet.service'
 import { richTierService } from './rich-tier.service'
 import { walletService } from './wallet.service'
 import { getUserWalletFreezeFlags } from './wallet-freeze.service'
+import { walletLevelService } from './user-level.service'
+import { LevelType } from '@prisma/client'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -359,5 +361,71 @@ export const adminWalletService = {
 
   async getFreezeState(targetUserId: string) {
     return getUserWalletFreezeFlags(targetUserId)
+  },
+
+  async setAllWalletsFrozen(targetUserId: string, frozen: boolean, adminUserId: string) {
+    const user = await userRepository.findById(targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    await userRepository.update(targetUserId, {
+      personalCoinsFrozen: frozen,
+      tradingCoinsFrozen: frozen,
+      pointsFrozen: frozen,
+    })
+    auditService.log({
+      userId: adminUserId,
+      actionType: frozen ? 'ADMIN_FREEZE_ALL_WALLETS' : 'ADMIN_UNFREEZE_ALL_WALLETS',
+      actionStatus: 'success',
+      actionDetails: { targetUserId, frozen },
+    })
+    return {
+      ok: true as const,
+      userId: targetUserId,
+      personalCoinsFrozen: frozen,
+      tradingCoinsFrozen: frozen,
+      pointsFrozen: frozen,
+    }
+  },
+
+  async setLevelIncreaseOnly(params: {
+    adminUserId: string
+    targetUserId: string
+    type: 'wealth' | 'livestream'
+    targetLevel: number
+    reason?: string
+  }) {
+    const user = await userRepository.findById(params.targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const levelType = params.type === 'wealth' ? LevelType.WEALTH : LevelType.LIVESTREAM
+    const result = await walletLevelService.setLevelIncreaseOnly({
+      userId: params.targetUserId,
+      levelType,
+      targetLevel: params.targetLevel,
+    })
+
+    auditService.log({
+      userId: params.adminUserId,
+      actionType: 'ADMIN_SET_USER_LEVEL',
+      actionStatus: 'success',
+      actionDetails: {
+        targetUserId: params.targetUserId,
+        levelType: params.type,
+        targetLevel: params.targetLevel,
+        previousLevel: result.previousLevel,
+        currentLevel: result.currentLevel,
+        reason: params.reason ?? null,
+      },
+    })
+
+    return {
+      ok: true as const,
+      userId: params.targetUserId,
+      levelType: params.type,
+      previousLevel: result.previousLevel,
+      previousCumulative: result.previousCumulative,
+      currentLevel: result.currentLevel,
+      cumulativeTotal: result.cumulativeTotal,
+      snapshot: result.snapshot,
+    }
   },
 }

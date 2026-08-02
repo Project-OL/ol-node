@@ -64,6 +64,9 @@ model User {
   pointsFrozen          Boolean   @default(false) @map("points_frozen")
   postingSuspendedUntil DateTime? @map("posting_suspended_until")
   postingBanned         Boolean   @default(false) @map("posting_banned")
+  /// When set, user cannot be approved / create a new agency (set by admin agency ban).
+  agencyBarredAt        DateTime? @map("agency_barred_at")
+  agencyBarredReason    String?   @map("agency_barred_reason") @db.Text
   currentAgencyId       String?   @map("current_agency_id") @db.Uuid
 
   lastIpAddress String?  @map("last_ip_address") @db.VarChar(45)
@@ -2016,6 +2019,7 @@ enum AgencyHostHistoryReason {
   ADMIN_FORCE_EXIT
   AGENT_DELETED
   HOST_DELETED
+  AGENCY_BANNED
 }
 
 model Agency {

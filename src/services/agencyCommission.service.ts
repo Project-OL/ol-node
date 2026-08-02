@@ -109,8 +109,27 @@ export const agencyCommissionService = {
 
     const agencyRow = await tx.agency.findUnique({
       where: { userId: agencyUserId },
-      select: { currentLevel: true },
+      select: { currentLevel: true, pausedAt: true, pausedUntil: true },
     })
+    const nowMs = Date.now()
+    const agencyPaused =
+      agencyRow?.pausedAt != null &&
+      (agencyRow.pausedUntil == null || agencyRow.pausedUntil.getTime() > nowMs)
+    if (agencyPaused) {
+      // Mark processed so retries do not re-attempt; no commission while suspended.
+      try {
+        await tx.agencyCommissionProcessed.create({
+          data: { hostLedgerEntryId: params.hostLedgerEntryId },
+        })
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          return { bustAgentUserId: null }
+        }
+        throw e
+      }
+      return { bustAgentUserId: null }
+    }
+
     const levelKey = agencyRow?.currentLevel ?? 'D'
     const levelCfg = await tx.agencyCommissionLevel.findUnique({
       where: { level: levelKey },

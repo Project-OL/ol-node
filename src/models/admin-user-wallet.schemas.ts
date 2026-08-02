@@ -44,3 +44,10 @@ export const adminPostListQuerySchema = z.object({
   cursor: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
+
+export const adminSetLevelBodySchema = z.object({
+  targetLevel: z.coerce.number().int().min(1).max(200),
+  reason: z.string().max(500).optional(),
+})
+
+export const adminLevelTypeParamSchema = z.enum(['wealth', 'livestream'])
