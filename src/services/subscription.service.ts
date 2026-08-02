@@ -41,7 +41,7 @@ import { assertNotBlockedEitherWay, isBlockedEitherWay } from '../utils/block-re
 async function bustAgentCommissionIfNeeded(agentUserId: string | null): Promise<void> {
   if (!agentUserId) return
   const { agencyCommissionService } = await import('./agencyCommission.service')
-  await agencyCommissionService.bustAgentCommissionCaches(agentUserId)
+  await agencyCommissionService.afterCommissionCreditCommit(agentUserId)
 }
 
 async function creditCreatorSubscriptionPoints(

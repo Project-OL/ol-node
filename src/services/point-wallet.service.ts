@@ -320,7 +320,7 @@ export const pointWalletService = {
 
     if (bustAgentUserId) {
       const { agencyCommissionService } = await import('./agencyCommission.service')
-      await agencyCommissionService.bustAgentCommissionCaches(bustAgentUserId)
+      await agencyCommissionService.afterCommissionCreditCommit(bustAgentUserId)
     }
 
     const streamSnapshot = await walletLevelService.refreshCache(

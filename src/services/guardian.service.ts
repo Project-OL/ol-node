@@ -462,7 +462,7 @@ export const guardianService = {
     }
     if (bustAgentUserId) {
       const { agencyCommissionService } = await import('./agencyCommission.service')
-      await agencyCommissionService.bustAgentCommissionCaches(bustAgentUserId)
+      await agencyCommissionService.afterCommissionCreditCommit(bustAgentUserId)
     }
     await enqueueGuardianExpiry(guardian.id, expiresAt)
 

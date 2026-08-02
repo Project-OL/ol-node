@@ -59,16 +59,17 @@ export function utcDayFromTimestamp(d: Date): Date {
 }
 
 /**
- * Rolling window for agency level: last 30 fully elapsed UTC calendar days
- * ending yesterday — `[fromDay, toDay]` inclusive as DATE values.
+ * Rolling window for agency level: last 30 UTC calendar days **including today** —
+ * `[fromDay, toDay]` inclusive as DATE values (`today−29` … `today`).
+ * At UTC midnight the oldest day ages out and a new empty today enters.
  */
 export function agencyCommissionRollingWindowDays(now: Date = utcNow()): {
   fromDay: Date
   toDay: Date
 } {
   const todayStart = utcStartOfDay(now)
-  const toDay = addUtcDays(todayStart, -1)
-  const fromDay = addUtcDays(todayStart, -30)
+  const toDay = todayStart
+  const fromDay = addUtcDays(todayStart, -29)
   return { fromDay, toDay }
 }
 

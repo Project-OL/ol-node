@@ -299,7 +299,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
 
   if (txResult.bustAgentUserId) {
     const { agencyCommissionService } = await import('./agencyCommission.service')
-    await agencyCommissionService.bustAgentCommissionCaches(txResult.bustAgentUserId)
+    await agencyCommissionService.afterCommissionCreditCommit(txResult.bustAgentUserId)
   }
 
   await invalidateAfterGiftSend({

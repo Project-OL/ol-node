@@ -439,6 +439,7 @@ export const agencyCommissionService = {
       agencyUserId,
       fromDay,
       toDay,
+      { preferPrimary: true },
     )
     const levels = await agencyCommissionRepository.getLevelConfig()
     let newLevel = 'D'
@@ -468,6 +469,16 @@ export const agencyCommissionService = {
     )
 
     await this.bustAgentCommissionCaches(agencyUserId)
+  },
+
+  /**
+   * Post-commit after applyCommission (or reverse): refresh window total + tier.
+   * Uses primary DB; skips same-day dedupe so live credits always update.
+   * Commission for the credit that just landed already used the pre-update tier.
+   */
+  async afterCommissionCreditCommit(agencyUserId: string | null | undefined): Promise<void> {
+    if (!agencyUserId) return
+    await this.recomputeAgencyLevel(agencyUserId, { skipDailyDedupe: true })
   },
 
   async enqueueDailyRecomputeMaster(opts?: { utcDate?: string; force?: boolean }): Promise<void> {

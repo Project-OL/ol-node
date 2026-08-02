@@ -328,7 +328,7 @@ async function main() {
     AGENCY_LEVEL_JOB_MASTER,
     {},
     {
-      repeat: { pattern: '5 0 * * *', tz: 'UTC' },
+      repeat: { pattern: '0 0 * * *', tz: 'UTC' },
       jobId: 'agency-level-recompute-repeatable-master-utc',
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },

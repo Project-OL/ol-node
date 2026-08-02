@@ -661,7 +661,7 @@ export const adminTransactionsService = {
         result.livestreamResult,
       )
       if (result.commission.bustAgentUserId) {
-        await agencyCommissionService.bustAgentCommissionCaches(result.commission.bustAgentUserId)
+        await agencyCommissionService.afterCommissionCreditCommit(result.commission.bustAgentUserId)
       }
 
       auditService.log({
@@ -836,7 +836,7 @@ export const adminTransactionsService = {
         result.livestreamResult,
       )
       if (result.commission.bustAgentUserId) {
-        await agencyCommissionService.bustAgentCommissionCaches(result.commission.bustAgentUserId)
+        await agencyCommissionService.afterCommissionCreditCommit(result.commission.bustAgentUserId)
       }
 
       auditService.log({

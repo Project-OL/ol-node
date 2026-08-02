@@ -384,7 +384,7 @@ export const videoCallSessionService = {
 
     if (bustAgentUserId) {
       const { agencyCommissionService } = await import('./agencyCommission.service')
-      await agencyCommissionService.bustAgentCommissionCaches(bustAgentUserId)
+      await agencyCommissionService.afterCommissionCreditCommit(bustAgentUserId)
     }
 
     // Invalidate caches

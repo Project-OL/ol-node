@@ -1,5 +1,5 @@
 import { LedgerDirection, PointTxType, Prisma, WalletCurrencyType } from '@prisma/client'
-import { prismaRead } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -163,8 +163,14 @@ export const agencyCommissionRepository = {
     `
   },
 
-  async getAgencyWindowTotal(agencyUserId: string, fromDay: Date, toDay: Date): Promise<bigint> {
-    const rows = await prismaRead.$queryRaw<{ s: bigint }[]>`
+  async getAgencyWindowTotal(
+    agencyUserId: string,
+    fromDay: Date,
+    toDay: Date,
+    opts?: { preferPrimary?: boolean },
+  ): Promise<bigint> {
+    const client = opts?.preferPrimary ? prisma : prismaRead
+    const rows = await client.$queryRaw<{ s: bigint }[]>`
       SELECT COALESCE(SUM(e.host_earnings_points), 0)::bigint AS s
       FROM agency_daily_earnings e
       INNER JOIN users u ON u.id = e.host_user_id
@@ -175,6 +181,19 @@ export const agencyCommissionRepository = {
         AND u.status NOT IN ('suspended', 'deleted')
     `
     return rows[0]?.s ?? 0n
+  },
+
+  /** Cursor page of all agency owner ids (for nightly window-slide recompute). */
+  async listAllAgencyUserIds(opts: { cursor: string | null; limit: number }): Promise<string[]> {
+    const cur = opts.cursor && opts.cursor.length > 0 ? opts.cursor : ZERO_UUID
+    const rows = await prismaRead.$queryRaw<{ user_id: string }[]>`
+      SELECT a.user_id
+      FROM agencies a
+      WHERE a.user_id > ${cur}::uuid
+      ORDER BY a.user_id ASC
+      LIMIT ${opts.limit}
+    `
+    return rows.map((r) => r.user_id)
   },
 
   async listAgenciesForRecompute({
