@@ -98,6 +98,18 @@ export const agencyHostRepository = {
   ): Promise<
     Map<string, { hostEarnings: bigint; hostCommission: bigint; liveDurationSeconds: bigint }>
   > {
+    return this.getHostEarningsAggregatesInRange(agencyUserId, hostUserIds)
+  },
+
+  /** Per-host aggregates; optional inclusive UTC day range. Missing hosts → absent from map. */
+  async getHostEarningsAggregatesInRange(
+    agencyUserId: string,
+    hostUserIds: string[],
+    fromDay?: Date,
+    toDay?: Date,
+  ): Promise<
+    Map<string, { hostEarnings: bigint; hostCommission: bigint; liveDurationSeconds: bigint }>
+  > {
     const map = new Map<
       string,
       { hostEarnings: bigint; hostCommission: bigint; liveDurationSeconds: bigint }
@@ -106,7 +118,18 @@ export const agencyHostRepository = {
 
     const rows = await prismaRead.agencyDailyEarning.groupBy({
       by: ['hostUserId'],
-      where: { agencyUserId, hostUserId: { in: hostUserIds } },
+      where: {
+        agencyUserId,
+        hostUserId: { in: hostUserIds },
+        ...(fromDay || toDay
+          ? {
+              day: {
+                ...(fromDay ? { gte: fromDay } : {}),
+                ...(toDay ? { lte: toDay } : {}),
+              },
+            }
+          : {}),
+      },
       _sum: {
         hostEarningsPoints: true,
         hostCommissionPoints: true,

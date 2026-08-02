@@ -410,12 +410,88 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { agencyUserId: string } }>(
     '/recompute/:agencyUserId',
-    { preHandler: [authenticateAdmin] },
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'Force recompute agency commission tier from the rolling 30-day window (yesterday back). Also accepts agency publicId via /:identifier routes below.',
+      },
+    },
     async (request: FastifyRequest<{ Params: { agencyUserId: string } }>, reply: FastifyReply) => {
-      await agencyCommissionService.recomputeAgencyLevel(request.params.agencyUserId, {
-        skipDailyDedupe: true,
-      })
-      return reply.send({ ok: true })
+      return reply.send(await agencyAdminService.forceRecomputeLevel(request.params.agencyUserId))
+    },
+  )
+
+  app.post<{ Params: { identifier: string } }>(
+    '/:identifier/recompute-level',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description: 'Force recompute agency tier (UUID or agency publicId).',
+      },
+    },
+    async (request, reply) => {
+      return reply.send(await agencyAdminService.forceRecomputeLevel(request.params.identifier))
+    },
+  )
+
+  app.get<{ Params: { identifier: string } }>(
+    '/:identifier/hosts/earnings',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'List all current hosts for an agency with host earnings + agency commission for a period (default rolling 30 days ending yesterday).',
+      },
+    },
+    async (request, reply) => {
+      const q = request.query as Record<string, string | undefined>
+      const periodParams =
+        q.from && q.to
+          ? { from: q.from, to: q.to }
+          : {
+              periodDays: Math.min(365, Math.max(1, Number(q.periodDays ?? q.period ?? '30') || 30)),
+            }
+      const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
+      return reply.send(
+        await agencyAdminService.listHostEarnings(request.params.identifier, periodParams, {
+          limit,
+          cursor: q.cursor ?? null,
+        }),
+      )
+    },
+  )
+
+  app.get<{ Params: { identifier: string } }>(
+    '/:identifier/commission/history',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'List AGENT_COMMISSION ledger credits for an agency (newest first). Filter by hostPublicId / hostUserId and period (default rolling 30 days ending yesterday).',
+      },
+    },
+    async (request, reply) => {
+      const q = request.query as Record<string, string | undefined>
+      const periodParams =
+        q.from && q.to
+          ? { from: q.from, to: q.to }
+          : {
+              periodDays: Math.min(365, Math.max(1, Number(q.periodDays ?? q.period ?? '30') || 30)),
+            }
+      const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
+      return reply.send(
+        await agencyAdminService.listCommissionHistory(request.params.identifier, periodParams, {
+          hostPublicId: q.hostPublicId?.trim() || undefined,
+          hostUserId: q.hostUserId?.trim() || undefined,
+          limit,
+          cursor: q.cursor ?? null,
+        }),
+      )
     },
   )
 

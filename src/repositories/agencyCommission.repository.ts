@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client'
+import { LedgerDirection, PointTxType, Prisma, WalletCurrencyType } from '@prisma/client'
 import { prismaRead } from '../config/database'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
@@ -37,6 +37,86 @@ export const agencyCommissionRepository = {
       matchChatRateBp: r.matchChatRateBp,
       sortOrder: r.sortOrder,
     }
+  },
+
+  /**
+   * AGENT_COMMISSION ledger rows on the agency POINT wallet (newest first).
+   * Optional `hostUserId` filters by counterparty (the host who generated the commission).
+   */
+  async listCommissionHistory(params: {
+    agencyUserId: string
+    hostUserId?: string
+    /** Inclusive lower bound (UTC). */
+    from?: Date
+    /** Exclusive upper bound (UTC); typically next midnight after inclusive `to` day. */
+    toExclusive?: Date
+    cursor?: string
+    limit: number
+  }): Promise<
+    Array<{
+      id: string
+      amount: bigint
+      balanceAfter: bigint
+      direction: LedgerDirection
+      refId: string | null
+      counterpartyId: string | null
+      description: string | null
+      metadata: unknown
+      createdAt: Date
+    }>
+  > {
+    const wallet = await prismaRead.wallet.findUnique({
+      where: {
+        userId_currencyType: {
+          userId: params.agencyUserId,
+          currencyType: WalletCurrencyType.POINT,
+        },
+      },
+      select: { id: true },
+    })
+    if (!wallet) return []
+
+    let cursorCreatedAt: Date | undefined
+    if (params.cursor) {
+      const cur = await prismaRead.pointLedgerEntry.findUnique({
+        where: { id: params.cursor },
+        select: { createdAt: true },
+      })
+      cursorCreatedAt = cur?.createdAt
+    }
+
+    const createdAt: Prisma.DateTimeFilter = {}
+    if (params.from) createdAt.gte = params.from
+    // Cursor pages older than the previous page; combine with toExclusive via AND of lt bounds.
+    const upperExclusive =
+      cursorCreatedAt && params.toExclusive
+        ? cursorCreatedAt < params.toExclusive
+          ? cursorCreatedAt
+          : params.toExclusive
+        : (cursorCreatedAt ?? params.toExclusive)
+    if (upperExclusive) createdAt.lt = upperExclusive
+
+    return prismaRead.pointLedgerEntry.findMany({
+      where: {
+        walletId: wallet.id,
+        txType: PointTxType.AGENT_COMMISSION,
+        ...(params.hostUserId ? { counterpartyId: params.hostUserId } : {}),
+        ...(Object.keys(createdAt).length > 0 ? { createdAt } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: params.limit + 1,
+      select: {
+        id: true,
+        amount: true,
+        balanceAfter: true,
+        direction: true,
+        refId: true,
+        counterpartyId: true,
+        description: true,
+        metadata: true,
+        createdAt: true,
+      },
+    })
   },
 
   async upsertDailyEarning(

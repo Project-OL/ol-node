@@ -76,6 +76,11 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
   ],
   AgencyDetailView: [
     'GET /admin/agency/:identifier',
+    'GET /admin/agency/:identifier/hosts/earnings',
+    'GET /admin/agency/:identifier/commission/history',
+    'POST /admin/agency/:identifier/recompute-level',
+    'POST /admin/agency/recompute/:agencyUserId',
+    'POST /admin/agency/recompute-master',
     'PATCH /admin/agency/:identifier/commission-tier',
     'POST /admin/agency/:identifier/hosts',
     'POST /admin/agency/:identifier/transfer-hosts',
