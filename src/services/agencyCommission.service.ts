@@ -181,6 +181,109 @@ export const agencyCommissionService = {
     return { bustAgentUserId: agencyUserId }
   },
 
+  /**
+   * Undo `applyCommission` for a host point credit (admin gift/point revert).
+   * Debits the agent’s AGENT_COMMISSION credit (fails if agent lacks points),
+   * reverses daily earning deltas (floored at 0), and clears the processed marker.
+   */
+  async reverseCommission(
+    params: {
+      hostLedgerEntryId: string
+      reason: string
+    },
+    tx: Prisma.TransactionClient,
+  ): Promise<{
+    bustAgentUserId: string | null
+    reversed: boolean
+    commissionPoints: string | null
+  }> {
+    const processed = await tx.agencyCommissionProcessed.findUnique({
+      where: { hostLedgerEntryId: params.hostLedgerEntryId },
+    })
+    if (!processed) {
+      return { bustAgentUserId: null, reversed: false, commissionPoints: null }
+    }
+
+    const hostEntry = await tx.pointLedgerEntry.findUnique({
+      where: { id: params.hostLedgerEntryId },
+      select: {
+        id: true,
+        amount: true,
+        createdAt: true,
+        wallet: { select: { userId: true } },
+      },
+    })
+    if (!hostEntry) {
+      return { bustAgentUserId: null, reversed: false, commissionPoints: null }
+    }
+
+    const hostUserId = hostEntry.wallet.userId
+    const commissionKey = `agency-commission:${params.hostLedgerEntryId}`
+    const reverseKey = `agency-commission-reverse:${params.hostLedgerEntryId}`
+
+    const commissionEntry = await tx.pointLedgerEntry.findUnique({
+      where: { idempotencyKey: commissionKey },
+      include: { wallet: { select: { userId: true } } },
+    })
+
+    let agencyUserId: string | null = null
+    let commissionPoints = 0n
+
+    if (commissionEntry) {
+      agencyUserId = commissionEntry.wallet.userId
+      commissionPoints = commissionEntry.amount
+      await pointWalletService.debit(
+        agencyUserId,
+        commissionPoints,
+        PointTxType.ADJUSTMENT,
+        tx,
+        {
+          idempotencyKey: reverseKey,
+          description: `Admin commission reverse: ${params.reason}`.slice(0, 500),
+          counterpartyId: hostUserId,
+          refId: params.hostLedgerEntryId,
+          availabilityCheck: true,
+          metadata: {
+            source: 'admin_commission_reverse',
+            hostLedgerEntryId: params.hostLedgerEntryId,
+            originalCommissionLedgerEntryId: commissionEntry.id,
+            reason: params.reason,
+          },
+        },
+      )
+    } else {
+      const host = await tx.user.findUnique({
+        where: { id: hostUserId },
+        select: { currentAgencyId: true },
+      })
+      agencyUserId = host?.currentAgencyId ?? null
+    }
+
+    if (agencyUserId) {
+      const { utcDayFromTimestamp } = await import('../utils/datetime')
+      await agencyCommissionRepository.upsertDailyEarning(
+        {
+          agencyUserId,
+          hostUserId,
+          day: utcDayFromTimestamp(hostEntry.createdAt),
+          hostEarningsDelta: -hostEntry.amount,
+          hostCommissionDelta: -commissionPoints,
+        },
+        tx,
+      )
+    }
+
+    await tx.agencyCommissionProcessed.delete({
+      where: { hostLedgerEntryId: params.hostLedgerEntryId },
+    })
+
+    return {
+      bustAgentUserId: agencyUserId,
+      reversed: true,
+      commissionPoints: commissionPoints > 0n ? commissionPoints.toString() : null,
+    }
+  },
+
   async bustAgentCommissionCaches(agencyUserId: string): Promise<void> {
     try {
       await Promise.all([

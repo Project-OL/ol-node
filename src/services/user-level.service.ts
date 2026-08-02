@@ -190,6 +190,52 @@ export const walletLevelService = {
     return { newLevel, previousLevel, newCumulative }
   },
 
+  /**
+   * Undo XP previously added via `applyCredit` (admin transaction revert).
+   * Cumulative is floored at 0; level is recomputed from thresholds (may level down).
+   */
+  async applyDebit(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    levelType: LevelType,
+    decrement: bigint,
+  ): Promise<{ newLevel: number; previousLevel: number; newCumulative: bigint }> {
+    if (decrement <= 0n) {
+      const current = await tx.walletUserLevel.upsert({
+        where: { userId_levelType: { userId, levelType } },
+        create: { userId, levelType, currentLevel: 1, cumulativeTotal: 0n },
+        update: {},
+      })
+      return {
+        newLevel: current.currentLevel,
+        previousLevel: current.currentLevel,
+        newCumulative: current.cumulativeTotal,
+      }
+    }
+
+    const current = await tx.walletUserLevel.upsert({
+      where: { userId_levelType: { userId, levelType } },
+      create: { userId, levelType, currentLevel: 1, cumulativeTotal: 0n },
+      update: {},
+    })
+
+    const newCumulative =
+      current.cumulativeTotal > decrement ? current.cumulativeTotal - decrement : 0n
+    const thresholds = await getThresholds(levelType)
+    const newLevel = computeLevel(newCumulative, thresholds)
+    const previousLevel = current.currentLevel
+
+    await tx.walletUserLevel.update({
+      where: { userId_levelType: { userId, levelType } },
+      data: {
+        cumulativeTotal: newCumulative,
+        currentLevel: newLevel,
+      },
+    })
+
+    return { newLevel, previousLevel, newCumulative }
+  },
+
   async refreshCache(
     userId: string,
     levelType: LevelType,

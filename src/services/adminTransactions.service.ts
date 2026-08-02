@@ -1,6 +1,7 @@
 import {
   CoinTxType,
   LedgerDirection,
+  LevelType,
   PointTxType,
   WalletCurrencyType,
 } from '@prisma/client'
@@ -20,7 +21,32 @@ import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { coinTradingService } from './coinTrading.service'
 import { walletService } from './wallet.service'
+import {
+  syncLevelCacheFromApplyResult,
+  walletLevelService,
+} from './user-level.service'
+import { agencyCommissionService } from './agencyCommission.service'
+
 const TX_TIMEOUT_MS = 20_000
+
+/** Coin spend types that awarded wealth XP on the original debit. */
+const WEALTH_REVERT_COIN_TYPES = new Set<CoinTxType>([
+  CoinTxType.GIFT_SEND,
+  CoinTxType.STORE_ITEM_PURCHASE,
+  CoinTxType.GUARDIAN_PURCHASE,
+  CoinTxType.CREATOR_SUBSCRIPTION,
+  CoinTxType.VIDEO_CALL,
+  CoinTxType.CUSTOM_GIFT_REQUEST,
+])
+
+/** Point credit types that awarded livestream XP (and may have agency commission). */
+const LIVESTREAM_REVERT_POINT_TYPES = new Set<PointTxType>([
+  PointTxType.GIFT_RECEIVE,
+  PointTxType.LIVESTREAM_GIFT,
+  PointTxType.VIDEO_CALL,
+  PointTxType.SUBSCRIPTION,
+  PointTxType.GUARDIAN_PURCHASE,
+])
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -452,7 +478,22 @@ export const adminTransactionsService = {
               },
             },
           )
-          return { debit, credit }
+
+          let wealthResult = null
+          if (
+            currencyType === WalletCurrencyType.COIN &&
+            WEALTH_REVERT_COIN_TYPES.has(entry.txType)
+          ) {
+            // Original spend awarded wealth XP to the sender — claw it back.
+            wealthResult = await walletLevelService.applyDebit(
+              tx,
+              senderUserId,
+              LevelType.WEALTH,
+              amount,
+            )
+          }
+
+          return { debit, credit, wealthResult }
         },
         { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
       )
@@ -464,6 +505,7 @@ export const adminTransactionsService = {
         await walletService.adjustTradingBalanceCache(receiverUserId)
         await walletService.adjustTradingBalanceCache(senderUserId)
       }
+      await syncLevelCacheFromApplyResult(senderUserId, LevelType.WEALTH, result.wealthResult)
 
       auditService.log({
         userId: params.adminUserId,
@@ -478,6 +520,7 @@ export const adminTransactionsService = {
           reason: params.reason,
           debitLedgerEntryId: result.debit.ledgerEntryId,
           creditLedgerEntryId: result.credit.ledgerEntryId,
+          wealthXpReversed: Boolean(result.wealthResult),
           idempotencyKey: baseKey,
         },
       })
@@ -491,6 +534,11 @@ export const adminTransactionsService = {
         currencyType,
         debitLedgerEntryId: result.debit.ledgerEntryId,
         creditLedgerEntryId: result.credit.ledgerEntryId,
+        sideEffects: {
+          wealthXpReversed: Boolean(result.wealthResult),
+          livestreamXpReversed: false,
+          agencyCommissionReversed: false,
+        },
       }
     } catch (err) {
       if (err instanceof AppError && err.code === 'INSUFFICIENT_COINS') {
@@ -575,13 +623,46 @@ export const adminTransactionsService = {
               },
             },
           )
-          return { debit, credit }
+
+          let livestreamResult = null
+          let commission = {
+            bustAgentUserId: null as string | null,
+            reversed: false,
+            commissionPoints: null as string | null,
+          }
+
+          // Side effects were applied on the original host CREDIT row.
+          if (
+            entry.direction === LedgerDirection.CREDIT &&
+            LIVESTREAM_REVERT_POINT_TYPES.has(entry.txType)
+          ) {
+            livestreamResult = await walletLevelService.applyDebit(
+              tx,
+              receiverUserId,
+              LevelType.LIVESTREAM,
+              amount,
+            )
+            commission = await agencyCommissionService.reverseCommission(
+              { hostLedgerEntryId: entry.id, reason: params.reason },
+              tx,
+            )
+          }
+
+          return { debit, credit, livestreamResult, commission }
         },
         { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
       )
 
       await walletService.adjustPointBalanceCache(receiverUserId, -amount)
       await walletService.adjustPointBalanceCache(senderUserId, amount)
+      await syncLevelCacheFromApplyResult(
+        receiverUserId,
+        LevelType.LIVESTREAM,
+        result.livestreamResult,
+      )
+      if (result.commission.bustAgentUserId) {
+        await agencyCommissionService.bustAgentCommissionCaches(result.commission.bustAgentUserId)
+      }
 
       auditService.log({
         userId: params.adminUserId,
@@ -595,6 +676,9 @@ export const adminTransactionsService = {
           reason: params.reason,
           debitLedgerEntryId: result.debit.ledgerEntryId,
           creditLedgerEntryId: result.credit.ledgerEntryId,
+          livestreamXpReversed: Boolean(result.livestreamResult),
+          agencyCommissionReversed: result.commission.reversed,
+          commissionPoints: result.commission.commissionPoints,
           idempotencyKey: baseKey,
         },
       })
@@ -607,6 +691,12 @@ export const adminTransactionsService = {
         amount: amount.toString(),
         debitLedgerEntryId: result.debit.ledgerEntryId,
         creditLedgerEntryId: result.credit.ledgerEntryId,
+        sideEffects: {
+          wealthXpReversed: false,
+          livestreamXpReversed: Boolean(result.livestreamResult),
+          agencyCommissionReversed: result.commission.reversed,
+          commissionPoints: result.commission.commissionPoints,
+        },
       }
     } catch (err) {
       if (err instanceof AppError && err.code === 'INSUFFICIENT_POINTS') {
@@ -645,25 +735,55 @@ export const adminTransactionsService = {
     try {
       const result = await prisma.$transaction(
         async (tx) => {
-          const debit = await pointWalletService.debit(
-            giftTx.receiverUserId,
-            points,
-            PointTxType.ADJUSTMENT,
-            tx,
-            {
-              idempotencyKey: `admin-revert:gift:${giftTx.id}:debit`,
-              description: `Admin gift revert (points): ${params.reason}`.slice(0, 500),
-              counterpartyId: giftTx.senderUserId,
-              refId: giftTx.id,
-              availabilityCheck: true,
-              metadata: {
-                adminUserId: params.adminUserId,
-                source: 'admin_gift_revert',
-                giftTransactionId: giftTx.id,
-                reason: params.reason,
-              },
-            },
-          )
+          // Prefer reversing commission before host point debit so agent clawback
+          // fails fast if the agent already spent commission points.
+          const hostPointEntry =
+            points > 0n
+              ? await tx.pointLedgerEntry.findFirst({
+                  where: {
+                    refId: giftTx.id,
+                    txType: PointTxType.GIFT_RECEIVE,
+                    direction: LedgerDirection.CREDIT,
+                  },
+                  select: { id: true },
+                })
+              : null
+
+          let commission = {
+            bustAgentUserId: null as string | null,
+            reversed: false,
+            commissionPoints: null as string | null,
+          }
+          if (hostPointEntry) {
+            commission = await agencyCommissionService.reverseCommission(
+              { hostLedgerEntryId: hostPointEntry.id, reason: params.reason },
+              tx,
+            )
+          }
+
+          const debit =
+            points > 0n
+              ? await pointWalletService.debit(
+                  giftTx.receiverUserId,
+                  points,
+                  PointTxType.ADJUSTMENT,
+                  tx,
+                  {
+                    idempotencyKey: `admin-revert:gift:${giftTx.id}:debit`,
+                    description: `Admin gift revert (points): ${params.reason}`.slice(0, 500),
+                    counterpartyId: giftTx.senderUserId,
+                    refId: giftTx.id,
+                    availabilityCheck: true,
+                    metadata: {
+                      adminUserId: params.adminUserId,
+                      source: 'admin_gift_revert',
+                      giftTransactionId: giftTx.id,
+                      reason: params.reason,
+                    },
+                  },
+                )
+              : null
+
           const credit = await coinWalletService.credit(
             giftTx.senderUserId,
             coins,
@@ -683,13 +803,41 @@ export const adminTransactionsService = {
               },
             },
           )
-          return { debit, credit }
+
+          const wealthResult = await walletLevelService.applyDebit(
+            tx,
+            giftTx.senderUserId,
+            LevelType.WEALTH,
+            coins,
+          )
+          const livestreamResult =
+            points > 0n
+              ? await walletLevelService.applyDebit(
+                  tx,
+                  giftTx.receiverUserId,
+                  LevelType.LIVESTREAM,
+                  points,
+                )
+              : null
+
+          return { debit, credit, wealthResult, livestreamResult, commission }
         },
         { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
       )
 
       await walletService.adjustCoinBalanceCache(giftTx.senderUserId, coins)
-      await walletService.adjustPointBalanceCache(giftTx.receiverUserId, -points)
+      if (points > 0n) {
+        await walletService.adjustPointBalanceCache(giftTx.receiverUserId, -points)
+      }
+      await syncLevelCacheFromApplyResult(giftTx.senderUserId, LevelType.WEALTH, result.wealthResult)
+      await syncLevelCacheFromApplyResult(
+        giftTx.receiverUserId,
+        LevelType.LIVESTREAM,
+        result.livestreamResult,
+      )
+      if (result.commission.bustAgentUserId) {
+        await agencyCommissionService.bustAgentCommissionCaches(result.commission.bustAgentUserId)
+      }
 
       auditService.log({
         userId: params.adminUserId,
@@ -702,8 +850,12 @@ export const adminTransactionsService = {
           coins: coins.toString(),
           points: points.toString(),
           reason: params.reason,
-          debitPointLedgerEntryId: result.debit.ledgerEntryId,
+          debitPointLedgerEntryId: result.debit?.ledgerEntryId ?? null,
           creditCoinLedgerEntryId: result.credit.ledgerEntryId,
+          wealthXpReversed: true,
+          livestreamXpReversed: Boolean(result.livestreamResult),
+          agencyCommissionReversed: result.commission.reversed,
+          commissionPoints: result.commission.commissionPoints,
         },
       })
 
@@ -714,8 +866,14 @@ export const adminTransactionsService = {
         receiverUserId: giftTx.receiverUserId,
         coinsCredited: coins.toString(),
         pointsDebited: points.toString(),
-        debitPointLedgerEntryId: result.debit.ledgerEntryId,
+        debitPointLedgerEntryId: result.debit?.ledgerEntryId ?? null,
         creditCoinLedgerEntryId: result.credit.ledgerEntryId,
+        sideEffects: {
+          wealthXpReversed: true,
+          livestreamXpReversed: Boolean(result.livestreamResult),
+          agencyCommissionReversed: result.commission.reversed,
+          commissionPoints: result.commission.commissionPoints,
+        },
       }
     } catch (err) {
       if (err instanceof AppError && err.code === 'INSUFFICIENT_POINTS') {

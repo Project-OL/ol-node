@@ -64,14 +64,20 @@ export const agencyCommissionRepository = {
         ${agencyUserId}::uuid,
         ${hostUserId}::uuid,
         ${day}::date,
-        ${hostEarningsDelta},
-        ${hostCommissionDelta},
+        GREATEST(0, ${hostEarningsDelta}),
+        GREATEST(0, ${hostCommissionDelta}),
         true,
         NOW()
       )
       ON CONFLICT (agency_user_id, host_user_id, day) DO UPDATE SET
-        host_earnings_points = agency_daily_earnings.host_earnings_points + EXCLUDED.host_earnings_points,
-        host_commission_points = agency_daily_earnings.host_commission_points + EXCLUDED.host_commission_points,
+        host_earnings_points = GREATEST(
+          0,
+          agency_daily_earnings.host_earnings_points + ${hostEarningsDelta}
+        ),
+        host_commission_points = GREATEST(
+          0,
+          agency_daily_earnings.host_commission_points + ${hostCommissionDelta}
+        ),
         host_was_active = true,
         last_credit_at = NOW()
     `
