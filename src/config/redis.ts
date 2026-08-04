@@ -352,6 +352,8 @@ export const RedisKeys = {
   adminLoginFail: (email: string) => `admin:login:fail:${email.toLowerCase()}`,
   /** Cached per-admin view permission snapshot (JSON; TTL ADMIN_VIEW_ACCESS_TTL). */
   adminViewAccess: (adminId: string) => `admin:views:access:${adminId}`,
+  /** Per-admin last searched/viewed users (Redis LIST of userIds; max 10). */
+  adminUserSearchHistory: (adminId: string) => `admin:user-search-history:${adminId}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -463,6 +465,10 @@ export const ADMIN_LOGIN_FAIL_LIMIT = 10
 export const ADMIN_LOCKOUT_THRESHOLD = 5
 /** Account lock duration in minutes once the threshold is reached. */
 export const ADMIN_LOCKOUT_MINUTES = 15
+/** Per-admin user search/view history list TTL (90 days). */
+export const ADMIN_USER_SEARCH_HISTORY_TTL = 60 * 60 * 24 * 90
+/** Max recent users kept in admin search history. */
+export const ADMIN_USER_SEARCH_HISTORY_MAX = 10
 
 export const STORE_CATALOG_TTL = 600
 export const STORE_ITEM_TTL = 600

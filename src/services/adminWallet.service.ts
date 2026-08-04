@@ -386,7 +386,7 @@ export const adminWalletService = {
     }
   },
 
-  async setLevelIncreaseOnly(params: {
+  async setLevel(params: {
     adminUserId: string
     targetUserId: string
     type: 'wealth' | 'livestream'
@@ -397,7 +397,7 @@ export const adminWalletService = {
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
     const levelType = params.type === 'wealth' ? LevelType.WEALTH : LevelType.LIVESTREAM
-    const result = await walletLevelService.setLevelIncreaseOnly({
+    const result = await walletLevelService.setLevel({
       userId: params.targetUserId,
       levelType,
       targetLevel: params.targetLevel,
@@ -427,5 +427,16 @@ export const adminWalletService = {
       cumulativeTotal: result.cumulativeTotal,
       snapshot: result.snapshot,
     }
+  },
+
+  /** @deprecated Prefer {@link setLevel}. */
+  async setLevelIncreaseOnly(params: {
+    adminUserId: string
+    targetUserId: string
+    type: 'wealth' | 'livestream'
+    targetLevel: number
+    reason?: string
+  }) {
+    return adminWalletService.setLevel(params)
   },
 }

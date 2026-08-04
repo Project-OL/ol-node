@@ -5,6 +5,12 @@ import {
   adminUserSearchRepository,
   type AdminUserSearchRow,
 } from '../repositories/adminUserSearch.repository'
+import {
+  ADMIN_USER_SEARCH_HISTORY_MAX,
+  ADMIN_USER_SEARCH_HISTORY_TTL,
+  redisClient,
+  RedisKeys,
+} from '../config/redis'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 import { storeAdminService } from './store-admin.service'
 
@@ -33,6 +39,18 @@ export interface AdminUserSearchResultItem {
   phone: string | null
   matchedBy: AdminUserSearchMatchType
   store?: Awaited<ReturnType<typeof storeAdminService.getUserStoreSummary>>
+}
+
+export interface AdminUserSearchHistoryItem {
+  userId: string
+  name: string
+  username: string
+  publicId: string
+  displayPublicId: string
+  status: string
+  avatarUrl: string | null
+  isAgent: boolean
+  adminTags: string[]
 }
 
 function pickContact(
@@ -74,7 +92,64 @@ function resolveAutoType(query: string): Exclude<AdminUserSearchType, 'auto'> {
 }
 
 export const adminUserSearchService = {
-  async search(params: AdminUserSearchQuery): Promise<{
+  /**
+   * Push a user to the top of this admin's recent-search history (max 10, per admin).
+   * Dedupes by userId. Failures are swallowed — history is best-effort.
+   */
+  async recordHistory(
+    adminUserId: string,
+    user: { userId: string } | string,
+  ): Promise<void> {
+    const userId = typeof user === 'string' ? user : user.userId
+    if (!userId) return
+    const key = RedisKeys.adminUserSearchHistory(adminUserId)
+    try {
+      const pipe = redisClient.pipeline()
+      pipe.lrem(key, 0, userId)
+      pipe.lpush(key, userId)
+      pipe.ltrim(key, 0, ADMIN_USER_SEARCH_HISTORY_MAX - 1)
+      pipe.expire(key, ADMIN_USER_SEARCH_HISTORY_TTL)
+      await pipe.exec()
+    } catch {
+      // best-effort
+    }
+  },
+
+  async getHistory(adminUserId: string): Promise<{ users: AdminUserSearchHistoryItem[] }> {
+    const key = RedisKeys.adminUserSearchHistory(adminUserId)
+    let userIds: string[] = []
+    try {
+      userIds = await redisClient.lrange(key, 0, ADMIN_USER_SEARCH_HISTORY_MAX - 1)
+    } catch {
+      return { users: [] }
+    }
+    if (userIds.length === 0) return { users: [] }
+
+    const rows = await adminUserSearchRepository.findByUserIds(userIds)
+    const byId = new Map(rows.map((r) => [r.id, r]))
+    const users: AdminUserSearchHistoryItem[] = []
+    for (const id of userIds) {
+      const row = byId.get(id)
+      if (!row) continue
+      users.push({
+        userId: row.id,
+        name: buildUserDisplayName(row),
+        username: row.username,
+        publicId: String(row.publicId),
+        displayPublicId: resolveDisplayPublicId(row),
+        status: row.status,
+        avatarUrl: row.avatarUrl,
+        isAgent: row.isAgent,
+        adminTags: row.adminTags,
+      })
+    }
+    return { users }
+  },
+
+  async search(
+    params: AdminUserSearchQuery,
+    opts?: { adminUserId?: string },
+  ): Promise<{
     users: AdminUserSearchResultItem[]
     matchedBy: AdminUserSearchMatchType | null
   }> {
@@ -99,6 +174,21 @@ export const adminUserSearchService = {
       }
     }
 
+    const maybeRecordExact = async (result: {
+      users: AdminUserSearchResultItem[]
+      matchedBy: AdminUserSearchMatchType | null
+    }) => {
+      if (
+        opts?.adminUserId &&
+        result.users.length === 1 &&
+        result.matchedBy &&
+        result.matchedBy !== 'name'
+      ) {
+        await this.recordHistory(opts.adminUserId, result.users[0]!.userId)
+      }
+      return result
+    }
+
     if (effectiveType === 'name' && query.length < 2) {
       throw new AppError(400, 'Name search requires at least 2 characters', 'INVALID_REQUEST')
     }
@@ -109,13 +199,15 @@ export const adminUserSearchService = {
       }
       const row = await adminUserSearchRepository.findByUserId(query)
       if (row) {
-        return attachStore({
-          users: [mapRow(row, 'userId')],
-          matchedBy: 'userId',
-        })
+        return maybeRecordExact(
+          await attachStore({
+            users: [mapRow(row, 'userId')],
+            matchedBy: 'userId',
+          }),
+        )
       }
       if (params.type === 'auto') {
-        return this.searchByDevice(query, params.limit, includeStore)
+        return maybeRecordExact(await this.searchByDevice(query, params.limit, includeStore))
       }
       return { users: [], matchedBy: null }
     }
@@ -131,18 +223,22 @@ export const adminUserSearchService = {
         throw new AppError(400, 'Invalid public id', 'INVALID_PUBLIC_ID')
       }
       const row = await adminUserSearchRepository.findByPublicId(publicId)
-      return attachStore({
-        users: row ? [mapRow(row, 'publicId')] : [],
-        matchedBy: row ? 'publicId' : null,
-      })
+      return maybeRecordExact(
+        await attachStore({
+          users: row ? [mapRow(row, 'publicId')] : [],
+          matchedBy: row ? 'publicId' : null,
+        }),
+      )
     }
 
     if (effectiveType === 'email') {
       const row = await adminUserSearchRepository.findByEmail(query.toLowerCase())
-      return attachStore({
-        users: row ? [mapRow(row, 'email')] : [],
-        matchedBy: row ? 'email' : null,
-      })
+      return maybeRecordExact(
+        await attachStore({
+          users: row ? [mapRow(row, 'email')] : [],
+          matchedBy: row ? 'email' : null,
+        }),
+      )
     }
 
     if (effectiveType === 'phone') {
@@ -151,14 +247,16 @@ export const adminUserSearchService = {
         throw new AppError(400, 'Invalid phone number', 'INVALID_PHONE')
       }
       const row = await adminUserSearchRepository.findByPhone(normalized)
-      return attachStore({
-        users: row ? [mapRow(row, 'phone')] : [],
-        matchedBy: row ? 'phone' : null,
-      })
+      return maybeRecordExact(
+        await attachStore({
+          users: row ? [mapRow(row, 'phone')] : [],
+          matchedBy: row ? 'phone' : null,
+        }),
+      )
     }
 
     if (effectiveType === 'deviceId') {
-      return this.searchByDevice(query, params.limit, includeStore)
+      return maybeRecordExact(await this.searchByDevice(query, params.limit, includeStore))
     }
 
     const rows = await adminUserSearchRepository.searchByName(query, params.limit)

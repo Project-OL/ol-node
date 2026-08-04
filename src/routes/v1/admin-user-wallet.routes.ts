@@ -306,7 +306,7 @@ export default async function adminUserWalletRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users', 'Wallet'],
         description:
-          'Increase-only set wealth or livestream level to targetLevel (raises cumulative XP to that level threshold).',
+          'Set wealth or livestream level to targetLevel (raises or lowers cumulative XP to that level threshold).',
       },
     },
     async (request, reply) => {
@@ -323,7 +323,7 @@ export default async function adminUserWalletRoutes(app: FastifyInstance) {
         )
       }
       return reply.send(
-        await adminWalletService.setLevelIncreaseOnly({
+        await adminWalletService.setLevel({
           adminUserId: request.adminUser!.id,
           targetUserId: request.params.userId,
           type: typeParsed.data,

@@ -9,6 +9,7 @@ import { agencyHostRepository } from '../repositories/agencyHost.repository'
 import { agencyRepository } from '../repositories/agency.repository'
 import { bannedDeviceRepository } from '../repositories/bannedDevice.repository'
 import { deviceRepository } from '../repositories/device.repository'
+import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { userRepository } from '../repositories/user.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
 import { walletRepository } from '../repositories/wallet.repository'
@@ -24,6 +25,7 @@ import { walletService } from './wallet.service'
 import { richTierService } from './rich-tier.service'
 import { walletLevelService } from './user-level.service'
 import { storeAdminService } from './store-admin.service'
+import { adminUserSearchService } from './adminUserSearch.service'
 import { phoneSchema } from '../models/schemas'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 import { normalizeGenderStored } from '../utils/profileDisplay'
@@ -154,11 +156,11 @@ function resolveDeviceAndIp(
 }
 
 export const adminUserDetailService = {
-  async getUserDetail(userId: string) {
+  async getUserDetail(userId: string, opts?: { adminUserId?: string }) {
     const row = await adminUserDetailRepository.findUser(userId)
     if (!row) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
-    const [session, device, agency, vip, email, phone, levels, devicesBlock, store] =
+    const [session, device, agency, vip, email, phone, levels, devicesBlock, store, faceVerified] =
       await Promise.all([
       adminUserDetailRepository.getLatestSession(userId),
       adminUserDetailRepository.getLatestDevice(userId),
@@ -169,6 +171,7 @@ export const adminUserDetailService = {
       walletLevelService.getDisplayLevelsForUsers([userId]),
       buildDevicesBlock(userId, row.lastIpAddress),
       storeAdminService.getUserStoreSummary(userId),
+      faceVerificationRepository.isVerifiedForUser(userId),
     ])
 
     const deviceInfo = resolveDeviceAndIp(row, session, device)
@@ -178,7 +181,7 @@ export const adminUserDetailService = {
       ipAddresses.unshift(row.lastIpAddress.trim())
     }
 
-    return {
+    const detail = {
       userId: row.id,
       username: row.username,
       name: buildUserDisplayName(row),
@@ -192,6 +195,9 @@ export const adminUserDetailService = {
       phoneVerified: phone.verified,
       gender: normalizeGenderStored(row.gender),
       country: row.country,
+      faceVerified,
+      /** False while face verification is active; admin must revoke face first. */
+      genderEditable: !faceVerified,
       joinedAt: row.createdAt.toISOString(),
       lastLoggedInAt: deviceInfo.lastLoggedInAt,
       lastActiveAt: row.lastActiveAt?.toISOString() ?? deviceInfo.lastLoggedInAt,
@@ -217,6 +223,12 @@ export const adminUserDetailService = {
       },
       store,
     }
+
+    if (opts?.adminUserId) {
+      void adminUserSearchService.recordHistory(opts.adminUserId, detail.userId)
+    }
+
+    return detail
   },
 
   async getUserWallet(userId: string) {
@@ -260,6 +272,14 @@ export const adminUserDetailService = {
     }
 
     if (body.gender !== undefined) {
+      const faceVerified = await faceVerificationRepository.isVerifiedForUser(userId)
+      if (faceVerified) {
+        throw new AppError(
+          403,
+          'Cannot update gender while face verification is active. Revoke face verification first.',
+          'FACE_VERIFIED_GENDER_LOCKED',
+        )
+      }
       await userRepository.updateProfile(userId, { gender: body.gender })
     }
 

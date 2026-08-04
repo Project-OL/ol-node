@@ -408,6 +408,10 @@ export const adminTransactionsService = {
   /**
    * Revert a coin (personal or trading) ledger peer transfer:
    * 1) debit receiver  2) credit sender. Fails if receiver lacks balance.
+   *
+   * Trading-coin → personal/trading transfers (`coin_trading_transfers`) restore
+   * the agent’s **TRADING_COIN** wallet even when the ledger row being reverted
+   * sits on the recipient’s personal COIN wallet.
    */
   async revertCoinLedgerEntry(params: {
     ledgerEntryId: string
@@ -421,6 +425,62 @@ export const adminTransactionsService = {
     const existing = await adminTransactionsRepository.findExistingCoinReversal(entry.id)
     if (existing) {
       throw new AppError(409, 'Ledger entry already reverted', 'ALREADY_REVERTED')
+    }
+
+    const linkedTransfers = await coinTradingRepository.findTransfersByLedgerEntryIds([entry.id])
+    const linked = linkedTransfers[0]
+    if (linked) {
+      const transfer = await coinTradingRepository.getTransferById(linked.id)
+      if (!transfer) {
+        throw new AppError(404, 'Transfer not found', 'TRANSFER_NOT_FOUND')
+      }
+      if (transfer.reversedAt) {
+        throw new AppError(409, 'Transfer already reversed', 'TRANSFER_ALREADY_REVERSED')
+      }
+
+      await coinTradingService.reverseTransfer(
+        params.adminUserId,
+        transfer.id,
+        params.reason,
+      )
+
+      auditService.log({
+        userId: params.adminUserId,
+        actionType: 'ADMIN_TRANSACTION_REVERT_TRADING_TRANSFER',
+        actionStatus: 'success',
+        actionDetails: {
+          transferId: transfer.id,
+          originalLedgerEntryId: entry.id,
+          reason: params.reason,
+          senderAgentUserId: transfer.senderAgentUserId,
+          recipientUserId: transfer.recipientUserId,
+          restoredCurrencyType: WalletCurrencyType.TRADING_COIN,
+          recipientWalletType: transfer.recipientWalletType,
+          via: 'coin_ledger_entry',
+        },
+      })
+
+      return {
+        ok: true as const,
+        originalLedgerEntryId: entry.id,
+        transferId: transfer.id,
+        senderUserId: transfer.senderAgentUserId,
+        receiverUserId: transfer.recipientUserId,
+        amount: transfer.coinsCredited.toString(),
+        currencyType: entry.wallet.currencyType,
+        restoredToCurrencyType: WalletCurrencyType.TRADING_COIN,
+        recipientWalletType: transfer.recipientWalletType,
+        tradingCoinsCreditedToSender: transfer.tradingCoinsDebited.toString(),
+        coinsDebitedFromReceiver: transfer.coinsCredited.toString(),
+        debitLedgerEntryId: null as string | null,
+        creditLedgerEntryId: null as string | null,
+        sideEffects: {
+          wealthXpReversed: false,
+          livestreamXpReversed: false,
+          agencyCommissionReversed: false,
+          restoredToOriginalSource: true,
+        },
+      }
     }
 
     const { senderUserId, receiverUserId } = resolvePeerParties({

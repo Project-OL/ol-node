@@ -12,10 +12,10 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
   LoginView: ['POST /admin/auth/login'],
   HomeView: [],
   AboutView: [],
-  ReportsPlaceholderView: [],
-  UserListView: ['GET /admin/users/search'],
+  UserListView: ['GET /admin/users/search', 'GET /admin/users/search/history'],
   UserDetailView: [
     'GET /admin/users/search',
+    'GET /admin/users/search/history',
     'GET /admin/users/:id',
     'PATCH /admin/users/:id',
     'PUT /admin/users/:id/tags',
@@ -91,6 +91,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/agency/:identifier/ban',
     'POST /admin/agency/barred/:userId/unbar',
     'DELETE /admin/agency/:identifier',
+    'POST /admin/agency/users/:userId/wallet/credit',
     'POST /admin/users/:userId/messages/system',
   ],
   PlatformMessagesView: [
@@ -123,10 +124,12 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/gift-categories',
     'POST /admin/gift-categories',
     'PATCH /admin/gift-categories/:categoryId',
+    'POST /admin/gift-categories/reorder',
     'GET /admin/gift-gallery/categories',
     'POST /admin/gift-gallery/categories',
     'PATCH /admin/gift-gallery/categories/:sectionId',
     'POST /admin/gift-gallery/categories/:sectionId/gifts',
+    'POST /admin/gift-gallery/categories/reorder',
     'DELETE /admin/gift-gallery/categories/:sectionId',
   ],
   StoreAdminView: [

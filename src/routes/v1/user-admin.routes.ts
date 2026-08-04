@@ -19,7 +19,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users'],
         description:
-          'Search users by name, user id (UUID), public id, email, phone (E.164), or device id. Use `type=auto` (default) or force a field.',
+          'Search users by name, user id (UUID), public id, email, phone (E.164), or device id. Use `type=auto` (default) or force a field. Exact single matches are recorded in per-admin search history.',
         querystring: {
           type: 'object',
           required: ['q'],
@@ -44,8 +44,25 @@ export default async function userAdminRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const result = await adminUserSearchService.search(parsed.data)
+      const result = await adminUserSearchService.search(parsed.data, {
+        adminUserId: request.adminUser!.id,
+      })
       return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/users/search/history',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users'],
+        description:
+          'Last 10 users this admin searched (exact match) or opened via GET /users/:userId. Per-admin Redis history.',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return reply.send(await adminUserSearchService.getHistory(request.adminUser!.id))
     },
   )
 
@@ -55,7 +72,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Users'],
-        description: 'Full user profile for admin (identity, VIP, agency, device, status).',
+        description: 'Full user profile for admin (identity, VIP, agency, device, status). Also records search history.',
         params: {
           type: 'object',
           required: ['userId'],
@@ -64,7 +81,11 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      return reply.send(await adminUserDetailService.getUserDetail(request.params.userId))
+      return reply.send(
+        await adminUserDetailService.getUserDetail(request.params.userId, {
+          adminUserId: request.adminUser!.id,
+        }),
+      )
     },
   )
 
@@ -113,7 +134,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users'],
         description:
-          'Update user profile fields and status (active / suspend N days / ban). Revokes sessions on status change.',
+          'Partial update — send only fields to change (e.g. `{ "gender": "female" }`). Omitting username/name never clears them. Gender is locked while face verification is active (`FACE_VERIFIED_GENDER_LOCKED`). Revokes sessions on status change.',
         params: {
           type: 'object',
           required: ['userId'],

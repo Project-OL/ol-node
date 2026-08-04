@@ -287,10 +287,10 @@ export const walletLevelService = {
   },
 
   /**
-   * Admin-only: raise cumulative XP to the threshold of `targetLevel` (increase-only).
+   * Admin-only: set cumulative XP to the threshold of `targetLevel` (raise or lower).
    * Leaves the user at the start of that level so further XP progresses from there.
    */
-  async setLevelIncreaseOnly(params: {
+  async setLevel(params: {
     userId: string
     levelType: LevelType
     targetLevel: number
@@ -337,11 +337,11 @@ export const walletLevelService = {
         update: {},
       })
 
-      if (current.cumulativeTotal >= targetThreshold) {
+      if (current.cumulativeTotal === targetThreshold) {
         throw new AppError(
           400,
-          'User is already at or above the target level',
-          'LEVEL_ALREADY_AT_OR_ABOVE',
+          'User is already at the target level threshold',
+          'LEVEL_ALREADY_AT_TARGET',
         )
       }
 
@@ -384,6 +384,15 @@ export const walletLevelService = {
       cumulativeTotal: result.cumulativeTotal,
       snapshot,
     }
+  },
+
+  /** @deprecated Prefer {@link setLevel} — same behavior (now allows raise or lower). */
+  async setLevelIncreaseOnly(params: {
+    userId: string
+    levelType: LevelType
+    targetLevel: number
+  }) {
+    return walletLevelService.setLevel(params)
   },
 
   /**
