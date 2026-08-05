@@ -439,4 +439,21 @@ export async function onFaceRegistrationVerifyJobFailed(
   }
 
   console.error('[face-rekognition-worker] Face registration job failed:', job.id, err)
+
+  if (!willRetry) {
+    const session = await faceRegistrationRepository.findByIdForUser(
+      job.data.sessionId,
+      job.data.userId,
+    )
+    if (session?.status === 'PROCESSING') {
+      await failTerminal(job.data.sessionId, job.data.userId, 'worker_error', {
+        audit: {
+          details: {
+            message: err.message?.slice(0, 500),
+            name: err.name,
+          },
+        },
+      })
+    }
+  }
 }

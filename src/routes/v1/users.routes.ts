@@ -15,6 +15,7 @@ import { presenceService } from '../../services/presence.service'
 import { updateAcceptVideoCallsSchema } from '../../models/call.schemas'
 import { videoCallSettingsService } from '../../services/video-call.service'
 import { SetFcmTokenSchema } from '../../models/push-notification.schemas'
+import { userRestrictionService } from '../../services/userRestriction.service'
 
 const PATCH_ME_ALLOWED_FIELDS = new Set(['name', 'dob', 'bio'])
 
@@ -50,6 +51,21 @@ export default async function usersRoutes(app: FastifyInstance) {
         latencyMs: Date.now() - started,
       })
       return reply.status(200).send(data)
+    },
+  )
+
+  app.get(
+    '/me/restrictions',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Active timed moderation restrictions for the caller (messaging ban, live chat/audio mute, live-start ban).',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return reply.send(await userRestrictionService.listActiveForUser(request.userId!))
     },
   )
 

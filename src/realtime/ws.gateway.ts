@@ -12,6 +12,8 @@ import { messagingService } from '../services/messaging.service'
 
 import { presenceService } from '../services/presence.service'
 
+import { guardianService } from '../services/guardian.service'
+
 import { consumeWsTicket } from '../services/ws-ticket.service'
 
 import { connectionRegistry, type RegisteredSocket } from './connection-registry'
@@ -19,6 +21,8 @@ import { connectionRegistry, type RegisteredSocket } from './connection-registry
 import { conversationRooms } from './conversation-rooms'
 
 import { presenceRooms } from './presence-rooms'
+
+import { guardianRooms } from './guardian-rooms'
 
 import { redisConversationSubscriber } from './redis-subscriber'
 
@@ -122,6 +126,40 @@ async function handleLeavePresence(socketId: string, targetUserIds: string[]): P
   }
 }
 
+async function handleJoinGuardian(
+  socket: WebSocket,
+  socketId: string,
+  viewerUserId: string,
+  targetUserIds: string[],
+): Promise<void> {
+  const rs: RegisteredSocket = { socketId, userId: viewerUserId, ws: socket }
+
+  for (const targetUserId of new Set(targetUserIds)) {
+    const bump = guardianRooms.join(targetUserId, socketId, rs)
+    if (bump) {
+      await redisConversationSubscriber.subscribe(RedisKeys.guardianWatchChannel(targetUserId))
+    }
+    try {
+      const snapshot = await guardianService.buildGuardianSnapshotFrame(targetUserId)
+      sendServerFrame(socket, snapshot)
+    } catch {
+      sendServerFrame(socket, {
+        t: 'GUARDIAN',
+        event: 'guardian.snapshot',
+        targetUserId,
+        currentGuardian: null,
+      })
+    }
+  }
+}
+
+async function handleLeaveGuardian(socketId: string, targetUserIds: string[]): Promise<void> {
+  for (const targetUserId of new Set(targetUserIds)) {
+    if (!guardianRooms.leave(targetUserId, socketId)) continue
+    await redisConversationSubscriber.unsubscribe(RedisKeys.guardianWatchChannel(targetUserId))
+  }
+}
+
 export function registerRealtimeGateway(app: FastifyInstance): void {
   app.addHook('onReady', async () => {
     await redisConversationSubscriber.ensureStarted()
@@ -202,6 +240,12 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
 
         for (const u of presenceIds) {
           void redisConversationSubscriber.unsubscribe(RedisKeys.presenceChannel(u))
+        }
+
+        const guardianIds = guardianRooms.leaveAllForSocket(socketId)
+
+        for (const u of guardianIds) {
+          void redisConversationSubscriber.unsubscribe(RedisKeys.guardianWatchChannel(u))
         }
 
         const inboxIds = userInboxRooms.leaveAllForSocket(socketId)
@@ -316,6 +360,10 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
               await handleJoinPresence(socket, socketId, userId, frame.userIds)
             } else if (frame.t === 'LEAVE_PRESENCE') {
               await handleLeavePresence(socketId, frame.userIds)
+            } else if (frame.t === 'JOIN_GUARDIAN') {
+              await handleJoinGuardian(socket, socketId, userId, frame.userIds)
+            } else if (frame.t === 'LEAVE_GUARDIAN') {
+              await handleLeaveGuardian(socketId, frame.userIds)
             } else if (frame.t === 'RESUME') {
               const rows = await messagingService.getResumeSyncStates(userId, frame.conversations)
 

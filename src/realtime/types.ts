@@ -121,6 +121,43 @@ export type ServerFrame =
       sessionId: string
       detail?: Record<string, unknown>
     }
+  /**
+   * Guardian purchase / rank updates for the target user.
+   * - Target always receives via `msg:user:{targetUserId}` (auto on WS connect).
+   * - Watchers receive via `JOIN_GUARDIAN` → Redis `guardian:user:{targetUserId}`.
+   */
+  | {
+      t: 'GUARDIAN'
+      event: 'guardian.purchased' | 'guardian.updated' | 'guardian.expired' | 'guardian.snapshot'
+      targetUserId: string
+      /** Current top guardian for the target (null when none). */
+      currentGuardian: {
+        guardianId: string
+        guardianUserId: string
+        displayName: string
+        avatarUrl: string | null
+        tier: string
+        expiresAt: string
+        daysRemaining: number
+      } | null
+      /** Present on `guardian.purchased` — the purchase that triggered this frame. */
+      purchase?: {
+        guardianId: string
+        guardianUserId: string
+        tier: string
+        durationMonths: number
+        coinsPaid: string
+        expiresAt: string
+      }
+    }
+  /** Admin moderation restriction applied/cleared (subscribe `msg:user:{userId}`). */
+  | {
+      t: 'USER_RESTRICTION'
+      event: 'restriction.applied' | 'restriction.cleared'
+      restriction?: Record<string, unknown>
+      type?: string
+      clearedCount?: number
+    }
 
 export type ClientFrame =
   | { t: 'JOIN'; conversationId: string }
@@ -131,6 +168,9 @@ export type ClientFrame =
   | { t: 'READ'; conversationId: string; lastReadMessageId: string }
   | { t: 'JOIN_PRESENCE'; userIds: string[] }
   | { t: 'LEAVE_PRESENCE'; userIds: string[] }
+  /** Watch guardian updates for other (or own) user profiles — receives GUARDIAN frames + snapshot. */
+  | { t: 'JOIN_GUARDIAN'; userIds: string[] }
+  | { t: 'LEAVE_GUARDIAN'; userIds: string[] }
   | {
       t: 'RESUME'
       conversations: Array<{ conversationId: string; afterSeq?: number }>

@@ -3,6 +3,7 @@ import { env } from '../config/env'
 import { conversationRooms } from './conversation-rooms'
 import { presenceRooms } from './presence-rooms'
 import { userInboxRooms } from './user-inbox-rooms'
+import { guardianRooms } from './guardian-rooms'
 import WebSocket from 'ws'
 
 /** Must match `RedisKeys.convChannel` prefix. */
@@ -11,6 +12,8 @@ const CONV_CHANNEL_PREFIX = 'msg:conv:'
 const USER_INBOX_PREFIX = 'msg:user:'
 /** Must match `RedisKeys.presenceChannel` prefix. */
 const PRESENCE_CHANNEL_PREFIX = 'presence:user:'
+/** Must match `RedisKeys.guardianWatchChannel` prefix. */
+const GUARDIAN_WATCH_PREFIX = 'guardian:user:'
 
 function conversationIdFromChannel(channel: string): string | null {
   if (!channel.startsWith(CONV_CHANNEL_PREFIX)) return null
@@ -27,6 +30,12 @@ function presenceTargetUserId(channel: string): string | null {
 function inboxTargetUserId(channel: string): string | null {
   if (!channel.startsWith(USER_INBOX_PREFIX)) return null
   const id = channel.slice(USER_INBOX_PREFIX.length)
+  return id.length > 0 ? id : null
+}
+
+function guardianWatchTargetUserId(channel: string): string | null {
+  if (!channel.startsWith(GUARDIAN_WATCH_PREFIX)) return null
+  const id = channel.slice(GUARDIAN_WATCH_PREFIX.length)
   return id.length > 0 ? id : null
 }
 
@@ -106,6 +115,20 @@ class RedisRealtimeSubscriber {
       const presenceUserId = presenceTargetUserId(channel)
       if (presenceUserId) {
         const sockets = presenceRooms.getSockets(presenceUserId)
+        for (const rs of sockets) {
+          try {
+            if (rs.ws.readyState === WebSocket.OPEN) {
+              rs.ws.send(message)
+            }
+          } catch {
+            /* ignore broken socket */
+          }
+        }
+        return
+      }
+      const guardianUserId = guardianWatchTargetUserId(channel)
+      if (guardianUserId) {
+        const sockets = guardianRooms.getSockets(guardianUserId)
         for (const rs of sockets) {
           try {
             if (rs.ws.readyState === WebSocket.OPEN) {

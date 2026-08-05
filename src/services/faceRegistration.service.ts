@@ -9,6 +9,7 @@ import { storageService } from './storage.service'
 import { faceRegistrationRepository } from '../repositories/faceRegistration.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { createFaceLivenessSession, ensureCollectionExists } from '../lib/rekognition.client'
+import { mintFaceLivenessCredentials } from '../lib/face-liveness-credentials'
 import { buildRandomChallengeSequence } from './face-registration/face-registration.challenges'
 import { computeFaceRegistrationRiskScore } from './face-registration/face-registration.risk'
 import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
@@ -147,17 +148,23 @@ export const faceRegistrationService = {
 
     log.info({ userId, sessionId: session.id, awsSessionId }, 'face_registration_session_created')
 
+    const credentials = await mintFaceLivenessCredentials(userId)
+
     return {
       sessionId: session.id,
       rekognitionSessionId: awsSessionId,
       region: env.AWS_REGION,
       expiresAt: session.expiresAt.toISOString(),
+      /** AWS Face Liveness SessionId is typically valid ~3 minutes to start — begin SDK immediately. */
+      livenessStartWindowHintSec: 180,
       status: session.status,
       challengePayload: {
         nonce: challengeNonce,
         steps: challengeSequence,
         hint: 'Complete Face Liveness in the mobile SDK using rekognitionSessionId; server polls results asynchronously.',
       },
+      /** Temporary AWS creds for Amplify FaceLivenessDetector (null when FACE_LIVENESS_STS_ROLE_ARN unset). */
+      credentials,
       uploadUrls: null as null,
       retryCount: 0,
       riskScore,
@@ -258,8 +265,8 @@ export const faceRegistrationService = {
 
     try {
       const idemKey = RedisKeys.faceRegistrationVerifyIdem(sessionId, idempotencyKey)
-      const first = await redisClient.set(idemKey, '1', 'EX', 86400, 'NX')
-      if (!first) {
+      const existingIdem = await redisClient.get(idemKey)
+      if (existingIdem) {
         return { status: 'PROCESSING' }
       }
 
@@ -293,12 +300,23 @@ export const faceRegistrationService = {
       await emitFaceRegistration(userId, 'face.registration.processing', sessionId, {
         idempotencyKey,
       })
-      await enqueueFaceRegistrationVerification({
-        sessionId,
-        userId,
-        idempotencyKey,
-        requestId,
-      })
+      try {
+        await enqueueFaceRegistrationVerification({
+          sessionId,
+          userId,
+          idempotencyKey,
+          requestId,
+        })
+      } catch (enqueueErr) {
+        // Allow client retry with the same idempotency key if the job never landed.
+        await faceRegistrationRepository.updateSession(sessionId, {
+          status: session.status,
+          idempotencyKey: null,
+        })
+        throw enqueueErr
+      }
+      // Set idem key only after enqueue succeeds so a failed enqueue is not sticky-cached.
+      await redisClient.set(idemKey, '1', 'EX', 86400)
       return { status: 'PROCESSING' }
     } finally {
       await redisClient.del(lockKey)

@@ -28,6 +28,8 @@ import {
   type LevelApplyResult,
 } from './user-level.service'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { publishServerFrameToUser, publishServerFrameToGuardianWatchers } from '../utils/ws-publisher'
+import type { ServerFrame } from '../realtime/types'
 
 const MONTHLY_PRICE: Record<GuardianTier, number> = {
   SILVER: 150_000,
@@ -183,6 +185,39 @@ function parseCachedActiveGuardianSummary(raw: string): ActiveGuardianSummary | 
 
 function daysRemainingFor(expiresAt: Date): number {
   return Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / 86_400_000))
+}
+
+function currentGuardianWsPayload(
+  summary: ActiveGuardianSummary | null,
+): Extract<ServerFrame, { t: 'GUARDIAN' }>['currentGuardian'] {
+  if (!summary) return null
+  return {
+    guardianId: summary.guardianId,
+    guardianUserId: summary.guardianUserId,
+    displayName: summary.displayName,
+    avatarUrl: summary.avatarUrl,
+    tier: summary.tier,
+    expiresAt: summary.expiresAt.toISOString(),
+    daysRemaining: daysRemainingFor(summary.expiresAt),
+  }
+}
+
+async function publishGuardianFrame(
+  targetUserId: string,
+  frame: Extract<ServerFrame, { t: 'GUARDIAN' }>,
+): Promise<void> {
+  try {
+    // Target's own inbox (auto-subscribed on WS connect).
+    await publishServerFrameToUser(targetUserId, frame)
+  } catch {
+    /* best-effort */
+  }
+  try {
+    // JOIN_GUARDIAN watchers (profile / live viewers).
+    await publishServerFrameToGuardianWatchers(targetUserId, frame)
+  } catch {
+    /* best-effort */
+  }
 }
 
 function computeTopGuardianIdsByTarget(rows: Guardian[]): Map<string, string | null> {
@@ -473,6 +508,22 @@ export const guardianService = {
       guardianUserIds,
     })
 
+    const current = await guardianService.getActiveGuardianSummary(input.targetUserId)
+    await publishGuardianFrame(input.targetUserId, {
+      t: 'GUARDIAN',
+      event: 'guardian.purchased',
+      targetUserId: input.targetUserId,
+      currentGuardian: currentGuardianWsPayload(current),
+      purchase: {
+        guardianId: guardian.id,
+        guardianUserId: guardianUserId,
+        tier: guardian.tier,
+        durationMonths: guardian.durationMonths,
+        coinsPaid: guardian.coinsPaid.toString(),
+        expiresAt: guardian.expiresAt.toISOString(),
+      },
+    })
+
     return {
       guardianId: guardian.id,
       tier: guardian.tier,
@@ -559,6 +610,19 @@ export const guardianService = {
       GUARDIAN_ACTIVE_TTL,
     )
     return summary
+  },
+
+  /** Current top-guardian WS frame for JOIN_GUARDIAN snapshots. */
+  async buildGuardianSnapshotFrame(
+    targetUserId: string,
+  ): Promise<Extract<ServerFrame, { t: 'GUARDIAN' }>> {
+    const current = await this.getActiveGuardianSummary(targetUserId)
+    return {
+      t: 'GUARDIAN',
+      event: 'guardian.snapshot',
+      targetUserId,
+      currentGuardian: currentGuardianWsPayload(current),
+    }
   },
 
   /**
@@ -754,5 +818,12 @@ export const guardianService = {
       cacheService.delete(RedisKeys.guardianMeList(g.targetUserId)),
       cacheService.delete(RedisKeys.guardianMyList(g.guardianUserId)),
     ])
+    const current = await guardianService.getActiveGuardianSummary(g.targetUserId)
+    await publishGuardianFrame(g.targetUserId, {
+      t: 'GUARDIAN',
+      event: 'guardian.expired',
+      targetUserId: g.targetUserId,
+      currentGuardian: currentGuardianWsPayload(current),
+    })
   },
 }

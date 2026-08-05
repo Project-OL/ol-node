@@ -42,6 +42,14 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
     userIds: userIdList,
   }),
   z.object({
+    t: z.literal('JOIN_GUARDIAN'),
+    userIds: userIdList,
+  }),
+  z.object({
+    t: z.literal('LEAVE_GUARDIAN'),
+    userIds: userIdList,
+  }),
+  z.object({
     t: z.literal('RESUME'),
     conversations: z
       .array(

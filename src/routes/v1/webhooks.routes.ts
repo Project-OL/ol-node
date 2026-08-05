@@ -109,4 +109,17 @@ export async function webhooksRoutes(app: FastifyInstance) {
       return reply.code(200).send({ ok: true, alreadyEnded: result.alreadyEnded })
     },
   )
+
+  /**
+   * Livestream backend: fetch active timed restrictions (chat mute / audio mute / start ban).
+   * Auth: X-Live-Webhook-Secret
+   */
+  app.get<{ Params: { userId: string } }>(
+    '/live/user-restrictions/:userId',
+    { preHandler: [verifyLiveWebhookSecret] },
+    async (request, reply) => {
+      const { userRestrictionService } = await import('../../services/userRestriction.service')
+      return reply.send(await userRestrictionService.listActiveForUser(request.params.userId))
+    },
+  )
 }

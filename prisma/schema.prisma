@@ -175,6 +175,7 @@ model User {
   hostLiveSessions             HostLiveSession[]
   hostStreamBans               HostStreamBan[]               @relation("UserHostBans")
   liveStreams                  LiveStream[]
+  userRestrictions             UserRestriction[]
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -976,6 +977,7 @@ model MessageReport {
   reportedUser      User          @relation("Reported", fields: [reportedUserId], references: [id])
   hostUser          User?         @relation("ReportedLiveHost", fields: [hostUserId], references: [id], onDelete: SetNull)
   reviewedByAdmin   SystemAdmin?  @relation("ReportReviewer", fields: [reviewedByAdminId], references: [id], onDelete: SetNull)
+  restrictions      UserRestriction[]
 
   @@index([reporterId])
   @@index([reportedUserId])
@@ -983,6 +985,38 @@ model MessageReport {
   @@index([status, createdAt(sort: Desc)])
   @@index([context, status])
   @@map("message_reports")
+}
+
+/// Timed, per-feature moderation flags (live chat mute, live audio mute, messaging ban, live-start ban).
+/// Each type is independent — admins apply only the restrictions needed for a given report.
+enum UserRestrictionType {
+  LIVE_CHAT_MUTE
+  LIVE_AUDIO_MUTE
+  MESSAGING_DISABLE
+  LIVE_STREAM_START_BAN
+}
+
+model UserRestriction {
+  id               String              @id @default(uuid()) @db.Uuid
+  userId           String              @map("user_id") @db.Uuid
+  type             UserRestrictionType
+  restrictedUntil  DateTime            @map("restricted_until")
+  reason           String?             @db.Text
+  /// Optional link to the message/live report that triggered this restriction.
+  reportId         String?             @map("report_id")
+  createdByAdminId String              @map("created_by_admin_id")
+  clearedAt        DateTime?           @map("cleared_at")
+  clearedByAdminId String?             @map("cleared_by_admin_id")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  report MessageReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+
+  @@index([userId, type, clearedAt])
+  @@index([userId, restrictedUntil])
+  @@index([reportId])
+  @@map("user_restrictions")
 }
 
 model BroadcastReminder {

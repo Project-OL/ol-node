@@ -135,6 +135,8 @@ export const RedisKeys = {
   presenceChannel: (userId: string) => `presence:user:${userId}`,
   /** Messaging: per-user thin digest for badge/list when not in conv room (Phase 7). */
   userInboxChannel: (userId: string) => `msg:user:${userId}`,
+  /** Pub/sub for JOIN_GUARDIAN watchers (purchase / expiry / snapshot for a target user). */
+  guardianWatchChannel: (targetUserId: string) => `guardian:user:${targetUserId}`,
   /** One-time WebSocket upgrade ticket (GETDEL on connect). TTL 15m. */
   wsTicket: (token: string) => `ws:ticket:${token}`,
   /** Admin notification broadcast: per-campaign progress hash (adminUserId, message, total, remaining, sent, createdAt). */
@@ -344,6 +346,17 @@ export const RedisKeys = {
   liveActiveSession: (hostUserId: string) => `live:active:${hostUserId}`,
   /** Reserved for future rate limiting on session start. */
   liveStartRateLimit: (hostUserId: string) => `live:rl:start:${hostUserId}`,
+  /**
+   * Active timed user moderation flag (value = ISO restrictedUntil).
+   * Types: LIVE_CHAT_MUTE | LIVE_AUDIO_MUTE | MESSAGING_DISABLE | LIVE_STREAM_START_BAN
+   */
+  userRestriction: (userId: string, type: string) => `user:restriction:${userId}:${type}`,
+  /**
+   * Admin requested force-stop of a live room. Livestream backend should poll/subscribe
+   * and honor this (TODO: coordinate kill path with livestream service).
+   * Value: JSON `{ requestedAt, adminUserId, reason?, hostUserId, source }`
+   */
+  liveForceStop: (roomId: string) => `live:force-stop:${roomId}`,
   /** Short-lived flag set on admin logout; TTL matches ADMIN_JWT_ACCESS_EXPIRES_IN. */
   adminTokenRevoked: (adminId: string) => `admin:revoked:${adminId}`,
   /** Admin presence heartbeat — refreshed on every authenticated admin request (TTL ADMIN_ONLINE_TTL). */

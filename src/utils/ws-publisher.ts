@@ -118,3 +118,15 @@ export async function publishServerFrameToUser(userId: string, frame: ServerFram
   )
   await redisClient.publish(channel, payload)
 }
+
+/** Fan-out to JOIN_GUARDIAN watchers on `guardian:user:{targetUserId}`. */
+export async function publishServerFrameToGuardianWatchers(
+  targetUserId: string,
+  frame: ServerFrame,
+): Promise<void> {
+  const channel = RedisKeys.guardianWatchChannel(targetUserId)
+  const payload = JSON.stringify(frame, (_key, value) =>
+    typeof value === 'bigint' ? value.toString() : value,
+  )
+  await redisClient.publish(channel, payload)
+}

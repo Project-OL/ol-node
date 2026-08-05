@@ -28,6 +28,7 @@ import {
   RECORDING_INDICATOR_TTL_SEC,
   READ_RECEIPT_DEBOUNCE_MS,
 } from '../config/redis'
+import { userRestrictionService } from './userRestriction.service'
 import { AppError } from '../middlewares/errorHandler'
 import { MediaProcessingStatus } from '@prisma/client'
 import { publishServerFrameToConversation, publishToConversation } from '../utils/ws-publisher'
@@ -268,6 +269,9 @@ export const messagingService = {
     recipientId: string,
     options?: CanUserMessageOptions,
   ): Promise<void> {
+    // Admin-timed messaging ban — independent of peer blocks / privacy.
+    await userRestrictionService.assertNotRestricted(senderId, 'MESSAGING_DISABLE')
+
     if (await blockRepository.isBlocked(recipientId, senderId)) {
       // Evict any cached permission — block state wins regardless of TTL
       await redisClient.del(RedisKeys.allowedMessaging(recipientId, senderId)).catch(() => {})

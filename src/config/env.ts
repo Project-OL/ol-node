@@ -77,6 +77,19 @@ const envSchema = z
     FACE_LIVENESS_AUDIT_IMAGES_LIMIT: z.coerce.number().int().min(0).max(4).default(2),
     /** S3 prefix for Rekognition Face Liveness OutputConfig (reference + audit images). */
     FACE_LIVENESS_S3_OUTPUT_PREFIX: z.string().default('face-liveness'),
+    /**
+     * IAM role ARN for Amplify Face Liveness temporary credentials (AssumeRole).
+     * Role must allow rekognition:StartFaceLivenessSession. When unset, session
+     * response omits `credentials` and the client must supply its own AWS auth.
+     */
+    FACE_LIVENESS_STS_ROLE_ARN: z.string().optional(),
+    /** STS session duration for Face Liveness client credentials (seconds). */
+    FACE_LIVENESS_CREDENTIALS_DURATION_SEC: z.coerce
+      .number()
+      .int()
+      .min(900)
+      .max(3600)
+      .default(900),
 
     /** Rekognition DetectFaces quality thresholds (0–100 scale). */
     FACE_MIN_BRIGHTNESS: z.coerce.number().min(0).max(100).default(30),

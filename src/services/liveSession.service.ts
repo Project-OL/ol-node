@@ -13,6 +13,10 @@ export const liveSessionService = {
     roomId: string
     startedAt?: Date
   }) {
+    // Enforce admin LIVE_STREAM_START_BAN before recording agency duration.
+    const { userRestrictionService } = await import('./userRestriction.service')
+    await userRestrictionService.assertNotRestricted(data.hostUserId, 'LIVE_STREAM_START_BAN')
+
     const startedAt = data.startedAt ?? new Date()
 
     const existingKey = await redisClient.get(RedisKeys.liveActiveSession(data.hostUserId))
