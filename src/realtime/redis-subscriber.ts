@@ -66,6 +66,12 @@ class RedisRealtimeSubscriber {
     this.client.on('error', (err) => {
       console.error('❌ Redis subscriber error:', err)
     })
+    // lazyConnect: true — connect before any SUBSCRIBE so the first JOIN is not lost.
+    if (this.client.status === 'wait') {
+      await this.client.connect().catch((err) => {
+        console.error('❌ Redis subscriber connect failed:', err)
+      })
+    }
     this.client.on('message', (channel: string, message: string) => {
       const convId = conversationIdFromChannel(channel)
       if (convId) {

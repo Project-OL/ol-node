@@ -108,6 +108,8 @@ export type ServerFrame =
   | { t: 'PRESENCE'; userId: string; online: boolean }
   | { t: 'PONG'; ts: number }
   | { t: 'GOAWAY'; reason?: string }
+  /** Invalid client frame or recoverable WS error (do not close the socket). */
+  | { t: 'ERROR'; code: string; message: string; details?: unknown }
   /** Per-user face registration / liveness pipeline (subscribe `msg:user:{userId}` on WS). */
   | {
       t: 'FACE_REGISTRATION'

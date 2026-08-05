@@ -508,7 +508,7 @@ export const guardianService = {
       guardianUserIds,
     })
 
-    const current = await guardianService.getActiveGuardianSummary(input.targetUserId)
+    const current = await guardianService.getActiveGuardianSummary(input.targetUserId).catch(() => null)
     await publishGuardianFrame(input.targetUserId, {
       t: 'GUARDIAN',
       event: 'guardian.purchased',

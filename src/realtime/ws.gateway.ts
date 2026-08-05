@@ -302,11 +302,16 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
 
             if (!parsed.success) {
               app.log.warn(
-                { userId, socketId, err: parsed.error.flatten() },
-
+                { userId, socketId, err: parsed.error.flatten(), data },
                 '[ws] invalid client frame',
               )
-
+              sendServerFrame(socket, {
+                t: 'ERROR',
+                code: 'INVALID_FRAME',
+                message:
+                  'Invalid WebSocket frame. JOIN_GUARDIAN requires { t, userIds: string[] } with user UUIDs (not publicId).',
+                details: parsed.error.flatten(),
+              })
               return
             }
 
@@ -315,7 +320,6 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
             if (frame.t === 'JOIN') {
               app.log.info(
                 { userId, socketId, conversationId: frame.conversationId, msg: 'ws join' },
-
                 'realtime',
               )
 
@@ -323,7 +327,6 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
             } else if (frame.t === 'LEAVE') {
               app.log.info(
                 { userId, socketId, conversationId: frame.conversationId, msg: 'ws leave' },
-
                 'realtime',
               )
 
@@ -335,25 +338,19 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
             } else if (frame.t === 'TYPING') {
               await messagingService.handleTypingFrame(
                 userId,
-
                 frame.conversationId,
-
                 frame.isTyping,
               )
             } else if (frame.t === 'RECORDING') {
               await messagingService.handleRecordingFrame(
                 userId,
-
                 frame.conversationId,
-
                 frame.isRecording,
               )
             } else if (frame.t === 'READ') {
               messagingService.scheduleReadReceipt(
                 userId,
-
                 frame.conversationId,
-
                 frame.lastReadMessageId,
               )
             } else if (frame.t === 'JOIN_PRESENCE') {
@@ -361,8 +358,16 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
             } else if (frame.t === 'LEAVE_PRESENCE') {
               await handleLeavePresence(socketId, frame.userIds)
             } else if (frame.t === 'JOIN_GUARDIAN') {
+              app.log.info(
+                { userId, socketId, targetUserIds: frame.userIds, msg: 'ws join_guardian' },
+                'realtime',
+              )
               await handleJoinGuardian(socket, socketId, userId, frame.userIds)
             } else if (frame.t === 'LEAVE_GUARDIAN') {
+              app.log.info(
+                { userId, socketId, targetUserIds: frame.userIds, msg: 'ws leave_guardian' },
+                'realtime',
+              )
               await handleLeaveGuardian(socketId, frame.userIds)
             } else if (frame.t === 'RESUME') {
               const rows = await messagingService.getResumeSyncStates(userId, frame.conversations)
@@ -370,11 +375,8 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
               for (const r of rows) {
                 sendServerFrame(socket, {
                   t: 'SYNC_STATE',
-
                   conversationId: r.conversationId,
-
                   latestSeq: r.latestSeq,
-
                   hasGap: r.hasGap,
                 })
               }
