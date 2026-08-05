@@ -3,10 +3,13 @@
   "compilerOptions": {
     "incremental": true,
     "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "assumeChangesOnlyAffectDirectDependencies": true,
+    "pretty": false,
     "sourceMap": false,
     "declaration": false,
-    "declarationMap": false
+    "declarationMap": false,
+    "noEmitOnError": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "exclude": ["node_modules", "dist", "tests", "**/*.test.ts", "**/*.spec.ts"]
 }
