@@ -135,11 +135,19 @@ export const agencyKycService = {
     const row = await agencyApplicationKycRepository.getKycForAdminReview(userId)
     const faceIndexed = row.user?.faceProfile?.status === 'INDEXED'
     const faceOk = Boolean(row.kyc?.faceVerified) || faceIndexed
+    const govtKey = row.kyc?.govtIdS3Key?.trim()
+    const faceKey = row.user?.faceProfile?.s3KeyReference?.trim()
     return {
       userId,
       govtIdUploaded: Boolean(row.kyc?.govtIdSubmittedAt),
       contactSubmitted: Boolean(row.kyc?.contactSubmittedAt),
       faceVerified: faceOk,
+      govtIdUrl: govtKey ? storageService.getCdnOrS3PublicUrl(govtKey) : null,
+      faceImageUrl: faceKey ? storageService.getCdnOrS3PublicUrl(faceKey) : null,
+      contactPhone: row.kyc?.contactPhone ?? null,
+      contactEmail: row.kyc?.contactEmail ?? null,
+      contactSubmittedAt: row.kyc?.contactSubmittedAt?.toISOString() ?? null,
+      govtIdSubmittedAt: row.kyc?.govtIdSubmittedAt?.toISOString() ?? null,
       kyc: row.kyc,
     }
   },

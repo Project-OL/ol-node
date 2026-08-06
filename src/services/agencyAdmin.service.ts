@@ -58,10 +58,18 @@ function mapKycDocuments(kyc: {
     govtIdUploaded: Boolean(kyc?.govtIdSubmittedAt),
     govtIdUrl: kyc?.govtIdS3Key ? storageService.getCdnOrS3PublicUrl(kyc.govtIdS3Key) : null,
     govtIdSubmittedAt: kyc?.govtIdSubmittedAt?.toISOString() ?? null,
+    contactSubmitted: Boolean(kyc?.contactSubmittedAt),
     contactPhone: kyc?.contactPhone ?? null,
     contactEmail: kyc?.contactEmail ?? null,
     contactSubmittedAt: kyc?.contactSubmittedAt?.toISOString() ?? null,
   }
+}
+
+function faceImageUrlFromProfile(
+  faceProfile: { s3KeyReference?: string | null } | null | undefined,
+): string | null {
+  const key = faceProfile?.s3KeyReference?.trim()
+  return key ? storageService.getCdnOrS3PublicUrl(key) : null
 }
 
 function buildKycReviewStatus(
@@ -73,12 +81,14 @@ function buildKycReviewStatus(
     contactPhone: string | null
     contactEmail: string | null
   } | null,
-  faceIndexed: boolean,
+  faceProfile: { status?: string | null; s3KeyReference?: string | null } | null | undefined,
 ) {
+  const faceIndexed = faceProfile?.status === 'INDEXED'
   const faceOk = Boolean(kyc?.faceVerified) || faceIndexed
   return {
     ...mapKycDocuments(kyc),
     faceVerified: faceOk,
+    faceImageUrl: faceImageUrlFromProfile(faceProfile),
     isComplete: Boolean(kyc?.govtIdSubmittedAt) && Boolean(kyc?.contactSubmittedAt) && faceOk,
   }
 }
@@ -185,23 +195,51 @@ export const agencyAdminService = {
   },
 
   async listPendingApplications(params: { skip: number; take: number }) {
-    const statuses = ['PENDING', 'UNDER_REVIEW', 'MORE_DOCS_REQUIRED'] as const
+    return this.listApplications({
+      statuses: ['PENDING', 'UNDER_REVIEW', 'MORE_DOCS_REQUIRED'],
+      skip: params.skip,
+      take: params.take,
+    })
+  },
+
+  async listRejectedApplications(params: { skip: number; take: number }) {
+    return this.listApplications({
+      statuses: ['REJECTED'],
+      skip: params.skip,
+      take: params.take,
+    })
+  },
+
+  async listApplications(params: {
+    statuses: Array<
+      'PENDING' | 'UNDER_REVIEW' | 'MORE_DOCS_REQUIRED' | 'APPROVED' | 'REJECTED'
+    >
+    skip: number
+    take: number
+  }) {
     const [rows, total] = await Promise.all([
-      agencyAgentApplicationRepository.listByStatus([...statuses], params.skip, params.take),
-      agencyAgentApplicationRepository.count([...statuses]),
+      agencyAgentApplicationRepository.listByStatus([...params.statuses], params.skip, params.take),
+      agencyAgentApplicationRepository.count([...params.statuses]),
     ])
 
     const items = rows.map((row) => {
-      const faceIndexed = row.user.faceProfile?.status === 'INDEXED'
+      const faceImageUrl = faceImageUrlFromProfile(row.user.faceProfile)
       return {
         applicationId: row.id,
         applicantUserId: row.userId,
         applicantUserName: buildUserDisplayName(row.user),
+        username: row.user.username,
         userPublicId: resolveDisplayPublicId(row.user),
         country: row.user.country ?? null,
-        kyc: buildKycReviewStatus(row.kyc, faceIndexed),
+        avatarUrl: row.user.avatarUrl ?? null,
+        faceImageUrl,
+        kyc: buildKycReviewStatus(row.kyc, row.user.faceProfile),
         status: row.status,
         appliedAt: row.createdAt.toISOString(),
+        reviewedAt: row.reviewedAt?.toISOString() ?? null,
+        reviewedBy: row.reviewedBy ?? null,
+        adminNote: row.adminNote ?? null,
+        userNote: row.userNote ?? null,
       }
     })
 
@@ -232,7 +270,7 @@ export const agencyAdminService = {
           defaultPublicId: true,
           currentVipPublicId: true,
           country: true,
-          faceProfile: { select: { status: true } },
+          faceProfile: { select: { status: true, s3KeyReference: true } },
         },
       }),
       agencyApplicationKycRepository.getKycForAdminReview(agencyUserId),
@@ -244,6 +282,7 @@ export const agencyAdminService = {
     if (!owner) throw new AppError(404, 'Agency owner not found', 'USER_NOT_FOUND')
 
     const faceIndexed = owner.faceProfile?.status === 'INDEXED'
+    const faceImageUrl = faceImageUrlFromProfile(owner.faceProfile)
     const kycVerified =
       Boolean(kycRow.kyc?.govtIdSubmittedAt) &&
       Boolean(kycRow.kyc?.contactSubmittedAt) &&
@@ -263,8 +302,12 @@ export const agencyAdminService = {
       approvedAt: agency.createdAt.toISOString(),
       country: owner.country,
       kycVerified,
-      kycDocuments: mapKycDocuments(kycRow.kyc),
+      kycDocuments: {
+        ...mapKycDocuments(kycRow.kyc),
+        faceImageUrl,
+      },
       faceVerified: Boolean(kycRow.kyc?.faceVerified) || faceIndexed,
+      faceImageUrl,
       totalHosts: agency.totalHostsCount,
       totalEarningHosts: earningHostsCount,
       totalEarningsPoints: lifetimePoints.toString(),

@@ -16,6 +16,11 @@ import { updateAcceptVideoCallsSchema } from '../../models/call.schemas'
 import { videoCallSettingsService } from '../../services/video-call.service'
 import { SetFcmTokenSchema } from '../../models/push-notification.schemas'
 import { userRestrictionService } from '../../services/userRestriction.service'
+import { userLocationService } from '../../services/userLocation.service'
+import {
+  locationHistoryQuerySchema,
+  reportLocationBodySchema,
+} from '../../models/user-location.schemas'
 
 const PATCH_ME_ALLOWED_FIELDS = new Set(['name', 'dob', 'bio'])
 
@@ -66,6 +71,87 @@ export default async function usersRoutes(app: FastifyInstance) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       return reply.send(await userRestrictionService.listActiveForUser(request.userId!))
+    },
+  )
+
+  app.put(
+    '/me/location',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users', 'Location'],
+        description:
+          'Report / refresh GPS location when available (e.g. GPS switched on). Updates current location and appends a history sample.',
+        body: {
+          type: 'object',
+          required: ['latitude', 'longitude'],
+          properties: {
+            latitude: { type: 'number' },
+            longitude: { type: 'number' },
+            accuracyM: { type: 'number' },
+            source: { type: 'string' },
+            recordedAt: { type: 'string' },
+          },
+        },
+      },
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = reportLocationBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(await userLocationService.reportLocation(request.userId!, parsed.data))
+    },
+  )
+
+  app.get(
+    '/me/location',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users', 'Location'],
+        description: 'Current (latest) GPS location for the caller.',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return reply.send(await userLocationService.getCurrent(request.userId!))
+    },
+  )
+
+  app.get(
+    '/me/locations',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users', 'Location'],
+        description: 'GPS location history samples for the caller (newest first).',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = locationHistoryQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await userLocationService.listHistory(request.userId!, {
+          limit: parsed.data.limit,
+          cursor: parsed.data.cursor,
+        }),
+      )
     },
   )
 

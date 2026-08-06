@@ -151,8 +151,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.get('/applications/rejected', { preHandler: preAuth }, async (request, reply) => {
     const q = pendingApplicationsQuerySchema.parse(request.query ?? {})
-    const result = await agencyAgentApplicationService.listForAdminReview({
-      statuses: ['REJECTED'],
+    const result = await agencyAdminService.listRejectedApplications({
       skip: q.skip,
       take: q.take,
     })
@@ -710,6 +709,39 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     })
     return reply.send(result)
   })
+
+  app.get('/payroll/assignments', { preHandler: preAuth }, async (request, reply) => {
+    const q = request.query as Record<string, string | undefined>
+    const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
+    const status = q.status?.trim()
+    if (
+      status &&
+      !['PENDING', 'WAITING', 'COMPLETED', 'REJECTED', 'EXPIRED'].includes(status)
+    ) {
+      throw new AppError(400, 'Invalid status', 'INVALID_REQUEST')
+    }
+    const result = await payrollAdminService.listAssignments({
+      status,
+      agencyUserId: q.agencyUserId?.trim() || undefined,
+      hostUserId: q.hostUserId?.trim() || undefined,
+      withdrawalId: q.withdrawalId?.trim() || undefined,
+      from: q.from?.trim() || undefined,
+      to: q.to?.trim() || undefined,
+      cursor: q.cursor?.trim() || undefined,
+      limit,
+    })
+    return reply.send(result)
+  })
+
+  app.get<{ Params: { assignmentId: string } }>(
+    '/payroll/assignments/:assignmentId',
+    { preHandler: preAuth },
+    async (request, reply) => {
+      return reply.send(
+        await payrollAdminService.getAssignmentDetail(request.params.assignmentId),
+      )
+    },
+  )
 
   app.get(
     '/payroll/pending-platform',

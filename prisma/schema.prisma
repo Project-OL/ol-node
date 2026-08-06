@@ -70,6 +70,11 @@ model User {
   currentAgencyId       String?   @map("current_agency_id") @db.Uuid
 
   lastIpAddress String?  @map("last_ip_address") @db.VarChar(45)
+  /// Last reported GPS fix (updated when client reports location).
+  lastLatitude          Decimal?  @map("last_latitude") @db.Decimal(9, 6)
+  lastLongitude         Decimal?  @map("last_longitude") @db.Decimal(9, 6)
+  lastLocationAccuracyM Float?    @map("last_location_accuracy_m")
+  lastLocatedAt         DateTime? @map("last_located_at")
   tokenVersion  Int      @default(0) @map("token_version") // revoke-all / password change; embedded in access JWT
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
@@ -171,6 +176,8 @@ model User {
   tradingCoinTransfersReceived CoinTradingTransfer[]         @relation("TradingCoinTransferRecipient")
   tradingCoinTransferReversals CoinTradingTransfer[]         @relation("TradingCoinTransferReversedBy")
   paymentMethods               UserPaymentMethod[]
+  withdrawals                  Withdrawal[]
+  locationSamples              UserLocationSample[]
   payrollAssignmentsAsAgent    WithdrawalPayrollAssignment[] @relation("AgencyPayrollAssignments")
   hostLiveSessions             HostLiveSession[]
   hostStreamBans               HostStreamBan[]               @relation("UserHostBans")
@@ -1498,6 +1505,7 @@ model Withdrawal {
   withdrawalVersion Int      @default(1) @map("withdrawal_version")
 
   wallet             Wallet                        @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user               User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
   paymentMethod      UserPaymentMethod?            @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
   payrollAssignments WithdrawalPayrollAssignment[]
 
@@ -1588,6 +1596,25 @@ model WithdrawalPayoutRailConfig {
   updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
 
   @@map("withdrawal_payout_rail_config")
+}
+
+/// Append-only GPS samples; `users.last_*` holds the current fix.
+model UserLocationSample {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  latitude  Decimal  @db.Decimal(9, 6)
+  longitude Decimal  @db.Decimal(9, 6)
+  accuracyM Float?   @map("accuracy_m")
+  /// Client source tag, e.g. app_gps, coarse, background.
+  source    String   @default("app_gps") @db.VarChar(40)
+  recordedAt DateTime @default(now()) @map("recorded_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, recordedAt(sort: Desc)])
+  @@index([recordedAt(sort: Desc)])
+  @@map("user_location_samples")
 }
 
 /// Singleton: phone OTP channel routing window (WhatsApp for first N-1, SMS from Nth within interval).

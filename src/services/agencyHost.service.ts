@@ -24,7 +24,10 @@ type HostEarningsAgg = {
 
 const TX_MS = 20_000
 const DAY_MS = 24 * 60 * 60 * 1000
-const COOLDOWN_MS = 30 * DAY_MS
+/** Wait after host exit / rejected join before joining another agency. */
+const JOIN_COOLDOWN_MS = DAY_MS
+/** Wait after a resolved leave application before filing another leave. */
+const LEAVE_COOLDOWN_MS = 30 * DAY_MS
 const REMOVAL_TENURE_MS = 7 * DAY_MS
 const REMOVAL_INACTIVE_MS = 30 * DAY_MS
 /** Membership shorter than 24 hours → immediate exit (no leave application). */
@@ -32,8 +35,8 @@ const IMMEDIATE_LEAVE_MS = DAY_MS
 const LATE_APPROVE_MS = 14 * DAY_MS
 const AUTO_APPROVE_MS = 7 * DAY_MS
 
-function nextAllowedFrom(ts: Date): Date {
-  return new Date(ts.getTime() + COOLDOWN_MS)
+function nextAllowedFrom(ts: Date, cooldownMs: number): Date {
+  return new Date(ts.getTime() + cooldownMs)
 }
 
 function computeAge(dob: Date | null): number | null {
@@ -168,16 +171,16 @@ async function isHostFaceVerified(hostUserId: string): Promise<boolean> {
 
 async function assertJoinCooldown(hostUserId: string): Promise<void> {
   const recentExit = await agencyHostRepository.getRecentExitForHost(hostUserId)
-  if (recentExit && Date.now() - recentExit.exitedAt.getTime() < COOLDOWN_MS) {
+  if (recentExit && Date.now() - recentExit.exitedAt.getTime() < JOIN_COOLDOWN_MS) {
     throw new AppError(429, 'Agency application cooldown', 'AGENCY_APPLICATION_COOLDOWN', {
-      nextAllowedAt: nextAllowedFrom(recentExit.exitedAt).toISOString(),
+      nextAllowedAt: nextAllowedFrom(recentExit.exitedAt, JOIN_COOLDOWN_MS).toISOString(),
     })
   }
 
   const recentReject = await agencyHostRepository.findLatestRejectedApplication(hostUserId)
-  if (recentReject?.resolvedAt && Date.now() - recentReject.resolvedAt.getTime() < COOLDOWN_MS) {
+  if (recentReject?.resolvedAt && Date.now() - recentReject.resolvedAt.getTime() < JOIN_COOLDOWN_MS) {
     throw new AppError(429, 'Agency application cooldown', 'AGENCY_APPLICATION_COOLDOWN', {
-      nextAllowedAt: nextAllowedFrom(recentReject.resolvedAt).toISOString(),
+      nextAllowedAt: nextAllowedFrom(recentReject.resolvedAt, JOIN_COOLDOWN_MS).toISOString(),
     })
   }
 }
@@ -378,9 +381,9 @@ export const agencyHostService = {
     }
 
     const lastResolved = await agencyHostRepository.findLatestResolvedLeaveApplication(hostUserId)
-    if (lastResolved?.resolvedAt && Date.now() - lastResolved.resolvedAt.getTime() < COOLDOWN_MS) {
+    if (lastResolved?.resolvedAt && Date.now() - lastResolved.resolvedAt.getTime() < LEAVE_COOLDOWN_MS) {
       throw new AppError(429, 'Leave cooldown', 'LEAVE_COOLDOWN', {
-        nextAllowedAt: nextAllowedFrom(lastResolved.resolvedAt).toISOString(),
+        nextAllowedAt: nextAllowedFrom(lastResolved.resolvedAt, LEAVE_COOLDOWN_MS).toISOString(),
       })
     }
 

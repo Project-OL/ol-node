@@ -4,6 +4,85 @@ import { AppError } from '../middlewares/errorHandler'
 import { withdrawalService } from './withdrawal.service'
 import { auditService } from './audit.service'
 import { withdrawalRepository } from '../repositories/withdrawal.repository'
+import { payrollAssignmentRepository } from '../repositories/payrollAssignment.repository'
+import { storageService } from './storage.service'
+import { mapPaymentMethodMaskedForAgent } from '../utils/payment-method-mask'
+import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+
+type AdminUserCard = {
+  id: string
+  username: string
+  firstName: string | null
+  lastName: string | null
+  publicId: bigint
+  defaultPublicId: bigint
+  currentVipPublicId: bigint | null
+  avatarUrl: string | null
+  country: string | null
+}
+
+function mapUserCard(u: AdminUserCard) {
+  const displayName = buildUserDisplayName(u)
+  return {
+    userId: u.id,
+    username: u.username,
+    displayName,
+    name: displayName,
+    publicId: u.publicId.toString(),
+    displayPublicId: resolveDisplayPublicId(u),
+    avatarUrl: u.avatarUrl,
+    country: u.country,
+  }
+}
+
+function mapAdminAssignment(
+  row: NonNullable<Awaited<ReturnType<typeof payrollAssignmentRepository.getByIdForAdmin>>>,
+  config: { inrPerUsd: number },
+) {
+  const w = row.withdrawal
+  const hostPayoutUsd = Number(w.hostPayoutUsd ?? 0)
+  const platformFeePoints = w.platformFeePoints ?? 0n
+  const hostPayoutPoints = w.amountPoints - platformFeePoints
+  const proofKey = row.proofS3Key?.trim() || null
+
+  return {
+    assignmentId: row.id,
+    status: row.status,
+    assignmentNumber: row.assignmentNumber,
+    assignedAt: row.assignedAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    waitingExpiresAt: row.waitingExpiresAt?.toISOString() ?? null,
+    completedAt: row.completedAt?.toISOString() ?? null,
+    rejectedAt: row.rejectedAt?.toISOString() ?? null,
+    rejectionReason: row.rejectionReason ?? null,
+    /** Proof image / receipt uploaded by agency agent. */
+    proofS3Key: proofKey,
+    proofImageUrl: proofKey ? storageService.getCdnOrS3PublicUrl(proofKey) : null,
+    agent: mapUserCard(row.agencyUser),
+    host: mapUserCard(w.user),
+    withdrawal: {
+      withdrawalId: w.id,
+      status: w.status,
+      requestedAt: w.requestedAt.toISOString(),
+      processedAt: w.processedAt?.toISOString() ?? null,
+      disputeTicketId: w.disputeTicketId ?? null,
+      assignmentCount: w.assignmentCount,
+      /** Gross points withdrawn (escrowed from host). */
+      grossPoints: w.amountPoints.toString(),
+      /** Platform fee taken from gross. */
+      platformFeePoints: platformFeePoints.toString(),
+      /** Points owed / paid to host (= gross − platform fee). */
+      hostPayoutPoints: hostPayoutPoints.toString(),
+      hostPayoutUsd: w.hostPayoutUsd?.toString() ?? null,
+      localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
+      localCurrencyCode: 'INR' as const,
+      /** Processing reward credited to the agency agent. */
+      agentRewardPoints: (w.agentRewardPoints ?? 0n).toString(),
+      notes: w.notes ?? null,
+    },
+    paymentMethod: w.paymentMethod ? mapPaymentMethodMaskedForAgent(w.paymentMethod) : null,
+  }
+}
 
 export const payrollAdminService = {
   getConfig() {
@@ -91,5 +170,51 @@ export const payrollAdminService = {
 
   getDisputedPayrolls(opts: { limit: number; cursor?: string }) {
     return withdrawalService.getAdminDisputedPayrolls(opts)
+  },
+
+  async listAssignments(query: {
+    status?: string
+    agencyUserId?: string
+    hostUserId?: string
+    withdrawalId?: string
+    from?: string
+    to?: string
+    cursor?: string
+    limit: number
+  }) {
+    const from = query.from ? new Date(query.from) : undefined
+    const to = query.to ? new Date(query.to) : undefined
+    if (from && Number.isNaN(from.getTime())) {
+      throw new AppError(400, 'Invalid from', 'INVALID_REQUEST')
+    }
+    if (to && Number.isNaN(to.getTime())) {
+      throw new AppError(400, 'Invalid to', 'INVALID_REQUEST')
+    }
+
+    const rows = await payrollAssignmentRepository.listForAdmin({
+      status: query.status,
+      agencyUserId: query.agencyUserId,
+      hostUserId: query.hostUserId,
+      withdrawalId: query.withdrawalId,
+      from,
+      to,
+      cursor: query.cursor,
+      limit: query.limit,
+    })
+    const hasMore = rows.length > query.limit
+    const page = hasMore ? rows.slice(0, query.limit) : rows
+    const config = await withdrawalService.getPayrollConfig()
+    return {
+      items: page.map((r) => mapAdminAssignment(r, config)),
+      nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
+      hasMore,
+    }
+  },
+
+  async getAssignmentDetail(assignmentId: string) {
+    const row = await payrollAssignmentRepository.getByIdForAdmin(assignmentId)
+    if (!row) throw new AppError(404, 'Assignment not found', 'NOT_FOUND')
+    const config = await withdrawalService.getPayrollConfig()
+    return mapAdminAssignment(row, config)
   },
 }

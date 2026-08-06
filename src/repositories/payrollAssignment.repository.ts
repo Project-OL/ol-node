@@ -327,4 +327,113 @@ export const payrollAssignmentRepository = {
       orderBy: { completedAt: 'desc' },
     })
   },
+
+  async listForAdmin(filter: {
+    status?: string
+    agencyUserId?: string
+    hostUserId?: string
+    withdrawalId?: string
+    from?: Date
+    to?: Date
+    cursor?: string
+    limit: number
+  }) {
+    let cursorAssignedAt: Date | undefined
+    if (filter.cursor) {
+      const cur = await prismaRead.withdrawalPayrollAssignment.findUnique({
+        where: { id: filter.cursor },
+        select: { assignedAt: true },
+      })
+      cursorAssignedAt = cur?.assignedAt
+    }
+
+    const assignedAt: Prisma.DateTimeFilter = {}
+    if (filter.from) assignedAt.gte = filter.from
+    if (filter.to) assignedAt.lte = filter.to
+    if (cursorAssignedAt) assignedAt.lt = cursorAssignedAt
+
+    return prismaRead.withdrawalPayrollAssignment.findMany({
+      where: {
+        ...(filter.status ? { status: filter.status } : {}),
+        ...(filter.agencyUserId ? { agencyUserId: filter.agencyUserId } : {}),
+        ...(filter.withdrawalId ? { withdrawalId: filter.withdrawalId } : {}),
+        ...(Object.keys(assignedAt).length ? { assignedAt } : {}),
+        ...(filter.hostUserId ? { withdrawal: { userId: filter.hostUserId } } : {}),
+      },
+      orderBy: [{ assignedAt: 'desc' }, { id: 'desc' }],
+      take: filter.limit + 1,
+      include: {
+        agencyUser: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            avatarUrl: true,
+            country: true,
+          },
+        },
+        withdrawal: {
+          include: {
+            paymentMethod: true,
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                publicId: true,
+                defaultPublicId: true,
+                currentVipPublicId: true,
+                avatarUrl: true,
+                country: true,
+              },
+            },
+          },
+        },
+      },
+    })
+  },
+
+  async getByIdForAdmin(id: string) {
+    return prismaRead.withdrawalPayrollAssignment.findUnique({
+      where: { id },
+      include: {
+        agencyUser: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            avatarUrl: true,
+            country: true,
+          },
+        },
+        withdrawal: {
+          include: {
+            paymentMethod: true,
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                publicId: true,
+                defaultPublicId: true,
+                currentVipPublicId: true,
+                avatarUrl: true,
+                country: true,
+              },
+            },
+          },
+        },
+      },
+    })
+  },
 }

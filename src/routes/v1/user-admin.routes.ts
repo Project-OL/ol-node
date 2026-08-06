@@ -10,6 +10,11 @@ import { adminUserSearchService } from '../../services/adminUserSearch.service'
 import { adminUserDetailService } from '../../services/adminUserDetail.service'
 import { adminUserVipGuardianService } from '../../services/adminUserVipGuardian.service'
 import { storeAdminService } from '../../services/store-admin.service'
+import { userLocationService } from '../../services/userLocation.service'
+import {
+  adminLocationsQuerySchema,
+  locationHistoryQuerySchema,
+} from '../../models/user-location.schemas'
 
 const preAuth = [authenticateAdmin]
 
@@ -220,6 +225,61 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       return reply.send(
         await adminUserVipGuardianService.getUserGuardians(request.params.userId, {
           purchaseHistoryLimit: parsed.data.purchaseHistoryLimit,
+        }),
+      )
+    },
+  )
+
+  app.get(
+    '/locations',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Location'],
+        description:
+          'Global GPS location sample feed (newest first). Filter by userId / from / to.',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = adminLocationsQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(await userLocationService.listForAdmin(parsed.data))
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
+    '/users/:userId/locations',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Location'],
+        description: 'Current GPS location + history samples for one user.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const parsed = locationHistoryQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await userLocationService.getUserLocationsForAdmin(request.params.userId, {
+          limit: parsed.data.limit,
+          cursor: parsed.data.cursor,
         }),
       )
     },

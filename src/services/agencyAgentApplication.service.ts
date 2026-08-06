@@ -2,24 +2,39 @@ import type { AgencyAgentApplicationStatus } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
+import { storageService } from './storage.service'
+
+function faceImageUrlFromProfile(
+  faceProfile: { s3KeyReference?: string | null } | null | undefined,
+): string | null {
+  const key = faceProfile?.s3KeyReference?.trim()
+  return key ? storageService.getCdnOrS3PublicUrl(key) : null
+}
 
 function buildKycReviewStatus(
   kyc: {
     govtIdSubmittedAt: Date | null
     contactSubmittedAt: Date | null
     faceVerified: boolean
+    govtIdS3Key?: string | null
     contactPhone: string | null
     contactEmail: string | null
   } | null,
-  faceIndexed: boolean,
+  faceProfile: { status?: string | null; s3KeyReference?: string | null } | null | undefined,
 ) {
+  const faceIndexed = faceProfile?.status === 'INDEXED'
   const faceOk = Boolean(kyc?.faceVerified) || faceIndexed
+  const govtKey = kyc?.govtIdS3Key?.trim()
   return {
     govtIdUploaded: Boolean(kyc?.govtIdSubmittedAt),
+    govtIdUrl: govtKey ? storageService.getCdnOrS3PublicUrl(govtKey) : null,
+    govtIdSubmittedAt: kyc?.govtIdSubmittedAt?.toISOString() ?? null,
     contactSubmitted: Boolean(kyc?.contactSubmittedAt),
-    faceVerified: faceOk,
     contactPhone: kyc?.contactPhone ?? null,
     contactEmail: kyc?.contactEmail ?? null,
+    contactSubmittedAt: kyc?.contactSubmittedAt?.toISOString() ?? null,
+    faceVerified: faceOk,
+    faceImageUrl: faceImageUrlFromProfile(faceProfile),
     isComplete: Boolean(kyc?.govtIdSubmittedAt) && Boolean(kyc?.contactSubmittedAt) && faceOk,
   }
 }
@@ -35,7 +50,6 @@ export const agencyAgentApplicationService = {
       agencyAgentApplicationRepository.count(params.statuses),
     ])
     const items = rows.map((row) => {
-      const faceIndexed = row.user.faceProfile?.status === 'INDEXED'
       return {
         id: row.id,
         publicId: row.publicId,
@@ -53,8 +67,10 @@ export const agencyAgentApplicationService = {
           firstName: row.user.firstName,
           lastName: row.user.lastName,
           defaultPublicId: row.user.defaultPublicId?.toString(),
+          avatarUrl: row.user.avatarUrl ?? null,
+          faceImageUrl: faceImageUrlFromProfile(row.user.faceProfile),
         },
-        kycStatus: buildKycReviewStatus(row.kyc, faceIndexed),
+        kycStatus: buildKycReviewStatus(row.kyc, row.user.faceProfile),
       }
     })
     return { items, total, skip: params.skip, take: params.take }
@@ -66,10 +82,9 @@ export const agencyAgentApplicationService = {
       throw new AppError(404, 'No agency application found', 'APPLICATION_NOT_FOUND')
     }
     const { kyc, user } = await agencyApplicationKycRepository.getKycForAdminReview(userId)
-    const faceIndexed = user?.faceProfile?.status === 'INDEXED'
     return {
       ...application,
-      kycStatus: buildKycReviewStatus(kyc, faceIndexed),
+      kycStatus: buildKycReviewStatus(kyc, user?.faceProfile),
     }
   },
 }

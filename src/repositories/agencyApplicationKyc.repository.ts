@@ -82,7 +82,10 @@ export const agencyApplicationKycRepository = {
       prismaRead.agencyApplicationKyc.findUnique({ where: { userId } }),
       prismaRead.user.findUnique({
         where: { id: userId },
-        select: { id: true, faceProfile: { select: { status: true } } },
+        select: {
+          id: true,
+          faceProfile: { select: { status: true, s3KeyReference: true } },
+        },
       }),
     ])
     return { kyc, user }
