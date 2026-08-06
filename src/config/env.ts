@@ -34,6 +34,15 @@ const envSchema = z
     ADMIN_JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
     ADMIN_INITIAL_EMAIL: z.string().email().optional(),
     ADMIN_INITIAL_PASSWORD: z.string().min(12).optional(),
+    /**
+     * When `true`, SUPER_ADMIN login also requires a matching row in
+     * `admin_ip_whitelist` (empty list = blocked). CSA (`CUSTOMER_SUPPORT`)
+     * whitelist is always enforced regardless of this flag.
+     */
+    SUPER_ADMIN_IP_WHITELIST_ENABLED: z
+      .string()
+      .optional()
+      .transform((s) => s === 'true'),
     /** Optional override for inbox sender (`users.id`). When unset, server uses or creates `offoo_platform`. */
     PLATFORM_SENDER_USER_ID: z.string().uuid().optional(),
     /** HMAC key for device binding fingerprint. Min 32 chars. Required in production. */

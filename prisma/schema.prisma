@@ -2727,8 +2727,25 @@ model SystemAdmin {
   notifications   CsaNotification[]
   reviewedReports MessageReport[]       @relation("ReportReviewer")
   viewAssignments AdminViewAssignment[]
+  ipWhitelist     AdminIpWhitelist[]
 
   @@map("system_admins")
+}
+
+/// Exact IPv4/IPv6 allow-list for admin login. CSAs always require a match
+/// (empty list = cannot log in). SUPER_ADMIN checks when env SUPER_ADMIN_IP_WHITELIST_ENABLED=true.
+model AdminIpWhitelist {
+  id              String      @id @default(uuid())
+  adminId         String      @map("admin_id")
+  admin           SystemAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  /// Normalized exact address (IPv4 or IPv6 lowercase; IPv4-mapped forms stored as IPv4).
+  ipAddress       String      @map("ip_address") @db.VarChar(45)
+  createdByAdminId String?    @map("created_by_admin_id")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  @@unique([adminId, ipAddress])
+  @@index([adminId])
+  @@map("admin_ip_whitelist")
 }
 
 // Named group of admin endpoints ("METHOD /admin/path") the panel renders as one view.

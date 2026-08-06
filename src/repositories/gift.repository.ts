@@ -26,15 +26,9 @@ export const giftRepository = {
     tag?: string
     skip: number
     take: number
-    /**
-     * When false, exclude `vipOnly` gifts (non-VIP / anonymous callers).
-     * When true, return all active gifts including VIP-only.
-     */
-    includeVipOnly?: boolean
   }): Promise<{ items: GiftWithTags[]; total: number }> {
     const where: Prisma.GiftWhereInput = {
       isActive: true,
-      ...(params.includeVipOnly ? {} : { vipOnly: false }),
       ...(params.tag ? { tags: { some: { tag: params.tag } } } : {}),
     }
 

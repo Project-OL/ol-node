@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { z } from 'zod'
 import { AppError } from '../../middlewares/errorHandler'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { adminUserTagsBodySchema } from '../../models/admin-user-tags.schemas'
@@ -7,9 +8,24 @@ import { adminUserPatchBodySchema } from '../../models/admin-user-detail.schemas
 import { adminUserTagsService } from '../../services/admin-user-tags.service'
 import { adminUserSearchService } from '../../services/adminUserSearch.service'
 import { adminUserDetailService } from '../../services/adminUserDetail.service'
+import { adminUserVipGuardianService } from '../../services/adminUserVipGuardian.service'
 import { storeAdminService } from '../../services/store-admin.service'
 
 const preAuth = [authenticateAdmin]
+
+const adminUserVipQuerySchema = z.object({
+  purchasesLimit: z.coerce.number().int().min(1).max(100).optional(),
+  purchasesCursor: z.string().min(1).optional(),
+  claimsLimit: z.coerce.number().int().min(1).max(100).optional(),
+  claimsCursor: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'claimsCursor must be YYYY-MM-DD')
+    .optional(),
+})
+
+const adminUserGuardiansQuerySchema = z.object({
+  purchaseHistoryLimit: z.coerce.number().int().min(1).max(100).optional(),
+})
 
 export default async function userAdminRoutes(app: FastifyInstance) {
   app.get(
@@ -124,6 +140,88 @@ export default async function userAdminRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(await adminUserDetailService.getUserWallet(request.params.userId))
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
+    '/users/:userId/vip',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'VIP'],
+        description:
+          'Full VIP dossier for a user: current membership + expiry, rare VIP public id, rich tier, purchase history, daily claim history, and privilege flags.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            purchasesLimit: { type: 'integer', minimum: 1, maximum: 100 },
+            purchasesCursor: { type: 'string' },
+            claimsLimit: { type: 'integer', minimum: 1, maximum: 100 },
+            claimsCursor: { type: 'string', description: 'YYYY-MM-DD' },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminUserVipQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await adminUserVipGuardianService.getUserVipDetail(request.params.userId, {
+          purchasesLimit: parsed.data.purchasesLimit,
+          purchasesCursor: parsed.data.purchasesCursor,
+          claimsLimit: parsed.data.claimsLimit,
+          claimsCursor: parsed.data.claimsCursor,
+        }),
+      )
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
+    '/users/:userId/guardians',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Guardian'],
+        description:
+          'Guardian relationships for a user (as buyer and as target), including expired rows, counterparty cards, plus coin-ledger guardian purchase history.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            purchaseHistoryLimit: { type: 'integer', minimum: 1, maximum: 100 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminUserGuardiansQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await adminUserVipGuardianService.getUserGuardians(request.params.userId, {
+          purchaseHistoryLimit: parsed.data.purchaseHistoryLimit,
+        }),
+      )
     },
   )
 

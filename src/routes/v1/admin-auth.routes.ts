@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { systemAdminService } from '../../services/systemAdmin.service'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
+import { passwordSchema } from '../../models/schemas'
 
 const LoginBody = z.object({
   email: z.string().email(),
@@ -28,6 +29,13 @@ const CreateAdminBody = z.object({
   phoneCountryCode: z.string().min(1).max(8).optional(),
   gender: z.string().max(20).optional(),
   country: z.string().max(100).optional(),
+})
+
+/** Optional: omit to auto-generate. When set, must satisfy strength policy and be ≥12 chars. */
+const ResetAdminPasswordBody = z.object({
+  newPassword: passwordSchema
+    .refine((v) => v.length >= 12, 'Password must be at least 12 characters')
+    .optional(),
 })
 
 export async function registerAdminAuthRoutes(app: FastifyInstance) {
@@ -67,6 +75,37 @@ export async function registerAdminAuthRoutes(app: FastifyInstance) {
       createdAt: admin.createdAt,
     })
   })
+
+  app.post<{ Params: { adminId: string } }>(
+    '/auth/admins/:adminId/password/reset',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Auth'],
+        description:
+          'SUPER_ADMIN only. Reset any system admin password (CSA / MODERATOR / FINANCE / CONTENT / SUPER_ADMIN). Omitting `newPassword` returns a one-time `temporaryPassword`. Revokes all sessions for the target.',
+      },
+    },
+    async (req, reply) => {
+      if (req.adminUser?.role !== 'SUPER_ADMIN') {
+        throw new AppError(403, 'SUPER_ADMIN only', 'ADMIN_FORBIDDEN')
+      }
+      const parsed = ResetAdminPasswordBody.safeParse(req.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await systemAdminService.resetPassword({
+        targetAdminId: req.params.adminId,
+        actorAdminId: req.adminUser.id,
+        newPassword: parsed.data.newPassword,
+      })
+      return reply.code(200).send(result)
+    },
+  )
 
   app.get('/auth/me', { preHandler: [authenticateAdmin] }, async (req, reply) => {
     return reply.send({ admin: req.adminUser })

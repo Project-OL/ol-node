@@ -149,6 +149,16 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     return reply.send(result)
   })
 
+  app.get('/applications/rejected', { preHandler: preAuth }, async (request, reply) => {
+    const q = pendingApplicationsQuerySchema.parse(request.query ?? {})
+    const result = await agencyAgentApplicationService.listForAdminReview({
+      statuses: ['REJECTED'],
+      skip: q.skip,
+      take: q.take,
+    })
+    return reply.send(result)
+  })
+
   app.patch<{ Params: { agencyIdentifier: string } }>(
     '/:agencyIdentifier/commission-tier',
     { preHandler: preAuth },

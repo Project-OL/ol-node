@@ -119,6 +119,63 @@ export const vipMembershipRepository = {
     })
   },
 
+  async getDailyClaimHistory(
+    userId: string,
+    opts: { limit: number; cursorClaimDate?: string | null },
+  ) {
+    const cursorDate = opts.cursorClaimDate
+      ? (() => {
+          const d = new Date(`${opts.cursorClaimDate}T00:00:00.000Z`)
+          return Number.isNaN(d.getTime()) ? null : d
+        })()
+      : null
+
+    const rows = await prismaRead.vipDailyClaim.findMany({
+      where: {
+        userId,
+        ...(cursorDate ? { claimDate: { lt: cursorDate } } : {}),
+      },
+      orderBy: { claimDate: 'desc' },
+      take: opts.limit + 1,
+      select: {
+        claimDate: true,
+        coinAmount: true,
+        ledgerEntryId: true,
+        claimedAt: true,
+      },
+    })
+
+    const hasMore = rows.length > opts.limit
+    const page = hasMore ? rows.slice(0, opts.limit) : rows
+    const last = page[page.length - 1]
+    const nextCursor = hasMore && last
+      ? last.claimDate.toISOString().slice(0, 10)
+      : undefined
+
+    return { items: page, nextCursor, hasMore }
+  },
+
+  async countPurchases(userId: string) {
+    return prismaRead.vipMembershipPurchase.count({ where: { userId } })
+  },
+
+  async countDailyClaims(userId: string) {
+    return prismaRead.vipDailyClaim.count({ where: { userId } })
+  },
+
+  async getMembershipRow(userId: string) {
+    return prismaRead.user.findUnique({
+      where: { id: userId },
+      select: {
+        vipSubscriptionActive: true,
+        vipSubscriptionStartAt: true,
+        vipSubscriptionExpiresAt: true,
+        currentVipPublicId: true,
+        vipPublicIdExpiresAt: true,
+      },
+    })
+  },
+
   async getRecentPurchases(userId: string, opts: { limit: number; cursor?: string | null }) {
     const cursorRow = opts.cursor
       ? await prismaRead.vipMembershipPurchase.findFirst({

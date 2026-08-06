@@ -84,6 +84,13 @@ export const agencyKycService = {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     if (user.isAgent) throw new AppError(400, 'Already an agent', 'ALREADY_AGENT')
+    if (user.currentAgencyId) {
+      throw new AppError(
+        409,
+        'Leave your current agency before applying to create your own',
+        'ALREADY_IN_AGENCY',
+      )
+    }
     if (user.agencyBarredAt) {
       throw new AppError(403, 'User is barred from operating an agency', 'AGENCY_BARRED')
     }

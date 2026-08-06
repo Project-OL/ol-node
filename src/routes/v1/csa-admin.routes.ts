@@ -11,6 +11,10 @@ import {
   ListCsasQuerySchema,
   ExportCsasQuerySchema,
   CsaIdParamsSchema,
+  FailedLoginsQuerySchema,
+  CsaTicketsQuerySchema,
+  AddCsaIpSchema,
+  CsaIpWhitelistIdParamsSchema,
 } from '../../models/csa-admin.schemas'
 
 const preAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
@@ -19,7 +23,7 @@ const preAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 export default async function csaAdminRoutes(app: FastifyInstance) {
   app.post('/csas', { preHandler: preAuth }, async (req, reply) => {
     const body = parseRequest(CreateCsaSchema, req.body)
-    const csa = await csaManagementService.createCsa(body)
+    const csa = await csaManagementService.createCsa(body, req.adminUser!.id)
     return reply.code(201).send({ csa })
   })
 
@@ -32,6 +36,13 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
   app.get('/csas/overview', { preHandler: preAuth }, async (_req, reply) => {
     const stats = await csaManagementService.getOverviewStats()
     return reply.send(stats)
+  })
+
+  /** Named CSA accounts with recent failed logins / active lockouts. */
+  app.get('/csas/failed-logins', { preHandler: preAuth }, async (req, reply) => {
+    const query = parseRequest(FailedLoginsQuerySchema, req.query)
+    const result = await csaManagementService.listFailedLogins(query)
+    return reply.send(result)
   })
 
   app.get('/csas/export', { preHandler: preAuth }, async (req, reply) => {
@@ -71,6 +82,33 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
     const { adminId } = parseRequest(CsaIdParamsSchema, req.params)
     const stats = await csaManagementService.getCsaStats(adminId)
     return reply.send({ adminId, stats })
+  })
+
+  /** All tickets (or closed/rated) for one CSA + avgRating summary. */
+  app.get('/csas/:adminId/tickets', { preHandler: preAuth }, async (req, reply) => {
+    const { adminId } = parseRequest(CsaIdParamsSchema, req.params)
+    const query = parseRequest(CsaTicketsQuerySchema, req.query)
+    const result = await csaManagementService.listCsaTickets(adminId, query)
+    return reply.send(result)
+  })
+
+  app.get('/csas/:adminId/ip-whitelist', { preHandler: preAuth }, async (req, reply) => {
+    const { adminId } = parseRequest(CsaIdParamsSchema, req.params)
+    const result = await csaManagementService.listIpWhitelist(adminId)
+    return reply.send(result)
+  })
+
+  app.post('/csas/:adminId/ip-whitelist', { preHandler: preAuth }, async (req, reply) => {
+    const { adminId } = parseRequest(CsaIdParamsSchema, req.params)
+    const body = parseRequest(AddCsaIpSchema, req.body)
+    const ip = await csaManagementService.addIp(adminId, body, req.adminUser!.id)
+    return reply.code(201).send({ ip })
+  })
+
+  app.delete('/csas/:adminId/ip-whitelist/:whitelistId', { preHandler: preAuth }, async (req, reply) => {
+    const { adminId, whitelistId } = parseRequest(CsaIpWhitelistIdParamsSchema, req.params)
+    const result = await csaManagementService.removeIp(adminId, whitelistId)
+    return reply.send(result)
   })
 
   // Views assigned to this CSA (empty = unrestricted legacy role-based access).

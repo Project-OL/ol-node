@@ -5,8 +5,16 @@ import { systemAdminService } from './systemAdmin.service'
 import { supportAssignmentService } from './supportAssignment.service'
 import { AppError } from '../middlewares/errorHandler'
 import { toCsv } from '../utils/csv'
-import type { CreateCsaInput, UpdateCsaInput, ListCsasQuery } from '../models/csa-admin.schemas'
-import type { AdminStatus, SystemAdmin } from '@prisma/client'
+import type {
+  CreateCsaInput,
+  UpdateCsaInput,
+  ListCsasQuery,
+  FailedLoginsQuery,
+  CsaTicketsQuery,
+  AddCsaIpInput,
+} from '../models/csa-admin.schemas'
+import type { AdminStatus, SupportTicketStatus, SystemAdmin } from '@prisma/client'
+import { deriveStage } from './supportAdmin.service'
 
 const EXPORT_ROW_CAP = 10_000
 
@@ -27,7 +35,19 @@ function toCsaDto(admin: SystemAdmin) {
     createdAt: admin.createdAt,
     lastLoginAt: admin.lastLoginAt,
     failedLoginCount: admin.failedLoginCount,
+    lastFailedLoginAt: admin.lastFailedLoginAt,
     lockedUntil: admin.lockedUntil,
+    /** True while lockedUntil is in the future (login lockout, not DISABLED/SUSPENDED). */
+    isLocked: admin.lockedUntil != null && admin.lockedUntil.getTime() > Date.now(),
+  }
+}
+
+function toIpDto(row: { id: string; ipAddress: string; createdAt: Date; createdByAdminId: string | null }) {
+  return {
+    id: row.id,
+    ipAddress: row.ipAddress,
+    createdAt: row.createdAt,
+    createdByAdminId: row.createdByAdminId,
   }
 }
 
@@ -57,7 +77,8 @@ export const csaManagementService = {
     await findCsaOrThrow(adminId)
   },
 
-  async createCsa(input: CreateCsaInput) {
+  async createCsa(input: CreateCsaInput, createdByAdminId?: string) {
+    const uniqueIps = [...new Set(input.allowedIps)]
     const admin = await systemAdminService.createAdmin({
       email: input.email,
       password: input.password,
@@ -69,7 +90,17 @@ export const csaManagementService = {
       gender: input.gender ?? null,
       country: input.country,
     })
-    return toCsaDto(admin)
+
+    await systemAdminRepository.addIpWhitelistMany(
+      uniqueIps.map((ipAddress) => ({
+        adminId: admin.id,
+        ipAddress,
+        createdByAdminId: createdByAdminId ?? null,
+      })),
+    )
+
+    const ipWhitelist = await systemAdminRepository.listIpWhitelist(admin.id)
+    return { ...toCsaDto(admin), ipWhitelist: ipWhitelist.map(toIpDto) }
   },
 
   async listCsas(query: ListCsasQuery) {
@@ -105,15 +136,51 @@ export const csaManagementService = {
 
   async getCsa(adminId: string) {
     const admin = await findCsaOrThrow(adminId)
-    const [online, performance] = await Promise.all([
+    const [online, performance, ipWhitelist] = await Promise.all([
       onlineFlags([adminId]),
       supportRepository.csaPerformance(adminId),
+      systemAdminRepository.listIpWhitelist(adminId),
     ])
     return {
       ...toCsaDto(admin),
       isOnline: online.get(adminId) ?? false,
       performance,
+      ipWhitelist: ipWhitelist.map(toIpDto),
     }
+  },
+
+  async listIpWhitelist(adminId: string) {
+    await findCsaOrThrow(adminId)
+    const items = await systemAdminRepository.listIpWhitelist(adminId)
+    return { adminId, ips: items.map(toIpDto) }
+  },
+
+  async addIp(adminId: string, input: AddCsaIpInput, createdByAdminId: string) {
+    await findCsaOrThrow(adminId)
+    const count = await systemAdminRepository.countIpWhitelist(adminId)
+    if (count >= 20) {
+      throw new AppError(400, 'Maximum of 20 whitelisted IPs per CSA', 'CSA_IP_LIMIT')
+    }
+    const existing = await systemAdminRepository.findIpWhitelistByAddress(adminId, input.ipAddress)
+    if (existing) {
+      throw new AppError(409, 'IP already whitelisted for this CSA', 'CSA_IP_CONFLICT')
+    }
+    const row = await systemAdminRepository.addIpWhitelist({
+      adminId,
+      ipAddress: input.ipAddress,
+      createdByAdminId,
+    })
+    return toIpDto(row)
+  },
+
+  async removeIp(adminId: string, whitelistId: string) {
+    await findCsaOrThrow(adminId)
+    const row = await systemAdminRepository.findIpWhitelistEntry(adminId, whitelistId)
+    if (!row) {
+      throw new AppError(404, 'Whitelisted IP not found', 'CSA_IP_NOT_FOUND')
+    }
+    await systemAdminRepository.removeIpWhitelist(whitelistId)
+    return { ok: true as const, id: whitelistId }
   },
 
   async updateCsa(adminId: string, input: UpdateCsaInput) {
@@ -219,5 +286,69 @@ export const csaManagementService = {
   async getCsaStats(adminId: string) {
     await findCsaOrThrow(adminId)
     return supportRepository.csaPerformance(adminId)
+  },
+
+  /**
+   * Which CSA accounts have recent failed logins / active lockouts — for the
+   * security overview so SUPER_ADMIN can suspend/reset the named account.
+   */
+  async listFailedLogins(query: FailedLoginsQuery) {
+    const since = new Date(Date.now() - query.withinHours * 3600_000)
+    const skip = (query.page - 1) * query.limit
+    const { items, total } = await systemAdminRepository.findFailedLoginAccounts(
+      'CUSTOMER_SUPPORT',
+      { since, includeLocked: query.includeLocked, skip, take: query.limit },
+    )
+    const online = await onlineFlags(items.map((a) => a.id))
+    return {
+      withinHours: query.withinHours,
+      accounts: items.map((a) => ({
+        ...toCsaDto(a),
+        isOnline: online.get(a.id) ?? false,
+      })),
+      page: query.page,
+      limit: query.limit,
+      total,
+      hasMore: skip + items.length < total,
+    }
+  },
+
+  /**
+   * All tickets assigned to a CSA (or closed/rated subset) plus performance
+   * averages — power the per-CSA ratings & ticket roster screens.
+   */
+  async listCsaTickets(adminId: string, query: CsaTicketsQuery) {
+    await findCsaOrThrow(adminId)
+    const skip = (query.page - 1) * query.limit
+    const status = query.status as SupportTicketStatus | undefined
+    const [{ tickets, total }, performance] = await Promise.all([
+      supportRepository.findAdminTickets({
+        assignedAdminId: adminId,
+        status: query.ratedOnly ? 'CLOSED' : status,
+        ratedOnly: query.ratedOnly,
+        skip,
+        take: query.limit,
+      }),
+      supportRepository.csaPerformance(adminId),
+    ])
+
+    const payload = {
+      adminId,
+      avgRating: performance.avgRating,
+      ratingCount: performance.ratingCount,
+      tickets: tickets.map((t) => ({
+        ...t,
+        stage: deriveStage(t),
+      })),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        hasMore: skip + tickets.length < total,
+      },
+    }
+    return JSON.parse(
+      JSON.stringify(payload, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+    ) as typeof payload
   },
 }

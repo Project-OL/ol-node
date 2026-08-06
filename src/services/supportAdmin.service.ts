@@ -174,7 +174,7 @@ export const supportAdminService = {
   async resolve(
     actor: AdminActor,
     ticketId: bigint,
-    input: { resolution: SupportTicketResolution; note?: string },
+    input: { resolution: SupportTicketResolution; note: string },
   ) {
     const ticket = await findTicketOrThrow(ticketId)
     if (ticket.status === 'CLOSED') {
@@ -186,11 +186,9 @@ export const supportAdminService = {
     assertCanAct(actor, ticket)
 
     const resolvedAt = new Date()
-    const closingContent =
-      input.note ??
-      (input.resolution === 'RESOLVED'
-        ? 'Your issue has been resolved. This ticket will close automatically in 72 hours unless you reply.'
-        : 'Your request has been reviewed and rejected. This ticket will close automatically in 72 hours unless you reply.')
+    const label = input.resolution === 'RESOLVED' ? 'resolved' : 'rejected'
+    // Reason is required in chat; append the 24h contest window notice.
+    const closingContent = `${input.note.trim()}\n\n(This ticket was marked ${label}. It will close automatically in 24 hours unless you reply.)`
 
     await supportRepository.createMessage({
       ticketId,
@@ -226,8 +224,25 @@ export const supportAdminService = {
     }
     assertCanAct(actor, ticket)
 
+    const now = new Date()
+    // Keep an existing resolve/reject outcome; otherwise treat force-close as RESOLVED
+    // so it counts in CSA resolvedTotal and remains attributable for star ratings.
+    const resolution = ticket.resolution ?? 'RESOLVED'
+    const resolvedAt = ticket.resolvedAt ?? now
+
+    await supportRepository.createMessage({
+      ticketId,
+      senderType: 'SUPPORT',
+      content:
+        'This ticket has been closed by support. Please rate your experience (1–5 stars).',
+    })
+
     const updated = await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
-      closedAt: new Date(),
+      closedAt: now,
+      resolution,
+      resolvedAt,
+      ...(ticket.firstResponseAt ? {} : { firstResponseAt: now }),
+      ...(ticket.assignedAdminId ? {} : { assignedAdminId: actor.id, assignedAt: now }),
     })
     await invalidateUserCaches(ticket.userId, ticketId)
     return toJsonSafe(ticketDto(updated))
@@ -237,6 +252,18 @@ export const supportAdminService = {
     const ticket = await findTicketOrThrow(ticketId)
     if (ticket.status === 'CLOSED') {
       throw new AppError(409, 'Cannot assign a closed ticket', 'TICKET_CLOSED')
+    }
+    // Freeze ownership through the review window so the resolving CSA keeps
+    // star-rating credit (and rated CLOSED tickets stay with that assignee).
+    if (ticket.status === 'PENDING_REVIEW') {
+      throw new AppError(
+        409,
+        'Cannot reassign a ticket pending user review',
+        'TICKET_PENDING_REVIEW_FROZEN',
+      )
+    }
+    if (ticket.rating != null) {
+      throw new AppError(409, 'Cannot reassign a rated ticket', 'TICKET_RATED_FROZEN')
     }
     // SUPER_ADMIN may move any ticket; a CSA may only hand off their own.
     if (!isSuperAdmin(actor) && ticket.assignedAdminId !== actor.id) {

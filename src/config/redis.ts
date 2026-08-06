@@ -198,8 +198,9 @@ export const RedisKeys = {
   userLivestreamLevel: (userId: string) => `level:stream:${userId}`,
   levelConfigWealth: () => `level:config:wealth`,
   levelConfigStream: () => `level:config:stream`,
-  giftList: (audience: 'vip' | 'novip' = 'novip') => `gifts:list:${audience}`,
-  giftByTag: (tag: string, audience: 'vip' | 'novip' = 'novip') => `gifts:tag:${tag}:${audience}`,
+  /** Full active gift catalog (includes vipOnly). Legacy audience suffixes `:vip`/`:novip` are invalidated on write. */
+  giftList: () => `gifts:list`,
+  giftByTag: (tag: string) => `gifts:tag:${tag}`,
   /** Global gallery structure for a UTC month (admin-defined template). */
   giftGalleryTemplate: (year: number, month: number) => `gallery:template:${year}:${month}`,
   /** Per-host merged payload (template + that host's progress). */

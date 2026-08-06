@@ -29,7 +29,8 @@ export const supportAssignmentService = {
     opts?: { excludeAdminId?: string },
   ): Promise<string | null> {
     const ticket = await supportRepository.findTicketById(ticketId)
-    if (!ticket || ticket.status === 'CLOSED') return null
+    if (!ticket || ticket.status === 'CLOSED' || ticket.status === 'PENDING_REVIEW') return null
+    if (ticket.rating != null) return null
 
     const candidates = (await systemAdminRepository.findAllByRole('CUSTOMER_SUPPORT', 'ACTIVE')).filter(
       (a) => a.id !== opts?.excludeAdminId,
@@ -74,9 +75,10 @@ export const supportAssignmentService = {
 
   /**
    * Reassign every open ticket held by an admin (used when a CSA is disabled
-   * or suspended). Tickets with no available candidate return to the
-   * unassigned queue: OPEN for active work, status preserved for
-   * PENDING_REVIEW so the auto-close window still applies.
+   * or suspended). PENDING_REVIEW tickets are **not** moved — assignee is
+   * frozen through the 24h review window so star ratings stay attributed to
+   * the resolving CSA. Other tickets with no available candidate return to
+   * the unassigned OPEN queue.
    */
   async reassignAllFrom(adminId: string): Promise<{ reassigned: number; unassigned: number }> {
     const tickets = await supportRepository.findActiveTicketsByAdmin(adminId)
@@ -84,23 +86,20 @@ export const supportAssignmentService = {
     let unassigned = 0
 
     for (const ticket of tickets) {
+      if (ticket.status === 'PENDING_REVIEW') {
+        // Keep assignee for rating attribution; auto-close still fires.
+        continue
+      }
       const newAdminId = await this.assignTicket(ticket.id, { excludeAdminId: adminId })
       if (newAdminId) {
         reassigned += 1
         continue
       }
       unassigned += 1
-      if (ticket.status === 'PENDING_REVIEW') {
-        await supportRepository.updateTicketStatus(ticket.id, 'PENDING_REVIEW', {
-          assignedAdminId: null,
-          assignedAt: null,
-        })
-      } else {
-        await supportRepository.updateTicketStatus(ticket.id, 'OPEN', {
-          assignedAdminId: null,
-          assignedAt: null,
-        })
-      }
+      await supportRepository.updateTicketStatus(ticket.id, 'OPEN', {
+        assignedAdminId: null,
+        assignedAt: null,
+      })
     }
 
     return { reassigned, unassigned }

@@ -137,4 +137,26 @@ export const guardianRepository = {
       },
     })
   },
+
+  /** Admin: all relationships where user is the guardian (active + expired). */
+  async findAllAsGuardian(guardianUserId: string): Promise<GuardianWithTargetUser[]> {
+    return prismaRead.guardian.findMany({
+      where: { guardianUserId },
+      orderBy: [{ purchasedAt: 'desc' }, { expiresAt: 'desc' }],
+      include: {
+        targetUser: { select: userCardSelect },
+      },
+    })
+  },
+
+  /** Admin: all relationships where user is the target (active + expired). */
+  async findAllAsTarget(targetUserId: string): Promise<GuardianWithGuardianUser[]> {
+    return prismaRead.guardian.findMany({
+      where: { targetUserId },
+      orderBy: [{ purchasedAt: 'desc' }, { expiresAt: 'desc' }],
+      include: {
+        guardianUser: { select: userCardSelect },
+      },
+    })
+  },
 }

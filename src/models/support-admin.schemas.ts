@@ -37,7 +37,8 @@ export const AdminReplySchema = z.object({
 
 export const ResolveTicketSchema = z.object({
   resolution: z.enum(['RESOLVED', 'REJECTED']),
-  note: z.string().max(2000).optional(),
+  /** Required reason posted into the ticket chat as a SUPPORT message. */
+  note: z.string().min(1).max(2000),
 })
 
 export const AssignTicketSchema = z.object({

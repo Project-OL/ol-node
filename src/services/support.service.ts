@@ -52,6 +52,12 @@ function hasUnreadForActor(
   return ticket.userLastReadMessageId < lastMessage.id
 }
 
+function ticketUserFlags(ticket: { status: SupportTicketStatus; rating: number | null }) {
+  return {
+    canRate: ticket.status === 'CLOSED' && ticket.rating == null,
+  }
+}
+
 export const supportService = {
   getTicketTypes() {
     return SUPPORT_TYPE_CONFIG
@@ -156,6 +162,7 @@ export const supportService = {
           | undefined
         return {
           ...ticket,
+          ...ticketUserFlags(ticket),
           hasUnreadMessages: hasUnreadForActor(
             {
               userLastReadMessageId: ticket.userLastReadMessageId ?? null,
@@ -215,7 +222,10 @@ export const supportService = {
     }
 
     return toJsonSafe({
-      ticket,
+      ticket: {
+        ...ticket,
+        ...ticketUserFlags(ticket),
+      },
       messages: chronological,
       hasMore: messages.length === messageQuery.limit,
       nextCursor:
@@ -285,9 +295,19 @@ export const supportService = {
       throw new AppError(409, 'Ticket is already closed', 'TICKET_ALREADY_CLOSED')
     }
 
+    const now = new Date()
+    const resolution = ticket.resolution ?? 'RESOLVED'
+    await supportRepository.createMessage({
+      ticketId,
+      senderType: 'SUPPORT',
+      content:
+        'This ticket has been closed by support. Please rate your experience (1–5 stars).',
+    })
     const updated = await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
-      closedAt: new Date(),
+      closedAt: now,
       closedByUserId: csUserId,
+      resolution,
+      resolvedAt: ticket.resolvedAt ?? now,
     })
 
     await invalidateCaches(ticket.userId, ticketId)
@@ -316,9 +336,18 @@ export const supportService = {
       closedByUserId: userId,
     })
 
+    await supportRepository.createMessage({
+      ticketId,
+      senderType: 'SUPPORT',
+      content: 'Thanks for confirming. Please rate your experience (1–5 stars).',
+    })
+
     await invalidateCaches(userId, ticketId)
 
-    return toJsonSafe(updated)
+    return toJsonSafe({
+      ...updated,
+      canRate: true,
+    })
   },
 
   async rateTicket(ticketId: bigint, userId: string, input: RateTicketInput) {
@@ -338,11 +367,14 @@ export const supportService = {
     const updated = await supportRepository.rateTicket(ticketId, input.rating)
     await invalidateCaches(userId, ticketId)
 
-    return toJsonSafe(updated)
+    return toJsonSafe({
+      ...updated,
+      canRate: false,
+    })
   },
 
   /**
-   * BullMQ auto-close: fires 72h after a ticket entered PENDING_REVIEW.
+   * BullMQ auto-close: fires 24h after a ticket entered PENDING_REVIEW.
    * No-op unless the ticket is still PENDING_REVIEW (user may have contested
    * or confirmed in the meantime).
    */
@@ -350,8 +382,18 @@ export const supportService = {
     const ticket = await supportRepository.findTicketById(ticketId)
     if (!ticket || ticket.status !== 'PENDING_REVIEW') return
 
+    const now = new Date()
+    await supportRepository.createMessage({
+      ticketId,
+      senderType: 'SUPPORT',
+      content:
+        'This ticket was closed automatically. Please rate your experience (1–5 stars).',
+    })
     await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
-      closedAt: new Date(),
+      closedAt: now,
+      // Preserve resolve/reject already set at PENDING_REVIEW entry.
+      resolution: ticket.resolution ?? 'RESOLVED',
+      resolvedAt: ticket.resolvedAt ?? now,
     })
     await invalidateCaches(ticket.userId, ticketId)
   },

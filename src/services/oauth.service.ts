@@ -224,16 +224,36 @@ export const oauthService = {
     void userPublicIdService.setOriginalPublicId(user.id, publicId).catch((err) => {
       console.error(`[public-id] Failed to store originalPublicId for ${user.id}`, err)
     })
-    await prisma.authIdentifier.create({
-      data: {
+    const now = new Date()
+    const identifiers: Array<{
+      userId: string
+      provider: AuthProvider
+      identifier: string
+      isVerified: boolean
+      verifiedAt: Date
+      isPrimary: boolean
+    }> = [
+      {
         userId: user.id,
         provider,
         identifier: userInfo.providerId,
         isVerified: true,
-        verifiedAt: new Date(),
+        verifiedAt: now,
         isPrimary: true,
       },
-    })
+    ]
+    // Persist Facebook Graph email so /me and admin user detail show it (email AuthIdentifier).
+    if (provider === 'facebook' && userInfo.email) {
+      identifiers.push({
+        userId: user.id,
+        provider: 'email',
+        identifier: userInfo.email,
+        isVerified: true,
+        verifiedAt: now,
+        isPrimary: false,
+      })
+    }
+    await prisma.authIdentifier.createMany({ data: identifiers })
     await deviceService.linkAccountToDevice(deviceId, user.id)
     const tokens = await sessionService.createSession({
       userId: user.id,

@@ -3,19 +3,20 @@ import { GIFT_LIST_CACHE_TTL } from '../config/redis'
 import { giftRepository, type GiftWithTags } from '../repositories/gift.repository'
 import { AppError } from '../middlewares/errorHandler'
 import { giftGalleryService } from './gift-gallery.service'
-import { vipMembershipService } from './vip-membership.service'
-
-type GiftListAudience = 'vip' | 'novip'
 
 async function invalidateGiftCaches(affectedTags: string[]) {
   try {
-    await redisClient.del(RedisKeys.giftList('vip'), RedisKeys.giftList('novip'))
-    // Legacy unscoped keys (pre-audience suffix)
-    await redisClient.del('gifts:list')
+    await redisClient.del(
+      RedisKeys.giftList(),
+      'gifts:list:vip',
+      'gifts:list:novip',
+      'gifts:list',
+    )
     for (const tag of affectedTags) {
       await redisClient.del(
-        RedisKeys.giftByTag(tag, 'vip'),
-        RedisKeys.giftByTag(tag, 'novip'),
+        RedisKeys.giftByTag(tag),
+        `gifts:tag:${tag}:vip`,
+        `gifts:tag:${tag}:novip`,
         `gifts:tag:${tag}`,
       )
     }
@@ -27,7 +28,12 @@ async function invalidateGiftCaches(affectedTags: string[]) {
 
 async function invalidateAllGiftListCaches() {
   try {
-    await redisClient.del(RedisKeys.giftList('vip'), RedisKeys.giftList('novip'), 'gifts:list')
+    await redisClient.del(
+      RedisKeys.giftList(),
+      'gifts:list:vip',
+      'gifts:list:novip',
+      'gifts:list',
+    )
     const pattern = 'gifts:tag:*'
     let cursor = '0'
     do {
@@ -45,21 +51,12 @@ async function invalidateAllGiftListCaches() {
 
 export const giftService = {
   /**
-   * Active gift catalog for clients.
-   * Non-VIP / anonymous callers only see `vipOnly: false` gifts; VIP members see all active gifts.
+   * Active gift catalog for clients (includes `vipOnly` gifts).
+   * Sending a `vipOnly` gift still requires active VIP membership.
    */
-  async listPublic(
-    query: { tag?: string; page: number; limit: number },
-    opts?: { userId?: string },
-  ) {
-    const includeVipOnly = opts?.userId
-      ? await vipMembershipService.hasActive(opts.userId)
-      : false
-    const audience: GiftListAudience = includeVipOnly ? 'vip' : 'novip'
+  async listPublic(query: { tag?: string; page: number; limit: number }) {
     const skip = (query.page - 1) * query.limit
-    const cacheKey = query.tag
-      ? RedisKeys.giftByTag(query.tag, audience)
-      : RedisKeys.giftList(audience)
+    const cacheKey = query.tag ? RedisKeys.giftByTag(query.tag) : RedisKeys.giftList()
 
     try {
       const raw = await redisClient.get(cacheKey)
@@ -79,7 +76,6 @@ export const giftService = {
       tag: query.tag,
       skip,
       take: query.limit,
-      includeVipOnly,
     })
 
     const payload = {

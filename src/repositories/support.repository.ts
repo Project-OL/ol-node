@@ -181,6 +181,8 @@ export const supportRepository = {
     type?: SupportTicketType
     assignedAdminId?: string
     unassigned?: boolean
+    /** When true, only tickets that have a star rating (typically with status=CLOSED). */
+    ratedOnly?: boolean
     skip: number
     take: number
   }) {
@@ -190,6 +192,7 @@ export const supportRepository = {
       ...(opts.type ? { type: opts.type } : {}),
       ...(opts.assignedAdminId ? { assignedAdminId: opts.assignedAdminId } : {}),
       ...(opts.unassigned ? { assignedAdminId: null, status: { not: 'CLOSED' } } : {}),
+      ...(opts.ratedOnly ? { rating: { not: null } } : {}),
     }
     const [tickets, total] = await Promise.all([
       prismaRead.supportTicket.findMany({

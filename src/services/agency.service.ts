@@ -200,11 +200,18 @@ export const agencyService = {
 
     await agencyKycService.validateKycComplete(params.applicantUserId)
 
-    const barred = await prisma.user.findUnique({
+    const applicant = await prisma.user.findUnique({
       where: { id: params.applicantUserId },
-      select: { agencyBarredAt: true },
+      select: { agencyBarredAt: true, currentAgencyId: true },
     })
-    if (barred?.agencyBarredAt) {
+    if (applicant?.currentAgencyId) {
+      throw new AppError(
+        409,
+        'Applicant is already a host in an agency',
+        'ALREADY_IN_AGENCY',
+      )
+    }
+    if (applicant?.agencyBarredAt) {
       throw new AppError(403, 'User is barred from operating an agency', 'AGENCY_BARRED')
     }
 

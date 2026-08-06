@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto'
 import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env'
@@ -12,6 +13,8 @@ import {
 import { systemAdminRepository, type AdminProfileData } from '../repositories/systemAdmin.repository'
 import { AppError } from '../middlewares/errorHandler'
 import { parseJwtExpiresToSeconds } from '../utils/jwt'
+import { normalizeIp } from '../utils/ipAddress'
+import { passwordService } from './password.service'
 import type { AdminRole } from '@prisma/client'
 
 const BCRYPT_ROUNDS = 12
@@ -21,6 +24,8 @@ interface AdminAccessPayload {
   role: AdminRole
   iss: 'offoo-admin'
   type: 'access'
+  /** Bound for CUSTOMER_SUPPORT so a new login can invalidate prior access JWTs. */
+  sessionId?: string
 }
 
 interface AdminRefreshPayload {
@@ -38,12 +43,18 @@ function accessTokenTtlSeconds(): number {
   return parseJwtExpiresToSeconds(env.ADMIN_JWT_ACCESS_EXPIRES_IN)
 }
 
-function signAccessToken(adminId: string, role: AdminRole): string {
-  return jwt.sign(
-    { sub: adminId, role, iss: 'offoo-admin', type: 'access' } satisfies AdminAccessPayload,
-    env.ADMIN_JWT_SECRET,
-    { expiresIn: env.ADMIN_JWT_ACCESS_EXPIRES_IN, algorithm: 'HS256' } as jwt.SignOptions,
-  )
+function signAccessToken(adminId: string, role: AdminRole, sessionId?: string): string {
+  const payload: AdminAccessPayload = {
+    sub: adminId,
+    role,
+    iss: 'offoo-admin',
+    type: 'access',
+    ...(sessionId ? { sessionId } : {}),
+  }
+  return jwt.sign(payload, env.ADMIN_JWT_SECRET, {
+    expiresIn: env.ADMIN_JWT_ACCESS_EXPIRES_IN,
+    algorithm: 'HS256',
+  } as jwt.SignOptions)
 }
 
 function signRefreshToken(adminId: string, sessionId: string): string {
@@ -120,6 +131,27 @@ export const systemAdminService = {
       throw new AppError(401, 'Invalid credentials', 'ADMIN_INVALID_CREDENTIALS')
     }
 
+    // IP allow-list: CSA always; SUPER_ADMIN when env flag is on. Empty list = deny.
+    if (shouldEnforceIpWhitelist(admin.role)) {
+      const clientIp = normalizeIp(meta.ipAddress)
+      const allowed = clientIp
+        ? await systemAdminRepository.isIpWhitelisted(admin.id, clientIp)
+        : false
+      if (!allowed) {
+        await recordLoginFailure(failKey)
+        console.warn('[admin-auth] login blocked by IP whitelist', {
+          adminId: admin.id,
+          role: admin.role,
+          ipAddress: clientIp ?? meta.ipAddress ?? null,
+        })
+        throw new AppError(
+          403,
+          'Login not allowed from this IP address',
+          'ADMIN_IP_FORBIDDEN',
+        )
+      }
+    }
+
     if (admin.failedLoginCount > 0 || admin.lockedUntil) {
       await systemAdminRepository.resetFailedLogin(admin.id)
     }
@@ -141,10 +173,20 @@ export const systemAdminService = {
     const refreshToken = signRefreshToken(admin.id, session.id)
     const tokenHash = await bcrypt.hash(refreshToken, 10)
     await systemAdminRepository.updateSessionTokenHash(session.id, tokenHash)
+
+    // CSA: only one active session — revoke peers after minting this one (new login wins).
+    if (admin.role === 'CUSTOMER_SUPPORT') {
+      await systemAdminRepository.revokeOtherSessions(admin.id, session.id)
+    }
+
     await systemAdminRepository.updateLastLogin(admin.id)
 
     return {
-      accessToken: signAccessToken(admin.id, admin.role),
+      accessToken: signAccessToken(
+        admin.id,
+        admin.role,
+        admin.role === 'CUSTOMER_SUPPORT' ? session.id : undefined,
+      ),
       refreshToken,
       admin: {
         id: admin.id,
@@ -184,14 +226,62 @@ export const systemAdminService = {
       throw new AppError(401, 'Admin not found or inactive', 'ADMIN_INVALID_CREDENTIALS')
     }
 
+    const bindSession = session.admin.role === 'CUSTOMER_SUPPORT' ? session.id : undefined
     return {
-      accessToken: signAccessToken(session.admin.id, session.admin.role),
+      accessToken: signAccessToken(session.admin.id, session.admin.role, bindSession),
     }
   },
 
   async logout(adminId: string) {
     await systemAdminRepository.revokeAllSessions(adminId).catch(() => null)
     await redisClient.set(RedisKeys.adminTokenRevoked(adminId), '1', 'EX', accessTokenTtlSeconds())
+  },
+
+  /**
+   * SUPER_ADMIN: set a new password for any SystemAdmin (CSA, moderator, another SUPER_ADMIN, …).
+   * Revokes all sessions for the target so old JWTs stop working.
+   * When `newPassword` is omitted, generates a temporary password and returns it once.
+   */
+  async resetPassword(params: {
+    targetAdminId: string
+    actorAdminId: string
+    newPassword?: string
+  }) {
+    const target = await systemAdminRepository.findById(params.targetAdminId)
+    if (!target) throw new AppError(404, 'Admin not found', 'ADMIN_NOT_FOUND')
+
+    const plain = params.newPassword?.trim() || generateTemporaryAdminPassword()
+    if (plain.length < 12) {
+      throw new AppError(400, 'Password must be at least 12 characters', 'WEAK_PASSWORD')
+    }
+    const strength = passwordService.validateStrength(plain)
+    if (!strength.ok) {
+      throw new AppError(400, strength.error, 'WEAK_PASSWORD')
+    }
+
+    const passwordHash = await bcrypt.hash(plain, BCRYPT_ROUNDS)
+    await systemAdminRepository.updatePasswordHash(params.targetAdminId, passwordHash)
+    await this.logout(params.targetAdminId)
+
+    // Clear email-based login throttle so the target can sign in with the new password immediately.
+    await redisClient.del(RedisKeys.adminLoginFail(target.email)).catch(() => null)
+
+    console.info('[admin-auth] password reset', {
+      targetAdminId: params.targetAdminId,
+      actorAdminId: params.actorAdminId,
+      role: target.role,
+      generated: !params.newPassword,
+    })
+
+    return {
+      ok: true as const,
+      adminId: target.id,
+      email: target.email,
+      role: target.role,
+      temporaryPassword: params.newPassword ? undefined : plain,
+      sessionsRevoked: true,
+      message: 'Password reset; all sessions revoked',
+    }
   },
 
   async verifyAccessToken(token: string): Promise<AdminAccessPayload> {
@@ -211,6 +301,17 @@ export const systemAdminService = {
         throw new AppError(401, 'Admin not found or inactive', 'ADMIN_INVALID_CREDENTIALS')
       }
 
+      // CSA single-session: access JWT must match a non-revoked AdminSession.
+      if (admin.role === 'CUSTOMER_SUPPORT') {
+        if (!payload.sessionId) {
+          throw new AppError(401, 'Admin token invalid or expired', 'ADMIN_TOKEN_INVALID')
+        }
+        const session = await systemAdminRepository.findSessionById(payload.sessionId)
+        if (!session || session.adminId !== admin.id) {
+          throw new AppError(401, 'Admin token invalid or expired', 'ADMIN_TOKEN_INVALID')
+        }
+      }
+
       return payload
     } catch (e) {
       if (e instanceof AppError) throw e
@@ -223,6 +324,13 @@ function cryptoRandom(): string {
   return `${Date.now()}-${Math.random()}`
 }
 
+function generateTemporaryAdminPassword(): string {
+  const suffix = randomBytes(12)
+    .toString('base64url')
+    .replace(/[^a-zA-Z0-9]/g, 'a')
+  return `Aa1!${suffix}9`
+}
+
 async function recordLoginFailure(failKey: string): Promise<void> {
   try {
     const count = await redisClient.incr(failKey)
@@ -230,4 +338,10 @@ async function recordLoginFailure(failKey: string): Promise<void> {
   } catch {
     // Redis unavailable — fail open; the DB lockout still protects known accounts.
   }
+}
+
+function shouldEnforceIpWhitelist(role: AdminRole): boolean {
+  if (role === 'CUSTOMER_SUPPORT') return true
+  if (role === 'SUPER_ADMIN') return env.SUPER_ADMIN_IP_WHITELIST_ENABLED === true
+  return false
 }
