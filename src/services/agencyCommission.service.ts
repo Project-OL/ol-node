@@ -407,6 +407,10 @@ export const agencyCommissionService = {
     }
   },
 
+  /**
+   * Match agency commission tier to rolling-window **agency commission earned**
+   * (`host_commission_points` sum). Host earnings are excluded from tier math.
+   */
   async recomputeAgencyLevel(
     agencyUserId: string,
     opts?: { skipDailyDedupe?: boolean },

@@ -347,6 +347,7 @@ export const agencyAdminService = {
 
   /**
    * Force agency tier recompute (skips same-day dedupe). Returns before/after level.
+   * Window total uses agency commission earned only (not host earnings).
    */
   async forceRecomputeLevel(identifier: string) {
     const agency = await resolveAgencyByIdentifier(identifier)

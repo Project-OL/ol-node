@@ -163,6 +163,11 @@ export const agencyCommissionRepository = {
     `
   },
 
+  /**
+   * Rolling-window total used for agency commission tier matching / progress.
+   * Sums agency commission earned (`host_commission_points`) only — host
+   * earnings are tracked separately and must not drive tier changes.
+   */
   async getAgencyWindowTotal(
     agencyUserId: string,
     fromDay: Date,
@@ -171,7 +176,7 @@ export const agencyCommissionRepository = {
   ): Promise<bigint> {
     const client = opts?.preferPrimary ? prisma : prismaRead
     const rows = await client.$queryRaw<{ s: bigint }[]>`
-      SELECT COALESCE(SUM(e.host_earnings_points), 0)::bigint AS s
+      SELECT COALESCE(SUM(e.host_commission_points), 0)::bigint AS s
       FROM agency_daily_earnings e
       INNER JOIN users u ON u.id = e.host_user_id
       WHERE e.agency_user_id = ${agencyUserId}::uuid

@@ -485,7 +485,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Agency'],
         description:
-          'Force recompute agency commission tier from the configured rolling window (days-only default: today−29…today). Also accepts agency publicId via /:identifier routes below.',
+          'Force recompute agency commission tier from the configured rolling window (days-only default: today−29…today). Window total = agency commission earned only (host earnings excluded). Also accepts agency publicId via /:identifier routes below.',
       },
     },
     async (request: FastifyRequest<{ Params: { agencyUserId: string } }>, reply: FastifyReply) => {
@@ -499,7 +499,8 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       preHandler: [authenticateAdmin],
       schema: {
         tags: ['Admin', 'Agency'],
-        description: 'Force recompute agency tier (UUID or agency publicId).',
+        description:
+          'Force recompute agency tier (UUID or agency publicId). Metric: rolling-window agency commission earned (not host earnings).',
       },
     },
     async (request, reply) => {
