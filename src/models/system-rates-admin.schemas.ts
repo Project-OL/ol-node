@@ -89,3 +89,17 @@ export const CommissionLevelsReplaceSchema = z.object({
     )
     .min(1),
 })
+
+/** Soft-replace video-call allowed pricePerMin rows by livestream level band. */
+export const ReplaceVideoCallPriceCapsSchema = z.object({
+  tiers: z
+    .array(
+      z.object({
+        minLevel: z.number().int().min(1),
+        maxLevel: z.number().int().min(1).nullable().optional(),
+        price: z.number().int().positive(),
+        label: z.string().max(64).nullable().optional(),
+      }),
+    )
+    .min(1),
+})

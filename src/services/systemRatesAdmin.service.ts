@@ -15,6 +15,7 @@ import { agencyCommissionService } from './agencyCommission.service'
 import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import { payrollAdminService } from './payrollAdmin.service'
 import { walletLevelService } from './user-level.service'
+import { videoCallPriceCapService } from './videoCallPriceCap.service'
 
 export type RateTierInput = {
   minUsd: number
@@ -478,6 +479,7 @@ export const systemRatesAdminService = {
       personalExchangeRates,
       coinPackages,
       walletLevelConfigs,
+      videoCallPriceCaps,
       topupRates,
       agentExchangeRates,
       tradingTopupPackages,
@@ -489,6 +491,7 @@ export const systemRatesAdminService = {
       this.getPersonalExchangeRates(),
       this.getCoinPackages(),
       this.getWalletLevelConfigs(),
+      videoCallPriceCapService.getCaps(),
       this.getTopupRates(),
       this.getAgentExchangeRates(),
       this.getTradingTopupPackages(),
@@ -502,6 +505,7 @@ export const systemRatesAdminService = {
       personalExchangeRates,
       coinPackages,
       walletLevelConfigs,
+      videoCallPriceCaps,
       tradingTopupRates: topupRates,
       agentExchangeRates,
       tradingTopupPackages,

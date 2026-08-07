@@ -195,6 +195,8 @@ export const RedisKeys = {
   coinPackages: () => 'coin:packages',
   /** Host revenue share singleton (gift/sub/guardian/video bp). */
   hostRevenueShares: () => 'host:revenue-shares',
+  /** Active video-call pricePerMin allow-list by livestream level. */
+  videoCallPriceCaps: () => 'call:price-caps',
   coinsellerSettings: (agencyUserId: string) => `agency:coinseller:${agencyUserId}`,
   walletIdem: (key: string) => `wallet:idem:${key}`,
   walletRateLimit: (userId: string, action: string) => `wallet:rl:${userId}:${action}`,

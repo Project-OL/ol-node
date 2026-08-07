@@ -1,17 +1,23 @@
 /**
- * Video call price cap rules by host livestream level.
- * @see docs/flow-md/rates-levels-and-earnings-reference.md § 11
+ * Video call price helpers — prefer `videoCallPriceCapService` at runtime.
+ * Sync helpers use TS defaults only (admin DB config is authoritative).
+ * @see docs/flow-md/rates-levels-and-earnings-reference.md
  */
 
-export const MIN_CALL_PRICE_COINS_PER_MIN = 1800
+import {
+  DEFAULT_VIDEO_CALL_PRICE_CAPS,
+  MIN_CALL_PRICE_COINS_PER_MIN,
+} from '../config/video-call-price-caps.defaults'
 
+export { MIN_CALL_PRICE_COINS_PER_MIN }
+
+/** @deprecated Sync fallback only — use videoCallPriceCapService.getMaxPriceForLevel. */
 export function getMaxCallPriceForLevel(livestreamLevel: number): number {
-  if (livestreamLevel <= 4) return 1800
-  if (livestreamLevel <= 9) return 2400
-  if (livestreamLevel <= 14) return 3000
-  if (livestreamLevel <= 19) return 3600
-  if (livestreamLevel <= 24) return 4800
-  if (livestreamLevel <= 29) return 6000
-  if (livestreamLevel <= 34) return 7200
-  return 9600 // Level 35+
+  const allowed = DEFAULT_VIDEO_CALL_PRICE_CAPS.filter((t) => {
+    if (livestreamLevel < t.minLevel) return false
+    if (t.maxLevel != null && livestreamLevel > t.maxLevel) return false
+    return true
+  }).map((t) => t.price)
+  if (allowed.length === 0) return MIN_CALL_PRICE_COINS_PER_MIN
+  return Math.max(...allowed)
 }

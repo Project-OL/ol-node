@@ -548,7 +548,7 @@ model UserSettings {
   language              String   @default("en") @db.VarChar(10)
   allowMsgFromMutual    Boolean  @default(true) @map("allow_msg_from_mutual")
   allowMsgFromFollowing Boolean  @default(true) @map("allow_msg_from_following")
-  allowMsgFromStranger  Boolean  @default(false) @map("allow_msg_from_stranger")
+  allowMsgFromStranger  Boolean  @default(true) @map("allow_msg_from_stranger")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
@@ -1504,6 +1504,26 @@ model HostRevenueShareConfig {
   updatedByAdminId      String?  @map("updated_by_admin_id") @db.Uuid
 
   @@map("host_revenue_share_config")
+}
+
+/// Allowed video-call `pricePerMin` values for a host livestream level band.
+/// Soft-replace via admin system-settings. Multiple rows may share the same band
+/// (e.g. Lv10+ choices 3000 / 3600 / …).
+model VideoCallPriceCap {
+  id        String   @id @default(uuid()) @db.Uuid
+  /// Inclusive lower bound of livestream level (typically ≥ 1).
+  minLevel  Int      @map("min_level")
+  /// Inclusive upper bound; null = open-ended (e.g. Lv10 & Above).
+  maxLevel  Int?     @map("max_level")
+  /// One allowed `pricePerMin` (host points / minute) for this band.
+  price     Int
+  label     String?  @db.VarChar(64)
+  sortOrder Int      @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("video_call_price_caps")
 }
 
 model Withdrawal {

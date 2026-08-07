@@ -5,10 +5,12 @@ import {
   HostRevenueSharesUpdateSchema,
   ReplaceCoinPackagesSchema,
   ReplaceRatesSchema,
+  ReplaceVideoCallPriceCapsSchema,
   WalletLevelConfigsReplaceSchema,
 } from '../../models/system-rates-admin.schemas'
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
+import { videoCallPriceCapService } from '../../services/videoCallPriceCap.service'
 
 /**
  * Platform-wide coin / point rate configs (System Settings).
@@ -18,6 +20,7 @@ import { systemRatesAdminService } from '../../services/systemRatesAdmin.service
  * GET|PUT /v1/admin/system-settings/personal-exchange-rates
  * GET|PUT /v1/admin/system-settings/coin-packages
  * GET|PUT /v1/admin/system-settings/wallet-level-configs
+ * GET|PUT /v1/admin/system-settings/video-call-price-caps
  */
 export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
   app.get(
@@ -95,6 +98,23 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = WalletLevelConfigsReplaceSchema.parse(request.body ?? {})
       return reply.send(await systemRatesAdminService.replaceWalletLevelConfigs(body))
+    },
+  )
+
+  app.get(
+    '/system-settings/video-call-price-caps',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await videoCallPriceCapService.getCaps())
+    },
+  )
+
+  app.put(
+    '/system-settings/video-call-price-caps',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const body = ReplaceVideoCallPriceCapsSchema.parse(request.body ?? {})
+      return reply.send(await videoCallPriceCapService.replaceCaps(body.tiers))
     },
   )
 }

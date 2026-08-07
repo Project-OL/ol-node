@@ -61,7 +61,7 @@ export default async function callRoutes(app: FastifyInstance) {
       },
     },
     async (_request: FastifyRequest, reply: FastifyReply) => {
-      return reply.send({ priceTable: videoCallSettingsService.priceTable() })
+      return reply.send({ priceTable: await videoCallSettingsService.priceTable() })
     },
   )
 

@@ -21,14 +21,13 @@ import {
   LevelType,
 } from '@prisma/client'
 import {
-  maxPriceForLevel,
   MIN_CALL_PRICE,
   type UpdateCallSettingsInput,
 } from '../models/call.schemas'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { callerCoinDebitForCall } from '../config/host-revenue-shares'
 import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
-import { assertPositiveIntMultiple, VIDEO_CALL_PRICE_STEP } from '../utils/transaction-amount-steps'
+import { videoCallPriceCapService } from './videoCallPriceCap.service'
 import { assertCoinDebitAllowed } from './wallet-freeze.service'
 
 /** Public call-settings shape — always populated (virtual defaults when no DB row). */
@@ -38,6 +37,10 @@ export type VideoCallSettingsDto = {
   blockLv5: boolean
   blockLv10: boolean
   acceptVideoCalls: boolean
+  /** Host livestream level used to resolve allowedPrices (additive). */
+  livestreamLevel?: number
+  /** Discrete pricePerMin values this host may choose (additive). */
+  allowedPrices?: number[]
 }
 
 const DEFAULT_CALL_SETTINGS = {
@@ -63,6 +66,16 @@ function toPublicSettings(
     blockLv10: row?.blockLv10 ?? DEFAULT_CALL_SETTINGS.blockLv10,
     acceptVideoCalls: row?.acceptVideoCalls ?? DEFAULT_CALL_SETTINGS.acceptVideoCalls,
   }
+}
+
+async function withAllowedPrices(
+  userId: string,
+  base: VideoCallSettingsDto,
+): Promise<VideoCallSettingsDto> {
+  const record = await walletUserLevelRepository.getByUser(userId, LevelType.LIVESTREAM)
+  const livestreamLevel = record?.currentLevel ?? 1
+  const allowedPrices = await videoCallPriceCapService.getAllowedPricesForLevel(livestreamLevel)
+  return { ...base, livestreamLevel, allowedPrices }
 }
 
 // ── LiveKit helpers ───────────────────────────────────────────────────────────
@@ -95,7 +108,7 @@ export const videoCallSettingsService = {
    */
   async get(userId: string): Promise<VideoCallSettingsDto> {
     const settings = await videoCallRepository.getSettings(userId)
-    return toPublicSettings(userId, settings)
+    return withAllowedPrices(userId, toPublicSettings(userId, settings))
   },
 
   /** Whether the user currently wants to receive video calls (default true). */
@@ -104,48 +117,25 @@ export const videoCallSettingsService = {
     return settings?.acceptVideoCalls ?? DEFAULT_CALL_SETTINGS.acceptVideoCalls
   },
 
-  /** Returns the full call-price cap table so the client can display it. */
-  priceTable() {
-    return [
-      { label: '≤Lv4', maxLevel: 4, maxPrice: 1800 },
-      { label: 'Lv5-9', maxLevel: 9, maxPrice: 2400 },
-      { label: 'Lv10-14', maxLevel: 14, maxPrice: 3000 },
-      { label: 'Lv15-19', maxLevel: 19, maxPrice: 3600 },
-      { label: 'Lv20-24', maxLevel: 24, maxPrice: 4800 },
-      { label: 'Lv25-29', maxLevel: 29, maxPrice: 6000 },
-      { label: 'Lv30-34', maxLevel: 34, maxPrice: 7200 },
-      { label: 'Lv35+', maxLevel: null, maxPrice: 9600 },
-    ]
+  /** Returns the configured allow-list (DB / admin) for the Call Price UI. */
+  async priceTable() {
+    return videoCallPriceCapService.priceTable()
   },
 
   async update(userId: string, input: UpdateCallSettingsInput): Promise<VideoCallSettingsDto> {
     if (input.pricePerMin !== undefined) {
-      assertPositiveIntMultiple(input.pricePerMin, VIDEO_CALL_PRICE_STEP, {
-        belowMinCode: 'MIN_CALL_PRICE',
-        unitLabel: 'price per minute',
-      })
-      // Validate against the creator's current livestream level
       const record = await walletUserLevelRepository.getByUser(userId, LevelType.LIVESTREAM)
       const livestreamLevel = record?.currentLevel ?? 1
-      const cap = maxPriceForLevel(livestreamLevel)
-
-      if (input.pricePerMin > cap) {
-        throw new AppError(
-          400,
-          `Your livestream level (Lv${livestreamLevel}) allows a max price of ${cap} coins/min`,
-          'PRICE_EXCEEDS_CAP',
-          { cap, livestreamLevel },
-        )
-      }
+      await videoCallPriceCapService.assertPriceAllowed(livestreamLevel, input.pricePerMin)
     }
 
     const row = await videoCallRepository.upsertSettings(userId, input)
-    return toPublicSettings(userId, row)
+    return withAllowedPrices(userId, toPublicSettings(userId, row))
   },
 
   async setAcceptVideoCalls(userId: string, acceptVideoCalls: boolean): Promise<VideoCallSettingsDto> {
     const row = await videoCallRepository.upsertSettings(userId, { acceptVideoCalls })
-    return toPublicSettings(userId, row)
+    return withAllowedPrices(userId, toPublicSettings(userId, row))
   },
 }
 
