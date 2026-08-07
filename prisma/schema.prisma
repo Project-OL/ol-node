@@ -1918,6 +1918,7 @@ model Gift {
   effectUrl       String?  @map("effect_url") @db.Text
   displayOrder    Int      @default(0) @map("display_order")
   vipOnly         Boolean  @default(false) @map("vip_only")
+  isLucky         Boolean  @default(false) @map("is_lucky")
   isActive        Boolean  @default(true) @map("is_active")
   categoryId      String?  @map("category_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
@@ -1931,6 +1932,7 @@ model Gift {
   customGiftRequests  CustomGiftRequest[]
 
   @@index([isActive])
+  @@index([isLucky])
   @@index([categoryId])
   @@index([displayOrder])
   @@map("gifts")
