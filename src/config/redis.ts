@@ -285,6 +285,8 @@ export const RedisKeys = {
   agencyHostBreakdown: (agencyUserId: string, period: string) =>
     `agency:host:breakdown:${agencyUserId}:${period}`,
   agencyLevelConfig: () => `agency:level:config`,
+  /** Singleton agency tier rolling window (days/hours/minutes). */
+  agencyCommissionWindowConfig: () => `agency:commission:window-config`,
   ratelimitAgencyPointTransfer: (userId: string) => `ratelimit:agency:point-transfer:${userId}`,
   /** Agency dashboard: earnings & commission overview per period label (30s TODAY / 60s others). */
   agencyDashboardEarnings: (agencyUserId: string, periodLabel: string) =>
@@ -496,6 +498,8 @@ export const RICH_STATE_TTL = 300
 export const RICH_CONFIG_TTL = 3600
 /** Payroll fee config singleton cache. */
 export const PAYROLL_CONFIG_TTL = 3600
+/** Agency commission tier rolling-window config singleton. */
+export const AGENCY_COMMISSION_WINDOW_CONFIG_TTL = 300
 /** Public withdrawal payout rail (EPAY/BANK fee + arrival copy). */
 export const PAYOUT_RAIL_CONFIG_TTL = 300
 /** Agent payroll dashboard summary (tab counts + toggle). */

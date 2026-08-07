@@ -94,6 +94,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/agency/:identifier/recompute-level',
     'POST /admin/agency/recompute/:agencyUserId',
     'POST /admin/agency/recompute-master',
+    'GET /admin/agency/commission/config',
+    'PUT /admin/agency/commission/config',
     'PATCH /admin/agency/:identifier/commission-tier',
     'POST /admin/agency/:identifier/hosts',
     'POST /admin/agency/:identifier/transfer-hosts',

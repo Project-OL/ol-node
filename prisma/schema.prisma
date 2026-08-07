@@ -2220,6 +2220,18 @@ model AgencyCommissionLevel {
   @@map("agency_commission_levels")
 }
 
+/// Singleton: agency tier/level rolling window (days + hours + minutes).
+model AgencyCommissionConfig {
+  id               Int      @id @default(1)
+  windowDays       Int      @default(30) @map("window_days")
+  windowHours      Int      @default(0) @map("window_hours")
+  windowMinutes    Int      @default(0) @map("window_minutes")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  updatedByAdminId String?  @map("updated_by_admin_id")
+
+  @@map("agency_commission_config")
+}
+
 model AgencyDailyEarning {
   agencyUserId         String    @map("agency_user_id") @db.Uuid
   hostUserId           String    @map("host_user_id") @db.Uuid

@@ -62,14 +62,42 @@ export function utcDayFromTimestamp(d: Date): Date {
  * Rolling window for agency level: last 30 UTC calendar days **including today** —
  * `[fromDay, toDay]` inclusive as DATE values (`today−29` … `today`).
  * At UTC midnight the oldest day ages out and a new empty today enters.
+ *
+ * @deprecated Prefer `agencyCommissionConfigService.resolveRollingWindowDays()` —
+ * window length is admin-configurable via `agency_commission_config`.
  */
 export function agencyCommissionRollingWindowDays(now: Date = utcNow()): {
   fromDay: Date
   toDay: Date
 } {
+  return resolveAgencyCommissionRollingWindowDays({ days: 30, hours: 0, minutes: 0 }, now)
+}
+
+/**
+ * Resolve inclusive UTC calendar-day window for agency tier recompute.
+ * - Days-only (`hours==0 && minutes==0`): `today − (days−1)` … `today` (legacy 30 → today−29…today).
+ * - Otherwise: days overlapping `[now − duration, now]` via `utcStartOfDay`.
+ */
+export function resolveAgencyCommissionRollingWindowDays(
+  cfg: { days: number; hours: number; minutes: number },
+  now: Date = utcNow(),
+): { fromDay: Date; toDay: Date } {
+  const days = Math.max(0, Math.floor(cfg.days))
+  const hours = Math.max(0, Math.floor(cfg.hours))
+  const minutes = Math.max(0, Math.floor(cfg.minutes))
   const todayStart = utcStartOfDay(now)
   const toDay = todayStart
-  const fromDay = addUtcDays(todayStart, -29)
+
+  if (hours === 0 && minutes === 0) {
+    const inclusiveDays = Math.max(1, days)
+    const fromDay = addUtcDays(todayStart, -(inclusiveDays - 1))
+    return { fromDay, toDay }
+  }
+
+  const totalMinutes = days * 24 * 60 + hours * 60 + minutes
+  const durationMs = Math.max(1, totalMinutes) * 60_000
+  const windowStart = new Date(now.getTime() - durationMs)
+  const fromDay = utcStartOfDay(windowStart)
   return { fromDay, toDay }
 }
 

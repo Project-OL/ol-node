@@ -13,7 +13,6 @@ import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-disp
 import { formatPointsAsUsd } from '../utils/points-currency'
 import {
   addUtcDays,
-  agencyCommissionRollingWindowDays,
   commissionPeriodToLedgerBounds,
   resolveCommissionPeriod,
   utcDateString,
@@ -22,9 +21,9 @@ import {
   utcStartOfDay,
   utcYearMonth,
 } from '../utils/datetime'
+import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function isAgencySuspended(agency: { pausedAt: Date | null; pausedUntil: Date | null }): boolean {
   if (!agency.pausedAt) return false
@@ -46,14 +45,16 @@ function pctChange(today: bigint, yesterday: bigint): number | null {
   return Math.round(((t - y) / y) * 10000) / 100
 }
 
-function mapKycDocuments(kyc: {
-  govtIdS3Key: string | null
-  govtIdSubmittedAt: Date | null
-  contactPhone: string | null
-  contactEmail: string | null
-  contactSubmittedAt: Date | null
-  faceVerified: boolean
-} | null) {
+function mapKycDocuments(
+  kyc: {
+    govtIdS3Key: string | null
+    govtIdSubmittedAt: Date | null
+    contactPhone: string | null
+    contactEmail: string | null
+    contactSubmittedAt: Date | null
+    faceVerified: boolean
+  } | null,
+) {
   return {
     govtIdUploaded: Boolean(kyc?.govtIdSubmittedAt),
     govtIdUrl: kyc?.govtIdS3Key ? storageService.getCdnOrS3PublicUrl(kyc.govtIdS3Key) : null,
@@ -135,9 +136,7 @@ export const agencyAdminService = {
     ])
 
     const activePct =
-      totalAgencies > 0
-        ? Math.round((totalActiveAgencies / totalAgencies) * 10000) / 100
-        : 0
+      totalAgencies > 0 ? Math.round((totalActiveAgencies / totalAgencies) * 10000) / 100 : 0
 
     return {
       totalAgencies,
@@ -211,9 +210,7 @@ export const agencyAdminService = {
   },
 
   async listApplications(params: {
-    statuses: Array<
-      'PENDING' | 'UNDER_REVIEW' | 'MORE_DOCS_REQUIRED' | 'APPROVED' | 'REJECTED'
-    >
+    statuses: Array<'PENDING' | 'UNDER_REVIEW' | 'MORE_DOCS_REQUIRED' | 'APPROVED' | 'REJECTED'>
     skip: number
     take: number
   }) {
@@ -288,8 +285,7 @@ export const agencyAdminService = {
       Boolean(kycRow.kyc?.contactSubmittedAt) &&
       (Boolean(kycRow.kyc?.faceVerified) || faceIndexed)
 
-    const lifetimePoints =
-      totalEarnings.hostEarningsPoints + totalEarnings.hostCommissionPoints
+    const lifetimePoints = totalEarnings.hostEarningsPoints + totalEarnings.hostCommissionPoints
     const monthPoints = monthEarnings.hostEarningsPoints + monthEarnings.hostCommissionPoints
 
     return {
@@ -367,7 +363,8 @@ export const agencyAdminService = {
     const afterRow = await agencyRepository.getAgencyByUserId(agency.userId)
     if (!afterRow) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
 
-    const { fromDay, toDay } = agencyCommissionRollingWindowDays()
+    const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays()
+    const cfg = await agencyCommissionConfigService.getConfig()
     return {
       ok: true as const,
       agencyUserId: agency.userId,
@@ -375,7 +372,10 @@ export const agencyAdminService = {
       levelWindow: {
         from: utcDateString(fromDay),
         to: utcDateString(toDay),
-        note: 'Inclusive UTC days ending yesterday (today excluded)',
+        windowDays: cfg.windowDays,
+        windowHours: cfg.windowHours,
+        windowMinutes: cfg.windowMinutes,
+        note: 'Inclusive UTC calendar days overlapping the configured rolling window (today included)',
       },
       before,
       after: {
@@ -412,8 +412,7 @@ export const agencyAdminService = {
     )
 
     const last = page[page.length - 1]
-    const nextCursor =
-      hasMore && last ? `${last.joinedAt.toISOString()}|${last.hostUserId}` : null
+    const nextCursor = hasMore && last ? `${last.joinedAt.toISOString()}|${last.hostUserId}` : null
 
     return {
       agencyUserId: agency.userId,
@@ -587,11 +586,7 @@ export const agencyAdminService = {
    * Ban/bar agency: freeze owner wallets, expire open payroll, free hosts, delete agency,
    * bar re-application. User login remains active.
    */
-  async banAgencyByAdmin(
-    agencyUserId: string,
-    adminUserId: string,
-    reason?: string,
-  ) {
+  async banAgencyByAdmin(agencyUserId: string, adminUserId: string, reason?: string) {
     const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
     if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
 
@@ -600,7 +595,8 @@ export const agencyAdminService = {
     const { agencyCoinsellerService } = await import('./agencyCoinseller.service')
     const { adminWalletService } = await import('./adminWallet.service')
     const { withdrawalService } = await import('./withdrawal.service')
-    const { payrollAssignmentRepository } = await import('../repositories/payrollAssignment.repository')
+    const { payrollAssignmentRepository } =
+      await import('../repositories/payrollAssignment.repository')
     const { withdrawalRepository } = await import('../repositories/withdrawal.repository')
     const { removePayrollSla, removePayrollWaiting } = await import('../queues/payroll.queue')
 
@@ -628,19 +624,12 @@ export const agencyAdminService = {
             tx,
           )
           await withdrawalRepository.incrementAssignmentCount(a.withdrawalId, tx)
-          await withdrawalRepository.updateStatus(
-            { id: a.withdrawalId, status: 'PENDING' },
-            tx,
-          )
+          await withdrawalRepository.updateStatus({ id: a.withdrawalId, status: 'PENDING' }, tx)
           withdrawalIdsToReassign.push(a.withdrawalId)
           void now
         }
 
-        await agencyHostService.handleAgentAccountDeletion(
-          agencyUserId,
-          tx,
-          'AGENCY_BANNED',
-        )
+        await agencyHostService.handleAgentAccountDeletion(agencyUserId, tx, 'AGENCY_BANNED')
 
         await tx.user.update({
           where: { id: agencyUserId },

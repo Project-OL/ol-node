@@ -21,7 +21,6 @@ import {
 } from '../utils/transaction-amount-steps'
 import {
   addUtcDays,
-  agencyCommissionRollingWindowDays,
   commissionPeriodToLedgerBounds,
   resolveCommissionPeriod,
   utcDateString,
@@ -30,6 +29,7 @@ import {
 } from '../utils/datetime'
 import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from '../queues/agency-commission.queue'
 import { walletService } from './wallet.service'
+import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 export const MIN_AGENT_POINT_TRANSFER = AGENT_POINT_TRANSFER_STEP
@@ -251,25 +251,19 @@ export const agencyCommissionService = {
     if (commissionEntry) {
       agencyUserId = commissionEntry.wallet.userId
       commissionPoints = commissionEntry.amount
-      await pointWalletService.debit(
-        agencyUserId,
-        commissionPoints,
-        PointTxType.ADJUSTMENT,
-        tx,
-        {
-          idempotencyKey: reverseKey,
-          description: `Admin commission reverse: ${params.reason}`.slice(0, 500),
-          counterpartyId: hostUserId,
-          refId: params.hostLedgerEntryId,
-          availabilityCheck: true,
-          metadata: {
-            source: 'admin_commission_reverse',
-            hostLedgerEntryId: params.hostLedgerEntryId,
-            originalCommissionLedgerEntryId: commissionEntry.id,
-            reason: params.reason,
-          },
+      await pointWalletService.debit(agencyUserId, commissionPoints, PointTxType.ADJUSTMENT, tx, {
+        idempotencyKey: reverseKey,
+        description: `Admin commission reverse: ${params.reason}`.slice(0, 500),
+        counterpartyId: hostUserId,
+        refId: params.hostLedgerEntryId,
+        availabilityCheck: true,
+        metadata: {
+          source: 'admin_commission_reverse',
+          hostLedgerEntryId: params.hostLedgerEntryId,
+          originalCommissionLedgerEntryId: commissionEntry.id,
+          reason: params.reason,
         },
-      )
+      })
     } else {
       const host = await tx.user.findUnique({
         where: { id: hostUserId },
@@ -420,7 +414,7 @@ export const agencyCommissionService = {
     opts?: { skipDailyDedupe?: boolean },
   ): Promise<void> {
     const now = utcNow()
-    const { fromDay, toDay } = agencyCommissionRollingWindowDays(now)
+    const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays(now)
 
     if (!opts?.skipDailyDedupe) {
       const cur = await prismaRead.agency.findUnique({
@@ -535,7 +529,7 @@ export const agencyCommissionService = {
     const idx = levels.findIndex((l) => l.level === ag.currentLevel)
     const nextRow = idx >= 0 && idx + 1 < levels.length ? levels[idx + 1]! : null
 
-    const { fromDay, toDay } = agencyCommissionRollingWindowDays()
+    const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays()
     const windowTotal = await agencyCommissionRepository.getAgencyWindowTotal(
       agencyUserId,
       fromDay,

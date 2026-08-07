@@ -27,6 +27,7 @@ import { agencyCommissionService } from '../../services/agencyCommission.service
 import { agencyKycService } from '../../services/agencyKyc.service'
 import { coinTradingService } from '../../services/coinTrading.service'
 import { payrollAdminService } from '../../services/payrollAdmin.service'
+import { agencyCommissionConfigService } from '../../services/agencyCommissionConfig.service'
 import { withdrawalService } from '../../services/withdrawal.service'
 import { withdrawalPayoutRailConfigService } from '../../services/withdrawalPayoutRailConfig.service'
 import { redisClient, RedisKeys } from '../../config/redis'
@@ -109,6 +110,16 @@ const PayrollConfigUpdateSchema = z.object({
   inrPerUsd: z.number().optional(),
 })
 
+const AgencyCommissionWindowConfigUpdateSchema = z
+  .object({
+    windowDays: z.number().int().min(0).max(365).optional(),
+    windowHours: z.number().int().min(0).max(23).optional(),
+    windowMinutes: z.number().int().min(0).max(59).optional(),
+  })
+  .refine((b) => b.windowDays != null || b.windowHours != null || b.windowMinutes != null, {
+    message: 'Provide at least one of windowDays, windowHours, windowMinutes',
+  })
+
 const DisputeResolveSchema = z.object({
   reason: z.string().min(3),
   agencyUserId: z.string().uuid().optional(),
@@ -166,10 +177,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       const agency = await agencyAdminService.resolveAgencyByIdentifier(
         request.params.agencyIdentifier,
       )
-      const result = await agencyService.setCommissionTier(
-        agency.userId,
-        body.commissionTier,
-      )
+      const result = await agencyService.setCommissionTier(agency.userId, body.commissionTier)
       return reply.send(result)
     },
   )
@@ -521,7 +529,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         q.from && q.to
           ? { from: q.from, to: q.to }
           : {
-              periodDays: Math.min(365, Math.max(1, Number(q.periodDays ?? q.period ?? '30') || 30)),
+              periodDays: Math.min(
+                365,
+                Math.max(1, Number(q.periodDays ?? q.period ?? '30') || 30),
+              ),
             }
       const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
       return reply.send(
@@ -549,7 +560,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         q.from && q.to
           ? { from: q.from, to: q.to }
           : {
-              periodDays: Math.min(365, Math.max(1, Number(q.periodDays ?? q.period ?? '30') || 30)),
+              periodDays: Math.min(
+                365,
+                Math.max(1, Number(q.periodDays ?? q.period ?? '30') || 30),
+              ),
             }
       const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
       return reply.send(
@@ -679,6 +693,20 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     return reply.send({ ok: true })
   })
 
+  app.get('/commission/config', { preHandler: [authenticateAdmin] }, async (_request, reply) => {
+    const cfg = await agencyCommissionConfigService.getConfig()
+    return reply.send(cfg)
+  })
+
+  app.put('/commission/config', { preHandler: [authenticateAdmin] }, async (request, reply) => {
+    const adminUserId = request.adminUser?.id
+    if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+    const body = AgencyCommissionWindowConfigUpdateSchema.parse(request.body ?? {})
+    const cfg = await agencyCommissionConfigService.updateConfig(adminUserId, body)
+    await agencyCommissionService.enqueueDailyRecomputeMaster({ force: true })
+    return reply.send({ ...cfg, recomputeEnqueued: true })
+  })
+
   app.get(
     '/withdrawal/payout-rails',
     { preHandler: [authenticateAdmin] },
@@ -714,10 +742,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     const q = request.query as Record<string, string | undefined>
     const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
     const status = q.status?.trim()
-    if (
-      status &&
-      !['PENDING', 'WAITING', 'COMPLETED', 'REJECTED', 'EXPIRED'].includes(status)
-    ) {
+    if (status && !['PENDING', 'WAITING', 'COMPLETED', 'REJECTED', 'EXPIRED'].includes(status)) {
       throw new AppError(400, 'Invalid status', 'INVALID_REQUEST')
     }
     const result = await payrollAdminService.listAssignments({
@@ -737,9 +762,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     '/payroll/assignments/:assignmentId',
     { preHandler: preAuth },
     async (request, reply) => {
-      return reply.send(
-        await payrollAdminService.getAssignmentDetail(request.params.assignmentId),
-      )
+      return reply.send(await payrollAdminService.getAssignmentDetail(request.params.assignmentId))
     },
   )
 
