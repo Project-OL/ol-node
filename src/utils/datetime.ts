@@ -101,14 +101,18 @@ export function resolveAgencyCommissionRollingWindowDays(
   return { fromDay, toDay }
 }
 
-/** Inclusive UTC calendar day range ending yesterday (`periodDays` days). */
+/**
+ * Inclusive UTC calendar day range ending **today** (`periodDays` days).
+ * Example: `periodDays=30` → `today−29` … `today` (same shape as days-only tier window).
+ */
 export function utcRollingPeriodDays(
   periodDays: number,
   now: Date = utcNow(),
 ): { fromDay: Date; toDay: Date } {
-  const yesterday = addUtcDays(utcStartOfDay(now), -1)
-  const fromDay = addUtcDays(yesterday, -(periodDays - 1))
-  return { fromDay, toDay: yesterday }
+  const today = utcStartOfDay(now)
+  const inclusiveDays = Math.max(1, Math.floor(periodDays))
+  const fromDay = addUtcDays(today, -(inclusiveDays - 1))
+  return { fromDay, toDay: today }
 }
 
 function parseUtcDate(s: string): Date {
@@ -118,7 +122,7 @@ function parseUtcDate(s: string): Date {
 
 /**
  * Resolves a commission query period from either:
- *   - periodDays (integer, rolling window ending yesterday)
+ *   - periodDays (integer, rolling window ending today UTC)
  *   - from + to (ISO date strings, inclusive UTC calendar days)
  *
  * Returns { start: Date (UTC midnight), end: Date (UTC midnight, inclusive) }

@@ -28,11 +28,15 @@ import { agencyKycService } from '../../services/agencyKyc.service'
 import { coinTradingService } from '../../services/coinTrading.service'
 import { payrollAdminService } from '../../services/payrollAdmin.service'
 import { agencyCommissionConfigService } from '../../services/agencyCommissionConfig.service'
+import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { withdrawalService } from '../../services/withdrawal.service'
 import { withdrawalPayoutRailConfigService } from '../../services/withdrawalPayoutRailConfig.service'
-import { redisClient, RedisKeys } from '../../config/redis'
-import { prisma } from '../../config/database'
 import { PayoutRailConfigUpdateSchema } from '../../models/withdrawalPayoutRail.schemas'
+import {
+  CommissionLevelsReplaceSchema,
+  ReplaceRatesSchema,
+  ReplaceTradingTopupPackagesSchema,
+} from '../../models/system-rates-admin.schemas'
 import { addUtcDays, utcNow } from '../../utils/datetime'
 
 const DEFAULT_AGENT_APP_LIST_STATUSES: AgencyAgentApplicationStatus[] = [
@@ -86,16 +90,6 @@ const ForceExitSchema = z.object({
 
 const ReverseSchema = z.object({
   reason: z.string().min(3),
-})
-
-const ReplaceRatesSchema = z.object({
-  tiers: z.array(
-    z.object({
-      minUsd: z.number().nonnegative(),
-      maxUsd: z.number().nullable().optional(),
-      coinsPerUsd: z.number().int().positive(),
-    }),
-  ),
 })
 
 const PayrollConfigUpdateSchema = z.object({
@@ -491,7 +485,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Agency'],
         description:
-          'Force recompute agency commission tier from the rolling 30-day window (yesterday back). Also accepts agency publicId via /:identifier routes below.',
+          'Force recompute agency commission tier from the configured rolling window (days-only default: today−29…today). Also accepts agency publicId via /:identifier routes below.',
       },
     },
     async (request: FastifyRequest<{ Params: { agencyUserId: string } }>, reply: FastifyReply) => {
@@ -520,7 +514,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Agency'],
         description:
-          'List all current hosts for an agency with host earnings + agency commission for a period (default rolling 30 days ending yesterday).',
+          'List all current hosts for an agency with host earnings + agency commission for a period (default rolling 30 UTC days ending today).',
       },
     },
     async (request, reply) => {
@@ -551,7 +545,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Agency'],
         description:
-          'List AGENT_COMMISSION ledger credits for an agency (newest first). Filter by hostPublicId / hostUserId and period (default rolling 30 days ending yesterday).',
+          'List AGENT_COMMISSION ledger credits for an agency (newest first). Filter by hostPublicId / hostUserId and period (default rolling 30 UTC days ending today).',
       },
     },
     async (request, reply) => {
@@ -625,28 +619,28 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     },
   )
 
+  app.get(
+    '/coin-trading/topup-rates',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await systemRatesAdminService.getTopupRates())
+    },
+  )
+
   app.put(
     '/coin-trading/topup-rates',
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceRatesSchema.parse(request.body ?? {})
-      await prisma.$transaction(async (tx) => {
-        await tx.coinTradingTopupRate.updateMany({ data: { isActive: false } })
-        for (let i = 0; i < body.tiers.length; i++) {
-          const tier = body.tiers[i]!
-          await tx.coinTradingTopupRate.create({
-            data: {
-              minUsd: tier.minUsd,
-              maxUsd: tier.maxUsd ?? null,
-              coinsPerUsd: tier.coinsPerUsd,
-              sortOrder: i + 1,
-              isActive: true,
-            },
-          })
-        }
-      })
-      await redisClient.del(RedisKeys.ctTopupRates())
-      return reply.send({ ok: true })
+      return reply.send(await systemRatesAdminService.replaceTopupRates(body.tiers))
+    },
+  )
+
+  app.get(
+    '/coin-trading/exchange-rates',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await systemRatesAdminService.getAgentExchangeRates())
     },
   )
 
@@ -655,28 +649,24 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceRatesSchema.parse(request.body ?? {})
-      await prisma.$transaction(async (tx) => {
-        await tx.agentExchangeRate.updateMany({ data: { isActive: false } })
-        for (let i = 0; i < body.tiers.length; i++) {
-          const tier = body.tiers[i]!
-          await tx.agentExchangeRate.create({
-            data: {
-              minUsdEquiv: tier.minUsd,
-              maxUsdEquiv: tier.maxUsd ?? null,
-              coinsPerUsd: tier.coinsPerUsd,
-              sortOrder: i + 1,
-              isActive: true,
-            },
-          })
-        }
-      })
-      await redisClient.del(RedisKeys.ctExchangeRates())
-      // Exchange packages are derived from these rates (cached per user type).
-      await redisClient.del(
-        RedisKeys.ctExchangePackages('agent'),
-        RedisKeys.ctExchangePackages('personal'),
-      )
-      return reply.send({ ok: true })
+      return reply.send(await systemRatesAdminService.replaceAgentExchangeRates(body.tiers))
+    },
+  )
+
+  app.get(
+    '/coin-trading/topup-packages',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await systemRatesAdminService.getTradingTopupPackages())
+    },
+  )
+
+  app.put(
+    '/coin-trading/topup-packages',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const body = ReplaceTradingTopupPackagesSchema.parse(request.body ?? {})
+      return reply.send(await systemRatesAdminService.replaceTradingTopupPackages(body.packages))
     },
   )
 
@@ -689,8 +679,8 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     const adminUserId = request.adminUser?.id
     if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     const body = PayrollConfigUpdateSchema.parse(request.body ?? {})
-    await payrollAdminService.updateConfig(adminUserId, body)
-    return reply.send({ ok: true })
+    const cfg = await payrollAdminService.updateConfig(adminUserId, body)
+    return reply.send(cfg)
   })
 
   app.get('/commission/config', { preHandler: [authenticateAdmin] }, async (_request, reply) => {
@@ -705,6 +695,15 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     const cfg = await agencyCommissionConfigService.updateConfig(adminUserId, body)
     await agencyCommissionService.enqueueDailyRecomputeMaster({ force: true })
     return reply.send({ ...cfg, recomputeEnqueued: true })
+  })
+
+  app.get('/commission/levels', { preHandler: [authenticateAdmin] }, async (_request, reply) => {
+    return reply.send(await systemRatesAdminService.getCommissionLevels())
+  })
+
+  app.put('/commission/levels', { preHandler: [authenticateAdmin] }, async (request, reply) => {
+    const body = CommissionLevelsReplaceSchema.parse(request.body ?? {})
+    return reply.send(await systemRatesAdminService.replaceCommissionLevels(body.levels))
   })
 
   app.get(

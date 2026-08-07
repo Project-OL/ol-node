@@ -40,6 +40,18 @@ export const coinTradingRepository = {
       orderBy: { sortOrder: 'asc' },
     })
   },
+  getPersonalExchangeRates() {
+    return prismaRead.personalExchangeRate.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+    })
+  },
+  getCoinPackages() {
+    return prismaRead.coinPackage.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+    })
+  },
   createTopupOrder(
     data: Prisma.CoinTradingTopupOrderUncheckedCreateInput,
     tx: Prisma.TransactionClient,

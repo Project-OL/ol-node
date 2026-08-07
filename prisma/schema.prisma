@@ -1479,6 +1479,33 @@ model AgentExchangeRate {
   @@map("agent_exchange_rates")
 }
 
+/// Non-agent point→coin exchange tiers (mirrors AgentExchangeRate).
+model PersonalExchangeRate {
+  id          String   @id @default(uuid()) @db.Uuid
+  minUsdEquiv Decimal  @map("min_usd_equiv") @db.Decimal(12, 2)
+  maxUsdEquiv Decimal? @map("max_usd_equiv") @db.Decimal(12, 2)
+  coinsPerUsd Int      @map("coins_per_usd")
+  sortOrder   Int      @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("personal_exchange_rates")
+}
+
+/// Singleton: host point-credit share of coin spend (basis points, 10000 = 100%).
+model HostRevenueShareConfig {
+  id                    Int      @id @default(1)
+  giftReceiveBp         Int      @default(6000) @map("gift_receive_bp")
+  subscriptionBp        Int      @default(7500) @map("subscription_bp")
+  guardianPurchaseBp    Int      @default(7500) @map("guardian_purchase_bp")
+  videoCallHostShareBp  Int      @default(6000) @map("video_call_host_share_bp")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  updatedByAdminId      String?  @map("updated_by_admin_id") @db.Uuid
+
+  @@map("host_revenue_share_config")
+}
+
 model Withdrawal {
   id              String           @id @default(uuid()) @db.Uuid
   walletId        String           @map("wallet_id") @db.Uuid

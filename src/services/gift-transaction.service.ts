@@ -1,6 +1,7 @@
 ﻿import crypto, { randomUUID } from 'crypto'
 import { prisma } from '../config/database'
 import { hostPointsFromGift } from '../config/host-revenue-shares'
+import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import { redisClient, RedisKeys } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { giftRepository } from '../repositories/gift.repository'
@@ -85,7 +86,8 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
 
   const unitCoinCost = gift.coinCost
   const coinCost = unitCoinCost * quantity
-  const pointsAwarded = Number(hostPointsFromGift(BigInt(coinCost)))
+  const shares = await hostRevenueShareConfigService.getShares()
+  const pointsAwarded = Number(hostPointsFromGift(BigInt(coinCost), shares.giftReceiveBp))
   const giftLabel = quantity > 1 ? `${gift.name} ×${quantity}` : gift.name
   const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys()
 

@@ -27,6 +27,7 @@ import {
 } from '../models/call.schemas'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { callerCoinDebitForCall } from '../config/host-revenue-shares'
+import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import { assertPositiveIntMultiple, VIDEO_CALL_PRICE_STEP } from '../utils/transaction-amount-steps'
 import { assertCoinDebitAllowed } from './wallet-freeze.service'
 
@@ -205,7 +206,11 @@ export const videoCallSessionService = {
     // in POINTS; the caller is charged coins at the markup rate.
     await assertCoinDebitAllowed(callerId, WalletCurrencyType.COIN)
     const callerBalance = await walletService.getCoinBalance(callerId)
-    const firstMinuteCoinCost = callerCoinDebitForCall(BigInt(pricePerMin))
+    const shares = await hostRevenueShareConfigService.getShares()
+    const firstMinuteCoinCost = callerCoinDebitForCall(
+      BigInt(pricePerMin),
+      shares.videoCallHostShareBp,
+    )
     if (callerBalance < firstMinuteCoinCost) {
       throw new AppError(402, 'Insufficient coins for a one-minute call', 'INSUFFICIENT_COINS', {
         required: firstMinuteCoinCost.toString(),
@@ -264,7 +269,8 @@ export const videoCallSessionService = {
     // The caller is charged coins at the markup rate so the host receives exactly
     // their set price as points.
     const hostPricePerMin = BigInt(session.pricePerMin)
-    const callerDebit = callerCoinDebitForCall(hostPricePerMin)
+    const shares = await hostRevenueShareConfigService.getShares()
+    const callerDebit = callerCoinDebitForCall(hostPricePerMin, shares.videoCallHostShareBp)
     const minuteNum = session.minsCharged + 1
     const idemBase = `videocall-${sessionId}-min-${minuteNum}`
 

@@ -249,6 +249,49 @@ function lookupExchangeCoinsPerUsd(
   return tier.coinsPerUsd
 }
 
+async function getPersonalExchangeRatesCached(): Promise<DbExchangeTier[]> {
+  const key = RedisKeys.ctPersonalExchangeRates()
+  try {
+    const hit = await redisClient.get(key)
+    if (hit) {
+      const parsed = JSON.parse(hit) as {
+        tiers: Array<{ minUsd: number; maxUsd: number | null; coinsPerUsd: number }>
+      }
+      return parsed.tiers.map((t) => ({
+        minUsdEquiv: new Prisma.Decimal(t.minUsd),
+        maxUsdEquiv: t.maxUsd == null ? null : new Prisma.Decimal(t.maxUsd),
+        coinsPerUsd: t.coinsPerUsd,
+      }))
+    }
+  } catch {
+    /* miss */
+  }
+
+  const rows = await coinTradingRepository.getPersonalExchangeRates()
+  if (rows.length > 0) {
+    const dto = {
+      tiers: rows.map((r) => ({
+        minUsd: Number(r.minUsdEquiv.toString()),
+        maxUsd: r.maxUsdEquiv == null ? null : Number(r.maxUsdEquiv.toString()),
+        coinsPerUsd: r.coinsPerUsd,
+        sortOrder: r.sortOrder,
+      })),
+    }
+    try {
+      await redisClient.set(key, JSON.stringify(dto), 'EX', CT_RATES_TTL)
+    } catch {
+      /* ignore */
+    }
+    return rows
+  }
+
+  return PERSONAL_COIN_EXCHANGE_RATES.map((t) => ({
+    minUsdEquiv: new Prisma.Decimal(t.minUsd),
+    maxUsdEquiv: t.maxUsd == null ? null : new Prisma.Decimal(t.maxUsd),
+    coinsPerUsd: t.coinsPerUsd,
+  }))
+}
+
 function formatPackage(row: {
   id: string
   tradingCoins: bigint
@@ -318,7 +361,7 @@ export const coinTradingService = {
 
     const rates = isAgent
       ? await coinTradingRepository.getExchangeRates()
-      : PERSONAL_COIN_EXCHANGE_RATES
+      : await getPersonalExchangeRatesCached()
 
     const BASE_PACKAGES = [
       { id: 'pkg_exchange_100k', pointsRequired: 100_000n, label: '100K Points' },
@@ -604,7 +647,7 @@ export const coinTradingService = {
     const usdEquiv = Number(pointsToExchange) / 10000.0
     const rates = user.isAgent
       ? await coinTradingRepository.getExchangeRates()
-      : PERSONAL_COIN_EXCHANGE_RATES
+      : await getPersonalExchangeRatesCached()
 
     const coinsPerUsd = lookupExchangeCoinsPerUsd(rates, usdEquiv)
     const coinsAwarded = BigInt(Math.floor((Number(pointsToExchange) * coinsPerUsd) / 10000))

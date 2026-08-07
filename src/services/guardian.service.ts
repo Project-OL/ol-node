@@ -2,7 +2,8 @@ import crypto from 'crypto'
 import type { Guardian, GuardianTier } from '@prisma/client'
 import { PointTxType, LevelType } from '@prisma/client'
 import { prisma } from '../config/database'
-import { HOST_REVENUE_SHARES, hostPointsFromGuardian } from '../config/host-revenue-shares'
+import { hostPointsFromGuardian } from '../config/host-revenue-shares'
+import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import { AppError } from '../middlewares/errorHandler'
 import { redisClient, RedisKeys, GUARDIAN_ACTIVE_TTL, GUARDIAN_LIST_TTL } from '../config/redis'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
@@ -408,6 +409,7 @@ export const guardianService = {
     }
     const totalCoins = BigInt(MONTHLY_PRICE[input.tier] * mult)
     const expiresAt = addMonths(new Date(), input.durationMonths)
+    const shares = await hostRevenueShareConfigService.getShares()
 
     let bustAgentUserId: string | null = null
     let buyerWealthResult: LevelApplyResult | null = null
@@ -456,7 +458,7 @@ export const guardianService = {
           tx,
         )
 
-        const hostPoints = hostPointsFromGuardian(totalCoins)
+        const hostPoints = hostPointsFromGuardian(totalCoins, shares.guardianPurchaseBp)
         if (hostPoints > 0n) {
           const credited = await pointWalletService.creditInTransaction(
             input.targetUserId,
@@ -471,7 +473,7 @@ export const guardianService = {
               metadata: {
                 coinsPaid: totalCoins.toString(),
                 tier: input.tier,
-                hostShareBp: HOST_REVENUE_SHARES.GUARDIAN_PURCHASE_BP,
+                hostShareBp: shares.guardianPurchaseBp,
               },
               applyLivestreamLevel: true,
             },
@@ -491,7 +493,7 @@ export const guardianService = {
       LevelType.LIVESTREAM,
       hostLivestreamResult,
     )
-    const hostPoints = hostPointsFromGuardian(totalCoins)
+    const hostPoints = hostPointsFromGuardian(totalCoins, shares.guardianPurchaseBp)
     if (hostPoints > 0n) {
       await walletService.adjustPointBalanceCache(input.targetUserId, hostPoints)
     }

@@ -190,6 +190,11 @@ export const RedisKeys = {
   ctTopupPackages: () => 'ct:topup-packages',
   ctExchangeRates: () => 'ct:exchange-rates',
   ctExchangePackages: (userType: 'agent' | 'personal') => `ct:exchange-packages:${userType}`,
+  ctPersonalExchangeRates: () => 'ct:personal-exchange-rates',
+  /** Personal COIN Epay packages catalogue. */
+  coinPackages: () => 'coin:packages',
+  /** Host revenue share singleton (gift/sub/guardian/video bp). */
+  hostRevenueShares: () => 'host:revenue-shares',
   coinsellerSettings: (agencyUserId: string) => `agency:coinseller:${agencyUserId}`,
   walletIdem: (key: string) => `wallet:idem:${key}`,
   walletRateLimit: (userId: string, action: string) => `wallet:rl:${userId}:${action}`,
@@ -427,6 +432,8 @@ export const WALLET_BALANCE_TTL = 300
 export const CT_BALANCE_TTL = 300
 export const CT_RECENT_USERS_TTL = 120
 export const CT_RATES_TTL = 3600
+/** Host revenue shares / personal exchange / coin packages config TTL. */
+export const SYSTEM_RATES_CONFIG_TTL = 3600
 export const COINSELLER_SETTINGS_TTL = 300
 /** Wallet: idempotency key TTL (5 minutes). */
 export const WALLET_IDEM_TTL = 300

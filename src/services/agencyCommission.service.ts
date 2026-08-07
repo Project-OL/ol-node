@@ -20,12 +20,10 @@ import {
   AGENT_POINT_TRANSFER_STEP,
 } from '../utils/transaction-amount-steps'
 import {
-  addUtcDays,
   commissionPeriodToLedgerBounds,
   resolveCommissionPeriod,
   utcDateString,
   utcNow,
-  utcStartOfDay,
 } from '../utils/datetime'
 import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from '../queues/agency-commission.queue'
 import { walletService } from './wallet.service'
@@ -480,12 +478,10 @@ export const agencyCommissionService = {
     await publishAgencyRecomputeMasterJob(d, opts?.force)
   },
 
-  /** Half-open window `[from, toExclusive)` in UTC for ledger timestamps. */
+  /** Half-open window `[from, toExclusive)` in UTC for ledger timestamps (rolling window ending today). */
   resolvePeriodBounds(periodDays: number): { from: Date; toExclusive: Date } {
-    const dayStart = utcStartOfDay(utcNow())
-    const from = addUtcDays(dayStart, -periodDays)
-    const toExclusive = addUtcDays(dayStart, 1)
-    return { from, toExclusive }
+    const { start, end } = resolveCommissionPeriod({ periodDays })
+    return commissionPeriodToLedgerBounds(start, end)
   },
 
   async getCommissionMeSnapshot(

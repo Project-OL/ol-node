@@ -45,10 +45,17 @@ export const coinWalletService = {
    * admin ADJUSTMENT) call `richTierService.applyRecharge` only — not wealth XP.
    */
   async listPackages() {
-    return prisma.coinPackage.findMany({
-      where: { isActive: true },
-      orderBy: { sortOrder: 'asc' },
-    })
+    const { systemRatesAdminService } = await import('./systemRatesAdmin.service')
+    const { packages } = await systemRatesAdminService.getCoinPackages()
+    return packages.map((p) => ({
+      id: p.id,
+      coins: p.coins,
+      priceCents: p.priceCents,
+      currency: p.currency,
+      label: p.label,
+      sortOrder: p.sortOrder,
+      isActive: true,
+    }))
   },
 
   async initiateTopup(userId: string, packageId: string, idempotencyKey: string) {

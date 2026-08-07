@@ -388,7 +388,7 @@ export const agencyAdminService = {
 
   /**
    * All current hosts for an agency with earnings + commission for a period.
-   * Default period = rolling 30 days ending yesterday (same as level window when periodDays=30).
+   * Default period = rolling 30 UTC days ending today (same shape as days-only tier window).
    */
   async listHostEarnings(
     identifier: string,
@@ -449,7 +449,7 @@ export const agencyAdminService = {
   /**
    * Per-credit commission history (AGENT_COMMISSION ledger) for an agency.
    * Filter with `hostPublicId` (or `hostUserId`) and optional date window.
-   * Default period = rolling 30 days ending yesterday (same as host earnings).
+   * Default period = rolling 30 UTC days ending today (same as host earnings).
    */
   async listCommissionHistory(
     identifier: string,

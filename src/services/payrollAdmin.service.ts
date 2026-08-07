@@ -140,6 +140,7 @@ export const payrollAdminService = {
     })
 
     await withdrawalService.bustPayrollConfigCache()
+    return withdrawalService.getPayrollConfig()
   },
 
   async listPendingPlatformWithdrawals(opts: { limit: number; cursor?: string }) {

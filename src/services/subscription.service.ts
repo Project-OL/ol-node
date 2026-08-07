@@ -30,7 +30,8 @@ import {
 } from '../repositories/subscription.repository'
 import { userRepository } from '../repositories/user.repository'
 import { userSubscriberRepository } from '../repositories/userSubscriber.repository'
-import { HOST_REVENUE_SHARES, hostPointsFromSubscription } from '../config/host-revenue-shares'
+import { hostPointsFromSubscription } from '../config/host-revenue-shares'
+import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import { ledgerHostPointsKey } from '../utils/ledger-idempotency'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
@@ -53,13 +54,14 @@ async function creditCreatorSubscriptionPoints(
     coinsPaid: bigint
     idempotencyKey: string
     description: string
+    hostShareBp: number
   },
 ): Promise<{
   hostPoints: bigint
   bustAgentUserId: string | null
   livestreamLevelResult: LevelApplyResult | null
 }> {
-  const hostPoints = hostPointsFromSubscription(params.coinsPaid)
+  const hostPoints = hostPointsFromSubscription(params.coinsPaid, params.hostShareBp)
   if (hostPoints <= 0n) {
     return { hostPoints: 0n, bustAgentUserId: null, livestreamLevelResult: null }
   }
@@ -76,7 +78,7 @@ async function creditCreatorSubscriptionPoints(
       description: params.description,
       metadata: {
         coinsPaid: params.coinsPaid.toString(),
-        hostShareBp: HOST_REVENUE_SHARES.SUBSCRIPTION_BP,
+        hostShareBp: params.hostShareBp,
       },
       applyLivestreamLevel: true,
     },
@@ -326,6 +328,7 @@ export const subscriptionService = {
 
     const nextRenewalAt = new Date(Date.now() + SUBSCRIPTION_PERIOD_MS)
     const idempotencyKey = `sub:create:${subscriberId}:${creatorId}:${crypto.randomUUID()}`
+    const shares = await hostRevenueShareConfigService.getShares()
 
     let bustAgentUserId: string | null = null
     let subscriberWealthResult: LevelApplyResult | null = null
@@ -360,6 +363,7 @@ export const subscriptionService = {
           coinsPaid: SUBSCRIPTION_COIN_COST,
           idempotencyKey: ledgerHostPointsKey(idempotencyKey),
           description: 'Creator subscription revenue (75%)',
+          hostShareBp: shares.subscriptionBp,
         })
         bustAgentUserId = credited.bustAgentUserId
         creatorLivestreamResult = credited.livestreamLevelResult
@@ -372,7 +376,10 @@ export const subscriptionService = {
     await walletService.adjustCoinBalanceCache(subscriberId, SUBSCRIPTION_COIN_COST)
     await syncLevelCacheFromApplyResult(subscriberId, LevelType.WEALTH, subscriberWealthResult)
     await syncLevelCacheFromApplyResult(creatorId, LevelType.LIVESTREAM, creatorLivestreamResult)
-    const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
+    const creatorPoints = hostPointsFromSubscription(
+      SUBSCRIPTION_COIN_COST,
+      shares.subscriptionBp,
+    )
     if (creatorPoints > 0n) {
       await walletService.adjustPointBalanceCache(creatorId, creatorPoints)
     }
@@ -527,6 +534,7 @@ export const subscriptionService = {
 
     const idempotencyKey = `sub-renewal:${subscriptionId}:${sub.nextRenewalAt.toISOString()}`
     const hostPtsIdem = `sub-host-pts:renewal:${subscriptionId}:${sub.nextRenewalAt.toISOString()}`
+    const shares = await hostRevenueShareConfigService.getShares()
 
     try {
       let bustAgentUserId: string | null = null
@@ -553,6 +561,7 @@ export const subscriptionService = {
             coinsPaid: SUBSCRIPTION_COIN_COST,
             idempotencyKey: hostPtsIdem,
             description: 'Creator subscription renewal revenue (75%)',
+            hostShareBp: shares.subscriptionBp,
           })
           bustAgentUserId = credited.bustAgentUserId
           creatorLivestreamResult = credited.livestreamLevelResult
@@ -571,7 +580,10 @@ export const subscriptionService = {
         LevelType.LIVESTREAM,
         creatorLivestreamResult,
       )
-      const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
+      const creatorPoints = hostPointsFromSubscription(
+        SUBSCRIPTION_COIN_COST,
+        shares.subscriptionBp,
+      )
       if (creatorPoints > 0n) {
         await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
       }
@@ -628,6 +640,7 @@ export const subscriptionService = {
 
     const idempotencyKey = `sub-grace:${subscriptionId}:${sub.graceUntil.toISOString()}`
     const hostPtsIdem = `sub-host-pts:grace:${subscriptionId}:${sub.graceUntil.toISOString()}`
+    const shares = await hostRevenueShareConfigService.getShares()
 
     try {
       let bustAgentUserId: string | null = null
@@ -654,6 +667,7 @@ export const subscriptionService = {
             coinsPaid: SUBSCRIPTION_COIN_COST,
             idempotencyKey: hostPtsIdem,
             description: 'Creator subscription grace recovery revenue (75%)',
+            hostShareBp: shares.subscriptionBp,
           })
           bustAgentUserId = credited.bustAgentUserId
           creatorLivestreamResult = credited.livestreamLevelResult
@@ -672,7 +686,10 @@ export const subscriptionService = {
         LevelType.LIVESTREAM,
         creatorLivestreamResult,
       )
-      const creatorPoints = hostPointsFromSubscription(SUBSCRIPTION_COIN_COST)
+      const creatorPoints = hostPointsFromSubscription(
+        SUBSCRIPTION_COIN_COST,
+        shares.subscriptionBp,
+      )
       if (creatorPoints > 0n) {
         await walletService.adjustPointBalanceCache(sub.creatorId, creatorPoints)
       }
