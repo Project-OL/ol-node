@@ -59,12 +59,39 @@ export function utcDayFromTimestamp(d: Date): Date {
 }
 
 /**
+ * Duration in whole minutes for agency commission rolling window config.
+ * Minimum 1 minute (same as admin config validation).
+ */
+export function agencyCommissionWindowTotalMinutes(cfg: {
+  days: number
+  hours: number
+  minutes: number
+}): number {
+  const days = Math.max(0, Math.floor(cfg.days))
+  const hours = Math.max(0, Math.floor(cfg.hours))
+  const minutes = Math.max(0, Math.floor(cfg.minutes))
+  return Math.max(1, days * 24 * 60 + hours * 60 + minutes)
+}
+
+/**
+ * Half-open UTC timestamp window `[from, toExclusive)` ending at `now` for tier math.
+ * Duration = days/hours/minutes from `agency_commission_config` (exact minutes, not calendar days).
+ */
+export function resolveAgencyCommissionRollingWindowBounds(
+  cfg: { days: number; hours: number; minutes: number },
+  now: Date = utcNow(),
+): { from: Date; toExclusive: Date; totalMinutes: number } {
+  const totalMinutes = agencyCommissionWindowTotalMinutes(cfg)
+  const from = new Date(now.getTime() - totalMinutes * 60_000)
+  return { from, toExclusive: now, totalMinutes }
+}
+
+/**
  * Rolling window for agency level: last 30 UTC calendar days **including today** —
  * `[fromDay, toDay]` inclusive as DATE values (`today−29` … `today`).
- * At UTC midnight the oldest day ages out and a new empty today enters.
  *
- * @deprecated Prefer `agencyCommissionConfigService.resolveRollingWindowDays()` —
- * window length is admin-configurable via `agency_commission_config`.
+ * @deprecated Prefer `resolveAgencyCommissionRollingWindowBounds()` for tier totals.
+ * Calendar day overlap is only useful for day-bucket reports, not tier matching.
  */
 export function agencyCommissionRollingWindowDays(now: Date = utcNow()): {
   fromDay: Date
@@ -74,36 +101,24 @@ export function agencyCommissionRollingWindowDays(now: Date = utcNow()): {
 }
 
 /**
- * Resolve inclusive UTC calendar-day window for agency tier recompute.
- * - Days-only (`hours==0 && minutes==0`): `today − (days−1)` … `today` (legacy 30 → today−29…today).
- * - Otherwise: days overlapping `[now − duration, now]` via `utcStartOfDay`.
+ * Inclusive UTC calendar days that overlap the precise rolling window (for day-bucket queries).
+ * Tier recompute itself uses {@link resolveAgencyCommissionRollingWindowBounds} + ledger timestamps.
  */
 export function resolveAgencyCommissionRollingWindowDays(
   cfg: { days: number; hours: number; minutes: number },
   now: Date = utcNow(),
 ): { fromDay: Date; toDay: Date } {
-  const days = Math.max(0, Math.floor(cfg.days))
-  const hours = Math.max(0, Math.floor(cfg.hours))
-  const minutes = Math.max(0, Math.floor(cfg.minutes))
-  const todayStart = utcStartOfDay(now)
-  const toDay = todayStart
-
-  if (hours === 0 && minutes === 0) {
-    const inclusiveDays = Math.max(1, days)
-    const fromDay = addUtcDays(todayStart, -(inclusiveDays - 1))
-    return { fromDay, toDay }
-  }
-
-  const totalMinutes = days * 24 * 60 + hours * 60 + minutes
-  const durationMs = Math.max(1, totalMinutes) * 60_000
-  const windowStart = new Date(now.getTime() - durationMs)
-  const fromDay = utcStartOfDay(windowStart)
+  const { from, toExclusive } = resolveAgencyCommissionRollingWindowBounds(cfg, now)
+  const fromDay = utcStartOfDay(from)
+  // Inclusive end day: last instant in the half-open window is just before `toExclusive`.
+  const lastInstant = new Date(Math.max(from.getTime(), toExclusive.getTime() - 1))
+  const toDay = utcStartOfDay(lastInstant)
   return { fromDay, toDay }
 }
 
 /**
  * Inclusive UTC calendar day range ending **today** (`periodDays` days).
- * Example: `periodDays=30` → `today−29` … `today` (same shape as days-only tier window).
+ * Example: `periodDays=30` → `today−29` … `today` (commission report period; tier math uses timestamp duration separately).
  */
 export function utcRollingPeriodDays(
   periodDays: number,

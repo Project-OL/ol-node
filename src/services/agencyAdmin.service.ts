@@ -364,6 +364,8 @@ export const agencyAdminService = {
     const afterRow = await agencyRepository.getAgencyByUserId(agency.userId)
     if (!afterRow) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
 
+    const { from, toExclusive, totalMinutes } =
+      await agencyCommissionConfigService.resolveRollingWindowBounds()
     const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays()
     const cfg = await agencyCommissionConfigService.getConfig()
     return {
@@ -373,10 +375,13 @@ export const agencyAdminService = {
       levelWindow: {
         from: utcDateString(fromDay),
         to: utcDateString(toDay),
+        fromAt: from.toISOString(),
+        toExclusiveAt: toExclusive.toISOString(),
         windowDays: cfg.windowDays,
         windowHours: cfg.windowHours,
         windowMinutes: cfg.windowMinutes,
-        note: 'Inclusive UTC calendar days overlapping the configured rolling window (today included)',
+        totalMinutes,
+        note: 'Half-open UTC timestamp window [fromAt, toExclusiveAt); sums unreversed AGENT_COMMISSION credits (from/to = overlapping calendar days)',
       },
       before,
       after: {

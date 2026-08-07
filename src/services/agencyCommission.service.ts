@@ -409,14 +409,16 @@ export const agencyCommissionService = {
 
   /**
    * Match agency commission tier to rolling-window **agency commission earned**
-   * (`host_commission_points` sum). Host earnings are excluded from tier math.
+   * (unreversed AGENT_COMMISSION ledger credits in `[now − duration, now)`).
+   * Host earnings are excluded from tier math.
    */
   async recomputeAgencyLevel(
     agencyUserId: string,
     opts?: { skipDailyDedupe?: boolean },
   ): Promise<void> {
     const now = utcNow()
-    const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays(now)
+    const { from, toExclusive } =
+      await agencyCommissionConfigService.resolveRollingWindowBounds(now)
 
     if (!opts?.skipDailyDedupe) {
       const cur = await prismaRead.agency.findUnique({
@@ -433,8 +435,8 @@ export const agencyCommissionService = {
 
     const total = await agencyCommissionRepository.getAgencyWindowTotal(
       agencyUserId,
-      fromDay,
-      toDay,
+      from,
+      toExclusive,
       { preferPrimary: true },
     )
     const levels = await agencyCommissionRepository.getLevelConfig()
@@ -529,11 +531,12 @@ export const agencyCommissionService = {
     const idx = levels.findIndex((l) => l.level === ag.currentLevel)
     const nextRow = idx >= 0 && idx + 1 < levels.length ? levels[idx + 1]! : null
 
-    const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays()
+    const { from: windowFrom, toExclusive: windowToExclusive } =
+      await agencyCommissionConfigService.resolveRollingWindowBounds()
     const windowTotal = await agencyCommissionRepository.getAgencyWindowTotal(
       agencyUserId,
-      fromDay,
-      toDay,
+      windowFrom,
+      windowToExclusive,
     )
 
     const [agg, liveDurationSeconds, dailyEarnings] = await Promise.all([

@@ -165,25 +165,44 @@ export const agencyCommissionRepository = {
 
   /**
    * Rolling-window total used for agency commission tier matching / progress.
-   * Sums agency commission earned (`host_commission_points`) only — host
-   * earnings are tracked separately and must not drive tier changes.
+   * Sums unreversed AGENT_COMMISSION ledger credits whose `created_at` falls in
+   * the half-open window `[from, toExclusive)`. Host earnings are excluded.
+   * Credits reversed via admin clawback (`agency-commission-reverse:*`) are omitted.
    */
   async getAgencyWindowTotal(
     agencyUserId: string,
-    fromDay: Date,
-    toDay: Date,
+    from: Date,
+    toExclusive: Date,
     opts?: { preferPrimary?: boolean },
   ): Promise<bigint> {
     const client = opts?.preferPrimary ? prisma : prismaRead
     const rows = await client.$queryRaw<{ s: bigint }[]>`
-      SELECT COALESCE(SUM(e.host_commission_points), 0)::bigint AS s
-      FROM agency_daily_earnings e
-      INNER JOIN users u ON u.id = e.host_user_id
-      WHERE e.agency_user_id = ${agencyUserId}::uuid
-        AND e.day >= ${fromDay}::date
-        AND e.day <= ${toDay}::date
-        AND e.host_was_active = true
-        AND u.status NOT IN ('suspended', 'deleted')
+      SELECT COALESCE(SUM(ple.amount), 0)::bigint AS s
+      FROM point_ledger_entries ple
+      INNER JOIN wallets w
+        ON w.id = ple.wallet_id
+       AND w.user_id = ${agencyUserId}::uuid
+       AND w.currency_type = 'POINT'
+      LEFT JOIN users u ON u.id = ple.counterparty_id
+      WHERE ple.tx_type = 'AGENT_COMMISSION'
+        AND ple.direction = 'CREDIT'
+        AND ple.created_at >= ${from}
+        AND ple.created_at < ${toExclusive}
+        AND (u.id IS NULL OR u.status NOT IN ('suspended', 'deleted'))
+        AND NOT EXISTS (
+          SELECT 1
+          FROM point_ledger_entries rev
+          WHERE rev.idempotency_key =
+            'agency-commission-reverse:' ||
+            COALESCE(
+              NULLIF(ple.metadata->>'hostLedgerEntryId', ''),
+              CASE
+                WHEN ple.idempotency_key LIKE 'agency-commission:%'
+                THEN substring(ple.idempotency_key FROM length('agency-commission:') + 1)
+                ELSE NULL
+              END
+            )
+        )
     `
     return rows[0]?.s ?? 0n
   },

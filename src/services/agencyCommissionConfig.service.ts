@@ -1,7 +1,11 @@
 import { AppError } from '../middlewares/errorHandler'
 import { prisma, prismaRead } from '../config/database'
 import { redisClient, RedisKeys, AGENCY_COMMISSION_WINDOW_CONFIG_TTL } from '../config/redis'
-import { resolveAgencyCommissionRollingWindowDays, utcNow } from '../utils/datetime'
+import {
+  resolveAgencyCommissionRollingWindowBounds,
+  resolveAgencyCommissionRollingWindowDays,
+  utcNow,
+} from '../utils/datetime'
 
 export type AgencyCommissionWindowConfigSnapshot = {
   windowDays: number
@@ -125,7 +129,25 @@ export const agencyCommissionConfigService = {
     return toSnapshot(row)
   },
 
-  /** Inclusive UTC day window used for tier recompute / progress. */
+  /**
+   * Precise half-open UTC window `[from, toExclusive)` for tier matching / progress.
+   * Duration comes from admin config (days + hours + minutes from `now`).
+   */
+  async resolveRollingWindowBounds(
+    now: Date = utcNow(),
+  ): Promise<{ from: Date; toExclusive: Date; totalMinutes: number }> {
+    const cfg = await this.getConfig()
+    return resolveAgencyCommissionRollingWindowBounds(
+      {
+        days: cfg.windowDays,
+        hours: cfg.windowHours,
+        minutes: cfg.windowMinutes,
+      },
+      now,
+    )
+  },
+
+  /** Inclusive UTC calendar days overlapping the precise rolling window (day-bucket reports). */
   async resolveRollingWindowDays(now: Date = utcNow()): Promise<{ fromDay: Date; toDay: Date }> {
     const cfg = await this.getConfig()
     return resolveAgencyCommissionRollingWindowDays(
