@@ -304,14 +304,14 @@ export const transactionalMessagingService = {
       case 'agent_rejected':
         content = `Withdrawal rejected by agent: ${points}.${agentLine}${reasonLine}`
         break
+      case 'waiting':
+        content = `Withdrawal proof uploaded — pending confirmation (${points}).${agentLine} You have a short window to raise a dispute.`
+        break
       case 'paid':
-        content = `Withdrawal processed: ${points} (${withdrawal.hostPayoutUsd ?? '0'} USD).${agentLine}`
+        content = `Withdrawal settled: ${points} (${withdrawal.hostPayoutUsd ?? '0'} USD).${agentLine}`
         break
       case 'failed':
         content = `Withdrawal failed or reversed: ${points}.${agentLine}${reasonLine}`
-        break
-      case 'waiting':
-        content = `Withdrawal proof submitted — pending confirmation: ${points}.${agentLine}`
         break
       default:
         content = `Withdrawal update (${params.event}): ${points}.${agentLine}`
@@ -337,10 +337,12 @@ export const transactionalMessagingService = {
         metadata,
         clientMessageId,
       })
-      if (sent.created) {
+      // Push when agency uploads proof (WAITING) — host can review for waitingHours.
+      // Final PAID settlement is inbox-only (agency already credited after the window).
+      if (sent.created && params.event === 'waiting') {
         await pushTransactionalNotification({
           userId: params.hostUserId,
-          title: 'Withdrawal update',
+          title: 'Withdrawal proof uploaded',
           body: content,
           conversationId: sent.conversationId || undefined,
           messageId: sent.messageId || undefined,

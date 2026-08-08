@@ -350,13 +350,29 @@ export const adminWalletService = {
     const user = await userRepository.findById(targetUserId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     await userRepository.update(targetUserId, { pointsFrozen: frozen })
+
+    let cancelledWithdrawalIds: string[] = []
+    if (frozen) {
+      const { withdrawalService } = await import('./withdrawal.service')
+      const cancelled = await withdrawalService.cancelUnsettledWithdrawalsForPointsFreeze(
+        targetUserId,
+        adminUserId,
+      )
+      cancelledWithdrawalIds = cancelled.cancelledIds
+    }
+
     auditService.log({
       userId: adminUserId,
       actionType: frozen ? 'ADMIN_FREEZE_POINTS' : 'ADMIN_UNFREEZE_POINTS',
       actionStatus: 'success',
-      actionDetails: { targetUserId, frozen },
+      actionDetails: { targetUserId, frozen, cancelledWithdrawalIds },
     })
-    return { ok: true as const, userId: targetUserId, pointsFrozen: frozen }
+    return {
+      ok: true as const,
+      userId: targetUserId,
+      pointsFrozen: frozen,
+      cancelledWithdrawalIds,
+    }
   },
 
   async getFreezeState(targetUserId: string) {
@@ -371,11 +387,22 @@ export const adminWalletService = {
       tradingCoinsFrozen: frozen,
       pointsFrozen: frozen,
     })
+
+    let cancelledWithdrawalIds: string[] = []
+    if (frozen) {
+      const { withdrawalService } = await import('./withdrawal.service')
+      const cancelled = await withdrawalService.cancelUnsettledWithdrawalsForPointsFreeze(
+        targetUserId,
+        adminUserId,
+      )
+      cancelledWithdrawalIds = cancelled.cancelledIds
+    }
+
     auditService.log({
       userId: adminUserId,
       actionType: frozen ? 'ADMIN_FREEZE_ALL_WALLETS' : 'ADMIN_UNFREEZE_ALL_WALLETS',
       actionStatus: 'success',
-      actionDetails: { targetUserId, frozen },
+      actionDetails: { targetUserId, frozen, cancelledWithdrawalIds },
     })
     return {
       ok: true as const,
@@ -383,6 +410,7 @@ export const adminWalletService = {
       personalCoinsFrozen: frozen,
       tradingCoinsFrozen: frozen,
       pointsFrozen: frozen,
+      cancelledWithdrawalIds,
     }
   },
 

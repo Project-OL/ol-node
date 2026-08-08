@@ -177,9 +177,9 @@ export const withdrawalRepository = {
 
   /**
    * Round-robin pick (FOR UPDATE SKIP LOCKED). Updates last_payroll_assigned_at in same tx.
-   * Prefers agencies with fewer open PENDING/WAITING assignments, then least-recently-assigned
-   * (NULLS FIRST = newly enabled payroll). Same-country only; excludes withdrawer and their
-   * current agency.
+   * Prefers fewest open PENDING/WAITING assignments (fill N before N+1), then earliest
+   * payroll_enabled_at (seniority since accept-toggle), then least-recently-assigned.
+   * Same-country only; excludes withdrawer and their current agency.
    */
   async getNextEligibleAgency(
     tx: Prisma.TransactionClient,
@@ -213,6 +213,7 @@ export const withdrawalRepository = {
           OR a.user_id <> ${excludeAgencyUserId}::uuid
         )
       ORDER BY COALESCE(open.open_cnt, 0) ASC,
+               a.payroll_enabled_at ASC NULLS LAST,
                a.last_payroll_assigned_at ASC NULLS FIRST,
                a.user_id ASC
       LIMIT 1

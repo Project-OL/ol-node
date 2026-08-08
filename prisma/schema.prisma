@@ -1550,7 +1550,7 @@ model Withdrawal {
   agentRewardPoints BigInt?  @map("agent_reward_points")
   assignmentCount   Int      @default(0) @map("assignment_count")
   disputeTicketId   String?  @map("dispute_ticket_id") @db.VarChar(255)
-  // 1 = legacy real-debit flow (WITHDRAWAL). 2 = escrow flow (WITHDRAWAL_ESCROW).
+  // 1 = legacy. 2 = hard debit at create (WITHDRAWAL); older v2 may still be soft escrow.
   withdrawalVersion Int      @default(1) @map("withdrawal_version")
 
   wallet             Wallet                        @relation(fields: [walletId], references: [id], onDelete: Cascade)
@@ -2141,6 +2141,8 @@ model Agency {
   /// Admin-granted right to participate in payroll. When false, agent cannot enable accept-toggle.
   payrollPrivilegeGranted    Boolean   @default(false) @map("payroll_privilege_granted")
   payrollEnabled             Boolean   @default(false) @map("payroll_enabled")
+  /// First time agent enabled accept-toggle (kept on disable; used for assignment seniority).
+  payrollEnabledAt           DateTime? @map("payroll_enabled_at")
   pausedAt                   DateTime? @map("paused_at")
   pausedUntil                DateTime? @map("paused_until")
   totalHostsCount            Int       @default(0) @map("total_hosts_count")
@@ -2161,6 +2163,7 @@ model Agency {
 
   @@index([payrollEnabled, pausedAt])
   @@index([payrollEnabled, pausedAt, lastPayrollAssignedAt])
+  @@index([payrollEnabled, payrollEnabledAt])
   @@index([payrollPrivilegeGranted, payrollEnabled, pausedAt])
   @@index([currentLevel, currentWindowTotalPoints(sort: Desc)])
   @@index([totalHostsCount(sort: Desc)])

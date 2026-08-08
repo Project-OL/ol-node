@@ -83,6 +83,7 @@ export const agencyLeaveApplicationRepository = {
             avatarUrl: true,
             gender: true,
             dateOfBirth: true,
+            country: true,
           },
         },
       },

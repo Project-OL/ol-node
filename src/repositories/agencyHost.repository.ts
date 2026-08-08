@@ -81,6 +81,7 @@ export const agencyHostRepository = {
             avatarUrl: true,
             gender: true,
             dateOfBirth: true,
+            country: true,
             isTagged: true,
             hourlyWage: true,
           },

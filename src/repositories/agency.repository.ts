@@ -115,13 +115,25 @@ export const agencyRepository = {
 
   async setPayrollEnabled(userId: string, payrollEnabled: boolean, tx?: Prisma.TransactionClient) {
     const client = tx ?? prisma
+    if (payrollEnabled) {
+      const cur = await client.agency.findUnique({
+        where: { userId },
+        select: { payrollEnabledAt: true },
+      })
+      return client.agency.update({
+        where: { userId },
+        data: {
+          payrollEnabled: true,
+          // Jump to front of LRA queue when accepting payroll (NULLS FIRST).
+          lastPayrollAssignedAt: null,
+          // Keep first-enable time for seniority; set only once.
+          ...(cur?.payrollEnabledAt ? {} : { payrollEnabledAt: new Date() }),
+        },
+      })
+    }
     return client.agency.update({
       where: { userId },
-      data: {
-        payrollEnabled,
-        // Jump to front of LRA queue when accepting payroll (NULLS FIRST).
-        ...(payrollEnabled ? { lastPayrollAssignedAt: null } : {}),
-      },
+      data: { payrollEnabled: false },
     })
   },
 

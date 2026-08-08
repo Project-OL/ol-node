@@ -719,6 +719,11 @@ export const pointWalletService = {
        * penalties) where correctness is enforced by upstream business logic.
        */
       availabilityCheck?: boolean
+      /**
+       * When true (default), reject if `users.points_frozen`. Set false for
+       * system settlement of an already-escrowed withdrawal.
+       */
+      freezeCheck?: boolean
     },
   ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
     const existing = await pointLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
@@ -729,7 +734,9 @@ export const pointWalletService = {
       }
     }
 
-    await assertPointsDebitAllowed(userId)
+    if (options.freezeCheck !== false) {
+      await assertPointsDebitAllowed(userId)
+    }
 
     const wallet = await tx.wallet.upsert({
       where: {

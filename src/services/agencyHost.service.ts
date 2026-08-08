@@ -63,6 +63,7 @@ function mapHostProfileFields(
     avatarUrl: string | null
     gender: string | null
     dateOfBirth: Date | null
+    country?: string | null
   },
   levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
 ) {
@@ -75,6 +76,7 @@ function mapHostProfileFields(
     name: displayName,
     gender: host.gender,
     age: computeAge(host.dateOfBirth),
+    country: host.country ?? null,
     wealthLevel: level?.wealthLevel ?? 0,
     livestreamLevel: level?.livestreamLevel ?? 0,
     avatarUrl: host.avatarUrl,
@@ -97,6 +99,7 @@ function mapHostListItem(
       avatarUrl: string | null
       gender: string | null
       dateOfBirth: Date | null
+      country: string | null
       isTagged: boolean
       hourlyWage: bigint
     }
@@ -115,7 +118,7 @@ function mapHostListItem(
     hostEarnings: bigIntToStr(agg?.hostEarnings ?? 0n),
     /** Commission points credited to the agency from this host (AGENT_COMMISSION ledger). */
     hostCommission: bigIntToStr(hostCommission),
-    /** Alias for clients that label agency cut as "hostAgency". */
+    /** Same as hostCommission — agency cut processed from this host’s eligible earnings. */
     hostAgency: bigIntToStr(hostCommission),
     hourlyWage: bigIntToStr(row.host.hourlyWage ?? 0n),
     liveDurationSeconds: bigIntToStr(liveDurationSeconds),
