@@ -31,13 +31,53 @@ export type CustomGiftRequestWithUserAndGift = Prisma.CustomGiftRequestGetPayloa
 }>
 
 export const customGiftRepository = {
-  /** Singleton config row (id=1), created on first read with schema defaults. */
+  /** Singleton config row (id=1). Ensures BigInt price columns are never null (DB drift-safe). */
   async getOrCreateConfig(): Promise<CustomGiftConfig> {
-    return prisma.customGiftConfig.upsert({
-      where: { id: 1 },
-      create: { id: 1 },
-      update: {},
-    })
+    const DEFAULT_1M = 100_000n
+    const DEFAULT_3M = 200_000n
+
+    const rows = await prisma.$queryRaw<
+      Array<{
+        id: number
+        coin_cost: bigint | null
+        coin_cost_1_month: bigint | null
+        coin_cost_3_months: bigint | null
+      }>
+    >`
+      SELECT id, coin_cost, coin_cost_1_month, coin_cost_3_months
+      FROM custom_gift_config
+      WHERE id = 1
+    `
+
+    if (rows.length === 0) {
+      return prisma.customGiftConfig.create({
+        data: {
+          id: 1,
+          coinCost: DEFAULT_1M,
+          coinCost1Month: DEFAULT_1M,
+          coinCost3Months: DEFAULT_3M,
+          enabled: true,
+        },
+      })
+    }
+
+    const row = rows[0]!
+    if (row.coin_cost == null || row.coin_cost_1_month == null || row.coin_cost_3_months == null) {
+      const coinCost = row.coin_cost ?? DEFAULT_1M
+      const coinCost1Month = row.coin_cost_1_month ?? coinCost
+      const coinCost3Months = row.coin_cost_3_months ?? DEFAULT_3M
+      await prisma.$executeRaw`
+        UPDATE custom_gift_config
+        SET
+          coin_cost = ${coinCost},
+          coin_cost_1_month = ${coinCost1Month},
+          coin_cost_3_months = ${coinCost3Months},
+          updated_at = NOW()
+        WHERE id = 1
+      `
+    }
+
+    return prisma.customGiftConfig.findUniqueOrThrow({ where: { id: 1 } })
   },
 
   updateConfig(data: {
@@ -48,9 +88,20 @@ export const customGiftRepository = {
     description?: string | null
     updatedByAdminId: string
   }): Promise<CustomGiftConfig> {
+    const DEFAULT_1M = 100_000n
+    const DEFAULT_3M = 200_000n
+    const oneMonth = data.coinCost1Month ?? data.coinCost ?? DEFAULT_1M
     return prisma.customGiftConfig.upsert({
       where: { id: 1 },
-      create: { id: 1, ...data },
+      create: {
+        id: 1,
+        coinCost: oneMonth,
+        coinCost1Month: oneMonth,
+        coinCost3Months: data.coinCost3Months ?? DEFAULT_3M,
+        enabled: data.enabled ?? true,
+        description: data.description ?? null,
+        updatedByAdminId: data.updatedByAdminId,
+      },
       update: data,
     })
   },
