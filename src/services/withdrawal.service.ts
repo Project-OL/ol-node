@@ -125,6 +125,19 @@ function decNum(d: Prisma.Decimal): number {
   return new Prisma.Decimal(d.toString()).toNumber()
 }
 
+/** Agency PAYROLL_HOST_PAYOUT amount (= host gross − platform fee). */
+function agencyCreditPoints(
+  amountPoints: bigint,
+  platformFeePoints: bigint | null | undefined,
+): string {
+  return (amountPoints - (platformFeePoints ?? 0n)).toString()
+}
+
+function secondsUntil(target: Date | null | undefined, now = Date.now()): number {
+  if (!target) return 0
+  return Math.max(0, Math.round((target.getTime() - now) / 1000))
+}
+
 /**
  * Pure fee math for Vitest + runtime. Uses BigInt for point splits; USD outputs use Decimal→number at boundaries only.
  */
@@ -1718,13 +1731,20 @@ export const withdrawalService = {
 
   async getAgentPayrollInbox(
     agencyUserId: string,
-    status: 'PENDING' | 'COMPLETED',
+    status: 'PENDING' | 'WAITING' | 'COMPLETED',
     cursor: string | undefined,
     limit: number,
   ) {
+    if (status === 'PENDING') {
+      return withdrawalService.getAgentPayrollInboxPending(agencyUserId, cursor, limit)
+    }
+    if (status === 'WAITING') {
+      return withdrawalService.getAgentPayrollInboxWaiting(agencyUserId, cursor, limit)
+    }
+
     const rows = await payrollAssignmentRepository.findInboxByStatus(
       agencyUserId,
-      status,
+      'COMPLETED',
       cursor,
       limit,
     )
@@ -1732,31 +1752,26 @@ export const withdrawalService = {
     const page = hasMore ? rows.slice(0, limit) : rows
     const nextCursor = hasMore ? page[page.length - 1]?.id : undefined
     const config = await withdrawalService.getPayrollConfig()
-
     const tabCounts = await payrollAssignmentRepository.countInboxByStatus(agencyUserId)
 
     return {
       items: page.map((a) => {
-        const hostPayoutUsd = Number(a.withdrawal.hostPayoutUsd ?? 0)
+        const settled = withdrawalService.mapSettledInboxItem(a, config)
         return {
-          id: a.id,
-          status: a.status,
+          id: settled.id,
+          status: settled.status,
           expiresAt: a.expiresAt.toISOString(),
-          slaRemainingSeconds: Math.max(0, Math.round((a.expiresAt.getTime() - Date.now()) / 1000)),
-          grossPoints: a.withdrawal.amountPoints.toString(),
-          hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
-          localCurrencyAmount: (hostPayoutUsd * Number(config.inrPerUsd)).toFixed(2),
-          localCurrencyCode: 'INR',
-          agentRewardPoints: a.withdrawal.agentRewardPoints?.toString() ?? '0',
-          paymentMethod: mapPaymentMethodForAgent(
-            a.withdrawal.paymentMethod,
-            a.status,
-            a.expiresAt,
-          ),
+          slaRemainingSeconds: 0,
+          grossPoints: settled.grossPoints,
+          hostPayoutUsd: settled.hostPayoutUsd,
+          localCurrencyAmount: settled.localCurrencyAmount,
+          localCurrencyCode: settled.localCurrencyCode,
+          agentRewardPoints: settled.agentRewardPoints,
+          paymentMethod: settled.paymentMethod,
         }
       }),
       nextCursor: nextCursor ?? null,
-      total: status === 'PENDING' ? tabCounts.pending : tabCounts.completed,
+      total: tabCounts.completed,
     }
   },
 
@@ -1764,7 +1779,9 @@ export const withdrawalService = {
     agencyUserId: string,
     opts: { status?: string; limit: number; cursor?: string },
   ) {
-    const status = opts.status === 'COMPLETED' ? 'COMPLETED' : ('PENDING' as const)
+    const raw = (opts.status ?? 'PENDING').toUpperCase()
+    const status =
+      raw === 'WAITING' || raw === 'COMPLETED' ? (raw as 'WAITING' | 'COMPLETED') : 'PENDING'
     return withdrawalService.getAgentPayrollInbox(agencyUserId, status, opts.cursor, opts.limit)
   },
 
@@ -1785,8 +1802,8 @@ export const withdrawalService = {
       status: a.status,
       withdrawalId: a.withdrawalId,
       expiresAt: a.expiresAt.toISOString(),
-      slaRemainingSeconds: Math.max(0, Math.round((a.expiresAt.getTime() - Date.now()) / 1000)),
-      grossPoints: a.withdrawal.amountPoints.toString(),
+      slaRemainingSeconds: secondsUntil(a.expiresAt),
+      grossPoints: agencyCreditPoints(a.withdrawal.amountPoints, a.withdrawal.platformFeePoints),
       hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
       localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
       localCurrencyCode: 'INR' as const,
@@ -1799,17 +1816,18 @@ export const withdrawalService = {
     const hostPayoutUsd = Number(a.withdrawal.hostPayoutUsd ?? 0)
     const isDisputed = a.withdrawal.status === 'DISPUTED'
     const waitingExpiresAt = a.waitingExpiresAt
+    const waitingSecondsRemaining =
+      isDisputed || !waitingExpiresAt ? null : secondsUntil(waitingExpiresAt)
     return {
       id: a.id,
       status: a.status,
       withdrawalId: a.withdrawalId,
       waitingExpiresAt: waitingExpiresAt?.toISOString() ?? null,
-      waitingSecondsRemaining:
-        isDisputed || !waitingExpiresAt
-          ? null
-          : Math.max(0, Math.round((waitingExpiresAt.getTime() - Date.now()) / 1000)),
+      /** Countdown to end of waiting window (auto-PAID). Alias of waitingSecondsRemaining. */
+      slaRemainingSeconds: waitingSecondsRemaining ?? 0,
+      waitingSecondsRemaining,
       isDisputed,
-      grossPoints: a.withdrawal.amountPoints.toString(),
+      grossPoints: agencyCreditPoints(a.withdrawal.amountPoints, a.withdrawal.platformFeePoints),
       hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
       localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
       localCurrencyCode: 'INR' as const,
@@ -1826,7 +1844,8 @@ export const withdrawalService = {
       id: a.id,
       status: a.status as 'COMPLETED' | 'REJECTED',
       withdrawalId: a.withdrawalId,
-      grossPoints: a.withdrawal.amountPoints.toString(),
+      slaRemainingSeconds: 0,
+      grossPoints: agencyCreditPoints(a.withdrawal.amountPoints, a.withdrawal.platformFeePoints),
       hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
       localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
       localCurrencyCode: 'INR' as const,

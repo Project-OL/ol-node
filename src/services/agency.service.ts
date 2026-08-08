@@ -559,29 +559,31 @@ export const agencyService = {
     const isDisputed = assignment.withdrawal.status === 'DISPUTED'
 
     const hostPayoutUsd = Number(assignment.withdrawal.hostPayoutUsd ?? 0)
+    const hostPayoutPoints = (
+      assignment.withdrawal.amountPoints - (assignment.withdrawal.platformFeePoints ?? 0n)
+    ).toString()
+    const waitingSecondsRemaining =
+      isWaiting && assignment.waitingExpiresAt && !isDisputed
+        ? Math.max(0, Math.round((assignment.waitingExpiresAt.getTime() - now.getTime()) / 1000))
+        : null
 
     return {
       id: assignment.id,
       status: assignment.status,
       expiresAt: assignment.expiresAt.toISOString(),
-      slaRemainingSeconds: Math.max(
-        0,
-        Math.round((assignment.expiresAt.getTime() - now.getTime()) / 1000),
-      ),
+      /** PENDING: proof SLA. WAITING: seconds until waitingExpiresAt (auto-settle). */
+      slaRemainingSeconds: isWaiting
+        ? (waitingSecondsRemaining ?? 0)
+        : Math.max(0, Math.round((assignment.expiresAt.getTime() - now.getTime()) / 1000)),
       waitingExpiresAt: assignment.waitingExpiresAt?.toISOString() ?? null,
-      waitingSecondsRemaining:
-        isWaiting && assignment.waitingExpiresAt && !isDisputed
-          ? Math.max(0, Math.round((assignment.waitingExpiresAt.getTime() - now.getTime()) / 1000))
-          : null,
+      waitingSecondsRemaining,
       isDisputed: isWaiting && isDisputed,
       assignmentNumber: assignment.assignmentNumber,
       proofS3Key: assignment.proofS3Key ?? null,
       completedAt: assignment.completedAt?.toISOString() ?? null,
-      grossPoints: assignment.withdrawal.amountPoints.toString(),
-      hostPayoutPoints: (
-        Number(assignment.withdrawal.amountPoints) -
-        Number(assignment.withdrawal.platformFeePoints ?? 0)
-      ).toString(),
+      /** Agency PAYROLL_HOST_PAYOUT points credited on settle (not host withdraw gross). */
+      grossPoints: hostPayoutPoints,
+      hostPayoutPoints,
       agentRewardPoints: assignment.withdrawal.agentRewardPoints?.toString() ?? '0',
       hostPayoutUsd: assignment.withdrawal.hostPayoutUsd?.toString() ?? null,
       localCurrencyAmount: (hostPayoutUsd * Number(config.inrPerUsd)).toFixed(2),

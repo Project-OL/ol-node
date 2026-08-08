@@ -28,7 +28,7 @@ const PayrollRejectSchema = z.object({
 })
 
 const PayrollInboxQuerySchema = z.object({
-  status: z.enum(['PENDING', 'COMPLETED']).default('PENDING'),
+  status: z.enum(['PENDING', 'WAITING', 'COMPLETED']).default('PENDING'),
   limit: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().optional(),
 })
