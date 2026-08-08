@@ -11,6 +11,7 @@ import {
 import { bustAgencyDashboardCaches } from './agencyDashboard.service'
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyPointTransferRepository } from '../repositories/agencyPointTransfer.repository'
+import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { pointWalletService } from './point-wallet.service'
 import { cacheRedisService } from './cacheRedis.service'
 import { AppError } from '../middlewares/errorHandler'
@@ -28,6 +29,7 @@ import {
 import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from '../queues/agency-commission.queue'
 import { walletService } from './wallet.service'
 import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
+import { env } from '../config/env'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 export const MIN_AGENT_POINT_TRANSFER = AGENT_POINT_TRANSFER_STEP
@@ -74,6 +76,38 @@ function categoryForTx(txType: PointTxType): CommissionCategory | null {
   if (LIVE_COMMISSION_TX_TYPES.has(txType)) return 'LIVE'
   if (MATCH_CHAT_COMMISSION_TX_TYPES.has(txType)) return 'MATCH_CHAT'
   return null
+}
+
+export type AgencyTierWindowMetric = {
+  total: bigint
+  from: Date
+  toExclusive: Date
+  fromDay: Date
+  toDay: Date
+  totalMinutes: number
+  includeHostEarnings: boolean
+  includeAgencyCommission: boolean
+}
+
+/**
+ * Build a note describing which env-gated sources feed the tier window total.
+ */
+export function agencyTierWindowMetricNote(metric: {
+  includeHostEarnings: boolean
+  includeAgencyCommission: boolean
+}): string {
+  const parts: string[] = []
+  if (metric.includeHostEarnings) {
+    parts.push(
+      'host earnings = SUM(agency_daily_earnings.host_earnings_points) on overlapping UTC calendar days [from, to]',
+    )
+  }
+  if (metric.includeAgencyCommission) {
+    parts.push(
+      'agency commission = unreversed AGENT_COMMISSION credits in half-open [fromAt, toExclusiveAt)',
+    )
+  }
+  return parts.join('; ')
 }
 
 export const agencyCommissionService = {
@@ -408,17 +442,62 @@ export const agencyCommissionService = {
   },
 
   /**
-   * Match agency commission tier to rolling-window **agency commission earned**
-   * (unreversed AGENT_COMMISSION ledger credits in `[now − duration, now)`).
-   * Host earnings are excluded from tier math.
+   * Rolling-window total for agency tier matching / progress.
+   * Sources gated by env (same for live recompute, nightly job, admin force):
+   * - `AGENCY_TIER_INCLUDE_HOST_EARNINGS` (default on): day-bucket host earnings
+   * - `AGENCY_TIER_INCLUDE_AGENCY_COMMISSION` (default off): ledger AGENT_COMMISSION
+   */
+  async resolveTierWindowTotal(
+    agencyUserId: string,
+    opts?: { preferPrimary?: boolean; now?: Date },
+  ): Promise<AgencyTierWindowMetric> {
+    const now = opts?.now ?? utcNow()
+    const { from, toExclusive, totalMinutes } =
+      await agencyCommissionConfigService.resolveRollingWindowBounds(now)
+    const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays(now)
+    const includeHostEarnings = env.AGENCY_TIER_INCLUDE_HOST_EARNINGS
+    const includeAgencyCommission = env.AGENCY_TIER_INCLUDE_AGENCY_COMMISSION
+
+    let total = 0n
+    if (includeHostEarnings) {
+      const daily = await agencyCommissionRepository.sumAgencyDailyEarnings(
+        agencyUserId,
+        fromDay,
+        toDay,
+        { preferPrimary: opts?.preferPrimary },
+      )
+      total += daily.hostEarningsPoints
+    }
+    if (includeAgencyCommission) {
+      total += await agencyCommissionRepository.sumAgencyCommissionLedgerWindow(
+        agencyUserId,
+        from,
+        toExclusive,
+        { preferPrimary: opts?.preferPrimary },
+      )
+    }
+
+    return {
+      total,
+      from,
+      toExclusive,
+      fromDay,
+      toDay,
+      totalMinutes,
+      includeHostEarnings,
+      includeAgencyCommission,
+    }
+  },
+
+  /**
+   * Match agency commission tier to the env-configured rolling-window metric
+   * (see {@link resolveTierWindowTotal}).
    */
   async recomputeAgencyLevel(
     agencyUserId: string,
     opts?: { skipDailyDedupe?: boolean },
   ): Promise<void> {
     const now = utcNow()
-    const { from, toExclusive } =
-      await agencyCommissionConfigService.resolveRollingWindowBounds(now)
 
     if (!opts?.skipDailyDedupe) {
       const cur = await prismaRead.agency.findUnique({
@@ -433,12 +512,10 @@ export const agencyCommissionService = {
       }
     }
 
-    const total = await agencyCommissionRepository.getAgencyWindowTotal(
-      agencyUserId,
-      from,
-      toExclusive,
-      { preferPrimary: true },
-    )
+    const { total } = await this.resolveTierWindowTotal(agencyUserId, {
+      preferPrimary: true,
+      now,
+    })
     const levels = await agencyCommissionRepository.getLevelConfig()
     let newLevel = 'D'
     for (let i = levels.length - 1; i >= 0; i--) {
@@ -531,13 +608,8 @@ export const agencyCommissionService = {
     const idx = levels.findIndex((l) => l.level === ag.currentLevel)
     const nextRow = idx >= 0 && idx + 1 < levels.length ? levels[idx + 1]! : null
 
-    const { from: windowFrom, toExclusive: windowToExclusive } =
-      await agencyCommissionConfigService.resolveRollingWindowBounds()
-    const windowTotal = await agencyCommissionRepository.getAgencyWindowTotal(
-      agencyUserId,
-      windowFrom,
-      windowToExclusive,
-    )
+    const windowMetric = await this.resolveTierWindowTotal(agencyUserId)
+    const windowTotal = windowMetric.total
 
     const [agg, liveDurationSeconds, dailyEarnings] = await Promise.all([
       agencyCommissionRepository.aggregateLedgerByTxTypeForAgencyHosts({
@@ -712,6 +784,15 @@ export const agencyCommissionService = {
       belowMinCode: 'MIN_TRANSFER_VIOLATION',
       unitLabel: 'points to transfer',
     })
+
+    const faceIndexed = await faceVerificationRepository.isIndexedForUser(senderUserId)
+    if (!faceIndexed) {
+      throw new AppError(
+        403,
+        'Face verification must be completed and indexed before transferring points',
+        'FACE_NOT_INDEXED',
+      )
+    }
 
     const recipientAg = await prismaRead.agency.findUnique({
       where: { userId: recipientAgentUserId },

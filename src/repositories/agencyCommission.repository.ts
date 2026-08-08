@@ -1,5 +1,6 @@
 import { LedgerDirection, PointTxType, Prisma, WalletCurrencyType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+import { addUtcDays } from '../utils/datetime'
 
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000'
 
@@ -164,12 +165,11 @@ export const agencyCommissionRepository = {
   },
 
   /**
-   * Rolling-window total used for agency commission tier matching / progress.
-   * Sums unreversed AGENT_COMMISSION ledger credits whose `created_at` falls in
-   * the half-open window `[from, toExclusive)`. Host earnings are excluded.
+   * Unreversed AGENT_COMMISSION ledger credits in `[from, toExclusive)`.
+   * Used when `AGENCY_TIER_INCLUDE_AGENCY_COMMISSION=true` for tier matching.
    * Credits reversed via admin clawback (`agency-commission-reverse:*`) are omitted.
    */
-  async getAgencyWindowTotal(
+  async sumAgencyCommissionLedgerWindow(
     agencyUserId: string,
     from: Date,
     toExclusive: Date,
@@ -205,6 +205,16 @@ export const agencyCommissionRepository = {
         )
     `
     return rows[0]?.s ?? 0n
+  },
+
+  /** @deprecated Prefer {@link sumAgencyCommissionLedgerWindow}. */
+  async getAgencyWindowTotal(
+    agencyUserId: string,
+    from: Date,
+    toExclusive: Date,
+    opts?: { preferPrimary?: boolean },
+  ): Promise<bigint> {
+    return this.sumAgencyCommissionLedgerWindow(agencyUserId, from, toExclusive, opts)
   },
 
   /** Cursor page of all agency owner ids (for nightly window-slide recompute). */
@@ -244,7 +254,7 @@ export const agencyCommissionRepository = {
     return rows.map((r) => r.agency_user_id)
   },
 
-  /** Per-host totals from daily earnings (commission panel). */
+  /** Per-host totals for commission panel (earnings from daily; commission from ledger; duration from live_streams). */
   async sumHostEarningsByHost(
     agencyUserId: string,
     fromDay: Date,
@@ -260,6 +270,7 @@ export const agencyCommissionRepository = {
   > {
     const limit = opts?.limit ?? 50
     const offset = opts?.offset ?? 0
+    const toExclusive = addUtcDays(toDay, 1)
     const rows = await prismaRead.$queryRaw<
       {
         host_user_id: string
@@ -272,8 +283,52 @@ export const agencyCommissionRepository = {
         SELECT
           e.host_user_id,
           COALESCE(SUM(e.host_earnings_points), 0)::bigint AS earnings,
-          COALESCE(SUM(e.host_commission_points), 0)::bigint AS commission,
-          COALESCE(SUM(e.live_duration_seconds), 0)::bigint AS live_duration
+          COALESCE((
+            SELECT SUM(ple.amount)
+            FROM point_ledger_entries ple
+            INNER JOIN wallets w
+              ON w.id = ple.wallet_id
+             AND w.user_id = ${agencyUserId}::uuid
+             AND w.currency_type = 'POINT'
+            WHERE ple.tx_type = 'AGENT_COMMISSION'
+              AND ple.direction = 'CREDIT'
+              AND ple.counterparty_id = e.host_user_id
+              AND ple.created_at >= ${fromDay}
+              AND ple.created_at < ${toExclusive}
+              AND NOT EXISTS (
+                SELECT 1
+                FROM point_ledger_entries rev
+                WHERE rev.idempotency_key =
+                  'agency-commission-reverse:' ||
+                  COALESCE(
+                    NULLIF(ple.metadata->>'hostLedgerEntryId', ''),
+                    CASE
+                      WHEN ple.idempotency_key LIKE 'agency-commission:%'
+                      THEN substring(ple.idempotency_key FROM length('agency-commission:') + 1)
+                      ELSE NULL
+                    END
+                  )
+              )
+          ), 0)::bigint AS commission,
+          COALESCE((
+            SELECT SUM(
+              GREATEST(
+                0,
+                FLOOR(EXTRACT(EPOCH FROM (ls.ended_at - ls.started_at)))
+              )
+            )
+            FROM live_streams ls
+            INNER JOIN agency_hosts ah
+              ON ls.user_id = ah.host_user_id::text
+             AND ah.agency_user_id = ${agencyUserId}::uuid
+            WHERE ls.user_id = e.host_user_id::text
+              AND ls.started_at IS NOT NULL
+              AND ls.ended_at IS NOT NULL
+              AND ls.ended_at > ls.started_at
+              AND ls.started_at >= ah.joined_at
+              AND ls.started_at >= ${fromDay}
+              AND ls.started_at < ${toExclusive}
+          ), 0)::bigint AS live_duration
         FROM agency_daily_earnings e
         INNER JOIN users u ON u.id = e.host_user_id
         WHERE e.agency_user_id = ${agencyUserId}::uuid
@@ -320,8 +375,10 @@ export const agencyCommissionRepository = {
     agencyUserId: string,
     fromDay: Date,
     toDay: Date,
+    opts?: { preferPrimary?: boolean },
   ): Promise<{ hostEarningsPoints: bigint; hostCommissionPoints: bigint }> {
-    const rows = await prismaRead.$queryRaw<{ earnings: bigint; commission: bigint }[]>`
+    const client = opts?.preferPrimary ? prisma : prismaRead
+    const rows = await client.$queryRaw<{ earnings: bigint; commission: bigint }[]>`
       SELECT
         COALESCE(SUM(e.host_earnings_points), 0)::bigint AS earnings,
         COALESCE(SUM(e.host_commission_points), 0)::bigint AS commission
@@ -366,13 +423,28 @@ export const agencyCommissionRepository = {
     fromDay: Date,
     toDay: Date,
   ): Promise<bigint> {
+    const toExclusive = addUtcDays(toDay, 1)
     const rows = await prismaRead.$queryRaw<{ s: bigint }[]>`
-      SELECT COALESCE(SUM(e.live_duration_seconds), 0)::bigint AS s
-      FROM agency_daily_earnings e
-      INNER JOIN users u ON u.id = e.host_user_id
-      WHERE e.agency_user_id = ${agencyUserId}::uuid
-        AND e.day >= ${fromDay}::date
-        AND e.day <= ${toDay}::date
+      SELECT COALESCE(
+               SUM(
+                 GREATEST(
+                   0,
+                   FLOOR(EXTRACT(EPOCH FROM (ls.ended_at - ls.started_at)))
+                 )
+               ),
+               0
+             )::bigint AS s
+      FROM live_streams ls
+      INNER JOIN agency_hosts ah
+        ON ls.user_id = ah.host_user_id::text
+       AND ah.agency_user_id = ${agencyUserId}::uuid
+      INNER JOIN users u ON u.id::text = ls.user_id
+      WHERE ls.started_at IS NOT NULL
+        AND ls.ended_at IS NOT NULL
+        AND ls.ended_at > ls.started_at
+        AND ls.started_at >= ah.joined_at
+        AND ls.started_at >= ${fromDay}
+        AND ls.started_at < ${toExclusive}
         AND u.status NOT IN ('suspended', 'deleted')
     `
     return rows[0]?.s ?? 0n
@@ -384,13 +456,28 @@ export const agencyCommissionRepository = {
     fromDay: Date,
     toDay: Date,
   ): Promise<bigint> {
+    const toExclusive = addUtcDays(toDay, 1)
     const rows = await prismaRead.$queryRaw<{ s: bigint }[]>`
-      SELECT COALESCE(SUM(e.live_duration_seconds), 0)::bigint AS s
-      FROM agency_daily_earnings e
-      WHERE e.agency_user_id = ${agencyUserId}::uuid
-        AND e.host_user_id = ${hostUserId}::uuid
-        AND e.day >= ${fromDay}::date
-        AND e.day <= ${toDay}::date
+      SELECT COALESCE(
+               SUM(
+                 GREATEST(
+                   0,
+                   FLOOR(EXTRACT(EPOCH FROM (ls.ended_at - ls.started_at)))
+                 )
+               ),
+               0
+             )::bigint AS s
+      FROM live_streams ls
+      INNER JOIN agency_hosts ah
+        ON ls.user_id = ah.host_user_id::text
+       AND ah.agency_user_id = ${agencyUserId}::uuid
+      WHERE ls.user_id = ${hostUserId}
+        AND ls.started_at IS NOT NULL
+        AND ls.ended_at IS NOT NULL
+        AND ls.ended_at > ls.started_at
+        AND ls.started_at >= ah.joined_at
+        AND ls.started_at >= ${fromDay}
+        AND ls.started_at < ${toExclusive}
     `
     return rows[0]?.s ?? 0n
   },

@@ -62,6 +62,8 @@ model User {
   personalCoinsFrozen   Boolean   @default(false) @map("personal_coins_frozen")
   tradingCoinsFrozen    Boolean   @default(false) @map("trading_coins_frozen")
   pointsFrozen          Boolean   @default(false) @map("points_frozen")
+  /// Placeholder for future host hourly salary feature (points). Default 0 until payroll wiring.
+  hourlyWage            BigInt    @default(0) @map("hourly_wage")
   postingSuspendedUntil DateTime? @map("posting_suspended_until")
   postingBanned         Boolean   @default(false) @map("posting_banned")
   /// When set, user cannot be approved / create a new agency (set by admin agency ban).

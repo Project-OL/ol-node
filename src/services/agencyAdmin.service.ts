@@ -7,7 +7,8 @@ import { agencyCommissionRepository } from '../repositories/agencyCommission.rep
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { agencyHostRepository } from '../repositories/agencyHost.repository'
 import { storageService } from './storage.service'
-import { agencyCommissionService } from './agencyCommission.service'
+import { agencyCommissionService, agencyTierWindowMetricNote } from './agencyCommission.service'
+import { env } from '../config/env'
 import { displayNameFromUser } from '../utils/profileDisplay'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 import { formatPointsAsUsd } from '../utils/points-currency'
@@ -347,7 +348,7 @@ export const agencyAdminService = {
 
   /**
    * Force agency tier recompute (skips same-day dedupe). Returns before/after level.
-   * Window total uses agency commission earned only (not host earnings).
+   * Window total sources are gated by AGENCY_TIER_INCLUDE_* env flags.
    */
   async forceRecomputeLevel(identifier: string) {
     const agency = await resolveAgencyByIdentifier(identifier)
@@ -364,6 +365,10 @@ export const agencyAdminService = {
     const afterRow = await agencyRepository.getAgencyByUserId(agency.userId)
     if (!afterRow) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
 
+    const metric = {
+      includeHostEarnings: env.AGENCY_TIER_INCLUDE_HOST_EARNINGS,
+      includeAgencyCommission: env.AGENCY_TIER_INCLUDE_AGENCY_COMMISSION,
+    }
     const { from, toExclusive, totalMinutes } =
       await agencyCommissionConfigService.resolveRollingWindowBounds()
     const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays()
@@ -381,7 +386,9 @@ export const agencyAdminService = {
         windowHours: cfg.windowHours,
         windowMinutes: cfg.windowMinutes,
         totalMinutes,
-        note: 'Half-open UTC timestamp window [fromAt, toExclusiveAt); sums unreversed AGENT_COMMISSION credits (from/to = overlapping calendar days)',
+        includeHostEarnings: metric.includeHostEarnings,
+        includeAgencyCommission: metric.includeAgencyCommission,
+        note: agencyTierWindowMetricNote(metric),
       },
       before,
       after: {

@@ -98,6 +98,7 @@ function mapHostListItem(
       gender: string | null
       dateOfBirth: Date | null
       isTagged: boolean
+      hourlyWage: bigint
     }
   },
   levels: Map<string, { livestreamLevel: number; wealthLevel: number }>,
@@ -105,13 +106,18 @@ function mapHostListItem(
 ) {
   const agg = earnings.get(row.hostUserId)
   const liveDurationSeconds = agg?.liveDurationSeconds ?? 0n
+  const hostCommission = agg?.hostCommission ?? 0n
   return {
     hostUserId: row.hostUserId,
     ...mapHostProfileFields(row.hostUserId, row.host, levels),
     isTagged: row.host.isTagged,
     joinedAt: row.joinedAt.toISOString(),
     hostEarnings: bigIntToStr(agg?.hostEarnings ?? 0n),
-    hostCommission: bigIntToStr(agg?.hostCommission ?? 0n),
+    /** Commission points credited to the agency from this host (AGENT_COMMISSION ledger). */
+    hostCommission: bigIntToStr(hostCommission),
+    /** Alias for clients that label agency cut as "hostAgency". */
+    hostAgency: bigIntToStr(hostCommission),
+    hourlyWage: bigIntToStr(row.host.hourlyWage ?? 0n),
     liveDurationSeconds: bigIntToStr(liveDurationSeconds),
     liveDurationFormatted: formatDuration(liveDurationSeconds),
   }

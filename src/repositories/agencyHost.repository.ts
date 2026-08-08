@@ -1,5 +1,6 @@
-import type { AgencyHostHistoryReason, Prisma } from '@prisma/client'
+import { Prisma, type AgencyHostHistoryReason } from '@prisma/client'
 import { prismaRead } from '../config/database'
+import { addUtcDays } from '../utils/datetime'
 
 export const agencyHostRepository = {
   async insertHost(
@@ -81,6 +82,7 @@ export const agencyHostRepository = {
             gender: true,
             dateOfBirth: true,
             isTagged: true,
+            hourlyWage: true,
           },
         },
       },
@@ -88,9 +90,14 @@ export const agencyHostRepository = {
   },
 
   /**
-   * All-time per-host earnings/commission/live-duration aggregates from
-   * `agency_daily_earnings`, keyed by hostUserId. Hosts with no rows are absent
-   * (callers default to zero).
+   * All-time per-host aggregates for the agency hosts list.
+   * - `hostEarnings` ← `agency_daily_earnings.host_earnings_points`
+   * - `hostCommission` ← unreversed `AGENT_COMMISSION` ledger credited to the agency
+   *   for that host (`counterparty_id`) — amount actually processed to the agency
+   * - `liveDurationSeconds` ← `live_streams` (ended − started), sessions since host
+   *   joined this agency (webhook `host_live_sessions` path is unused in prod)
+   *
+   * Hosts with no rows across all sources are absent (callers default to zero).
    */
   async getHostEarningsAggregates(
     agencyUserId: string,
@@ -116,34 +123,139 @@ export const agencyHostRepository = {
     >()
     if (hostUserIds.length === 0) return map
 
-    const rows = await prismaRead.agencyDailyEarning.groupBy({
+    const ensure = (hostUserId: string) => {
+      let row = map.get(hostUserId)
+      if (!row) {
+        row = { hostEarnings: 0n, hostCommission: 0n, liveDurationSeconds: 0n }
+        map.set(hostUserId, row)
+      }
+      return row
+    }
+
+    const dayFilter =
+      fromDay || toDay
+        ? {
+            day: {
+              ...(fromDay ? { gte: fromDay } : {}),
+              ...(toDay ? { lte: toDay } : {}),
+            },
+          }
+        : {}
+
+    const earningsRows = await prismaRead.agencyDailyEarning.groupBy({
       by: ['hostUserId'],
       where: {
         agencyUserId,
         hostUserId: { in: hostUserIds },
-        ...(fromDay || toDay
-          ? {
-              day: {
-                ...(fromDay ? { gte: fromDay } : {}),
-                ...(toDay ? { lte: toDay } : {}),
-              },
-            }
-          : {}),
+        ...dayFilter,
       },
       _sum: {
         hostEarningsPoints: true,
-        hostCommissionPoints: true,
-        liveDurationSeconds: true,
       },
     })
 
-    for (const r of rows) {
-      map.set(r.hostUserId, {
-        hostEarnings: r._sum.hostEarningsPoints ?? 0n,
-        hostCommission: r._sum.hostCommissionPoints ?? 0n,
-        liveDurationSeconds: r._sum.liveDurationSeconds ?? 0n,
-      })
+    for (const r of earningsRows) {
+      ensure(r.hostUserId).hostEarnings = r._sum.hostEarningsPoints ?? 0n
     }
+
+    // Half-open ledger / stream window from inclusive UTC calendar days.
+    const fromAt = fromDay ?? null
+    const toExclusive = toDay ? addUtcDays(toDay, 1) : null
+
+    const commissionWhere: Prisma.PointLedgerEntryWhereInput = {
+      txType: 'AGENT_COMMISSION',
+      direction: 'CREDIT',
+      counterpartyId: { in: hostUserIds },
+      wallet: {
+        userId: agencyUserId,
+        currencyType: 'POINT',
+      },
+      ...(fromAt || toExclusive
+        ? {
+            createdAt: {
+              ...(fromAt ? { gte: fromAt } : {}),
+              ...(toExclusive ? { lt: toExclusive } : {}),
+            },
+          }
+        : {}),
+    }
+
+    const commissionEntries = await prismaRead.pointLedgerEntry.findMany({
+      where: commissionWhere,
+      select: {
+        amount: true,
+        counterpartyId: true,
+        idempotencyKey: true,
+        metadata: true,
+      },
+    })
+
+    // Omit credits that have a matching admin reverse debit.
+    const reverseKeys = new Set(
+      (
+        await prismaRead.pointLedgerEntry.findMany({
+          where: {
+            idempotencyKey: {
+              in: commissionEntries
+                .map((e) => {
+                  const meta = e.metadata as { hostLedgerEntryId?: string } | null
+                  const hostLedgerId =
+                    meta?.hostLedgerEntryId ??
+                    (e.idempotencyKey?.startsWith('agency-commission:')
+                      ? e.idempotencyKey.slice('agency-commission:'.length)
+                      : null)
+                  return hostLedgerId ? `agency-commission-reverse:${hostLedgerId}` : null
+                })
+                .filter((k): k is string => Boolean(k)),
+            },
+          },
+          select: { idempotencyKey: true },
+        })
+      ).map((r) => r.idempotencyKey),
+    )
+
+    for (const e of commissionEntries) {
+      if (!e.counterpartyId) continue
+      const meta = e.metadata as { hostLedgerEntryId?: string } | null
+      const hostLedgerId =
+        meta?.hostLedgerEntryId ??
+        (e.idempotencyKey?.startsWith('agency-commission:')
+          ? e.idempotencyKey.slice('agency-commission:'.length)
+          : null)
+      if (hostLedgerId && reverseKeys.has(`agency-commission-reverse:${hostLedgerId}`)) {
+        continue
+      }
+      ensure(e.counterpartyId).hostCommission += e.amount
+    }
+
+    // Duration from live_streams since joining this agency (source of truth).
+    const memberships = await prismaRead.agencyHost.findMany({
+      where: { agencyUserId, hostUserId: { in: hostUserIds } },
+      select: { hostUserId: true, joinedAt: true },
+    })
+    const joinedAtByHost = new Map(memberships.map((m) => [m.hostUserId, m.joinedAt]))
+
+    const streams = await prismaRead.liveStream.findMany({
+      where: {
+        userId: { in: hostUserIds },
+        startedAt: {
+          not: null,
+          ...(fromAt ? { gte: fromAt } : {}),
+          ...(toExclusive ? { lt: toExclusive } : {}),
+        },
+        endedAt: { not: null },
+      },
+      select: { userId: true, startedAt: true, endedAt: true },
+    })
+
+    for (const s of streams) {
+      if (!s.startedAt || !s.endedAt || s.endedAt <= s.startedAt) continue
+      const joinedAt = joinedAtByHost.get(s.userId)
+      if (!joinedAt || s.startedAt < joinedAt) continue
+      const secs = BigInt(Math.floor((s.endedAt.getTime() - s.startedAt.getTime()) / 1000))
+      if (secs > 0n) ensure(s.userId).liveDurationSeconds += secs
+    }
+
     return map
   },
 

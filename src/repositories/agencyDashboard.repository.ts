@@ -259,7 +259,24 @@ export const agencyDashboardRepository = {
       SELECT
         COUNT(DISTINCT ade.host_user_id) FILTER (WHERE ade.host_earnings_points > 0)::BIGINT
           AS "hostsWithIncome",
-        COALESCE(SUM(ade.live_duration_seconds), 0)::BIGINT AS "totalLiveDuration",
+        COALESCE((
+          SELECT SUM(
+            GREATEST(
+              0,
+              FLOOR(EXTRACT(EPOCH FROM (ls.ended_at - ls.started_at)))
+            )
+          )::BIGINT
+          FROM live_streams ls
+          INNER JOIN agency_hosts ah
+            ON ls.user_id = ah.host_user_id::text
+           AND ah.agency_user_id = ${agencyUserId}::uuid
+          WHERE ls.started_at IS NOT NULL
+            AND ls.ended_at IS NOT NULL
+            AND ls.ended_at > ls.started_at
+            AND ls.started_at >= ah.joined_at
+            AND ls.started_at >= (${startDay}::timestamp AT TIME ZONE 'UTC')
+            AND ls.started_at < (((${endDay}::date + 1)::timestamp) AT TIME ZONE 'UTC')
+        ), 0)::BIGINT AS "totalLiveDuration",
         COALESCE(SUM(ade.host_earnings_points + ade.host_commission_points), 0)::BIGINT
           AS "totalEarningsPoints"
       FROM agency_daily_earnings ade
@@ -310,8 +327,8 @@ export const agencyDashboardRepository = {
       SELECT
         ade.host_user_id                                    AS "hostUserId",
         SUM(ade.host_earnings_points)::BIGINT               AS "hostEarnings",
-        SUM(ade.host_commission_points)::BIGINT             AS "commissionEarned",
-        COALESCE(SUM(ade.live_duration_seconds), 0)::BIGINT AS "liveDurationSeconds",
+        COALESCE(comm.commission, 0)::BIGINT                AS "commissionEarned",
+        COALESCE(dur.live_duration, 0)::BIGINT              AS "liveDurationSeconds",
         u.username                                          AS "displayName",
         u.first_name                                        AS "firstName",
         u.last_name                                         AS "lastName",
@@ -331,11 +348,61 @@ export const agencyDashboardRepository = {
         ON wl_stream.user_id = ade.host_user_id AND wl_stream.level_type = 'LIVESTREAM'
       LEFT JOIN wallet_user_levels wl_wealth
         ON wl_wealth.user_id = ade.host_user_id AND wl_wealth.level_type = 'WEALTH'
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(ple.amount), 0)::bigint AS commission
+        FROM point_ledger_entries ple
+        INNER JOIN wallets w
+          ON w.id = ple.wallet_id
+         AND w.user_id = ${agencyUserId}::uuid
+         AND w.currency_type = 'POINT'
+        WHERE ple.tx_type = 'AGENT_COMMISSION'
+          AND ple.direction = 'CREDIT'
+          AND ple.counterparty_id = ade.host_user_id
+          AND ple.created_at >= (${startDay}::timestamp AT TIME ZONE 'UTC')
+          AND ple.created_at < (((${endDay}::date + 1)::timestamp) AT TIME ZONE 'UTC')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM point_ledger_entries rev
+            WHERE rev.idempotency_key =
+              'agency-commission-reverse:' ||
+              COALESCE(
+                NULLIF(ple.metadata->>'hostLedgerEntryId', ''),
+                CASE
+                  WHEN ple.idempotency_key LIKE 'agency-commission:%'
+                  THEN substring(ple.idempotency_key FROM length('agency-commission:') + 1)
+                  ELSE NULL
+                END
+              )
+          )
+      ) comm ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+                 SUM(
+                   GREATEST(
+                     0,
+                     FLOOR(EXTRACT(EPOCH FROM (ls.ended_at - ls.started_at)))
+                   )
+                 ),
+                 0
+               )::bigint AS live_duration
+        FROM live_streams ls
+        INNER JOIN agency_hosts ah
+          ON ls.user_id = ah.host_user_id::text
+         AND ah.agency_user_id = ${agencyUserId}::uuid
+        WHERE ls.user_id = ade.host_user_id::text
+          AND ls.started_at IS NOT NULL
+          AND ls.ended_at IS NOT NULL
+          AND ls.ended_at > ls.started_at
+          AND ls.started_at >= ah.joined_at
+          AND ls.started_at >= (${startDay}::timestamp AT TIME ZONE 'UTC')
+          AND ls.started_at < (((${endDay}::date + 1)::timestamp) AT TIME ZONE 'UTC')
+      ) dur ON true
       WHERE ade.agency_user_id = ${agencyUserId}::uuid
         AND ade.day BETWEEN ${startDay}::date AND ${endDay}::date
       GROUP BY
         ade.host_user_id, u.username, u.first_name, u.last_name, u.avatar_url, u.default_public_id,
-        u.current_vip_public_id, u.is_tagged, wl_stream.current_level, wl_wealth.current_level
+        u.current_vip_public_id, u.is_tagged, wl_stream.current_level, wl_wealth.current_level,
+        comm.commission, dur.live_duration
       ORDER BY SUM(ade.host_earnings_points) DESC, ade.host_user_id ASC
       LIMIT ${limit} OFFSET ${offset}
     `
@@ -391,13 +458,57 @@ export const agencyDashboardRepository = {
       }>
     >`
       SELECT
-        COALESCE(SUM(host_earnings_points),   0)::BIGINT AS "hostEarnings",
-        COALESCE(SUM(host_commission_points), 0)::BIGINT AS "commissionEarned",
-        COALESCE(SUM(live_duration_seconds),  0)::BIGINT AS "liveDurationSeconds"
-      FROM agency_daily_earnings
-      WHERE agency_user_id = ${agencyUserId}::uuid
-        AND host_user_id   = ${hostUserId}::uuid
-        AND day BETWEEN ${startDay}::date AND ${endDay}::date
+        COALESCE(SUM(ade.host_earnings_points), 0)::BIGINT AS "hostEarnings",
+        COALESCE((
+          SELECT SUM(ple.amount)::bigint
+          FROM point_ledger_entries ple
+          INNER JOIN wallets w
+            ON w.id = ple.wallet_id
+           AND w.user_id = ${agencyUserId}::uuid
+           AND w.currency_type = 'POINT'
+          WHERE ple.tx_type = 'AGENT_COMMISSION'
+            AND ple.direction = 'CREDIT'
+            AND ple.counterparty_id = ${hostUserId}::uuid
+            AND ple.created_at >= (${startDay}::timestamp AT TIME ZONE 'UTC')
+            AND ple.created_at < (((${endDay}::date + 1)::timestamp) AT TIME ZONE 'UTC')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM point_ledger_entries rev
+              WHERE rev.idempotency_key =
+                'agency-commission-reverse:' ||
+                COALESCE(
+                  NULLIF(ple.metadata->>'hostLedgerEntryId', ''),
+                  CASE
+                    WHEN ple.idempotency_key LIKE 'agency-commission:%'
+                    THEN substring(ple.idempotency_key FROM length('agency-commission:') + 1)
+                    ELSE NULL
+                  END
+                )
+            )
+        ), 0)::BIGINT AS "commissionEarned",
+        COALESCE((
+          SELECT SUM(
+            GREATEST(
+              0,
+              FLOOR(EXTRACT(EPOCH FROM (ls.ended_at - ls.started_at)))
+            )
+          )::bigint
+          FROM live_streams ls
+          INNER JOIN agency_hosts ah
+            ON ls.user_id = ah.host_user_id::text
+           AND ah.agency_user_id = ${agencyUserId}::uuid
+          WHERE ls.user_id = ${hostUserId}
+            AND ls.started_at IS NOT NULL
+            AND ls.ended_at IS NOT NULL
+            AND ls.ended_at > ls.started_at
+            AND ls.started_at >= ah.joined_at
+            AND ls.started_at >= (${startDay}::timestamp AT TIME ZONE 'UTC')
+            AND ls.started_at < (((${endDay}::date + 1)::timestamp) AT TIME ZONE 'UTC')
+        ), 0)::BIGINT AS "liveDurationSeconds"
+      FROM agency_daily_earnings ade
+      WHERE ade.agency_user_id = ${agencyUserId}::uuid
+        AND ade.host_user_id   = ${hostUserId}::uuid
+        AND ade.day BETWEEN ${startDay}::date AND ${endDay}::date
     `
 
     const [user, levels, faceProfile, kycRow, pointsBalance] = await Promise.all([
@@ -413,6 +524,7 @@ export const agencyDashboardRepository = {
           dateOfBirth: true,
           gender: true,
           isTagged: true,
+          hourlyWage: true,
         },
       }),
       prismaRead.walletUserLevel.findMany({
@@ -465,7 +577,7 @@ export const agencyDashboardRepository = {
       totalEarningsPoints: bigIntToStr((agg?.hostEarnings ?? 0n) + (agg?.commissionEarned ?? 0n)),
       liveDurationSeconds: bigIntToStr(agg?.liveDurationSeconds ?? 0n),
       liveDurationFormatted: formatDuration(agg?.liveDurationSeconds ?? 0n),
-      platformHourlySalary: '0',
+      platformHourlySalary: bigIntToStr(user?.hourlyWage ?? 0n),
       rankReward: '0',
     }
   },

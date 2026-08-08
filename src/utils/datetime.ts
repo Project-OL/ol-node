@@ -102,7 +102,8 @@ export function agencyCommissionRollingWindowDays(now: Date = utcNow()): {
 
 /**
  * Inclusive UTC calendar days that overlap the precise rolling window (for day-bucket queries).
- * Tier recompute itself uses {@link resolveAgencyCommissionRollingWindowBounds} + ledger timestamps.
+ * Used for tier totals when `AGENCY_TIER_INCLUDE_HOST_EARNINGS` is enabled; commission ledger
+ * path still uses {@link resolveAgencyCommissionRollingWindowBounds}.
  */
 export function resolveAgencyCommissionRollingWindowDays(
   cfg: { days: number; hours: number; minutes: number },

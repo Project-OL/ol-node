@@ -269,6 +269,26 @@ const envSchema = z
       .optional()
       .transform((s) => s === 'true'),
 
+    /**
+     * When not the string `false`, agency tier window total includes
+     * `SUM(agency_daily_earnings.host_earnings_points)` over calendar days overlapping
+     * the rolling window (includes agency owner when they earn as a host on gift/video-call
+     * commission paths). Default **on**.
+     */
+    AGENCY_TIER_INCLUDE_HOST_EARNINGS: z
+      .string()
+      .optional()
+      .transform((s) => s !== 'false'),
+
+    /**
+     * When `true`, agency tier window total also includes unreversed `AGENT_COMMISSION`
+     * ledger credits in the precise `[now − duration, now)` window. Default **off**.
+     */
+    AGENCY_TIER_INCLUDE_AGENCY_COMMISSION: z
+      .string()
+      .optional()
+      .transform((s) => s === 'true'),
+
     /** VIP-pattern IDs to classify ahead of `next_public_id_sequence.next_value` (numeric string or number). */
     PUBLIC_ID_PREGEN_HORIZON_AHEAD: z.coerce.bigint().default(1_000_000n),
     PUBLIC_ID_PREGEN_BATCH_SIZE: z.coerce.number().default(5_000),
@@ -288,6 +308,14 @@ const envSchema = z
     VIP_PRICE_TIER_4: z.coerce.number().optional(),
   })
   .superRefine((val, ctx) => {
+    if (!val.AGENCY_TIER_INCLUDE_HOST_EARNINGS && !val.AGENCY_TIER_INCLUDE_AGENCY_COMMISSION) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AGENCY_TIER_INCLUDE_HOST_EARNINGS'],
+        message:
+          'At least one of AGENCY_TIER_INCLUDE_HOST_EARNINGS or AGENCY_TIER_INCLUDE_AGENCY_COMMISSION must be enabled',
+      })
+    }
     if (val.NODE_ENV === 'production' && !val.JWT_REFRESH_SECRET) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -25,6 +25,22 @@ export const faceVerificationRepository = {
     return Boolean(kyc?.faceVerified) || profile?.status === 'INDEXED'
   },
 
+  /**
+   * Strict Rekognition gate: profile must be INDEXED with a face id and reference image.
+   * Does not accept KYC `face_verified` alone (unlike `isVerifiedForUser`).
+   */
+  async isIndexedForUser(userId: string): Promise<boolean> {
+    const profile = await prismaRead.userFaceProfile.findUnique({
+      where: { userId },
+      select: { status: true, rekognitionFaceId: true, s3KeyReference: true },
+    })
+    return (
+      profile?.status === 'INDEXED' &&
+      Boolean(profile.rekognitionFaceId?.trim()) &&
+      Boolean(profile.s3KeyReference?.trim())
+    )
+  },
+
   createPendingProfile(
     input: {
       userId: string

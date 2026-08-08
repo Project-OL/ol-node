@@ -485,7 +485,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Agency'],
         description:
-          'Force recompute agency commission tier from the configured rolling window (exact duration from now). Window total = unreversed AGENT_COMMISSION ledger credits in [now−duration, now) (host earnings excluded). Also accepts agency publicId via /:identifier routes below.',
+          'Force recompute agency commission tier from the configured rolling window (exact duration from now). Window total sources are env-gated: AGENCY_TIER_INCLUDE_HOST_EARNINGS (default on; agency_daily_earnings host points on overlapping calendar days) and/or AGENCY_TIER_INCLUDE_AGENCY_COMMISSION (default off; unreversed AGENT_COMMISSION ledger credits). Also accepts agency publicId via /:identifier routes below.',
       },
     },
     async (request: FastifyRequest<{ Params: { agencyUserId: string } }>, reply: FastifyReply) => {
@@ -500,7 +500,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Agency'],
         description:
-          'Force recompute agency tier (UUID or agency publicId). Metric: unreversed AGENT_COMMISSION credits in the precise [now−duration, now) window (not host earnings).',
+          'Force recompute agency tier (UUID or agency publicId). Metric sources gated by AGENCY_TIER_INCLUDE_HOST_EARNINGS / AGENCY_TIER_INCLUDE_AGENCY_COMMISSION (same as live + nightly recompute).',
       },
     },
     async (request, reply) => {

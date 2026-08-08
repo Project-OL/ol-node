@@ -17,6 +17,7 @@ import {
 } from '../utils/datetime'
 import { AppError } from '../middlewares/errorHandler'
 import { withSerializationRetry } from '../utils/txRetry'
+import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { walletRepository } from '../repositories/wallet.repository'
 import { withdrawalRepository } from '../repositories/withdrawal.repository'
 import { payrollAssignmentRepository } from '../repositories/payrollAssignment.repository'
@@ -382,6 +383,15 @@ export const withdrawalService = {
     },
     idem: string,
   ) {
+    const faceIndexed = await faceVerificationRepository.isIndexedForUser(userId)
+    if (!faceIndexed) {
+      throw new AppError(
+        403,
+        'Face verification must be completed and indexed before withdrawing points',
+        'FACE_NOT_INDEXED',
+      )
+    }
+
     const method = await userPaymentMethodRepository.findById(params.paymentMethodId, userId)
     if (!method) {
       throw new AppError(404, 'Payment method not found', 'NOT_FOUND')
