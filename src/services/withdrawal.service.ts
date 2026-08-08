@@ -1629,7 +1629,7 @@ export const withdrawalService = {
         },
       },
       select: { id: true },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { requestedAt: 'asc' },
     })
 
     const cancelledIds: string[] = []
