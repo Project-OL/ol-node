@@ -110,9 +110,16 @@ export function agencyTierWindowMetricNote(metric: {
   return parts.join('; ')
 }
 
+function resolveAgencyUserIdForHost(
+  currentAgencyId: string | null | undefined,
+  ownedAgencyUserId: string | null | undefined,
+): string | null {
+  return currentAgencyId ?? ownedAgencyUserId ?? null
+}
+
 export const agencyCommissionService = {
   /**
-   * Hot path: host point credit â€” same Serializable tx as host ledger insert.
+   * Hot path: host point credit — same Serializable tx as host ledger insert.
    */
   async applyCommission(
     params: {
@@ -128,7 +135,16 @@ export const agencyCommissionService = {
       where: { id: params.hostUserId },
       select: { currentAgencyId: true },
     })
-    const agencyUserId = host?.currentAgencyId ?? null
+    // Prefer join membership; agency owners are also hosts of their own agency even when
+    // `currentAgencyId` was never set at approve-time.
+    let agencyUserId = host?.currentAgencyId ?? null
+    if (!agencyUserId) {
+      const owned = await tx.agency.findUnique({
+        where: { userId: params.hostUserId },
+        select: { userId: true },
+      })
+      agencyUserId = resolveAgencyUserIdForHost(null, owned?.userId)
+    }
     if (!agencyUserId) {
       return { bustAgentUserId: null }
     }
@@ -302,6 +318,13 @@ export const agencyCommissionService = {
         select: { currentAgencyId: true },
       })
       agencyUserId = host?.currentAgencyId ?? null
+      if (!agencyUserId) {
+        const owned = await tx.agency.findUnique({
+          where: { userId: hostUserId },
+          select: { userId: true },
+        })
+        agencyUserId = resolveAgencyUserIdForHost(null, owned?.userId)
+      }
     }
 
     if (agencyUserId) {
