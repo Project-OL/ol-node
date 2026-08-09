@@ -123,6 +123,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/agency/payroll/pending-platform',
     'GET /admin/agency/payroll/config',
     'PUT /admin/agency/payroll/config',
+    'GET /admin/agency/withdrawal/payout-rails',
+    'PUT /admin/agency/withdrawal/payout-rails',
     'POST /admin/agency/withdrawal/:id/assign',
     'POST /admin/agency/withdrawal/:id/reverse',
     'POST /admin/agency/withdrawal/:id/resolve-dispute/favour-agent',
@@ -152,6 +154,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/agency/coin-trading/topup-packages',
     'GET /admin/agency/payroll/config',
     'PUT /admin/agency/payroll/config',
+    'GET /admin/agency/withdrawal/payout-rails',
+    'PUT /admin/agency/withdrawal/payout-rails',
   ],
   PlatformMessagesView: [
     'GET /admin/users/search',

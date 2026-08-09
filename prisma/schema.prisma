@@ -1643,8 +1643,10 @@ model WithdrawalPayoutRailConfig {
   id              Int      @id @default(1)
   epayFeeRateBp   Int      @default(600) @map("epay_fee_rate_bp")
   epayArrivalTime String   @default("Within 24 hours") @map("epay_arrival_time") @db.VarChar(200)
+  epayEnabled     Boolean  @default(true) @map("epay_enabled")
   bankFeeRateBp   Int      @default(600) @map("bank_fee_rate_bp")
   bankArrivalTime String   @default("3-5 business days") @map("bank_arrival_time") @db.VarChar(200)
+  bankEnabled     Boolean  @default(true) @map("bank_enabled")
   updatedAt       DateTime @updatedAt @map("updated_at")
   updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
 

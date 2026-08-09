@@ -22,18 +22,20 @@ export { maskAccountNumber, maskEmail, maskPaymentMethodForDisplay }
 function railFieldsForType(
   methodType: MethodType,
   rails: PayoutRailPublicDto,
-): { feeRateBp: number; feePercent: number; arrivalTime: string } {
+): { feeRateBp: number; feePercent: number; arrivalTime: string; enabled: boolean } {
   const rail = methodType === 'EPAY' ? rails.epay : rails.bank
   return {
     feeRateBp: rail.feeRateBp,
     feePercent: rail.feePercent,
     arrivalTime: rail.arrivalTime,
+    enabled: rail.enabled,
   }
 }
 
 export const userPaymentMethodService = {
   async bindEpay(userId: string, body: { epayEmail: string }, securityPassword: string) {
     await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
+    await withdrawalPayoutRailConfigService.assertRailEnabled('EPAY')
     // Native ON CONFLICT upsert on (userId, methodType) is race-safe; the
     // retry-once covers Prisma's emulated-upsert fallback where a parallel
     // first bind can surface P2002 instead of converging to an update.
@@ -56,6 +58,7 @@ export const userPaymentMethodService = {
 
   async bindBank(userId: string, body: BindBankInput, securityPassword: string) {
     await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
+    await withdrawalPayoutRailConfigService.assertRailEnabled('BANK')
     try {
       await userPaymentMethodRepository.upsertBank(userId, body)
     } catch (err) {

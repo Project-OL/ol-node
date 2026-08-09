@@ -29,6 +29,7 @@ import { walletService } from './wallet.service'
 import { auditService } from './audit.service'
 import { supportService } from './support.service'
 import { storageService } from './storage.service'
+import { withdrawalPayoutRailConfigService } from './withdrawalPayoutRailConfig.service'
 import { enqueuePlatformWithdrawalMessage } from '../queues/platform-message.queue'
 import {
   enqueuePayrollSla,
@@ -412,6 +413,9 @@ export const withdrawalService = {
     if (!method) {
       throw new AppError(404, 'Payment method not found', 'NOT_FOUND')
     }
+
+    const methodType = method.methodType === 'BANK' ? 'BANK' : 'EPAY'
+    await withdrawalPayoutRailConfigService.assertRailEnabled(methodType)
 
     // Multiple open withdrawals are allowed (v2). Spending is capped by the
     // host's AVAILABLE points (totalPoints − unconfirmedPoints), enforced under
