@@ -345,6 +345,40 @@ export const coinTradingService = {
     await redisClient.set(key, JSON.stringify(rows), 'EX', CT_RATES_TTL)
     return rows
   },
+
+  /**
+   * Personal (non-agent) point→coin exchange tiers — same Prisma row shape as agent exchange rates.
+   * Does not write `ct:personal-exchange-rates` (that key stores admin `{ tiers }` DTO).
+   */
+  async getPersonalExchangeRates() {
+    const rows = await coinTradingRepository.getPersonalExchangeRates()
+    if (rows.length > 0) return rows
+    return PERSONAL_COIN_EXCHANGE_RATES.map((t, i) => ({
+      id: `default-personal-${i}`,
+      minUsdEquiv: new Prisma.Decimal(t.minUsd),
+      maxUsdEquiv: t.maxUsd == null ? null : new Prisma.Decimal(t.maxUsd),
+      coinsPerUsd: t.coinsPerUsd,
+      sortOrder: i + 1,
+      isActive: true,
+      updatedAt: new Date(),
+    }))
+  },
+
+  /**
+   * App rates catalogue: top-up tiers (unchanged) + point-exchange tiers for the caller.
+   * Agents → agent rates (TRADING_COIN). Non-agents → personal rates (COIN).
+   * Response shape always `{ topupRates, exchangeRates }` (both arrays).
+   */
+  async getRatesForCaller(userId: string) {
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const [topupRates, exchangeRates] = await Promise.all([
+      this.getTopupRates(),
+      user.isAgent ? this.getExchangeRates() : this.getPersonalExchangeRates(),
+    ])
+    return { topupRates, exchangeRates }
+  },
   /**
    * Point→coin exchange packages, with rates that depend on whether the user is an agent.
    * Agents see agent exchange rates (TRADING_COIN); non-agents see personal rates (COIN).

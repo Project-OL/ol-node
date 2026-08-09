@@ -509,20 +509,45 @@ export const agencyAdminService = {
     const hostIds = page
       .map((r) => r.counterpartyId)
       .filter((id): id is string => typeof id === 'string')
-    const hosts = await prismaRead.user.findMany({
-      where: { id: { in: [...new Set(hostIds)] } },
-      select: {
-        id: true,
-        username: true,
-        firstName: true,
-        lastName: true,
-        publicId: true,
-        defaultPublicId: true,
-        currentVipPublicId: true,
-        avatarUrl: true,
-      },
+    const senderIds = page
+      .map((r) => {
+        const meta =
+          r.metadata && typeof r.metadata === 'object' && !Array.isArray(r.metadata)
+            ? (r.metadata as Record<string, unknown>)
+            : null
+        return typeof meta?.senderUserId === 'string' ? meta.senderUserId : null
+      })
+      .filter((id): id is string => typeof id === 'string')
+    const profileSelect = {
+      id: true,
+      username: true,
+      firstName: true,
+      lastName: true,
+      publicId: true,
+      defaultPublicId: true,
+      currentVipPublicId: true,
+      avatarUrl: true,
+    } as const
+    const userIds = [...new Set([...hostIds, ...senderIds])]
+    const users = await prismaRead.user.findMany({
+      where: { id: { in: userIds } },
+      select: profileSelect,
     })
-    const hostMap = new Map(hosts.map((h) => [h.id, h]))
+    const userMap = new Map(users.map((u) => [u.id, u]))
+
+    const toCard = (userId: string | null | undefined) => {
+      if (!userId) return null
+      const u = userMap.get(userId)
+      if (!u) return null
+      return {
+        userId: u.id,
+        displayName: buildUserDisplayName(u),
+        publicId: String(u.publicId),
+        displayPublicId: resolveDisplayPublicId(u),
+        username: u.username,
+        avatarUrl: u.avatarUrl,
+      }
+    }
 
     return {
       agencyUserId: agency.userId,
@@ -538,11 +563,12 @@ export const agencyAdminService = {
         hostUserId: hostUserId ?? null,
       },
       entries: page.map((e) => {
-        const host = e.counterpartyId ? hostMap.get(e.counterpartyId) : undefined
         const meta =
           e.metadata && typeof e.metadata === 'object' && !Array.isArray(e.metadata)
             ? (e.metadata as Record<string, unknown>)
             : null
+        const senderUserId =
+          typeof meta?.senderUserId === 'string' ? meta.senderUserId : null
         return {
           id: e.id,
           direction: e.direction,
@@ -556,16 +582,14 @@ export const agencyAdminService = {
           hostTxType: typeof meta?.hostTxType === 'string' ? meta.hostTxType : null,
           hostLedgerEntryId:
             typeof meta?.hostLedgerEntryId === 'string' ? meta.hostLedgerEntryId : null,
-          host: host
-            ? {
-                userId: host.id,
-                displayName: buildUserDisplayName(host),
-                publicId: String(host.publicId),
-                displayPublicId: resolveDisplayPublicId(host),
-                username: host.username,
-                avatarUrl: host.avatarUrl,
-              }
-            : null,
+          giftId: typeof meta?.giftId === 'string' ? meta.giftId : null,
+          giftName: typeof meta?.giftName === 'string' ? meta.giftName : null,
+          giftContext: typeof meta?.context === 'string' ? meta.context : null,
+          quantity: typeof meta?.quantity === 'number' ? meta.quantity : null,
+          unitCoinCost: typeof meta?.unitCoinCost === 'number' ? meta.unitCoinCost : null,
+          senderUserId,
+          host: toCard(e.counterpartyId),
+          sender: toCard(senderUserId),
         }
       }),
       nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,

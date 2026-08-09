@@ -137,37 +137,57 @@ export const videoCallPriceCapService = {
     return this.getCaps()
   },
 
-  /** Distinct allowed pricePerMin values for a host livestream level (sorted ascending). */
+  /**
+   * Band-matched prices for GET `/call/settings` `allowedPrices` (not the full PUT selectable set).
+   * PUT validation uses `getPricesUpToLevelMax` (catalog ≤ band max).
+   */
   async getAllowedPricesForLevel(livestreamLevel: number): Promise<number[]> {
     const { tiers } = await this.getCaps()
     const prices = tiers.filter((t) => matchesLevel(t, livestreamLevel)).map((t) => t.price)
     return [...new Set(prices)].sort((a, b) => a - b)
   },
 
-  /** Highest allowed price for the level (0 if none configured). */
+  /** Distinct catalog prices from all configured tiers (sorted ascending). */
+  async getCatalogPrices(): Promise<number[]> {
+    const { tiers } = await this.getCaps()
+    return [...new Set(tiers.map((t) => t.price))].sort((a, b) => a - b)
+  },
+
+  /** Highest band price for the level (fallback MIN if none configured). */
   async getMaxPriceForLevel(livestreamLevel: number): Promise<number> {
     const allowed = await this.getAllowedPricesForLevel(livestreamLevel)
     if (allowed.length === 0) return MIN_CALL_PRICE_COINS_PER_MIN
     return allowed[allowed.length - 1]!
   },
 
+  /**
+   * Catalog prices the host may set for PUT: any configured price ≤ level max.
+   * Band `getAllowedPricesForLevel` remains narrower for GET settings display.
+   */
+  async getPricesUpToLevelMax(livestreamLevel: number): Promise<number[]> {
+    const max = await this.getMaxPriceForLevel(livestreamLevel)
+    const catalog = await this.getCatalogPrices()
+    return catalog.filter((p) => p <= max)
+  },
+
   async assertPriceAllowed(livestreamLevel: number, pricePerMin: number): Promise<void> {
-    const allowedPrices = await this.getAllowedPricesForLevel(livestreamLevel)
-    if (allowedPrices.length === 0) {
+    const bandPrices = await this.getAllowedPricesForLevel(livestreamLevel)
+    if (bandPrices.length === 0) {
       throw new AppError(
         400,
         'No video-call prices are configured for your livestream level',
         'PRICE_EXCEEDS_CAP',
-        { cap: 0, livestreamLevel, allowedPrices },
+        { cap: 0, livestreamLevel, allowedPrices: [] },
       )
     }
-    if (!allowedPrices.includes(pricePerMin)) {
-      const cap = allowedPrices[allowedPrices.length - 1]!
+    const cap = bandPrices[bandPrices.length - 1]!
+    const selectable = await this.getPricesUpToLevelMax(livestreamLevel)
+    if (!selectable.includes(pricePerMin)) {
       throw new AppError(
         400,
-        `Your livestream level (Lv${livestreamLevel}) allows prices: ${allowedPrices.join(', ')}`,
+        `Your livestream level (Lv${livestreamLevel}) allows catalog prices up to ${cap}: ${selectable.join(', ')}`,
         'PRICE_EXCEEDS_CAP',
-        { cap, livestreamLevel, allowedPrices },
+        { cap, livestreamLevel, allowedPrices: selectable },
       )
     }
   },

@@ -176,6 +176,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
             description: `Gift received: ${giftLabel}`,
             metadata: {
               giftId: params.giftId,
+              giftName: gift.name,
               context: params.context,
               quantity,
               unitCoinCost,

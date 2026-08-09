@@ -22,9 +22,13 @@ vi.mock("../../src/services/point-wallet.service", () => ({
   },
 }));
 
-import { agencyCommissionService } from "../../src/services/agencyCommission.service";
+import { agencyCommissionService, giftFieldsFromHostLedger } from "../../src/services/agencyCommission.service";
 
-function txMock() {
+function txMock(hostEntry?: {
+  refId?: string | null
+  metadata?: unknown
+  counterpartyId?: string | null
+}) {
   return {
     user: {
       findUnique: vi.fn(),
@@ -38,7 +42,18 @@ function txMock() {
     agencyCommissionLevel: {
       findUnique: vi.fn(),
     },
-  };
+    pointLedgerEntry: {
+      findUnique: vi.fn().mockResolvedValue(
+        hostEntry === undefined
+          ? { refId: null, metadata: null, counterpartyId: null }
+          : {
+              refId: hostEntry.refId ?? null,
+              metadata: hostEntry.metadata ?? null,
+              counterpartyId: hostEntry.counterpartyId ?? null,
+            },
+      ),
+    },
+  }
 }
 
 beforeEach(() => {
@@ -270,5 +285,136 @@ describe("agencyCommissionService.applyCommission", () => {
       tx,
       expect.anything(),
     );
+  });
+
+  it("copies gift sender + gift details onto AGENT_COMMISSION metadata", async () => {
+    const tx = txMock({
+      refId: "gift-tx-1",
+      counterpartyId: "sender-1",
+      metadata: {
+        giftId: "gift-rose",
+        giftName: "Rose",
+        context: "direct",
+        quantity: 2,
+        unitCoinCost: 100,
+      },
+    });
+    (tx.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      currentAgencyId: "agent-1",
+    });
+    (tx.agency.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      currentLevel: "D",
+    });
+    (tx.agencyCommissionLevel.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      level: "D",
+      liveRateBp: 400,
+      matchChatRateBp: 400,
+    });
+
+    await agencyCommissionService.applyCommission(
+      {
+        hostUserId: "host-1",
+        hostLedgerEntryId: "hl-gift",
+        hostPointsCredited: 100_000n,
+        hostTxType: PointTxType.GIFT_RECEIVE,
+        day,
+      },
+      tx as never,
+    );
+
+    expect(creditInTransaction).toHaveBeenCalledWith(
+      "agent-1",
+      4000n,
+      PointTxType.AGENT_COMMISSION,
+      tx,
+      expect.objectContaining({
+        counterpartyId: "host-1",
+        refId: "gift-tx-1",
+        description: "Agency commission: Rose",
+        metadata: expect.objectContaining({
+          category: "LIVE",
+          rateBp: 400,
+          hostTxType: PointTxType.GIFT_RECEIVE,
+          hostLedgerEntryId: "hl-gift",
+          giftId: "gift-rose",
+          giftName: "Rose",
+          context: "direct",
+          quantity: 2,
+          unitCoinCost: 100,
+          senderUserId: "sender-1",
+        }),
+      }),
+    );
+  });
+
+  it("VIDEO_CALL commission metadata has no gift keys", async () => {
+    const tx = txMock({
+      refId: "vc-1",
+      counterpartyId: "caller-1",
+      metadata: { sessionId: "s1" },
+    });
+    (tx.user.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      currentAgencyId: "agent-1",
+    });
+    (tx.agency.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      currentLevel: "D",
+    });
+    (tx.agencyCommissionLevel.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      level: "D",
+      liveRateBp: 400,
+      matchChatRateBp: 800,
+    });
+
+    await agencyCommissionService.applyCommission(
+      {
+        hostUserId: "host-1",
+        hostLedgerEntryId: "hl-vc2",
+        hostPointsCredited: 100_000n,
+        hostTxType: PointTxType.VIDEO_CALL,
+        day,
+      },
+      tx as never,
+    );
+
+    const opts = creditInTransaction.mock.calls[0]![4] as { metadata: Record<string, unknown> };
+    expect(opts.metadata).toMatchObject({
+      category: "MATCH_CHAT",
+      hostTxType: PointTxType.VIDEO_CALL,
+    });
+    expect(opts.metadata).not.toHaveProperty("giftId");
+    expect(opts.metadata).not.toHaveProperty("senderUserId");
+  });
+});
+
+describe("giftFieldsFromHostLedger", () => {
+  it("returns gift fields + senderUserId from host GIFT_RECEIVE row", () => {
+    expect(
+      giftFieldsFromHostLedger({
+        counterpartyId: "sender-9",
+        metadata: {
+          giftId: "g1",
+          giftName: "Heart",
+          context: "livestream",
+          quantity: 1,
+          unitCoinCost: 50,
+        },
+      }),
+    ).toEqual({
+      giftId: "g1",
+      giftName: "Heart",
+      context: "livestream",
+      quantity: 1,
+      unitCoinCost: 50,
+      senderUserId: "sender-9",
+    });
+  });
+
+  it("returns null when giftId missing", () => {
+    expect(
+      giftFieldsFromHostLedger({
+        counterpartyId: "sender-9",
+        metadata: { context: "direct" },
+      }),
+    ).toBeNull();
   });
 });

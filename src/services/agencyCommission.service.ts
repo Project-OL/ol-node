@@ -78,6 +78,53 @@ function categoryForTx(txType: PointTxType): CommissionCategory | null {
   return null
 }
 
+/** Gift fields copied onto AGENT_COMMISSION metadata from the host GIFT_RECEIVE ledger row. */
+export type GiftCommissionMetadata = {
+  giftId: string
+  giftName?: string
+  context?: string
+  quantity?: number
+  unitCoinCost?: number
+  senderUserId?: string
+}
+
+/**
+ * Extract gift sender + gift details from the host earning ledger entry.
+ * Returns null when the host row is not a gift credit (no giftId in metadata).
+ */
+export function giftFieldsFromHostLedger(
+  hostEntry: {
+    counterpartyId: string | null
+    metadata: unknown
+  } | null,
+): GiftCommissionMetadata | null {
+  if (!hostEntry) return null
+  const meta =
+    hostEntry.metadata && typeof hostEntry.metadata === 'object' && !Array.isArray(hostEntry.metadata)
+      ? (hostEntry.metadata as Record<string, unknown>)
+      : null
+  if (!meta || typeof meta.giftId !== 'string' || meta.giftId.length === 0) {
+    return null
+  }
+  const out: GiftCommissionMetadata = { giftId: meta.giftId }
+  if (typeof meta.giftName === 'string' && meta.giftName.length > 0) {
+    out.giftName = meta.giftName
+  }
+  if (typeof meta.context === 'string') {
+    out.context = meta.context
+  }
+  if (typeof meta.quantity === 'number' && Number.isFinite(meta.quantity)) {
+    out.quantity = meta.quantity
+  }
+  if (typeof meta.unitCoinCost === 'number' && Number.isFinite(meta.unitCoinCost)) {
+    out.unitCoinCost = meta.unitCoinCost
+  }
+  if (hostEntry.counterpartyId) {
+    out.senderUserId = hostEntry.counterpartyId
+  }
+  return out
+}
+
 export type AgencyTierWindowMetric = {
   total: bigint
   from: Date
@@ -219,11 +266,20 @@ export const agencyCommissionService = {
     if (commissionPoints > 0n) {
       const hostEntry = await tx.pointLedgerEntry.findUnique({
         where: { id: params.hostLedgerEntryId },
-        select: { refId: true, metadata: true },
+        select: { refId: true, metadata: true, counterpartyId: true },
       })
       const { resolvePointLedgerRefId } = await import('../utils/point-transaction-amounts')
       const businessRefId =
         resolvePointLedgerRefId(hostEntry?.refId, hostEntry?.metadata) ?? params.hostLedgerEntryId
+
+      const giftFields = giftFieldsFromHostLedger(hostEntry)
+      const metadata: Record<string, unknown> = {
+        category: cat,
+        rateBp,
+        hostTxType: params.hostTxType,
+        hostLedgerEntryId: params.hostLedgerEntryId,
+        ...(giftFields ?? {}),
+      }
 
       await pointWalletService.creditInTransaction(
         agencyUserId,
@@ -234,12 +290,10 @@ export const agencyCommissionService = {
           idempotencyKey: commissionKey,
           refId: businessRefId,
           counterpartyId: params.hostUserId,
-          metadata: {
-            category: cat,
-            rateBp,
-            hostTxType: params.hostTxType,
-            hostLedgerEntryId: params.hostLedgerEntryId,
-          },
+          description: giftFields?.giftName
+            ? `Agency commission: ${giftFields.giftName}`
+            : undefined,
+          metadata,
           applyLivestreamLevel: false,
         },
       )

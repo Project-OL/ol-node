@@ -86,12 +86,9 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
     },
   )
 
-  app.get('/rates', { preHandler: [authenticate] }, async (_request, reply) => {
-    const [topupRates, exchangeRates] = await Promise.all([
-      coinTradingService.getTopupRates(),
-      coinTradingService.getExchangeRates(),
-    ])
-    return reply.send({ topupRates, exchangeRates })
+  app.get('/rates', { preHandler: [authenticate] }, async (request, reply) => {
+    const rates = await coinTradingService.getRatesForCaller(request.userId!)
+    return reply.send(rates)
   })
 
   app.get(
