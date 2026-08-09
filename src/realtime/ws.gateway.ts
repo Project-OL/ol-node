@@ -106,14 +106,26 @@ async function handleJoinPresence(
   targetUserIds: string[],
 ): Promise<void> {
   const rs: RegisteredSocket = { socketId, userId, ws: socket }
+  const targets = [...new Set(targetUserIds)].filter((id) => id && id !== userId)
 
-  for (const targetUserId of new Set(targetUserIds)) {
-    if (targetUserId === userId) continue
-
+  for (const targetUserId of targets) {
     const bump = presenceRooms.join(targetUserId, socketId, rs)
 
     if (bump) {
       await redisConversationSubscriber.subscribe(RedisKeys.presenceChannel(targetUserId))
+    }
+  }
+
+  // Immediate snapshot so clients are not stuck offline until a presence transition.
+  if (targets.length > 0) {
+    const map = await presenceService.getPublicPresenceForUsers(userId, targets)
+    for (const targetUserId of targets) {
+      const p = map.get(targetUserId)
+      sendServerFrame(socket, {
+        t: 'PRESENCE',
+        userId: targetUserId,
+        online: p?.isOnline ?? false,
+      })
     }
   }
 }

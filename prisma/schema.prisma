@@ -831,6 +831,8 @@ model Conversation {
   lastMessageAt DateTime?            @map("last_message_at")
   // Monotonic per-conversation message sequence
   lastSeq       BigInt               @default(0) @map("last_seq")
+  /// Sorted `userA:userB` UUID pair for DIRECT uniqueness; null for GROUP/platform.
+  directPairKey String?              @unique @map("direct_pair_key")
   createdAt     DateTime             @default(now()) @map("created_at")
   updatedAt     DateTime             @updatedAt @map("updated_at")
   members       ConversationMember[]

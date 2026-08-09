@@ -326,27 +326,125 @@ export const messagingService = {
       throw new AppError(404, 'User not found', 'NOT_FOUND')
     }
     const recipientId = recipient.userId
+    if (initiatorId === recipientId) {
+      throw new AppError(400, 'Cannot create a conversation with yourself', 'CANNOT_MESSAGE_SELF')
+    }
     await this.canUserMessage(initiatorId, recipientId, {
       bypassDmPrivacy: recipient.isAgency,
     })
 
-    const existing = await conversationRepository.findDirectConversation(initiatorId, recipientId)
-    if (existing) {
+    const { makeDirectPairKey } = await import('../utils/direct-pair-key')
+    const { prisma } = await import('../config/database')
+    const { isUniqueViolation } = await import('../utils/txRetry')
+    const pairKey = makeDirectPairKey(initiatorId, recipientId)
+
+    const loadForUser = async (conversationId: string) => {
       const withMembers = await conversationRepository.findConversationById(
-        existing.id,
+        conversationId,
         initiatorId,
       )
       if (!withMembers) throw new AppError(403, 'Forbidden', 'FORBIDDEN')
-      return { conversation: withMembers as any, isNew: false }
+      return withMembers as Awaited<ReturnType<typeof conversationRepository.createConversation>>
     }
 
-    const conversation = await conversationRepository.createConversation({
-      type: 'DIRECT',
-      memberIds: [initiatorId, recipientId],
-    })
-    await cacheService.delete(RedisKeys.userConversations(initiatorId))
-    await cacheService.delete(RedisKeys.userConversations(recipientId))
-    return { conversation, isNew: true }
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          await conversationRepository.lockDirectPair(tx, pairKey)
+
+          const existing = await tx.conversation.findUnique({
+            where: { directPairKey: pairKey },
+            include: {
+              members: { select: { userId: true, isDeleted: true } },
+            },
+          })
+
+          let convId: string | null = existing?.id ?? null
+          if (!convId) {
+            const fallback =
+              await conversationRepository.findDirectConversationIncludingDeleted(
+                initiatorId,
+                recipientId,
+              )
+            convId = fallback?.id ?? null
+            // Attach pair key to legacy unkeyed thread when safe
+            if (fallback && !fallback.directPairKey) {
+              try {
+                await tx.conversation.update({
+                  where: { id: fallback.id },
+                  data: { directPairKey: pairKey },
+                })
+              } catch (e) {
+                if (!isUniqueViolation(e)) throw e
+              }
+            }
+          }
+
+          if (convId) {
+            await tx.conversationMember.updateMany({
+              where: { conversationId: convId, userId: initiatorId, isDeleted: true },
+              data: { isDeleted: false },
+            })
+            // Load through primary so we see membership updates in this tx.
+            const withMembers = await tx.conversation.findUnique({
+              where: { id: convId },
+              include: {
+                members: {
+                  include: {
+                    user: {
+                      select: {
+                        id: true,
+                        username: true,
+                        firstName: true,
+                        lastName: true,
+                        publicId: true,
+                        defaultPublicId: true,
+                        currentVipPublicId: true,
+                        avatarUrl: true,
+                      },
+                    },
+                  },
+                },
+              },
+            })
+            if (!withMembers?.members.some((m) => m.userId === initiatorId && !m.isDeleted)) {
+              throw new AppError(403, 'Forbidden', 'FORBIDDEN')
+            }
+            await cacheService.delete(RedisKeys.userConversations(initiatorId))
+            return {
+              conversation: withMembers as Awaited<
+                ReturnType<typeof conversationRepository.createConversation>
+              >,
+              isNew: false,
+            }
+          }
+
+          const conversation = await conversationRepository.createConversation({
+            type: 'DIRECT',
+            memberIds: [initiatorId, recipientId],
+            directPairKey: pairKey,
+            tx,
+          })
+          await cacheService.delete(RedisKeys.userConversations(initiatorId))
+          await cacheService.delete(RedisKeys.userConversations(recipientId))
+          return { conversation, isNew: true }
+        },
+        { timeout: 15_000 },
+      )
+    } catch (e) {
+      if (isUniqueViolation(e)) {
+        const again = await conversationRepository.findDirectConversationIncludingDeleted(
+          initiatorId,
+          recipientId,
+        )
+        if (again) {
+          await conversationRepository.reactivateMember(again.id, initiatorId)
+          await cacheService.delete(RedisKeys.userConversations(initiatorId))
+          return { conversation: await loadForUser(again.id), isNew: false }
+        }
+      }
+      throw e
+    }
   },
 
   async sendMessage(

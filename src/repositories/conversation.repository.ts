@@ -1,7 +1,8 @@
-import type { Conversation, ConversationType } from '@prisma/client'
+import type { Conversation, ConversationType, Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 import type { PlatformConversationType } from '../lib/platform-conversations.constants'
+import { makeDirectPairKey } from '../utils/direct-pair-key'
 
 const conversationMemberUserSelect = {
   id: true,
@@ -78,23 +79,31 @@ export async function createConversation(data: {
   memberIds: string[]
   /** When set, empty threads still appear in conversation list sort order. */
   lastMessageAt?: Date | null
+  /** DIRECT only — unique sorted pair key. */
+  directPairKey?: string | null
+  tx?: Prisma.TransactionClient
 }): Promise<ConversationWithMembers> {
-  const conv = await prisma.$transaction(async (tx) => {
+  const run = async (tx: Prisma.TransactionClient) => {
     const c = await tx.conversation.create({
       data: {
         type: data.type,
         ...(data.lastMessageAt !== undefined ? { lastMessageAt: data.lastMessageAt } : {}),
+        ...(data.directPairKey != null ? { directPairKey: data.directPairKey } : {}),
       },
     })
+    const uniqueMemberIds = [...new Set(data.memberIds)]
     await tx.conversationMember.createMany({
-      data: data.memberIds.map((userId) => ({
+      data: uniqueMemberIds.map((userId) => ({
         conversationId: c.id,
         userId,
       })),
     })
     return c
-  })
-  const withMembers = await prisma.conversation.findUnique({
+  }
+
+  const conv = data.tx ? await run(data.tx) : await prisma.$transaction(run)
+  const db = data.tx ?? prisma
+  const withMembers = await db.conversation.findUnique({
     where: { id: conv.id },
     include: {
       members: {
@@ -151,31 +160,106 @@ export async function createPlatformConversation(data: {
   })
 }
 
+/**
+ * Active DIRECT for unordered pair (both memberships not soft-deleted).
+ * Uses `directPairKey` when present; falls back to exact 2-member match for legacy rows.
+ */
 export async function findDirectConversation(
   userAId: string,
   userBId: string,
 ): Promise<Conversation | null> {
+  if (userAId === userBId) return null
+
+  const pairKey = makeDirectPairKey(userAId, userBId)
+  const byKey = await prismaRead.conversation.findUnique({
+    where: { directPairKey: pairKey },
+    include: { members: { select: { userId: true, isDeleted: true } } },
+  })
+  if (byKey) {
+    const members = byKey.members
+    if (members.length !== 2) return null
+    const ids = new Set(members.map((m) => m.userId))
+    if (!ids.has(userAId) || !ids.has(userBId)) return null
+    if (members.some((m) => m.isDeleted)) return null
+    const { members: _m, ...conv } = byKey
+    return conv
+  }
+
+  return findDirectByExactMembers(userAId, userBId, { includeDeleted: false })
+}
+
+/**
+ * DIRECT for unordered pair including soft-deleted memberships (for reactivate-on-create).
+ */
+export async function findDirectConversationIncludingDeleted(
+  userAId: string,
+  userBId: string,
+): Promise<Conversation | null> {
+  if (userAId === userBId) return null
+
+  const pairKey = makeDirectPairKey(userAId, userBId)
+  const byKey = await prismaRead.conversation.findUnique({
+    where: { directPairKey: pairKey },
+  })
+  if (byKey) return byKey
+
+  return findDirectByExactMembers(userAId, userBId, { includeDeleted: true })
+}
+
+async function findDirectByExactMembers(
+  userAId: string,
+  userBId: string,
+  opts: { includeDeleted: boolean },
+): Promise<Conversation | null> {
+  const memberWhere = opts.includeDeleted
+    ? { userId: userAId }
+    : { userId: userAId, isDeleted: false }
+
   const convIdsForA = await prismaRead.conversationMember.findMany({
-    where: { userId: userAId, isDeleted: false },
+    where: memberWhere,
     select: { conversationId: true },
   })
   const ids = convIdsForA.map((m) => m.conversationId)
   if (ids.length === 0) return null
-  const conv = await prismaRead.conversation.findFirst({
+
+  const candidates = await prismaRead.conversation.findMany({
     where: {
       id: { in: ids },
       type: 'DIRECT',
       members: {
-        some: { userId: userBId, isDeleted: false },
+        some: opts.includeDeleted
+          ? { userId: userBId }
+          : { userId: userBId, isDeleted: false },
       },
     },
+    include: {
+      members: { select: { userId: true, isDeleted: true } },
+    },
+    orderBy: { createdAt: 'asc' },
   })
-  return conv
+
+  for (const c of candidates) {
+    if (c.members.length !== 2) continue
+    const idSet = new Set(c.members.map((m) => m.userId))
+    if (!idSet.has(userAId) || !idSet.has(userBId)) continue
+    if (!opts.includeDeleted && c.members.some((m) => m.isDeleted)) continue
+    const { members: _m, ...conv } = c
+    return conv
+  }
+  return null
+}
+
+/** Advisory lock for DIRECT get-or-create (same transaction). */
+export async function lockDirectPair(
+  tx: Prisma.TransactionClient,
+  pairKey: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`dm-pair:${pairKey}`}, 0))::text AS locked`
 }
 
 /**
  * Batched findDirectConversation: existing DIRECT conversation id per contact in
- * `otherUserIds` (both memberships non-deleted) — one query instead of 2 per contact.
+ * `otherUserIds` (both memberships non-deleted, exactly 2 members) — one query.
  */
 export async function findDirectConversationIdsWith(
   userId: string,
@@ -183,6 +267,9 @@ export async function findDirectConversationIdsWith(
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>()
   if (otherUserIds.length === 0) return map
+  const others = otherUserIds.filter((id) => id !== userId)
+  if (others.length === 0) return map
+
   const convs = await prismaRead.conversation.findMany({
     where: {
       type: 'DIRECT',
@@ -190,17 +277,20 @@ export async function findDirectConversationIdsWith(
     },
     select: {
       id: true,
+      directPairKey: true,
       members: {
-        where: { userId: { in: otherUserIds }, isDeleted: false },
-        select: { userId: true },
+        select: { userId: true, isDeleted: true },
       },
     },
   })
+  const otherSet = new Set(others)
   for (const conv of convs) {
-    for (const member of conv.members) {
-      if (member.userId !== userId && !map.has(member.userId)) {
-        map.set(member.userId, conv.id)
-      }
+    if (conv.members.length !== 2) continue
+    if (conv.members.some((m) => m.isDeleted)) continue
+    const other = conv.members.find((m) => m.userId !== userId)
+    if (!other || !otherSet.has(other.userId)) continue
+    if (!map.has(other.userId)) {
+      map.set(other.userId, conv.id)
     }
   }
   return map
@@ -484,6 +574,8 @@ export const conversationRepository = {
   findPlatformConversationForUser,
   reactivateMember,
   findDirectConversation,
+  findDirectConversationIncludingDeleted,
+  lockDirectPair,
   findDirectConversationIdsWith,
   findConversationById,
   listConversationsForUser,
