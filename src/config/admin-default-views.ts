@@ -156,6 +156,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/agency/payroll/config',
     'GET /admin/agency/withdrawal/payout-rails',
     'PUT /admin/agency/withdrawal/payout-rails',
+    'GET /admin/system-settings/messaging',
+    'PUT /admin/system-settings/messaging',
   ],
   PlatformMessagesView: [
     'GET /admin/users/search',

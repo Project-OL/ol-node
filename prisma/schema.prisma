@@ -1653,6 +1653,17 @@ model WithdrawalPayoutRailConfig {
   @@map("withdrawal_payout_rail_config")
 }
 
+/// Singleton: shared host message edit/delete action window.
+model MessagingConfig {
+  id              Int      @id @default(1)
+  /// Duration from message createdAt during which sender may edit or soft-delete.
+  actionWindowMs  Int      @default(3600000) @map("action_window_ms")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("messaging_config")
+}
+
 /// Append-only GPS samples; `users.last_*` holds the current fix.
 model UserLocationSample {
   id        String   @id @default(uuid()) @db.Uuid

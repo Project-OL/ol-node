@@ -79,7 +79,7 @@ export default async function messageRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Messages'],
-        description: 'Delete own message (only within 1 hour of sending)',
+        description: 'Delete own message (only within the configured edit/delete window of sending)',
         params: {
           type: 'object',
           required: ['messageId'],
@@ -103,7 +103,7 @@ export default async function messageRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Messages'],
-        description: 'Edit own message content (only within 1 hour of sending)',
+        description: 'Edit own message content (only within the configured edit/delete window of sending)',
         params: {
           type: 'object',
           required: ['messageId'],

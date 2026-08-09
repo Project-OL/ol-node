@@ -8,7 +8,9 @@ import {
   ReplaceVideoCallPriceCapsSchema,
   WalletLevelConfigsReplaceSchema,
 } from '../../models/system-rates-admin.schemas'
+import { MessagingConfigUpdateSchema } from '../../models/messagingConfig.schemas'
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
+import { messagingConfigService } from '../../services/messagingConfig.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { videoCallPriceCapService } from '../../services/videoCallPriceCap.service'
 
@@ -21,6 +23,7 @@ import { videoCallPriceCapService } from '../../services/videoCallPriceCap.servi
  * GET|PUT /v1/admin/system-settings/coin-packages
  * GET|PUT /v1/admin/system-settings/wallet-level-configs
  * GET|PUT /v1/admin/system-settings/video-call-price-caps
+ * GET|PUT /v1/admin/system-settings/messaging
  */
 export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
   app.get(
@@ -115,6 +118,25 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = ReplaceVideoCallPriceCapsSchema.parse(request.body ?? {})
       return reply.send(await videoCallPriceCapService.replaceCaps(body.tiers))
+    },
+  )
+
+  app.get(
+    '/system-settings/messaging',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await messagingConfigService.getConfig())
+    },
+  )
+
+  app.put(
+    '/system-settings/messaging',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = MessagingConfigUpdateSchema.parse(request.body ?? {})
+      return reply.send(await messagingConfigService.updateConfig(adminUserId, body))
     },
   )
 }

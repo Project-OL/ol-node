@@ -342,6 +342,7 @@ export const RedisKeys = {
   /** Phase 3b payroll / withdrawal */
   payrollConfig: () => 'payroll:config',
   payoutRailConfig: () => 'withdrawal:payout-rail-config',
+  messagingConfig: () => 'messaging:config',
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
   ratelimitWithdrawalCreate: (userId: string) => `ratelimit:withdrawal:create:${userId}`,
   ratelimitWithdrawalDispute: (userId: string) => `ratelimit:withdrawal:dispute:${userId}`,
@@ -511,6 +512,8 @@ export const PAYROLL_CONFIG_TTL = 3600
 export const AGENCY_COMMISSION_WINDOW_CONFIG_TTL = 300
 /** Public withdrawal payout rail (EPAY/BANK fee + arrival copy). */
 export const PAYOUT_RAIL_CONFIG_TTL = 300
+/** Shared message edit/delete action window singleton. */
+export const MESSAGING_CONFIG_TTL = 300
 /** Agent payroll dashboard summary (tab counts + toggle). */
 export const PAYROLL_SUMMARY_TTL = 30
 /** GET rich-tier read endpoints: 60 requests / 60s per user. */

@@ -11,6 +11,7 @@ import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import type { ServerFrame } from '../realtime/types'
 import { storageService } from '../services/storage.service'
+import { messagingConfigService } from '../services/messagingConfig.service'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
 
 export type MediaItemInput = {
@@ -616,7 +617,7 @@ export async function searchMessages(
   `
 }
 
-/** Sender may edit or delete their own message only within this window of sending it. */
+/** @deprecated Prefer messagingConfigService.getActionWindowMs(); kept as default seed. */
 export const MESSAGE_ACTION_WINDOW_MS = 60 * 60 * 1000
 
 export async function softDeleteMessage(id: string, requestingUserId: string): Promise<Message> {
@@ -627,7 +628,8 @@ export async function softDeleteMessage(id: string, requestingUserId: string): P
   if (msg.senderId !== requestingUserId) {
     throw new AppError(403, 'Forbidden', 'FORBIDDEN')
   }
-  if (Date.now() - msg.createdAt.getTime() > MESSAGE_ACTION_WINDOW_MS) {
+  const windowMs = await messagingConfigService.getActionWindowMs()
+  if (Date.now() - msg.createdAt.getTime() > windowMs) {
     throw new AppError(403, 'Delete window has expired', 'MESSAGE_DELETE_WINDOW_EXPIRED')
   }
   const now = new Date()
@@ -652,7 +654,8 @@ export async function editMessage(
   if (msg.isDeleted) {
     throw new AppError(409, 'Message has been deleted', 'MESSAGE_ALREADY_DELETED')
   }
-  if (Date.now() - msg.createdAt.getTime() > MESSAGE_ACTION_WINDOW_MS) {
+  const windowMs = await messagingConfigService.getActionWindowMs()
+  if (Date.now() - msg.createdAt.getTime() > windowMs) {
     throw new AppError(403, 'Edit window has expired', 'MESSAGE_EDIT_WINDOW_EXPIRED')
   }
   return prisma.message.update({
