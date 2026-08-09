@@ -273,7 +273,7 @@ export const agencyCommissionService = {
         resolvePointLedgerRefId(hostEntry?.refId, hostEntry?.metadata) ?? params.hostLedgerEntryId
 
       const giftFields = giftFieldsFromHostLedger(hostEntry)
-      const metadata: Record<string, unknown> = {
+      const metadata: Prisma.JsonObject = {
         category: cat,
         rateBp,
         hostTxType: params.hostTxType,
