@@ -86,24 +86,40 @@ export const userPaymentMethodService = {
     await redisClient.del(RedisKeys.userPaymentMethods(userId))
   },
 
+  /**
+   * Always returns EPAY then BANK so clients can show display fees / enabled state
+   * even when a rail is unbound or admin-disabled.
+   */
   async getMyMethods(userId: string) {
     const cacheKey = RedisKeys.userPaymentMethods(userId)
     const rails = await withdrawalPayoutRailConfigService.getPublicConfig()
     const cached = await redisClient.get(cacheKey)
-    let methods: ReturnType<typeof userPaymentMethodService.serializeOwnerList>
+    let bound: ReturnType<typeof userPaymentMethodService.serializeOwnerList>
     if (cached) {
-      methods = JSON.parse(cached) as ReturnType<typeof userPaymentMethodService.serializeOwnerList>
+      bound = JSON.parse(cached) as ReturnType<typeof userPaymentMethodService.serializeOwnerList>
     } else {
       const rows = await userPaymentMethodRepository.findAllForUser(userId)
-      methods = userPaymentMethodService.serializeOwnerList(rows)
-      await redisClient.setex(cacheKey, WALLET_BALANCE_TTL, JSON.stringify(methods))
+      bound = userPaymentMethodService.serializeOwnerList(rows)
+      await redisClient.setex(cacheKey, WALLET_BALANCE_TTL, JSON.stringify(bound))
     }
-    return {
-      methods: methods.map((m) => ({
-        ...m,
-        ...railFieldsForType(m.methodType, rails),
-      })),
-    }
+
+    const byType = new Map(bound.map((m) => [m.methodType, m]))
+    const methods = (['EPAY', 'BANK'] as const).map((methodType) => {
+      const rail = railFieldsForType(methodType, rails)
+      const existing = byType.get(methodType)
+      if (existing) {
+        return { ...existing, bound: true as const, ...rail }
+      }
+      return {
+        id: null,
+        methodType,
+        bound: false as const,
+        lastUsed: null,
+        ...rail,
+      }
+    })
+
+    return { methods }
   },
 
   /** Full unmasked details for the owning user (`GET /payment-methods`). */
