@@ -6,6 +6,7 @@ import { agencyCoinsellerRepository } from '../repositories/agencyCoinseller.rep
 import { agencyCoinsellerService } from './agencyCoinseller.service'
 import { walletLevelService } from './user-level.service'
 import { buildUserDisplayName } from '../utils/user-display'
+import { countryCacheKeySegment } from '../utils/agency-country'
 
 export type AgencyRankingPeriod = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'ALL_TIME'
 
@@ -194,7 +195,7 @@ export const agencyRankingService = {
   }) {
     const limit = Math.min(Math.max(params.limit, 1), 100)
     const skip = decodeCursor(params.cursor ?? undefined)
-    const countryKey = params.country ?? 'none'
+    const countryKey = params.country ? countryCacheKeySegment(params.country) : 'none'
     const cacheKey = RedisKeys.agencyRanking(countryKey, params.period, limit, params.cursor ?? '')
 
     if (!params.country) {

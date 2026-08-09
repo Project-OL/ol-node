@@ -16,6 +16,7 @@ import {
   utcDateString,
 } from '../utils/datetime'
 import { AppError } from '../middlewares/errorHandler'
+import { countryEqualsFilter } from '../utils/agency-country'
 import { withSerializationRetry } from '../utils/txRetry'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { assertPointsDebitAllowed } from './wallet-freeze.service'
@@ -600,7 +601,7 @@ export const withdrawalService = {
                 payrollEnabled: true,
                 payrollPrivilegeGranted: true,
                 OR: [{ pausedAt: null }, { pausedUntil: { lte: new Date() } }],
-                user: { country: hostCountry },
+                user: { country: countryEqualsFilter(hostCountry) },
               },
             })
             if (ag) {

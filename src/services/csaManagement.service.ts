@@ -15,6 +15,7 @@ import type {
 } from '../models/csa-admin.schemas'
 import type { AdminStatus, SupportTicketStatus, SystemAdmin } from '@prisma/client'
 import { deriveStage } from './supportAdmin.service'
+import { normalizeCountry, normalizeCountryOptional } from '../utils/agency-country'
 
 const EXPORT_ROW_CAP = 10_000
 
@@ -88,7 +89,7 @@ export const csaManagementService = {
       phone: input.phone,
       phoneCountryCode: input.phoneCountryCode,
       gender: input.gender ?? null,
-      country: input.country,
+      country: normalizeCountry(input.country),
     })
 
     await systemAdminRepository.addIpWhitelistMany(
@@ -196,7 +197,9 @@ export const csaManagementService = {
       ...(input.phone !== undefined ? { phone: input.phone } : {}),
       ...(input.phoneCountryCode !== undefined ? { phoneCountryCode: input.phoneCountryCode } : {}),
       ...(input.gender !== undefined ? { gender: input.gender } : {}),
-      ...(input.country !== undefined ? { country: input.country } : {}),
+      ...(input.country !== undefined
+        ? { country: normalizeCountryOptional(input.country) }
+        : {}),
     })
     return toCsaDto(updated)
   },

@@ -218,7 +218,7 @@ export const withdrawalRepository = {
           a.paused_at IS NULL
           OR (a.paused_until IS NOT NULL AND a.paused_until <= NOW())
         )
-        AND u.country = ${hostCountry}
+        AND LOWER(TRIM(u.country)) = LOWER(TRIM(${hostCountry}))
         AND a.user_id <> ${opts.withdrawerUserId}::uuid
         AND (
           ${excludeAgencyUserId}::uuid IS NULL

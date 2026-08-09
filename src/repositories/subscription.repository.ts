@@ -2,6 +2,7 @@ import type { CreatorSubscription, Prisma } from '@prisma/client'
 import { CreatorSubscriptionStatus } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { USER_STATUSES } from '../models/types'
+import { countryEqualsFilter } from '../utils/agency-country'
 
 const BLOCKED_USER_STATUSES = [
   'suspended',
@@ -153,7 +154,7 @@ export const subscriptionRepository = {
   async queryTopCreatorsByCountry(country: string, limit: number): Promise<TopCreatorQueryRow[]> {
     return prismaRead.user.findMany({
       where: {
-        country,
+        country: countryEqualsFilter(country),
         ...topCreatorBySubscriberWhere,
       },
       select: topCreatorBySubscriberSelect,

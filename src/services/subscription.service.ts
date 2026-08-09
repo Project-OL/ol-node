@@ -13,6 +13,7 @@ import { postRepository } from '../repositories/post.repository'
 import { assembleUnlockedPostResponse } from './post-response.builder'
 import type { PostResponse } from '../types/post.types'
 import { AppError } from '../middlewares/errorHandler'
+import { countryCacheKeySegment } from '../utils/agency-country'
 import {
   SUBSCRIPTION_COIN_COST,
   SUBSCRIPTION_GRACE_MS,
@@ -160,7 +161,11 @@ async function invalidateTopCreatorsCachesForCreator(creatorId: string): Promise
       cacheRedisService.del(RedisKeys.subscriptionTopCreatorsByPosts()),
     ]
     if (creator?.country) {
-      tasks.push(cacheRedisService.del(RedisKeys.subscriptionTopCreators(creator.country)))
+      tasks.push(
+        cacheRedisService.del(
+          RedisKeys.subscriptionTopCreators(countryCacheKeySegment(creator.country)),
+        ),
+      )
     }
     await Promise.all(tasks)
   } catch {
@@ -246,8 +251,9 @@ export const subscriptionService = {
     const country = user?.country ?? null
 
     if (country) {
-      const countryPool = await loadTopCreators(RedisKeys.subscriptionTopCreators(country), () =>
-        subscriptionRepository.queryTopCreatorsByCountry(country, 4),
+      const countryPool = await loadTopCreators(
+        RedisKeys.subscriptionTopCreators(countryCacheKeySegment(country)),
+        () => subscriptionRepository.queryTopCreatorsByCountry(country, 4),
       )
       const countryCreators = excludeCallerTake3(countryPool, userId)
       if (countryCreators.length > 0) {

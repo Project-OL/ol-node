@@ -28,6 +28,7 @@ import { storeAdminService } from './store-admin.service'
 import { adminUserSearchService } from './adminUserSearch.service'
 import { phoneSchema } from '../models/schemas'
 import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { normalizeCountryOptional } from '../utils/agency-country'
 import { normalizeGenderStored } from '../utils/profileDisplay'
 
 function pickAuth(
@@ -284,7 +285,9 @@ export const adminUserDetailService = {
     }
 
     if (body.country !== undefined) {
-      await userRepository.updateProfile(userId, { country: body.country })
+      await userRepository.updateProfile(userId, {
+        country: normalizeCountryOptional(body.country),
+      })
     }
 
     if (body.tags != null) {

@@ -1,4 +1,5 @@
 import { prisma, prismaRead } from '../config/database'
+import { countryEqualsFilter } from '../utils/agency-country'
 
 export type OtpDeliveryAuditCreateInput = {
   userId?: string | null
@@ -35,7 +36,7 @@ function buildWhere(filters: Omit<OtpDeliveryAuditListFilters, 'page' | 'limit'>
     ...(filters.means ? { means: filters.means } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.userId ? { userId: filters.userId } : {}),
-    ...(filters.country ? { country: filters.country } : {}),
+    ...(filters.country ? { country: countryEqualsFilter(filters.country) } : {}),
     ...(filters.from || filters.to
       ? {
           createdAt: {

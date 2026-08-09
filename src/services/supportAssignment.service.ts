@@ -2,6 +2,7 @@ import { supportRepository } from '../repositories/support.repository'
 import { systemAdminRepository } from '../repositories/systemAdmin.repository'
 import { userRepository } from '../repositories/user.repository'
 import { csaNotificationService } from './csaNotification.service'
+import { countriesMatch } from '../utils/agency-country'
 
 /**
  * Auto-assignment for support tickets.
@@ -38,13 +39,11 @@ export const supportAssignmentService = {
     if (candidates.length === 0) return null
 
     const owner = await userRepository.findById(ticket.userId)
-    const ownerCountry = owner?.country?.trim().toLowerCase() ?? null
+    const ownerCountry = owner?.country ?? null
 
     let pool = candidates
     if (ownerCountry) {
-      const sameCountry = candidates.filter(
-        (a) => a.country && a.country.trim().toLowerCase() === ownerCountry,
-      )
+      const sameCountry = candidates.filter((a) => countriesMatch(a.country, ownerCountry))
       if (sameCountry.length > 0) pool = sameCountry
     }
 

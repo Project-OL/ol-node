@@ -17,6 +17,7 @@ import { sessionService } from './session.service'
 import { publicIdService } from './public-id.service'
 import { userPublicIdService } from './user-public-id.service'
 import { passwordService } from './password.service'
+import { normalizeCountry } from '../utils/agency-country'
 import { otpAuthService } from './otp-auth.service'
 import { auditService } from './audit.service'
 import { platformConversationsService } from './platformConversations.service'
@@ -242,7 +243,7 @@ export const authV2Service = {
       firstName: data.firstName,
       lastName,
       dateOfBirth: dateOfBirth ?? null,
-      country: data.country,
+      country: normalizeCountry(data.country),
       gender: data.gender,
       avatarUrl,
       status: 'active',

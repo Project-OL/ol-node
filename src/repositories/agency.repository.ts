@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+import { countryEqualsFilter } from '../utils/agency-country'
 
 export type AgencyAdminListParams = {
   status?: 'ACTIVE' | 'SUSPENDED'
@@ -25,7 +26,7 @@ function buildAdminListWhere(params: AgencyAdminListParams): Prisma.AgencyWhereI
   }
 
   if (params.country) {
-    and.push({ user: { country: params.country } })
+    and.push({ user: { country: countryEqualsFilter(params.country) } })
   }
 
   const q = params.search?.trim()
@@ -302,7 +303,7 @@ export const agencyRepository = {
     if (!params.country) return []
     return prismaRead.agency.findMany({
       where: {
-        user: { country: params.country },
+        user: { country: countryEqualsFilter(params.country) },
       },
       orderBy: [{ totalHostsCount: 'desc' }, { defaultPublicId: 'desc' }],
       skip: params.skip,
