@@ -1,13 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-
-const blockUser = vi.fn()
-const findBlock = vi.fn()
-vi.mock('../../src/repositories/block.repository', () => ({
-  blockRepository: {
-    blockUser: (...args: unknown[]) => blockUser(...args),
-    findBlock: (...args: unknown[]) => findBlock(...args),
-  },
-}))
+import { AppError } from '../../src/middlewares/errorHandler'
 
 const findByPublicId = vi.fn()
 vi.mock('../../src/repositories/user.repository', () => ({
@@ -16,28 +8,13 @@ vi.mock('../../src/repositories/user.repository', () => ({
   },
 }))
 
-const cacheDelete = vi.fn()
-vi.mock('../../src/services/cache.service', () => ({
-  cacheService: {
-    delete: (...args: unknown[]) => cacheDelete(...args),
+const findBlock = vi.fn()
+const blockUser = vi.fn()
+vi.mock('../../src/repositories/block.repository', () => ({
+  blockRepository: {
+    findBlock: (...args: unknown[]) => findBlock(...args),
+    blockUser: (...args: unknown[]) => blockUser(...args),
   },
-}))
-
-const auditLog = vi.fn()
-vi.mock('../../src/services/audit.service', () => ({
-  auditService: { log: (...args: unknown[]) => auditLog(...args) },
-}))
-
-const stopRenewalsDueToBlock = vi.fn()
-vi.mock('../../src/services/subscription.service', () => ({
-  subscriptionService: {
-    stopRenewalsDueToBlock: (...args: unknown[]) => stopRenewalsDueToBlock(...args),
-  },
-}))
-
-const invalidateSocialCountsCache = vi.fn()
-vi.mock('../../src/services/follow.service', () => ({
-  invalidateSocialCountsCache: (...args: unknown[]) => invalidateSocialCountsCache(...args),
 }))
 
 const deleteFollowsBetween = vi.fn()
@@ -47,31 +24,134 @@ vi.mock('../../src/repositories/follow.repository', () => ({
   },
 }))
 
-vi.mock('../../src/config/redis', () => ({
-  RedisKeys: {
-    blockList: (id: string) => `blocklist:${id}`,
-    allowedMessaging: (a: string, b: string) => `allowed-messaging:${a}:${b}`,
-  },
-  BLOCK_LIST_TTL: 300,
-  redisClient: { del: vi.fn().mockResolvedValue(1) },
+const invalidateSocialCountsCache = vi.fn()
+vi.mock('../../src/services/follow.service', () => ({
+  invalidateSocialCountsCache: (...args: unknown[]) => invalidateSocialCountsCache(...args),
 }))
 
-import { blockService } from '../../src/services/block.service'
+const cacheDelete = vi.fn()
+vi.mock('../../src/services/cache.service', () => ({
+  cacheService: {
+    delete: (...args: unknown[]) => cacheDelete(...args),
+    get: vi.fn(),
+    set: vi.fn(),
+  },
+}))
+
+const redisDel = vi.fn().mockResolvedValue(1)
+vi.mock('../../src/config/redis', () => {
+  const stubRedis = {
+    on: vi.fn(),
+    once: vi.fn(),
+    connect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn(),
+    quit: vi.fn().mockResolvedValue('OK'),
+    del: (...args: unknown[]) => redisDel(...args),
+  }
+  return {
+    redisClient: stubRedis,
+    redisReadClient: null,
+    getRedisForRead: () => stubRedis,
+    BLOCK_LIST_TTL: 3600,
+    RedisKeys: {
+      blockList: (userId: string) => `blocklist:v2:${userId}`,
+      allowedMessaging: (recipientId: string, senderId: string) =>
+        `allowed-messaging:${recipientId}:${senderId}`,
+      socialCounts: (userId: string) => `social:counts:${userId}`,
+    },
+  }
+})
+
+const stopRenewalsDueToBlock = vi.fn().mockResolvedValue(undefined)
+vi.mock('../../src/services/subscription.service', () => ({
+  subscriptionService: {
+    stopRenewalsDueToBlock: (...args: unknown[]) => stopRenewalsDueToBlock(...args),
+  },
+}))
+
+const auditLog = vi.fn().mockResolvedValue(undefined)
+vi.mock('../../src/services/audit.service', () => ({
+  auditService: { log: (...args: unknown[]) => auditLog(...args) },
+}))
+
+const { blockService } = await import('../../src/services/block.service')
+
+const blockerId = 'blocker-uuid'
+const blockedId = 'blocked-uuid'
+const blockedPublicId = '100042'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  redisDel.mockResolvedValue(1)
+  deleteFollowsBetween.mockResolvedValue(2)
+  blockUser.mockResolvedValue(undefined)
+  invalidateSocialCountsCache.mockResolvedValue(undefined)
+  cacheDelete.mockResolvedValue(undefined)
+  stopRenewalsDueToBlock.mockResolvedValue(undefined)
+  auditLog.mockResolvedValue(undefined)
+})
 
 describe('blockService.blockUser', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    findByPublicId.mockResolvedValue({ id: 'user-b', publicId: 100042n })
+  it('creates block then deletes follow edges both ways and busts social caches', async () => {
+    findByPublicId.mockResolvedValue({ id: blockedId, publicId: BigInt(blockedPublicId) })
     findBlock.mockResolvedValue(null)
-    blockUser.mockResolvedValue({ id: 'block-1' })
-    deleteFollowsBetween.mockResolvedValue(1)
+
+    await blockService.blockUser(blockerId, blockedPublicId)
+
+    expect(blockUser).toHaveBeenCalledWith(blockerId, blockedId)
+    expect(deleteFollowsBetween).toHaveBeenCalledTimes(1)
+    expect(deleteFollowsBetween).toHaveBeenCalledWith(blockerId, blockedId)
+    expect(deleteFollowsBetween.mock.invocationCallOrder[0]).toBeGreaterThan(
+      blockUser.mock.invocationCallOrder[0]!,
+    )
+    expect(cacheDelete).toHaveBeenCalledWith(`blocklist:v2:${blockerId}`)
+    expect(invalidateSocialCountsCache).toHaveBeenCalledWith(blockerId, blockedId)
+    expect(stopRenewalsDueToBlock).toHaveBeenCalledWith(blockerId, blockedId)
+    expect(auditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionType: 'BLOCK_USER',
+        actionStatus: 'success',
+        userId: blockerId,
+      }),
+    )
   })
 
-  it('removes follow relationships in both directions when blocking', async () => {
-    await blockService.blockUser('user-a', '100042')
+  it('does not delete follows when blocking yourself', async () => {
+    findByPublicId.mockResolvedValue({ id: blockerId, publicId: BigInt(blockedPublicId) })
 
-    expect(blockUser).toHaveBeenCalledWith('user-a', 'user-b')
-    expect(deleteFollowsBetween).toHaveBeenCalledWith('user-a', 'user-b')
-    expect(invalidateSocialCountsCache).toHaveBeenCalledWith('user-a', 'user-b')
+    await expect(blockService.blockUser(blockerId, blockedPublicId)).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_REQUEST',
+    })
+
+    expect(blockUser).not.toHaveBeenCalled()
+    expect(deleteFollowsBetween).not.toHaveBeenCalled()
+    expect(invalidateSocialCountsCache).not.toHaveBeenCalled()
+  })
+
+  it('does not delete follows when already blocked', async () => {
+    findByPublicId.mockResolvedValue({ id: blockedId, publicId: BigInt(blockedPublicId) })
+    findBlock.mockResolvedValue({ id: 'existing-block' })
+
+    await expect(blockService.blockUser(blockerId, blockedPublicId)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'ALREADY_BLOCKED',
+    })
+
+    expect(blockUser).not.toHaveBeenCalled()
+    expect(deleteFollowsBetween).not.toHaveBeenCalled()
+    expect(invalidateSocialCountsCache).not.toHaveBeenCalled()
+  })
+
+  it('throws NOT_FOUND when publicId does not resolve', async () => {
+    findByPublicId.mockResolvedValue(null)
+
+    await expect(blockService.blockUser(blockerId, blockedPublicId)).rejects.toBeInstanceOf(AppError)
+    await expect(blockService.blockUser(blockerId, blockedPublicId)).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'NOT_FOUND',
+    })
+
+    expect(deleteFollowsBetween).not.toHaveBeenCalled()
   })
 })

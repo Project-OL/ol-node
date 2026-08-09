@@ -887,6 +887,14 @@ export const withdrawalService = {
           tx,
         )
 
+        await withdrawalRepository.updateStatus(
+          {
+            id: a.withdrawalId,
+            status: 'WAITING',
+          },
+          tx,
+        )
+
         // Agency credits (host payout + processing reward) happen only after the
         // waitingHours dispute window elapses without a dispute (autoCompleteWaiting).
       },
@@ -898,7 +906,7 @@ export const withdrawalService = {
     await bustPayrollSummaryCache(agentUserId)
 
     console.info(
-      `[withdrawal] Payroll proof → WAITING assignment=${assignmentId} agent=${agentUserId}`,
+      `[withdrawal] Payroll proof → WAITING withdrawal=${notifyWithdrawalId} assignment=${assignmentId} agent=${agentUserId}`,
     )
 
     if (notifyWithdrawalId && notifyHostUserId) {
@@ -1056,7 +1064,8 @@ export const withdrawalService = {
     if (!row) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
     const waitingAssignment =
       await payrollAssignmentRepository.findWaitingByWithdrawalId(withdrawalId)
-    const allowWaitingEvidence = row.status === 'PENDING' && !!waitingAssignment
+    const allowWaitingEvidence =
+      (row.status === 'PENDING' || row.status === 'WAITING') && !!waitingAssignment
     if (row.status !== 'PAID' && row.status !== 'DISPUTED' && !allowWaitingEvidence) {
       throw new AppError(
         400,
@@ -1095,7 +1104,8 @@ export const withdrawalService = {
     }
 
     const waitingAssignment = w.payrollAssignments[0] ?? null
-    const isWaitingPeriod = w.status === 'PENDING' && waitingAssignment != null
+    const isWaitingPeriod =
+      (w.status === 'PENDING' || w.status === 'WAITING') && waitingAssignment != null
 
     if (w.status !== 'PAID' && !isWaitingPeriod) {
       throw new AppError(400, 'Withdrawal cannot be disputed in its current state', 'INVALID_STATE')
@@ -1458,7 +1468,13 @@ export const withdrawalService = {
     }
     // v2 allows cancelling open (escrowed) withdrawals in addition to reversing
     // settled (PAID/DISPUTED) ones.
-    const REVERSIBLE: WithdrawalStatus[] = ['PAID', 'DISPUTED', 'PENDING', 'PENDING_PLATFORM']
+    const REVERSIBLE: WithdrawalStatus[] = [
+      'PAID',
+      'DISPUTED',
+      'PENDING',
+      'PENDING_PLATFORM',
+      'WAITING',
+    ]
     if (!REVERSIBLE.includes(w.status)) {
       throw new AppError(400, 'Withdrawal cannot be reversed', 'INVALID_STATE')
     }
@@ -1625,7 +1641,7 @@ export const withdrawalService = {
       where: {
         userId,
         status: {
-          in: ['PENDING', 'PENDING_PLATFORM', 'KYC_CHECK', 'APPROVED', 'PROCESSING'],
+          in: ['PENDING', 'PENDING_PLATFORM', 'KYC_CHECK', 'APPROVED', 'PROCESSING', 'WAITING'],
         },
       },
       select: { id: true },
@@ -1650,7 +1666,12 @@ export const withdrawalService = {
     const page = hasMore ? rows.slice(0, opts.limit) : rows
     const nextCursor = hasMore ? page[page.length - 1]?.id : undefined
     return {
-      items: page.map(withdrawalService.serializeWithdrawal),
+      items: page.map((row) =>
+        withdrawalService.serializeWithdrawal({
+          ...row,
+          latestAssignmentStatus: row.payrollAssignments[0]?.status ?? null,
+        }),
+      ),
       nextCursor,
       hasMore,
     }
@@ -1666,8 +1687,13 @@ export const withdrawalService = {
 
     const config = await withdrawalService.getPayrollConfig()
 
+    const hostStatus = withdrawalService.resolveHostFacingStatus(
+      row.status,
+      row.payrollAssignments[0]?.status ?? null,
+    )
+
     const timeTakenSeconds =
-      row.status === 'PAID' && row.processedAt
+      hostStatus === 'PAID' && row.processedAt
         ? Math.round((row.processedAt.getTime() - row.requestedAt.getTime()) / 1000)
         : null
 
@@ -1678,7 +1704,7 @@ export const withdrawalService = {
 
     return {
       id: row.id,
-      status: row.status,
+      status: hostStatus,
       grossPoints: row.amountPoints.toString(),
       grossUsd: (Number(row.amountPoints) / 10_000).toFixed(2),
       hostPayoutPoints: (Number(row.amountPoints) - Number(row.platformFeePoints ?? 0)).toString(),
@@ -1699,6 +1725,19 @@ export const withdrawalService = {
     }
   },
 
+  /**
+   * Host-facing status. After proof upload, withdrawal is persisted as WAITING.
+   * Legacy rows may still be PENDING with assignment WAITING — map those without backfill.
+   */
+  resolveHostFacingStatus(
+    status: WithdrawalStatus,
+    latestAssignmentStatus?: string | null,
+  ): WithdrawalStatus {
+    if (status === 'WAITING') return 'WAITING'
+    if (status === 'PENDING' && latestAssignmentStatus === 'WAITING') return 'WAITING'
+    return status
+  },
+
   serializeWithdrawal(w: {
     id: string
     amountPoints: bigint
@@ -1712,11 +1751,17 @@ export const withdrawalService = {
     disputeTicketId: string | null
     paymentMethodId: string | null
     failReason?: string | null
+    /** When set (host history), map PENDING + assignment WAITING → WAITING. */
+    latestAssignmentStatus?: string | null
   }) {
+    const status =
+      w.latestAssignmentStatus !== undefined
+        ? withdrawalService.resolveHostFacingStatus(w.status, w.latestAssignmentStatus)
+        : w.status
     return {
       id: w.id,
       grossPoints: w.amountPoints.toString(),
-      status: w.status,
+      status,
       requestedAt: w.requestedAt.toISOString(),
       processedAt: w.processedAt?.toISOString() ?? null,
       hostPayoutUsd: w.hostPayoutUsd?.toString() ?? null,

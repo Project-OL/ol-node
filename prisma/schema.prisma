@@ -1134,6 +1134,8 @@ enum WithdrawalStatus {
   REJECTED
   PENDING_PLATFORM
   DISPUTED
+  /// Agency uploaded payout proof; host dispute window (`waitingHours`) before PAID.
+  WAITING
 }
 
 model CoinPackage {

@@ -1,10 +1,15 @@
 import type { Prisma, WithdrawalStatus } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 
-const PENDING_STATUSES: WithdrawalStatus[] = ['PENDING', 'PROCESSING', 'PENDING_PLATFORM']
+const PENDING_STATUSES: WithdrawalStatus[] = [
+  'PENDING',
+  'PROCESSING',
+  'PENDING_PLATFORM',
+  'WAITING',
+]
 
 /** Open (escrow-locked) statuses for v2 escrow accounting. */
-const ESCROWED_STATUSES: WithdrawalStatus[] = ['PENDING', 'PENDING_PLATFORM']
+const ESCROWED_STATUSES: WithdrawalStatus[] = ['PENDING', 'PENDING_PLATFORM', 'WAITING']
 
 export type WithdrawalDetailRow = Prisma.WithdrawalGetPayload<{
   include: {
@@ -109,6 +114,13 @@ export const withdrawalRepository = {
             skip: 1,
           }
         : {}),
+      include: {
+        payrollAssignments: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { status: true },
+        },
+      },
     })
     return rows
   },

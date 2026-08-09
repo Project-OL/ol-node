@@ -27,15 +27,23 @@ export default async function securityPasswordRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.userId!
       const identifiers = await securityPasswordService.getIdentifiers(userId)
+      const items = identifiers.map((id) => ({
+        id: id.id,
+        provider: id.provider,
+        identifier: id.identifier,
+        isVerified: id.isVerified,
+        maskedIdentifier: id.maskedIdentifier,
+      }))
+      if (items.length === 0) {
+        return reply.status(200).send({
+          message: 'Please link your Mobile or email first',
+          identifiers: [],
+          count: 0,
+        })
+      }
       return reply.status(200).send({
-        identifiers: identifiers.map((id) => ({
-          id: id.id,
-          provider: id.provider,
-          identifier: id.identifier,
-          isVerified: id.isVerified,
-          maskedIdentifier: id.maskedIdentifier,
-        })),
-        count: identifiers.length,
+        identifiers: items,
+        count: items.length,
       })
     },
   )

@@ -109,6 +109,8 @@ export function resolvePointTransactionStatus(
   switch (withdrawalStatus) {
     case 'PAID':
       return { status: 'SUCCESS', statusLabel: 'Withdrawal Successful' }
+    case 'WAITING':
+      return { status: 'PENDING', statusLabel: 'Awaiting Confirmation' }
     case 'PENDING':
     case 'PROCESSING':
     case 'PENDING_PLATFORM':
