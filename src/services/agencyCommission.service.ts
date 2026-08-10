@@ -788,43 +788,51 @@ export const agencyCommissionService = {
     const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end)
     const last3Months = resolveCommissionPeriod({ periodDays: 90 })
 
-    const [rows, buckets, liveDurationSeconds, dailyEarnings, last3MonthsDaily, hostUser] =
-      await Promise.all([
-        agencyCommissionRepository.aggregateLedgerForSingleHost({
-          hostUserId,
-          agencyUserId,
-          from,
-          toExclusive,
-        }),
-        agencyCommissionRepository.aggregateHostEarningsBuckets({
-          hostUserId,
-          agencyUserId,
-          from,
-          toExclusive,
-        }),
-        agencyCommissionRepository.sumLiveDurationForHost(
-          agencyUserId,
-          hostUserId,
-          period.start,
-          period.end,
-        ),
-        agencyCommissionRepository.sumHostDailyEarnings(
-          agencyUserId,
-          hostUserId,
-          period.start,
-          period.end,
-        ),
-        agencyCommissionRepository.sumHostDailyEarnings(
-          agencyUserId,
-          hostUserId,
-          last3Months.start,
-          last3Months.end,
-        ),
-        prismaRead.user.findUnique({
-          where: { id: hostUserId },
-          select: { hourlyWage: true },
-        }),
-      ])
+    const [
+      rows,
+      buckets,
+      liveDurationSeconds,
+      dailyEarnings,
+      last3MonthsDaily,
+      hostUser,
+      remainingPoints,
+    ] = await Promise.all([
+      agencyCommissionRepository.aggregateLedgerForSingleHost({
+        hostUserId,
+        agencyUserId,
+        from,
+        toExclusive,
+      }),
+      agencyCommissionRepository.aggregateHostEarningsBuckets({
+        hostUserId,
+        agencyUserId,
+        from,
+        toExclusive,
+      }),
+      agencyCommissionRepository.sumLiveDurationForHost(
+        agencyUserId,
+        hostUserId,
+        period.start,
+        period.end,
+      ),
+      agencyCommissionRepository.sumHostDailyEarnings(
+        agencyUserId,
+        hostUserId,
+        period.start,
+        period.end,
+      ),
+      agencyCommissionRepository.sumHostDailyEarnings(
+        agencyUserId,
+        hostUserId,
+        last3Months.start,
+        last3Months.end,
+      ),
+      prismaRead.user.findUnique({
+        where: { id: hostUserId },
+        select: { hourlyWage: true },
+      }),
+      walletService.getPointBalance(hostUserId),
+    ])
 
     const map = Object.fromEntries(rows.map((r) => [r.txType, r.totalAmount])) as Record<
       string,
@@ -848,6 +856,8 @@ export const agencyCommissionService = {
       totalEarningsLast3MonthsTo: utcDateString(last3Months.end),
       platformHourlySalary: (hostUser?.hourlyWage ?? 0n).toString(),
       rankReward: '0',
+      /** Current POINT wallet balance (available / remaining), not period-scoped. */
+      remainingPoints: remainingPoints.toString(),
       totals: {
         allCredits: buckets.allCredits.toString(),
         liveEarnings: buckets.liveEarnings.toString(),
