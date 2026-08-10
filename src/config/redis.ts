@@ -303,6 +303,11 @@ export const RedisKeys = {
     `agency:dashboard:hosts:${agencyUserId}:${periodLabel}`,
   /** Agency dashboard: "earned today" + accumulated + points balance (30s). */
   agencyDashboardToday: (agencyUserId: string) => `agency:dashboard:today:${agencyUserId}`,
+  /**
+   * Bumped on every commission/payroll cache bust. Readers capture this before DB compute
+   * and skip cache SET if the epoch changed (prevents stale rewrite races).
+   */
+  agencyEarningsCacheEpoch: (agencyUserId: string) => `agency:cache:epoch:${agencyUserId}`,
   /** Agency dashboard: shared read rate-limit bucket across all dashboard endpoints. */
   ratelimitAgencyDashboard: (userId: string) => `ratelimit:agency:dashboard:${userId}`,
   ratelimitCtTopup: (userId: string) => `ratelimit:ct:topup:${userId}`,

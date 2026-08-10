@@ -9,8 +9,9 @@ import { buildUserDisplayName } from '../utils/user-display'
  * Read-only aggregation repository for the agency agent dashboard.
  *
  * Most queries use `prismaRead` (read replica when configured).
- * `getAgentEarnedToday` uses primary (`prisma`) so post-gift commission
- * numbers are not held back by replica lag after Redis cache bust.
+ * Cached overview endpoints (`getEarningsOverview`, `getHostDataSummary`,
+ * `getAgentEarnedToday`) use primary (`prisma`) so post-commission busts
+ * do not re-fill Redis from lagging replicas.
  * This module is strictly read-only — commission ledger writes happen in
  * `agencyCommissionService.applyCommission`.
  *
@@ -108,13 +109,16 @@ export interface AgentEarnedToday {
   totalEarningsPoints: string
 }
 
-async function getAgencyRateBp(agencyUserId: string): Promise<{ level: string; rateBp: number }> {
-  const agency = await prismaRead.agency.findUnique({
+async function getAgencyRateBp(
+  agencyUserId: string,
+  client: PrismaClient = prismaRead,
+): Promise<{ level: string; rateBp: number }> {
+  const agency = await client.agency.findUnique({
     where: { userId: agencyUserId },
     select: { currentLevel: true },
   })
   const level = agency?.currentLevel ?? 'D'
-  const levelConfig = await prismaRead.agencyCommissionLevel.findUnique({
+  const levelConfig = await client.agencyCommissionLevel.findUnique({
     where: { level },
     select: { liveRateBp: true },
   })
@@ -182,9 +186,11 @@ export const agencyDashboardRepository = {
   ): Promise<EarningsOverview> {
     const startDay = toUTCDateOnly(start)
     const endDay = toUTCDateOnly(end)
+    // Primary: cache is busted on commission credit — avoid re-filling from a lagging replica.
+    const db = prisma
 
     // A: per-host aggregate from agency_daily_earnings.
-    const [dailyAgg] = await prismaRead.$queryRaw<
+    const [dailyAgg] = await db.$queryRaw<
       Array<{ totalHostEarnings: bigint; totalHostCommission: bigint }>
     >`
       SELECT
@@ -196,7 +202,7 @@ export const agencyDashboardRepository = {
     `
 
     // C: agent payroll-processing reward credits in the period.
-    const [payrollAgg] = await prismaRead.$queryRaw<Array<{ payrollCommission: bigint }>>`
+    const [payrollAgg] = await db.$queryRaw<Array<{ payrollCommission: bigint }>>`
       SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS "payrollCommission"
       FROM point_ledger_entries ple
       INNER JOIN wallets w ON w.id = ple.wallet_id
@@ -209,8 +215,8 @@ export const agencyDashboardRepository = {
     `
 
     const [agentOwnEarnings, { level, rateBp }] = await Promise.all([
-      sumAgentOwnEarnings(agencyUserId, start, end),
-      getAgencyRateBp(agencyUserId),
+      sumAgentOwnEarnings(agencyUserId, start, end, db),
+      getAgencyRateBp(agencyUserId, db),
     ])
 
     const agentOwnCommission = (agentOwnEarnings * BigInt(rateBp)) / 10_000n
@@ -242,8 +248,10 @@ export const agencyDashboardRepository = {
     const threeDaysAgo = new Date(utcNow().getTime() - 3 * 24 * 60 * 60 * 1000)
     const startDay = toUTCDateOnly(start)
     const endDay = toUTCDateOnly(end)
+    // Primary after commission cache bust (same rationale as getEarningsOverview).
+    const db = prisma
 
-    const [counts] = await prismaRead.$queryRaw<
+    const [counts] = await db.$queryRaw<
       Array<{ totalHosts: bigint; newHosts: bigint; validHosts: bigint }>
     >`
       SELECT
@@ -264,7 +272,7 @@ export const agencyDashboardRepository = {
       WHERE ah.agency_user_id = ${agencyUserId}::uuid
     `
 
-    const [incomeAndDuration] = await prismaRead.$queryRaw<
+    const [incomeAndDuration] = await db.$queryRaw<
       Array<{ hostsWithIncome: bigint; totalLiveDuration: bigint; totalEarningsPoints: bigint }>
     >`
       SELECT

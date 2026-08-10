@@ -15,6 +15,8 @@ function ttlForLabel(label: string): number {
 
 async function readCache<T>(key: string): Promise<T | null> {
   try {
+    // Always primary — Redis replica lag would otherwise keep serving values
+    // after a successful DEL on the writer.
     const hit = await redisClient.get(key)
     if (hit) return JSON.parse(hit) as T
   } catch {
@@ -23,8 +25,25 @@ async function readCache<T>(key: string): Promise<T | null> {
   return null
 }
 
+export async function readAgencyEarningsCacheEpoch(agencyUserId: string): Promise<string> {
+  try {
+    return (await redisClient.get(RedisKeys.agencyEarningsCacheEpoch(agencyUserId))) ?? '0'
+  } catch {
+    return '0'
+  }
+}
+
+export async function bumpAgencyEarningsCacheEpoch(agencyUserId: string): Promise<void> {
+  try {
+    await redisClient.incr(RedisKeys.agencyEarningsCacheEpoch(agencyUserId))
+  } catch {
+    /* non-fatal */
+  }
+}
+
 /** Invalidate all dashboard period caches for one agent (post commission / payroll credit). */
 export async function bustAgencyDashboardCaches(agencyUserId: string): Promise<void> {
+  await bumpAgencyEarningsCacheEpoch(agencyUserId)
   await Promise.all([
     cacheRedisService.del(RedisKeys.agencyDashboardToday(agencyUserId)),
     cacheRedisService.delByKeyPrefix(`agency:dashboard:earnings:${agencyUserId}`),
@@ -40,6 +59,19 @@ async function writeCache(key: string, ttl: number, value: unknown): Promise<voi
   }
 }
 
+/** Write only if no commission/payroll bust landed during the DB compute window. */
+async function writeCacheIfEpoch(
+  agencyUserId: string,
+  key: string,
+  ttl: number,
+  value: unknown,
+  epochAtStart: string,
+): Promise<void> {
+  const epochNow = await readAgencyEarningsCacheEpoch(agencyUserId)
+  if (epochNow !== epochAtStart) return
+  await writeCache(key, ttl, value)
+}
+
 export const agencyDashboardService = {
   async getEarningsOverview(
     agencyUserId: string,
@@ -51,9 +83,10 @@ export const agencyDashboardService = {
     const cached = await readCache<EarningsOverview & { periodLabel: string }>(cacheKey)
     if (cached) return cached
 
+    const epoch = await readAgencyEarningsCacheEpoch(agencyUserId)
     const result = await agencyDashboardRepository.getEarningsOverview(agencyUserId, start, end)
     const dto = { ...result, periodLabel: label }
-    await writeCache(cacheKey, ttlForLabel(label), dto)
+    await writeCacheIfEpoch(agencyUserId, cacheKey, ttlForLabel(label), dto, epoch)
     return dto
   },
 
@@ -67,9 +100,10 @@ export const agencyDashboardService = {
     const cached = await readCache<HostDataSummary & { periodLabel: string }>(cacheKey)
     if (cached) return cached
 
+    const epoch = await readAgencyEarningsCacheEpoch(agencyUserId)
     const result = await agencyDashboardRepository.getHostDataSummary(agencyUserId, start, end)
     const dto = { ...result, periodLabel: label }
-    await writeCache(cacheKey, ttlForLabel(label), dto)
+    await writeCacheIfEpoch(agencyUserId, cacheKey, ttlForLabel(label), dto, epoch)
     return dto
   },
 
@@ -102,8 +136,9 @@ export const agencyDashboardService = {
       )
     if (cached) return cached
 
+    const epoch = await readAgencyEarningsCacheEpoch(agencyUserId)
     const result = await agencyDashboardRepository.getAgentEarnedToday(agencyUserId)
-    await writeCache(cacheKey, DASHBOARD_TTL_TODAY, result)
+    await writeCacheIfEpoch(agencyUserId, cacheKey, DASHBOARD_TTL_TODAY, result, epoch)
     return result
   },
 }

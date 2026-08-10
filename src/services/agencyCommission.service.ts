@@ -8,7 +8,7 @@ import {
   AGENCY_LEVEL_CONFIG_CACHE_TTL,
   AGENCY_RATE_CACHE_TTL,
 } from '../config/redis'
-import { bustAgencyDashboardCaches } from './agencyDashboard.service'
+import { bustAgencyDashboardCaches, readAgencyEarningsCacheEpoch } from './agencyDashboard.service'
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyPointTransferRepository } from '../repositories/agencyPointTransfer.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
@@ -412,6 +412,8 @@ export const agencyCommissionService = {
         redisClient.del(RedisKeys.agencyRate(agencyUserId)),
         cacheRedisService.del(RedisKeys.agencyMe(agencyUserId)),
         cacheRedisService.delByKeyPrefix(RedisKeys.agencyCommissionMe(agencyUserId)),
+        cacheRedisService.delByKeyPrefix(`agency:host:breakdown:${agencyUserId}`),
+        // Also bumps agencyEarningsCacheEpoch + deletes dashboard today/earnings/hosts.
         bustAgencyDashboardCaches(agencyUserId),
       ])
     } catch {
@@ -679,9 +681,10 @@ export const agencyCommissionService = {
       /* miss */
     }
 
+    const epoch = await readAgencyEarningsCacheEpoch(agencyUserId)
     const period = resolveCommissionPeriod(periodParams)
     const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end)
-    const ag = await prismaRead.agency.findUnique({
+    const ag = await prisma.agency.findUnique({
       where: { userId: agencyUserId },
     })
     if (!ag) {
@@ -692,7 +695,9 @@ export const agencyCommissionService = {
     const idx = levels.findIndex((l) => l.level === ag.currentLevel)
     const nextRow = idx >= 0 && idx + 1 < levels.length ? levels[idx + 1]! : null
 
-    const windowMetric = await this.resolveTierWindowTotal(agencyUserId)
+    const windowMetric = await this.resolveTierWindowTotal(agencyUserId, {
+      preferPrimary: true,
+    })
     const windowTotal = windowMetric.total
 
     const [agg, liveDurationSeconds, dailyEarnings] = await Promise.all([
@@ -700,9 +705,12 @@ export const agencyCommissionService = {
         agencyUserId,
         from,
         toExclusive,
+        preferPrimary: true,
       }),
       agencyCommissionRepository.sumLiveDurationForAgency(agencyUserId, period.start, period.end),
-      agencyCommissionRepository.sumAgencyDailyEarnings(agencyUserId, period.start, period.end),
+      agencyCommissionRepository.sumAgencyDailyEarnings(agencyUserId, period.start, period.end, {
+        preferPrimary: true,
+      }),
     ])
 
     let lacking: bigint | null = null
@@ -734,7 +742,10 @@ export const agencyCommissionService = {
     }
 
     try {
-      await redisClient.set(key, JSON.stringify(snap), 'EX', AGENCY_COMMISSION_ME_CACHE_TTL)
+      const epochNow = await readAgencyEarningsCacheEpoch(agencyUserId)
+      if (epochNow === epoch) {
+        await redisClient.set(key, JSON.stringify(snap), 'EX', AGENCY_COMMISSION_ME_CACHE_TTL)
+      }
     } catch {
       /* ignore */
     }

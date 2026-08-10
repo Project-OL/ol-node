@@ -487,12 +487,15 @@ export const agencyCommissionRepository = {
     agencyUserId,
     from,
     toExclusive,
+    preferPrimary,
   }: {
     agencyUserId: string
     from: Date
     toExclusive: Date
+    preferPrimary?: boolean
   }): Promise<Array<{ txType: string; totalAmount: bigint }>> {
-    const rows = await prismaRead.$queryRaw<{ tx_type: string; s: bigint }[]>`
+    const client = preferPrimary ? prisma : prismaRead
+    const rows = await client.$queryRaw<{ tx_type: string; s: bigint }[]>`
       SELECT ple.tx_type::text AS tx_type, COALESCE(SUM(ple.amount), 0)::bigint AS s
       FROM point_ledger_entries ple
       INNER JOIN wallets w ON w.id = ple.wallet_id
