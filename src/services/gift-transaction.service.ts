@@ -301,6 +301,9 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
   }
 
   if (txResult.bustAgentUserId) {
+    // AGENT_COMMISSION credited the agency owner inside the gift tx; drop their
+    // POINT balance cache so /agency/dashboard/today `pointsBalance` is fresh.
+    await walletService.adjustPointBalanceCache(txResult.bustAgentUserId, 0n)
     const { agencyCommissionService } = await import('./agencyCommission.service')
     await agencyCommissionService.afterCommissionCreditCommit(txResult.bustAgentUserId)
   }

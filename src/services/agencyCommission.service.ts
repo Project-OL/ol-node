@@ -627,10 +627,17 @@ export const agencyCommissionService = {
    * Post-commit after applyCommission (or reverse): refresh window total + tier.
    * Uses primary DB; skips same-day dedupe so live credits always update.
    * Commission for the credit that just landed already used the pre-update tier.
+   * Always busts agent commission / dashboard caches even if tier recompute fails,
+   * so `/agency/dashboard/*` does not serve a stale 30s Redis snapshot.
    */
   async afterCommissionCreditCommit(agencyUserId: string | null | undefined): Promise<void> {
     if (!agencyUserId) return
-    await this.recomputeAgencyLevel(agencyUserId, { skipDailyDedupe: true })
+    try {
+      await this.recomputeAgencyLevel(agencyUserId, { skipDailyDedupe: true })
+    } finally {
+      // recomputeAgencyLevel also busts on success; keep this for failed recomputes.
+      await this.bustAgentCommissionCaches(agencyUserId)
+    }
   },
 
   async enqueueDailyRecomputeMaster(opts?: { utcDate?: string; force?: boolean }): Promise<void> {
@@ -779,45 +786,51 @@ export const agencyCommissionService = {
 
     const period = resolveCommissionPeriod(periodParams)
     const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end)
-    const [rows, liveDurationSeconds, dailyEarnings] = await Promise.all([
-      agencyCommissionRepository.aggregateLedgerForSingleHost({
-        hostUserId,
-        agencyUserId,
-        from,
-        toExclusive,
-      }),
-      agencyCommissionRepository.sumLiveDurationForHost(
-        agencyUserId,
-        hostUserId,
-        period.start,
-        period.end,
-      ),
-      agencyCommissionRepository.sumHostDailyEarnings(
-        agencyUserId,
-        hostUserId,
-        period.start,
-        period.end,
-      ),
-    ])
+    const last3Months = resolveCommissionPeriod({ periodDays: 90 })
+
+    const [rows, buckets, liveDurationSeconds, dailyEarnings, last3MonthsDaily, hostUser] =
+      await Promise.all([
+        agencyCommissionRepository.aggregateLedgerForSingleHost({
+          hostUserId,
+          agencyUserId,
+          from,
+          toExclusive,
+        }),
+        agencyCommissionRepository.aggregateHostEarningsBuckets({
+          hostUserId,
+          agencyUserId,
+          from,
+          toExclusive,
+        }),
+        agencyCommissionRepository.sumLiveDurationForHost(
+          agencyUserId,
+          hostUserId,
+          period.start,
+          period.end,
+        ),
+        agencyCommissionRepository.sumHostDailyEarnings(
+          agencyUserId,
+          hostUserId,
+          period.start,
+          period.end,
+        ),
+        agencyCommissionRepository.sumHostDailyEarnings(
+          agencyUserId,
+          hostUserId,
+          last3Months.start,
+          last3Months.end,
+        ),
+        prismaRead.user.findUnique({
+          where: { id: hostUserId },
+          select: { hourlyWage: true },
+        }),
+      ])
+
     const map = Object.fromEntries(rows.map((r) => [r.txType, r.totalAmount])) as Record<
       string,
       bigint
     >
-
-    let liveEarnings = 0n
-    for (const t of LIVE_COMMISSION_TX_TYPES) {
-      liveEarnings += map[t] ?? 0n
-    }
-    const privateChat = map.VIDEO_CALL ?? 0n
     const subscription = map.SUBSCRIPTION ?? 0n
-    const platformRewards = map.PLATFORM_REWARD ?? 0n
-
-    let other = 0n
-    for (const pt of COMMISSION_ELIGIBLE_TX_TYPES) {
-      if (!LIVE_COMMISSION_TX_TYPES.has(pt) && !MATCH_CHAT_COMMISSION_TX_TYPES.has(pt)) {
-        other += map[pt] ?? 0n
-      }
-    }
 
     return {
       hostUserId,
@@ -829,15 +842,23 @@ export const agencyCommissionService = {
       totalEarningsPoints: (
         dailyEarnings.hostEarningsPoints + dailyEarnings.hostCommissionPoints
       ).toString(),
+      /** Host gross points only (`agency_daily_earnings.host_earnings_points`), rolling 90 UTC days. */
+      totalEarningsLast3Months: last3MonthsDaily.hostEarningsPoints.toString(),
+      totalEarningsLast3MonthsFrom: utcDateString(last3Months.start),
+      totalEarningsLast3MonthsTo: utcDateString(last3Months.end),
+      platformHourlySalary: (hostUser?.hourlyWage ?? 0n).toString(),
+      rankReward: '0',
       totals: {
-        allCredits: Object.values(map)
-          .reduce((a, b) => a + b, 0n)
-          .toString(),
-        liveEarnings: liveEarnings.toString(),
-        privateChat: privateChat.toString(),
+        allCredits: buckets.allCredits.toString(),
+        liveEarnings: buckets.liveEarnings.toString(),
+        /** Message / DM gifts only (`GIFT_RECEIVE` + metadata.context = direct). */
+        privateChat: buckets.privateChat.toString(),
+        /** Reserved — tips not implemented yet. */
+        tips: '0',
         subscription: subscription.toString(),
-        platformRewards: platformRewards.toString(),
-        otherEarnings: other.toString(),
+        platformRewards: buckets.platformRewards.toString(),
+        /** Includes VIDEO_CALL and any other non-gift / non-platform-reward credits. */
+        otherEarnings: buckets.otherEarnings.toString(),
       },
       byTxType: rows.map((r) => ({
         txType: r.txType,

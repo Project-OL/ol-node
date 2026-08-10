@@ -1,4 +1,5 @@
-import { prismaRead } from '../config/database'
+import type { PrismaClient } from '@prisma/client'
+import { prisma, prismaRead } from '../config/database'
 import { redisClient, RedisKeys } from '../config/redis'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
 import { endOfUTCDay, startOfUTCDay, toUTCDateOnly, utcNow } from '../utils/datetime'
@@ -7,8 +8,10 @@ import { buildUserDisplayName } from '../utils/user-display'
 /**
  * Read-only aggregation repository for the agency agent dashboard.
  *
- * All queries use `prismaRead` (read replica when configured). This module is
- * strictly read-only — commission ledger writes happen in
+ * Most queries use `prismaRead` (read replica when configured).
+ * `getAgentEarnedToday` uses primary (`prisma`) so post-gift commission
+ * numbers are not held back by replica lag after Redis cache bust.
+ * This module is strictly read-only — commission ledger writes happen in
  * `agencyCommissionService.applyCommission`.
  *
  * Agent-own-earnings eligible point credit types — drives the legacy
@@ -119,8 +122,13 @@ async function getAgencyRateBp(agencyUserId: string): Promise<{ level: string; r
 }
 
 /** Sum the agent's own eligible point credits in `[start, end]` (inclusive instants). */
-async function sumAgentOwnEarnings(agencyUserId: string, start: Date, end: Date): Promise<bigint> {
-  const [row] = await prismaRead.$queryRaw<Array<{ earned: bigint }>>`
+async function sumAgentOwnEarnings(
+  agencyUserId: string,
+  start: Date,
+  end: Date,
+  client: PrismaClient = prismaRead,
+): Promise<bigint> {
+  const [row] = await client.$queryRaw<Array<{ earned: bigint }>>`
     SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS earned
     FROM point_ledger_entries ple
     INNER JOIN wallets w ON w.id = ple.wallet_id
@@ -135,14 +143,17 @@ async function sumAgentOwnEarnings(agencyUserId: string, start: Date, end: Date)
 }
 
 /** Current POINT wallet balance — Redis cache first, ledger fallback. */
-async function getPointsBalance(userId: string): Promise<bigint> {
+async function getPointsBalance(
+  userId: string,
+  client: PrismaClient = prismaRead,
+): Promise<bigint> {
   try {
     const cached = await redisClient.get(RedisKeys.walletPointBalance(userId))
     if (cached != null) return BigInt(cached)
   } catch {
     /* cache miss / parse error → fall through to DB */
   }
-  const [row] = await prismaRead.$queryRaw<Array<{ bal: bigint }>>`
+  const [row] = await client.$queryRaw<Array<{ bal: bigint }>>`
     SELECT COALESCE(
       SUM(CASE WHEN ple.direction = 'CREDIT' THEN ple.amount ELSE -ple.amount END),
       0
@@ -268,7 +279,7 @@ export const agencyDashboardRepository = {
           )::BIGINT
           FROM live_streams ls
           INNER JOIN agency_hosts ah
-            ON ls.user_id = ah.host_user_id::text
+            ON ls.user_id::text = ah.host_user_id::text
            AND ah.agency_user_id = ${agencyUserId}::uuid
           WHERE ls.started_at IS NOT NULL
             AND ls.ended_at IS NOT NULL
@@ -387,9 +398,9 @@ export const agencyDashboardRepository = {
                )::bigint AS live_duration
         FROM live_streams ls
         INNER JOIN agency_hosts ah
-          ON ls.user_id = ah.host_user_id::text
+          ON ls.user_id::text = ah.host_user_id::text
          AND ah.agency_user_id = ${agencyUserId}::uuid
-        WHERE ls.user_id = ade.host_user_id::text
+        WHERE ls.user_id::text = ade.host_user_id::text
           AND ls.started_at IS NOT NULL
           AND ls.ended_at IS NOT NULL
           AND ls.ended_at > ls.started_at
@@ -495,9 +506,9 @@ export const agencyDashboardRepository = {
           )::bigint
           FROM live_streams ls
           INNER JOIN agency_hosts ah
-            ON ls.user_id = ah.host_user_id::text
+            ON ls.user_id::text = ah.host_user_id::text
            AND ah.agency_user_id = ${agencyUserId}::uuid
-          WHERE ls.user_id = ${hostUserId}
+          WHERE ls.user_id::text = ${hostUserId}
             AND ls.started_at IS NOT NULL
             AND ls.ended_at IS NOT NULL
             AND ls.ended_at > ls.started_at
@@ -587,23 +598,26 @@ export const agencyDashboardRepository = {
     const todayStart = startOfUTCDay(now)
     const todayEnd = endOfUTCDay(now)
     const todayDay = toUTCDateOnly(now)
+    // Primary: avoid serving pre-gift totals right after dashboard Redis bust.
+    const db = prisma
 
-    const [todayAgg] = await prismaRead.$queryRaw<Array<{ earned: bigint }>>`
+    const [todayAgg] = await db.$queryRaw<Array<{ earned: bigint }>>`
       SELECT COALESCE(SUM(host_earnings_points + host_commission_points), 0)::BIGINT AS earned
       FROM agency_daily_earnings
       WHERE agency_user_id = ${agencyUserId}::uuid AND day = ${todayDay}::date
     `
 
-    const [allTimeAgg] = await prismaRead.$queryRaw<Array<{ earned: bigint }>>`
+    const [allTimeAgg] = await db.$queryRaw<Array<{ earned: bigint }>>`
       SELECT COALESCE(SUM(host_earnings_points + host_commission_points), 0)::BIGINT AS earned
       FROM agency_daily_earnings
       WHERE agency_user_id = ${agencyUserId}::uuid
     `
 
     const [ownToday, ownAllTime, pointsBalance] = await Promise.all([
-      sumAgentOwnEarnings(agencyUserId, todayStart, todayEnd),
+      sumAgentOwnEarnings(agencyUserId, todayStart, todayEnd, db),
       // All-time agent own eligible credits (no lower bound).
-      prismaRead.$queryRaw<Array<{ earned: bigint }>>`
+      db
+        .$queryRaw<Array<{ earned: bigint }>>`
           SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS earned
           FROM point_ledger_entries ple
           INNER JOIN wallets w ON w.id = ple.wallet_id
@@ -611,8 +625,9 @@ export const agencyDashboardRepository = {
             AND w.currency_type = 'POINT'
             AND ple.direction   = 'CREDIT'
             AND ple.tx_type::text = ANY(${[...AGENT_OWN_EARNINGS_TX_TYPES]}::text[])
-        `.then((rows) => rows[0]?.earned ?? 0n),
-      getPointsBalance(agencyUserId),
+        `
+        .then((rows) => rows[0]?.earned ?? 0n),
+      getPointsBalance(agencyUserId, db),
     ])
 
     const earnedToday = (todayAgg?.earned ?? 0n) + ownToday

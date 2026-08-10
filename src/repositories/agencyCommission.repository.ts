@@ -319,9 +319,9 @@ export const agencyCommissionRepository = {
             )
             FROM live_streams ls
             INNER JOIN agency_hosts ah
-              ON ls.user_id = ah.host_user_id::text
+              ON ls.user_id::text = ah.host_user_id::text
              AND ah.agency_user_id = ${agencyUserId}::uuid
-            WHERE ls.user_id = e.host_user_id::text
+            WHERE ls.user_id::text = e.host_user_id::text
               AND ls.started_at IS NOT NULL
               AND ls.ended_at IS NOT NULL
               AND ls.ended_at > ls.started_at
@@ -436,9 +436,9 @@ export const agencyCommissionRepository = {
              )::bigint AS s
       FROM live_streams ls
       INNER JOIN agency_hosts ah
-        ON ls.user_id = ah.host_user_id::text
+        ON ls.user_id::text = ah.host_user_id::text
        AND ah.agency_user_id = ${agencyUserId}::uuid
-      INNER JOIN users u ON u.id::text = ls.user_id
+      INNER JOIN users u ON u.id::text = ls.user_id::text
       WHERE ls.started_at IS NOT NULL
         AND ls.ended_at IS NOT NULL
         AND ls.ended_at > ls.started_at
@@ -469,9 +469,9 @@ export const agencyCommissionRepository = {
              )::bigint AS s
       FROM live_streams ls
       INNER JOIN agency_hosts ah
-        ON ls.user_id = ah.host_user_id::text
+        ON ls.user_id::text = ah.host_user_id::text
        AND ah.agency_user_id = ${agencyUserId}::uuid
-      WHERE ls.user_id = ${hostUserId}
+      WHERE ls.user_id::text = ${hostUserId}
         AND ls.started_at IS NOT NULL
         AND ls.ended_at IS NOT NULL
         AND ls.ended_at > ls.started_at
@@ -532,5 +532,86 @@ export const agencyCommissionRepository = {
       GROUP BY ple.tx_type
     `
     return rows.map((r) => ({ txType: r.tx_type, totalAmount: r.s }))
+  },
+
+  /**
+   * Host POINT credit buckets for agent host detail UI.
+   * - live: livestream gifts (`LIVESTREAM_GIFT` or `GIFT_RECEIVE` where context ≠ direct)
+   * - privateChat: message gifts (`GIFT_RECEIVE` + metadata.context = direct)
+   * - platformRewards: `PLATFORM_REWARD`
+   * - other: remaining credits (includes `VIDEO_CALL`, subscriptions, etc.)
+   */
+  async aggregateHostEarningsBuckets({
+    hostUserId,
+    agencyUserId,
+    from,
+    toExclusive,
+  }: {
+    hostUserId: string
+    agencyUserId: string
+    from: Date
+    toExclusive: Date
+  }): Promise<{
+    liveEarnings: bigint
+    privateChat: bigint
+    platformRewards: bigint
+    otherEarnings: bigint
+    allCredits: bigint
+  }> {
+    const [row] = await prismaRead.$queryRaw<
+      Array<{
+        live_earnings: bigint
+        private_chat: bigint
+        platform_rewards: bigint
+        other_earnings: bigint
+        all_credits: bigint
+      }>
+    >`
+      SELECT
+        COALESCE(SUM(
+          CASE
+            WHEN ple.tx_type = 'LIVESTREAM_GIFT' THEN ple.amount
+            WHEN ple.tx_type = 'GIFT_RECEIVE'
+              AND COALESCE(ple.metadata->>'context', 'livestream') <> 'direct'
+              THEN ple.amount
+            ELSE 0
+          END
+        ), 0)::bigint AS live_earnings,
+        COALESCE(SUM(
+          CASE
+            WHEN ple.tx_type = 'GIFT_RECEIVE'
+              AND ple.metadata->>'context' = 'direct'
+              THEN ple.amount
+            ELSE 0
+          END
+        ), 0)::bigint AS private_chat,
+        COALESCE(SUM(
+          CASE WHEN ple.tx_type = 'PLATFORM_REWARD' THEN ple.amount ELSE 0 END
+        ), 0)::bigint AS platform_rewards,
+        COALESCE(SUM(
+          CASE
+            WHEN ple.tx_type IN ('LIVESTREAM_GIFT', 'PLATFORM_REWARD') THEN 0
+            WHEN ple.tx_type = 'GIFT_RECEIVE' THEN 0
+            ELSE ple.amount
+          END
+        ), 0)::bigint AS other_earnings,
+        COALESCE(SUM(ple.amount), 0)::bigint AS all_credits
+      FROM point_ledger_entries ple
+      INNER JOIN wallets w ON w.id = ple.wallet_id
+      INNER JOIN users u ON u.id = w.user_id
+      WHERE w.currency_type = 'POINT'
+        AND ple.direction = 'CREDIT'
+        AND w.user_id = ${hostUserId}::uuid
+        AND u.current_agency_id = ${agencyUserId}::uuid
+        AND ple.created_at >= ${from}
+        AND ple.created_at < ${toExclusive}
+    `
+    return {
+      liveEarnings: row?.live_earnings ?? 0n,
+      privateChat: row?.private_chat ?? 0n,
+      platformRewards: row?.platform_rewards ?? 0n,
+      otherEarnings: row?.other_earnings ?? 0n,
+      allCredits: row?.all_credits ?? 0n,
+    }
   },
 }
