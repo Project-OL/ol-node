@@ -6,33 +6,52 @@ import {
 } from '../repositories/messagingConfig.repository'
 import type { MessagingConfigUpdateInput } from '../models/messagingConfig.schemas'
 
-const MIN_WINDOW_MS = 60_000
+const MIN_WINDOW_MS = 1_000 // 1 second
 const MAX_WINDOW_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+
+export type MessagingActionWindowUnit = 'seconds' | 'minutes' | 'hours'
 
 export type MessagingConfigDto = {
   amount: number
-  unit: 'minutes' | 'hours'
+  unit: MessagingActionWindowUnit
   windowMs: number
+  /** Whole minutes (rounded); for sub-minute windows may be 0 use windowMs / amount+unit. */
   windowMinutes: number
+  /** Whole seconds (floor of windowMs / 1000). */
+  windowSeconds: number
   updatedAt: string
 }
 
-export function amountUnitToMs(amount: number, unit: 'minutes' | 'hours'): number {
-  const ms = unit === 'hours' ? amount * 3_600_000 : amount * 60_000
-  return ms
+export function amountUnitToMs(amount: number, unit: MessagingActionWindowUnit): number {
+  if (unit === 'hours') return amount * 3_600_000
+  if (unit === 'minutes') return amount * 60_000
+  return amount * 1_000
 }
 
-/** Prefer whole hours when divisible by 1h; otherwise minutes. */
+/**
+ * Prefer whole hours when divisible by 1h; else whole minutes when divisible by 1m;
+ * otherwise seconds.
+ */
 export function toDisplayAmountUnit(windowMs: number): {
   amount: number
-  unit: 'minutes' | 'hours'
+  unit: MessagingActionWindowUnit
   windowMinutes: number
+  windowSeconds: number
 } {
-  const windowMinutes = Math.max(1, Math.round(windowMs / 60_000))
+  const windowSeconds = Math.max(1, Math.floor(windowMs / 1_000))
+  const windowMinutes = Math.floor(windowMs / 60_000)
   if (windowMs % 3_600_000 === 0) {
-    return { amount: windowMs / 3_600_000, unit: 'hours', windowMinutes }
+    return { amount: windowMs / 3_600_000, unit: 'hours', windowMinutes, windowSeconds }
   }
-  return { amount: windowMinutes, unit: 'minutes', windowMinutes }
+  if (windowMs % 60_000 === 0) {
+    return {
+      amount: Math.max(1, windowMinutes),
+      unit: 'minutes',
+      windowMinutes: Math.max(1, windowMinutes),
+      windowSeconds,
+    }
+  }
+  return { amount: windowSeconds, unit: 'seconds', windowMinutes, windowSeconds }
 }
 
 function serialize(row: { actionWindowMs: number; updatedAt: Date }): MessagingConfigDto {
@@ -43,6 +62,7 @@ function serialize(row: { actionWindowMs: number; updatedAt: Date }): MessagingC
     unit: display.unit,
     windowMs,
     windowMinutes: display.windowMinutes,
+    windowSeconds: display.windowSeconds,
     updatedAt: row.updatedAt.toISOString(),
   }
 }
@@ -52,7 +72,21 @@ export const messagingConfigService = {
     const key = RedisKeys.messagingConfig()
     try {
       const hit = await redisClient.get(key)
-      if (hit) return JSON.parse(hit) as MessagingConfigDto
+      if (hit) {
+        const parsed = JSON.parse(hit) as MessagingConfigDto
+        // Older cache payloads may omit windowSeconds — recompute from windowMs.
+        if (typeof parsed.windowSeconds !== 'number' && typeof parsed.windowMs === 'number') {
+          const display = toDisplayAmountUnit(parsed.windowMs)
+          return {
+            ...parsed,
+            amount: display.amount,
+            unit: display.unit,
+            windowMinutes: display.windowMinutes,
+            windowSeconds: display.windowSeconds,
+          }
+        }
+        return parsed
+      }
     } catch {
       /* miss */
     }
@@ -84,7 +118,7 @@ export const messagingConfigService = {
     if (rawMs < MIN_WINDOW_MS || rawMs > MAX_WINDOW_MS) {
       throw new AppError(
         400,
-        `Action window must be between 1 minute and 7 days (got ${input.amount} ${input.unit})`,
+        `Action window must be between 1 second and 7 days (got ${input.amount} ${input.unit})`,
         'INVALID_ACTION_WINDOW',
       )
     }

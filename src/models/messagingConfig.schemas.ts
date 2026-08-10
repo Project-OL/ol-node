@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const MessagingActionWindowUnitSchema = z.enum(['minutes', 'hours'])
+export const MessagingActionWindowUnitSchema = z.enum(['seconds', 'minutes', 'hours'])
 
 export const MessagingConfigUpdateSchema = z.object({
   amount: z.number().int().positive(),
