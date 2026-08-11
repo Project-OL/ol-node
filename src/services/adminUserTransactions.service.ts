@@ -52,7 +52,10 @@ export const adminUserTransactionsService = {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     resolveCoinHistoryTxTypes(filter.types)
-    return coinWalletService.getHistory(userId, filter)
+    return coinWalletService.getHistory(userId, {
+      ...filter,
+      alwaysIncludeUserCounterparty: true,
+    })
   },
 
   async listPointTransactions(
@@ -62,7 +65,10 @@ export const adminUserTransactionsService = {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     resolvePointHistoryTxTypes(filter.types)
-    return pointWalletService.getHistory(userId, filter)
+    return pointWalletService.getHistory(userId, {
+      ...filter,
+      alwaysIncludeUserCounterparty: true,
+    })
   },
 
   async listTradingCoinTransactions(

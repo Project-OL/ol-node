@@ -70,6 +70,7 @@ async function listEnrichedTradingTransactions(
     includeTransferFields?: boolean
     includeLegacyCounterparty?: boolean
     requireAgent?: boolean
+    alwaysIncludeUserCounterparty?: boolean
   },
 ) {
   if (opts.fromDate && opts.toDate && opts.fromDate > opts.toDate) {
@@ -112,7 +113,9 @@ async function listEnrichedTradingTransactions(
     createdAt: e.createdAt,
   }))
 
-  const enriched = await enrichLedgerEntries(baseEntries, 'TRADING_COIN', userId)
+  const enriched = await enrichLedgerEntries(baseEntries, 'TRADING_COIN', userId, {
+    alwaysIncludeUserCounterparty: opts.alwaysIncludeUserCounterparty === true,
+  })
 
   let transferByLedgerId = new Map<
     string,
@@ -1025,6 +1028,7 @@ export const coinTradingService = {
       includeTransferFields: true,
       includeLegacyCounterparty: false,
       requireAgent: false,
+      alwaysIncludeUserCounterparty: true,
     })
   },
 

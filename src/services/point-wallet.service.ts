@@ -397,6 +397,8 @@ export const pointWalletService = {
       to?: string
       cursor?: string
       limit: number
+      /** Admin history: always fill user counterpartyDetails when counterpartyId is set. */
+      alwaysIncludeUserCounterparty?: boolean
     },
   ) {
     let ledgerTypes: PointTxType[] | undefined
@@ -442,7 +444,9 @@ export const pointWalletService = {
       }
     })
 
-    const counterpartyMap = await buildCounterpartyDetailsMap(baseEntries, 'POINT', userId)
+    const counterpartyMap = await buildCounterpartyDetailsMap(baseEntries, 'POINT', userId, {
+      alwaysIncludeUserCounterparty: filter.alwaysIncludeUserCounterparty === true,
+    })
 
     return {
       entries: baseEntries.map((e) => ({

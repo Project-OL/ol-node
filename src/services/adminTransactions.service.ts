@@ -26,6 +26,10 @@ import {
   walletLevelService,
 } from './user-level.service'
 import { agencyCommissionService } from './agencyCommission.service'
+import {
+  buildAdminCounterpartyDetailsMap,
+  type CounterpartyDetails,
+} from '../utils/ledger-transaction-enrichment'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -999,6 +1003,12 @@ type PointLedgerRow = Awaited<
   ReturnType<typeof adminTransactionsRepository.listPointLedger>
 >[number]
 
+function walletContextForCoinRow(
+  currencyType: WalletCurrencyType,
+): 'COIN' | 'TRADING_COIN' {
+  return currencyType === WalletCurrencyType.TRADING_COIN ? 'TRADING_COIN' : 'COIN'
+}
+
 async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
   const counterpartyIds = page
     .map((e) => e.counterpartyId)
@@ -1032,6 +1042,41 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
     transferByLedger.set(t.recipientLedgerEntryId, t)
   }
 
+  // Trading-coin and personal-coin rows can share a page only if currency filter is omitted;
+  // our list endpoints always filter by currency, but still partition for safety.
+  const coinDetails = await buildAdminCounterpartyDetailsMap(
+    page
+      .filter((e) => e.wallet.currencyType !== WalletCurrencyType.TRADING_COIN)
+      .map((e) => ({
+        id: e.id,
+        direction: e.direction,
+        txType: e.txType,
+        amount: e.amount,
+        refId: e.refId,
+        counterpartyId: e.counterpartyId,
+        metadata: e.metadata,
+        createdAt: e.createdAt,
+        walletUserId: e.wallet.user.id,
+      })),
+    'COIN',
+  )
+  const tradingDetails = await buildAdminCounterpartyDetailsMap(
+    page
+      .filter((e) => e.wallet.currencyType === WalletCurrencyType.TRADING_COIN)
+      .map((e) => ({
+        id: e.id,
+        direction: e.direction,
+        txType: e.txType,
+        amount: e.amount,
+        refId: e.refId,
+        counterpartyId: e.counterpartyId,
+        metadata: e.metadata,
+        createdAt: e.createdAt,
+        walletUserId: e.wallet.user.id,
+      })),
+    'TRADING_COIN',
+  )
+
   return page.map((e) => {
     const cp = e.counterpartyId ? userMap.get(e.counterpartyId) : undefined
     const giftRef = e.refId ?? readMetaString(e.metadata, 'giftTransactionId')
@@ -1040,25 +1085,31 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
     const storeItem = storeItemId ? storeMap.get(storeItemId) : undefined
     const vip = vipMap.get(e.id)
     const tradingTransfer = transferByLedger.get(e.id)
+    const counterpartyDetails: CounterpartyDetails =
+      (e.wallet.currencyType === WalletCurrencyType.TRADING_COIN
+        ? tradingDetails.get(e.id)
+        : coinDetails.get(e.id)) ?? null
 
     return {
       id: e.id,
       direction: e.direction,
       txType: e.txType,
       transactionName: getTransactionName(
-        e.wallet.currencyType === 'TRADING_COIN' ? 'TRADING_COIN' : 'COIN',
+        walletContextForCoinRow(e.wallet.currencyType),
         e.txType,
         e.direction,
       ),
       amount: e.amount.toString(),
       balanceAfter: e.balanceAfter.toString(),
       refId: e.refId,
+      counterpartyId: e.counterpartyId,
       description: e.description,
       metadata: e.metadata,
       createdAt: e.createdAt.toISOString(),
       currencyType: e.wallet.currencyType,
       user: mapUserBrief(e.wallet.user),
       counterparty: cp ? mapUserBrief(cp) : null,
+      counterpartyDetails,
       gift: giftTx
         ? {
             giftTransactionId: giftTx.id,
@@ -1114,6 +1165,21 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
   const giftTxs = await adminTransactionsRepository.findGiftTransactionsByIds(giftTxIds)
   const giftTxMap = new Map(giftTxs.map((g) => [g.id, g]))
 
+  const counterpartyDetailsMap = await buildAdminCounterpartyDetailsMap(
+    page.map((e) => ({
+      id: e.id,
+      direction: e.direction,
+      txType: e.txType,
+      amount: e.amount,
+      refId: e.refId,
+      counterpartyId: e.counterpartyId,
+      metadata: e.metadata,
+      createdAt: e.createdAt,
+      walletUserId: e.wallet.user.id,
+    })),
+    'POINT',
+  )
+
   return page.map((e) => {
     const cp = e.counterpartyId ? userMap.get(e.counterpartyId) : undefined
     const giftRef = e.refId ?? readMetaString(e.metadata, 'giftTransactionId')
@@ -1127,11 +1193,13 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
       amount: e.amount.toString(),
       balanceAfter: e.balanceAfter.toString(),
       refId: e.refId,
+      counterpartyId: e.counterpartyId,
       description: e.description,
       metadata: e.metadata,
       createdAt: e.createdAt.toISOString(),
       user: mapUserBrief(e.wallet.user),
       counterparty: cp ? mapUserBrief(cp) : null,
+      counterpartyDetails: counterpartyDetailsMap.get(e.id) ?? null,
       gift: giftTx
         ? {
             giftTransactionId: giftTx.id,

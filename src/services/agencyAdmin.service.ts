@@ -571,12 +571,14 @@ export const agencyAdminService = {
             : null
         const senderUserId =
           typeof meta?.senderUserId === 'string' ? meta.senderUserId : null
+        const host = toCard(e.counterpartyId)
         return {
           id: e.id,
           direction: e.direction,
           amount: e.amount.toString(),
           balanceAfter: e.balanceAfter.toString(),
           refId: e.refId,
+          counterpartyId: e.counterpartyId,
           description: e.description,
           createdAt: e.createdAt.toISOString(),
           category: typeof meta?.category === 'string' ? meta.category : null,
@@ -590,8 +592,17 @@ export const agencyAdminService = {
           quantity: typeof meta?.quantity === 'number' ? meta.quantity : null,
           unitCoinCost: typeof meta?.unitCoinCost === 'number' ? meta.unitCoinCost : null,
           senderUserId,
-          host: toCard(e.counterpartyId),
+          host,
           sender: toCard(senderUserId),
+          /** Wallet-history shape for the host (ledger counterparty). */
+          counterpartyDetails: host
+            ? {
+                userId: host.userId,
+                name: host.name,
+                publicId: host.publicId,
+                avatarUrl: host.avatarUrl,
+              }
+            : null,
         }
       }),
       nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,

@@ -125,10 +125,20 @@ async function loadAgencyOwnerByForceExitRef(
   return row?.agencyUserId ?? null
 }
 
+export type BuildCounterpartyDetailsOptions = {
+  /**
+   * When true (admin lists), always attach user `counterpartyDetails`
+   * (name, publicId, userId, avatarUrl) whenever `counterpartyId` resolves,
+   * not only for the wallet-history tx-type allow-list.
+   */
+  alwaysIncludeUserCounterparty?: boolean
+}
+
 export async function buildCounterpartyDetailsMap(
   entries: LedgerEntryLike[],
   walletContext: LedgerWalletContext,
   walletUserId: string,
+  options?: BuildCounterpartyDetailsOptions,
 ): Promise<Map<string, CounterpartyDetails>> {
   const result = new Map<string, CounterpartyDetails>()
   if (entries.length === 0) return result
@@ -258,6 +268,14 @@ export async function buildCounterpartyDetailsMap(
       details = user ? mapUserCounterpartyDetails(user) : null
     }
 
+    if (options?.alwaysIncludeUserCounterparty && entry.counterpartyId) {
+      const user = userMap.get(entry.counterpartyId)
+      if (user) {
+        const userDetails = mapUserCounterpartyDetails(user)
+        details = details ? { ...details, ...userDetails } : userDetails
+      }
+    }
+
     result.set(entry.id, details)
   }
 
@@ -280,9 +298,47 @@ export async function enrichLedgerEntries<T extends LedgerEntryLike & Record<str
   entries: T[],
   walletContext: LedgerWalletContext,
   walletUserId: string,
+  options?: BuildCounterpartyDetailsOptions,
 ): Promise<Array<T & { transactionName: string; counterpartyDetails: CounterpartyDetails }>> {
-  const counterpartyMap = await buildCounterpartyDetailsMap(entries, walletContext, walletUserId)
+  const counterpartyMap = await buildCounterpartyDetailsMap(
+    entries,
+    walletContext,
+    walletUserId,
+    options,
+  )
   return entries.map((entry) =>
     enrichLedgerEntry(entry, walletContext, counterpartyMap.get(entry.id) ?? null),
   )
+}
+
+/**
+ * Admin multi-wallet lists: build counterpartyDetails per wallet owner
+ * (force-exit agency-owner lookup is scoped to the ledger wallet user).
+ */
+export async function buildAdminCounterpartyDetailsMap(
+  entries: Array<LedgerEntryLike & { walletUserId: string }>,
+  walletContext: LedgerWalletContext,
+): Promise<Map<string, CounterpartyDetails>> {
+  const result = new Map<string, CounterpartyDetails>()
+  if (entries.length === 0) return result
+
+  const byWalletUser = new Map<string, LedgerEntryLike[]>()
+  for (const entry of entries) {
+    const list = byWalletUser.get(entry.walletUserId) ?? []
+    list.push(entry)
+    byWalletUser.set(entry.walletUserId, list)
+  }
+
+  await Promise.all(
+    [...byWalletUser.entries()].map(async ([walletUserId, group]) => {
+      const map = await buildCounterpartyDetailsMap(group, walletContext, walletUserId, {
+        alwaysIncludeUserCounterparty: true,
+      })
+      for (const [id, details] of map) {
+        result.set(id, details)
+      }
+    }),
+  )
+
+  return result
 }

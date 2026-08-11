@@ -731,6 +731,8 @@ export const coinWalletService = {
       to?: string
       cursor?: string
       limit: number
+      /** Admin history: always fill user counterpartyDetails when counterpartyId is set. */
+      alwaysIncludeUserCounterparty?: boolean
     },
   ) {
     let ledgerTypes: CoinTxType[] | undefined
@@ -772,7 +774,9 @@ export const coinWalletService = {
       createdAt: e.createdAt,
     }))
 
-    const enriched = await enrichLedgerEntries(baseEntries, 'COIN', userId)
+    const enriched = await enrichLedgerEntries(baseEntries, 'COIN', userId, {
+      alwaysIncludeUserCounterparty: filter.alwaysIncludeUserCounterparty === true,
+    })
 
     return {
       entries: enriched.map((e) => ({
