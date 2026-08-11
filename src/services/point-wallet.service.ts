@@ -303,6 +303,17 @@ export const pointWalletService = {
           tx,
         )
 
+        const { rankingService } = await import('./ranking.service')
+        await rankingService.onHostPointCredit(
+          {
+            hostUserId: userId,
+            amount,
+            txType,
+            day: utcDayFromTimestamp(new Date()),
+          },
+          tx,
+        )
+
         const lr = await walletLevelService.applyCredit(tx, userId, LevelType.LIVESTREAM, amount)
 
         return {
@@ -670,6 +681,17 @@ export const pointWalletService = {
       )
       bustAgentUserId = ac.bustAgentUserId
     }
+
+    const { rankingService } = await import('./ranking.service')
+    await rankingService.onHostPointCredit(
+      {
+        hostUserId: userId,
+        amount,
+        txType,
+        day: utcDayFromTimestamp(new Date()),
+      },
+      tx,
+    )
 
     const applyXp = options.applyLivestreamLevel === true
     let livestreamLevelResult: Awaited<ReturnType<typeof walletLevelService.applyCredit>> | null =

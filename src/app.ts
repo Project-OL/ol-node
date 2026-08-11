@@ -45,6 +45,7 @@ import callRoutes from './routes/v1/call.routes'
 import giftRoutes from './routes/v1/gift.routes'
 import giftGalleryRoutes from './routes/v1/gift-gallery.routes'
 import fanRankingRoutes from './routes/v1/fan-ranking.routes'
+import rankingRoutes from './routes/v1/ranking.routes'
 import subscriptionRoutes from './routes/v1/subscription.routes'
 import guardianRoutes from './routes/v1/guardian.routes'
 import { registerAdminAuthRoutes } from './routes/v1/admin-auth.routes'
@@ -228,6 +229,7 @@ export async function buildApp() {
   await app.register(giftRoutes, { prefix: `${prefix}/gifts` })
   await app.register(giftGalleryRoutes, { prefix: `${prefix}/gift-gallery` })
   await app.register(fanRankingRoutes, { prefix: `${prefix}/fan-ranking` })
+  await app.register(rankingRoutes, { prefix: `${prefix}/rankings` })
   await app.register(subscriptionRoutes, { prefix: `${prefix}/subscriptions` })
   await app.register(guardianRoutes, { prefix: `${prefix}/guardian` })
   await app.register(

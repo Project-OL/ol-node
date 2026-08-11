@@ -184,6 +184,9 @@ export const richTierService = {
       tx,
     )
 
+    const { rankingService } = await import('./ranking.service')
+    await rankingService.onRecharge({ userId, coins: amountCoins }, tx)
+
     const agg = await richTierRepository.getMonthlyAggregateInTx(userId, year, month, tx)
     const monthTotal = agg?.totalRechargeCoins ?? amountCoins
 

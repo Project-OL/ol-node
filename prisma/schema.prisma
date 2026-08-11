@@ -2334,6 +2334,30 @@ model AgencyDailyEarning {
   @@map("agency_daily_earnings")
 }
 
+/// Platform leaderboards: Host / Gift / Rich / Agency daily rollups (week/month = SUM over days).
+enum RankingBoard {
+  HOST
+  GIFT
+  RICH
+  AGENCY
+}
+
+model RankingDailyScore {
+  id        String       @id @default(uuid()) @db.Uuid
+  board     RankingBoard
+  entityId  String       @map("entity_id") @db.Uuid
+  day       DateTime     @db.Date
+  score     BigInt       @default(0)
+  /// Denormalized `users.country` (Title Case) for filter index; nullable = unknown.
+  country   String?      @db.VarChar(100)
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  @@unique([board, entityId, day])
+  @@index([board, day, score(sort: Desc)])
+  @@index([board, day, country, score(sort: Desc)])
+  @@map("ranking_daily_scores")
+}
+
 /// Marks a host point ledger entry as processed for agency commission (same tx as applyCommission).
 model AgencyCommissionProcessed {
   hostLedgerEntryId String   @id @map("host_ledger_entry_id") @db.Uuid

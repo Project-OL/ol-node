@@ -131,6 +131,9 @@ import {
 import { LEDGER_AUDIT_JOB, LEDGER_AUDIT_QUEUE } from './queues/ledger-audit.constants'
 import { processLedgerAuditJob } from './jobs/ledger-audit.job'
 import type { LedgerAuditJobData } from './queues/ledger-audit.queue'
+import { RANKING_BACKFILL_QUEUE } from './queues/ranking.constants'
+import { registerRankingReconcileJob } from './queues/ranking.queue'
+import { processRankingBackfillJob } from './jobs/ranking-backfill.job'
 
 const ACCOUNT_DELETION_QUEUE = 'account-deletion'
 
@@ -145,6 +148,7 @@ async function main() {
   await registerMessageOutboxScheduledJobs()
   await registerPlatformBroadcastSweep()
   await registerPushBroadcastSweep()
+  await registerRankingReconcileJob()
 
   const accountDeletionQueue = new Queue(ACCOUNT_DELETION_QUEUE, {
     connection,
@@ -182,6 +186,12 @@ async function main() {
   const ledgerAuditWorker = new Worker(
     LEDGER_AUDIT_QUEUE,
     async (job: Job<LedgerAuditJobData>) => processLedgerAuditJob(job),
+    { connection, concurrency: 1 },
+  )
+
+  const rankingBackfillWorker = new Worker(
+    RANKING_BACKFILL_QUEUE,
+    async (job: Job) => processRankingBackfillJob(job),
     { connection, concurrency: 1 },
   )
 
@@ -677,6 +687,8 @@ async function main() {
     await agencyLevelRecomputeWorker.close()
     await agencyLevelRecomputeQueue.close()
     await agencyLeaveWorker.close()
+    await ledgerAuditWorker.close()
+    await rankingBackfillWorker.close()
     await agencyLeaveAutoApproveQueue.close()
     await vipMembershipExpiryWorker.close()
     await richTierRolloverWorker.close()

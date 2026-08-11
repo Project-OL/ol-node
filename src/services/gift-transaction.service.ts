@@ -205,6 +205,17 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
             tx,
           )
           bustAgentUserId = ac.bustAgentUserId
+
+          const { rankingService } = await import('./ranking.service')
+          await rankingService.onHostPointCredit(
+            {
+              hostUserId: params.receiverUserId,
+              amount: pt,
+              txType: PointTxType.GIFT_RECEIVE,
+              day: utcDayFromTimestamp(new Date()),
+            },
+            tx,
+          )
         }
 
         const gt = await giftTransactionRepository.create(tx, {

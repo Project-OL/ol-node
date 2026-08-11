@@ -132,6 +132,52 @@ export function mapAgencyToPublicProfile(params: {
 }
 
 export const agencyRankingService = {
+  /** Full agency card by agency owner user id (same shape as ranking items, without `rank`). */
+  async getPublicByUserId(agencyUserId: string): Promise<AgencyPublicProfile | null> {
+    const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
+    if (!agency) return null
+
+    const [levelsMap, owner, kyc, coinsellerRows] = await Promise.all([
+      walletLevelService.getDisplayLevelsForUsers([agency.userId]),
+      prismaRead.user.findUnique({
+        where: { id: agency.userId },
+        select: {
+          publicId: true,
+          defaultPublicId: true,
+          currentVipPublicId: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+          gender: true,
+          dateOfBirth: true,
+          avatarUrl: true,
+        },
+      }),
+      prismaRead.agencyApplicationKyc.findUnique({
+        where: { userId: agency.userId },
+        select: { contactPhone: true },
+      }),
+      agencyCoinsellerRepository.findManyByAgencyUserIds([agency.userId]),
+    ])
+
+    const coinseller = coinsellerRows[0] ?? null
+    const lv = levelsMap.get(agency.userId)
+    return mapAgencyToPublicProfile({
+      agency,
+      owner,
+      wealthLevel: lv?.wealthLevel ?? 0,
+      livestreamLevel: lv?.livestreamLevel ?? 0,
+      agencyContactNumber: kyc?.contactPhone ?? null,
+      coinseller: coinseller
+        ? {
+            priceImageS3Key: coinseller.priceImageS3Key,
+            whatsappNumber: coinseller.whatsappNumber,
+            transferChannel: coinseller.transferChannel,
+          }
+        : null,
+    })
+  },
+
   /** Full agency card by canonical or display public id (same shape as ranking items, without `rank`). */
   async getAgencyPublicProfile(publicIdString: string): Promise<AgencyPublicProfile | null> {
     let pid: bigint
@@ -185,7 +231,8 @@ export const agencyRankingService = {
     })
   },
   /**
-   * Phase 1: sorted by `totalHostsCount` DESC for every period (placeholder until Phase 2 earnings).
+   * Phase 1 discovery: sorted by `totalHostsCount` DESC for every period (placeholder).
+   * Prefer earnings-based `GET /api/v1/rankings/agency` (see platform-rankings-flow.md).
    */
   async getRanking(params: {
     period: AgencyRankingPeriod

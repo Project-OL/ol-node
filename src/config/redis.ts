@@ -215,6 +215,17 @@ export const RedisKeys = {
     `gallery:${hostUserId}:${year}:${month}`,
   fanRanking: (hostUserId: string, periodType: string, periodKey: string) =>
     `fanrank:${hostUserId}:${periodType}:${periodKey}`,
+  /** Platform rankings list cache. */
+  platformRanking: (
+    board: string,
+    period: string,
+    periodKey: string,
+    countryKey: string,
+    limit: number,
+    cursor: string,
+  ) => `ranking:${board}:${period}:${periodKey}:${countryKey}:${limit}:${cursor || '0'}`,
+  /** Bust epoch for platform ranking board write invalidation. */
+  platformRankingEpoch: (board: string) => `ranking:epoch:${board}`,
   giftSendRateLimit: (userId: string) => `rl:gift:send:${userId}`,
   /** O(1) paid subscription access: subscriber may view creator subscriber-only content while key exists. */
   subscriptionAccess: (subscriberId: string, creatorId: string) =>
@@ -464,6 +475,10 @@ export const GALLERY_TEMPLATE_TTL = 600
 export const GIFT_GALLERY_CACHE_TTL = GALLERY_HOST_TTL
 /** Fan ranking: day period (2 min). */
 export const FAN_RANK_DAY_TTL = 120
+/** Platform rankings list (current day bucket). */
+export const PLATFORM_RANKING_DAY_TTL = 60
+/** Platform rankings list (week/month / historical). */
+export const PLATFORM_RANKING_WEEK_MONTH_TTL = 120
 /** Fan ranking: week / month (5 min). */
 export const FAN_RANK_WEEK_MONTH_TTL = 300
 

@@ -263,6 +263,16 @@ export const agencyCommissionService = {
       tx,
     )
 
+    const { rankingService } = await import('./ranking.service')
+    await rankingService.onAgencyEarnings(
+      {
+        agencyUserId,
+        hostEarningsDelta: params.hostPointsCredited,
+        day: params.day,
+      },
+      tx,
+    )
+
     if (commissionPoints > 0n) {
       const hostEntry = await tx.pointLedgerEntry.findUnique({
         where: { id: params.hostLedgerEntryId },
@@ -331,6 +341,7 @@ export const agencyCommissionService = {
         id: true,
         amount: true,
         createdAt: true,
+        txType: true,
         wallet: { select: { userId: true } },
       },
     })
@@ -390,6 +401,30 @@ export const agencyCommissionService = {
           day: utcDayFromTimestamp(hostEntry.createdAt),
           hostEarningsDelta: -hostEntry.amount,
           hostCommissionDelta: -commissionPoints,
+        },
+        tx,
+      )
+
+      const { rankingService } = await import('./ranking.service')
+      await rankingService.onAgencyEarnings(
+        {
+          agencyUserId,
+          hostEarningsDelta: -hostEntry.amount,
+          day: utcDayFromTimestamp(hostEntry.createdAt),
+        },
+        tx,
+      )
+    }
+
+    {
+      const { utcDayFromTimestamp } = await import('../utils/datetime')
+      const { rankingService } = await import('./ranking.service')
+      await rankingService.onHostPointCredit(
+        {
+          hostUserId,
+          amount: -hostEntry.amount,
+          txType: hostEntry.txType,
+          day: utcDayFromTimestamp(hostEntry.createdAt),
         },
         tx,
       )

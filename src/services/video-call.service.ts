@@ -358,6 +358,17 @@ export const videoCallSessionService = {
           },
           tx,
         )
+
+        const { rankingService } = await import('./ranking.service')
+        await rankingService.onHostPointCredit(
+          {
+            hostUserId: session.creatorId,
+            amount: hostPricePerMin,
+            txType: PointTxType.VIDEO_CALL,
+            day: utcDayFromTimestamp(new Date()),
+          },
+          tx,
+        )
         bustAgentUserId = ac.bustAgentUserId
 
         // Livestream XP tracks host earnings: the host's point credit (their set price).
