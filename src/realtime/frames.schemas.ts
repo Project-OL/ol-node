@@ -50,6 +50,15 @@ export const clientFrameSchema = z.discriminatedUnion('t', [
     userIds: userIdList,
   }),
   z.object({
+    t: z.literal('JOIN_SUPPORT_TICKET'),
+    /** Decimal string of `support_tickets.id` (bigint). */
+    ticketId: z.string().regex(/^\d+$/).max(40),
+  }),
+  z.object({
+    t: z.literal('LEAVE_SUPPORT_TICKET'),
+    ticketId: z.string().regex(/^\d+$/).max(40),
+  }),
+  z.object({
     t: z.literal('RESUME'),
     conversations: z
       .array(

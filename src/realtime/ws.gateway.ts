@@ -24,6 +24,8 @@ import { presenceRooms } from './presence-rooms'
 
 import { guardianRooms } from './guardian-rooms'
 
+import { supportTicketRooms } from './support-ticket-rooms'
+
 import { redisConversationSubscriber } from './redis-subscriber'
 
 import { sendServerFrame } from './send-server-frame'
@@ -35,6 +37,13 @@ import { userInboxRooms } from './user-inbox-rooms'
 import { RedisKeys } from '../config/redis'
 
 import { clientFrameSchema } from './frames.schemas'
+
+import { supportRepository } from '../repositories/support.repository'
+
+import {
+  markSupportTicketWatching,
+  unmarkSupportTicketWatching,
+} from '../services/supportRealtime.service'
 
 /** Invalid ticket — same as Phase 1. */
 
@@ -172,6 +181,57 @@ async function handleLeaveGuardian(socketId: string, targetUserIds: string[]): P
   }
 }
 
+async function handleJoinSupportTicket(
+  app: FastifyInstance,
+  socket: WebSocket,
+  userId: string,
+  socketId: string,
+  ticketIdRaw: string,
+): Promise<void> {
+  let ticketId: bigint
+  try {
+    ticketId = BigInt(ticketIdRaw)
+  } catch {
+    sendServerFrame(socket, {
+      t: 'ERROR',
+      code: 'INVALID_TICKET_ID',
+      message: 'ticketId must be a decimal bigint string',
+    })
+    return
+  }
+
+  const ticket = await supportRepository.findTicketById(ticketId)
+  if (!ticket || ticket.userId !== userId) {
+    app.log.warn({ userId, ticketId: ticketIdRaw }, '[ws] JOIN_SUPPORT_TICKET rejected')
+    sendServerFrame(socket, {
+      t: 'ERROR',
+      code: 'SUPPORT_TICKET_FORBIDDEN',
+      message: 'Not allowed to join this support ticket',
+    })
+    return
+  }
+
+  const ticketKey = ticketId.toString()
+  const rs: RegisteredSocket = { socketId, userId, ws: socket }
+  const firstForSocket = supportTicketRooms.join(ticketKey, socketId, rs)
+  if (firstForSocket) {
+    await redisConversationSubscriber.subscribe(RedisKeys.supportTicketChannel(ticketKey))
+  }
+  await markSupportTicketWatching(ticketKey, userId)
+  app.log.info({ userId, socketId, ticketId: ticketKey, msg: 'ws join_support_ticket' }, 'realtime')
+}
+
+async function handleLeaveSupportTicket(
+  userId: string,
+  socketId: string,
+  ticketIdRaw: string,
+): Promise<void> {
+  const ticketKey = ticketIdRaw
+  if (!supportTicketRooms.leave(ticketKey, socketId)) return
+  await redisConversationSubscriber.unsubscribe(RedisKeys.supportTicketChannel(ticketKey))
+  await unmarkSupportTicketWatching(ticketKey, userId)
+}
+
 export function registerRealtimeGateway(app: FastifyInstance): void {
   app.addHook('onReady', async () => {
     await redisConversationSubscriber.ensureStarted()
@@ -258,6 +318,12 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
 
         for (const u of guardianIds) {
           void redisConversationSubscriber.unsubscribe(RedisKeys.guardianWatchChannel(u))
+        }
+
+        const supportTicketIds = supportTicketRooms.leaveAllForSocket(socketId)
+        for (const tid of supportTicketIds) {
+          void redisConversationSubscriber.unsubscribe(RedisKeys.supportTicketChannel(tid))
+          void unmarkSupportTicketWatching(tid, userId)
         }
 
         const inboxIds = userInboxRooms.leaveAllForSocket(socketId)
@@ -381,6 +447,10 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
                 'realtime',
               )
               await handleLeaveGuardian(socketId, frame.userIds)
+            } else if (frame.t === 'JOIN_SUPPORT_TICKET') {
+              await handleJoinSupportTicket(app, socket, userId, socketId, frame.ticketId)
+            } else if (frame.t === 'LEAVE_SUPPORT_TICKET') {
+              await handleLeaveSupportTicket(userId, socketId, frame.ticketId)
             } else if (frame.t === 'RESUME') {
               const rows = await messagingService.getResumeSyncStates(userId, frame.conversations)
 

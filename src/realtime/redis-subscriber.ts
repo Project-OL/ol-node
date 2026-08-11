@@ -4,6 +4,7 @@ import { conversationRooms } from './conversation-rooms'
 import { presenceRooms } from './presence-rooms'
 import { userInboxRooms } from './user-inbox-rooms'
 import { guardianRooms } from './guardian-rooms'
+import { supportTicketRooms } from './support-ticket-rooms'
 import WebSocket from 'ws'
 
 /** Must match `RedisKeys.convChannel` prefix. */
@@ -14,6 +15,8 @@ const USER_INBOX_PREFIX = 'msg:user:'
 const PRESENCE_CHANNEL_PREFIX = 'presence:user:'
 /** Must match `RedisKeys.guardianWatchChannel` prefix. */
 const GUARDIAN_WATCH_PREFIX = 'guardian:user:'
+/** Must match `RedisKeys.supportTicketChannel` prefix. */
+const SUPPORT_TICKET_PREFIX = 'msg:support_ticket:'
 
 function conversationIdFromChannel(channel: string): string | null {
   if (!channel.startsWith(CONV_CHANNEL_PREFIX)) return null
@@ -37,6 +40,24 @@ function guardianWatchTargetUserId(channel: string): string | null {
   if (!channel.startsWith(GUARDIAN_WATCH_PREFIX)) return null
   const id = channel.slice(GUARDIAN_WATCH_PREFIX.length)
   return id.length > 0 ? id : null
+}
+
+function supportTicketIdFromChannel(channel: string): string | null {
+  if (!channel.startsWith(SUPPORT_TICKET_PREFIX)) return null
+  const id = channel.slice(SUPPORT_TICKET_PREFIX.length)
+  return id.length > 0 ? id : null
+}
+
+function fanoutRaw(sockets: Array<{ ws: WebSocket }>, message: string) {
+  for (const rs of sockets) {
+    try {
+      if (rs.ws.readyState === WebSocket.OPEN) {
+        rs.ws.send(message)
+      }
+    } catch {
+      /* ignore broken socket */
+    }
+  }
 }
 
 const redisSubscriberOptions = {
@@ -134,16 +155,12 @@ class RedisRealtimeSubscriber {
       }
       const guardianUserId = guardianWatchTargetUserId(channel)
       if (guardianUserId) {
-        const sockets = guardianRooms.getSockets(guardianUserId)
-        for (const rs of sockets) {
-          try {
-            if (rs.ws.readyState === WebSocket.OPEN) {
-              rs.ws.send(message)
-            }
-          } catch {
-            /* ignore broken socket */
-          }
-        }
+        fanoutRaw(guardianRooms.getSockets(guardianUserId), message)
+        return
+      }
+      const supportTicketId = supportTicketIdFromChannel(channel)
+      if (supportTicketId) {
+        fanoutRaw(supportTicketRooms.getSockets(supportTicketId), message)
       }
     })
   }

@@ -3,6 +3,7 @@ import { supportRepository } from '../repositories/support.repository'
 import { systemAdminRepository } from '../repositories/systemAdmin.repository'
 import { storageService } from './storage.service'
 import { csaNotificationService } from './csaNotification.service'
+import { notifySupportTicketMessage } from './supportRealtime.service'
 import { enqueueSupportTicketAutoclose } from '../queues/support-autoclose.queue'
 import { AppError } from '../middlewares/errorHandler'
 import type {
@@ -184,6 +185,26 @@ export const supportAdminService = {
     await supportRepository.updateReadPointer(ticketId, 'SUPPORT', message.id)
     await invalidateUserCaches(ticket.userId, ticketId)
 
+    const assignedAdminId = ticket.assignedAdminId ?? actor.id
+    void notifySupportTicketMessage({
+      ticketId,
+      ticketPublicId: ticket.publicId,
+      ownerUserId: ticket.userId,
+      assignedAdminId,
+      message: {
+        id: message.id,
+        publicId: message.publicId,
+        senderType: message.senderType,
+        senderUserId: message.senderUserId,
+        content: message.content,
+        imageUrl: message.imageUrl,
+        isAutoReply: message.isAutoReply,
+        createdAt: message.createdAt,
+      },
+    }).catch((err) => {
+      console.warn('[support-admin] realtime notify failed', { ticketId: ticketId.toString(), err })
+    })
+
     return toJsonSafe({
       ...message,
       sender: withName(message.sender),
@@ -209,7 +230,7 @@ export const supportAdminService = {
     // Reason is required in chat; append the 24h contest window notice.
     const closingContent = `${input.note.trim()}\n\n(This ticket was marked ${label}. It will close automatically in 24 hours unless you reply.)`
 
-    await supportRepository.createMessage({
+    const closingMessage = await supportRepository.createMessage({
       ticketId,
       senderType: 'SUPPORT',
       content: closingContent,
@@ -223,6 +244,28 @@ export const supportAdminService = {
     })
 
     await invalidateUserCaches(ticket.userId, ticketId)
+
+    void notifySupportTicketMessage({
+      ticketId,
+      ticketPublicId: ticket.publicId,
+      ownerUserId: ticket.userId,
+      assignedAdminId: ticket.assignedAdminId ?? actor.id,
+      message: {
+        id: closingMessage.id,
+        publicId: closingMessage.publicId,
+        senderType: closingMessage.senderType,
+        senderUserId: closingMessage.senderUserId,
+        content: closingMessage.content,
+        imageUrl: closingMessage.imageUrl,
+        isAutoReply: closingMessage.isAutoReply,
+        createdAt: closingMessage.createdAt,
+      },
+    }).catch((err) => {
+      console.warn('[support-admin] resolve realtime notify failed', {
+        ticketId: ticketId.toString(),
+        err,
+      })
+    })
 
     try {
       await enqueueSupportTicketAutoclose(ticketId, resolvedAt)

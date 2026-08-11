@@ -3025,6 +3025,7 @@ enum PushDeliverySource {
   ADMIN_BROADCAST
   TRANSACTION
   NEW_MESSAGE
+  SUPPORT_TICKET
 }
 
 model PushDeliveryLog {

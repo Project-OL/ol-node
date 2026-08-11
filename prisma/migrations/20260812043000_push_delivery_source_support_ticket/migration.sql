@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "PushDeliverySource" ADD VALUE IF NOT EXISTS 'SUPPORT_TICKET';

@@ -160,6 +160,34 @@ export type ServerFrame =
       type?: string
       clearedCount?: number
     }
+  /** Live support ticket thread (`JOIN_SUPPORT_TICKET` → `msg:support_ticket:{ticketId}`). */
+  | {
+      t: 'SUPPORT_TICKET_MESSAGE'
+      ticketId: string
+      ticketPublicId: string
+      /** Assigned CSA / support admin id when present (deep-link). */
+      assignedAdminId: string | null
+      message: {
+        id: string
+        publicId: string
+        senderType: 'USER' | 'SUPPORT'
+        senderUserId: string | null
+        content: string
+        imageUrl: string | null
+        isAutoReply: boolean
+        createdAt: string
+      }
+    }
+  /** Thin owner inbox digest when a support message arrives (always on `msg:user:{owner}`). */
+  | {
+      t: 'SUPPORT_TICKET_DIGEST'
+      ticketId: string
+      ticketPublicId: string
+      assignedAdminId: string | null
+      senderType: 'USER' | 'SUPPORT'
+      preview: string
+      createdAt: string
+    }
 
 export type ClientFrame =
   | { t: 'JOIN'; conversationId: string }
@@ -173,6 +201,9 @@ export type ClientFrame =
   /** Watch guardian updates for other (or own) user profiles — receives GUARDIAN frames + snapshot. */
   | { t: 'JOIN_GUARDIAN'; userIds: string[] }
   | { t: 'LEAVE_GUARDIAN'; userIds: string[] }
+  /** Join the support ticket thread room (ticket owner only). */
+  | { t: 'JOIN_SUPPORT_TICKET'; ticketId: string }
+  | { t: 'LEAVE_SUPPORT_TICKET'; ticketId: string }
   | {
       t: 'RESUME'
       conversations: Array<{ conversationId: string; afterSeq?: number }>

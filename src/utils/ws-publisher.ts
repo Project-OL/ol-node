@@ -130,3 +130,15 @@ export async function publishServerFrameToGuardianWatchers(
   )
   await redisClient.publish(channel, payload)
 }
+
+/** Fan-out to JOIN_SUPPORT_TICKET viewers on `msg:support_ticket:{ticketId}`. */
+export async function publishServerFrameToSupportTicket(
+  ticketId: string,
+  frame: ServerFrame,
+): Promise<void> {
+  const channel = RedisKeys.supportTicketChannel(ticketId)
+  const payload = JSON.stringify(frame, (_key, value) =>
+    typeof value === 'bigint' ? value.toString() : value,
+  )
+  await redisClient.publish(channel, payload)
+}

@@ -4,6 +4,7 @@ import { supportRepository } from '../repositories/support.repository'
 import { storageService } from './storage.service'
 import { supportAssignmentService } from './supportAssignment.service'
 import { csaNotificationService } from './csaNotification.service'
+import { notifySupportTicketMessage } from './supportRealtime.service'
 import { AppError } from '../middlewares/errorHandler'
 import { SUPPORT_TYPE_CONFIG, isValidSubType, getDefaultPriority } from '../config/support-types.config'
 import type {
@@ -295,6 +296,25 @@ export const supportService = {
         { ticketId },
       )
     }
+
+    void notifySupportTicketMessage({
+      ticketId,
+      ticketPublicId: ticket.publicId,
+      ownerUserId: ticket.userId,
+      assignedAdminId: ticket.assignedAdminId,
+      message: {
+        id: message.id,
+        publicId: message.publicId,
+        senderType: message.senderType,
+        senderUserId: message.senderUserId,
+        content: message.content,
+        imageUrl: message.imageUrl,
+        isAutoReply: message.isAutoReply,
+        createdAt: message.createdAt,
+      },
+    }).catch((err) => {
+      console.warn('[support] realtime notify failed', { ticketId: ticketId.toString(), err })
+    })
 
     return toJsonSafe({
       ...message,

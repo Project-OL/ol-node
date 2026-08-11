@@ -156,6 +156,14 @@ export const RedisKeys = {
    * Same logical channel as legacy `conv:{id}:events`; migrated name for clarity.
    */
   convChannel: (conversationId: string) => `msg:conv:${conversationId}`,
+  /** Support ticket realtime room (`JOIN_SUPPORT_TICKET`). */
+  supportTicketChannel: (ticketId: string) => `msg:support_ticket:${ticketId}`,
+  /**
+   * Refcount of open sockets watching a support ticket for a user (cluster-wide).
+   * INCR on JOIN, DECR on LEAVE; push when count is 0.
+   */
+  supportTicketWatch: (ticketId: string, userId: string) =>
+    `support:ticket:watch:${ticketId}:${userId}`,
   /** Messaging: send message rate limit per user. */
   msgRateLimit: (userId: string) => `ratelimit:msg:send:${userId}`,
   /** Messaging: create conversation rate limit per user. */
