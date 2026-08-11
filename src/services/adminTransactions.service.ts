@@ -33,14 +33,36 @@ import {
 
 const TX_TIMEOUT_MS = 20_000
 
-/** Point credit types that awarded livestream XP (and may have agency commission). */
-const LIVESTREAM_REVERT_POINT_TYPES = new Set<PointTxType>([
+/** Point rows whose original funding was personal COIN (not point-wallet source). */
+const COIN_FUNDED_POINT_TX_TYPES = new Set<PointTxType>([
   PointTxType.GIFT_RECEIVE,
   PointTxType.LIVESTREAM_GIFT,
   PointTxType.VIDEO_CALL,
   PointTxType.SUBSCRIPTION,
   PointTxType.GUARDIAN_PURCHASE,
 ])
+
+/** Point credit types that awarded livestream XP (and may have agency commission). */
+const LIVESTREAM_REVERT_POINT_TYPES = COIN_FUNDED_POINT_TX_TYPES
+
+/**
+ * True point-wallet peer movements (points leave/enter POINT wallets).
+ * Not: coin→points earnings, platform rewards, payroll, or points→trading exchange.
+ */
+const POINT_WALLET_SOURCE_PEER_TYPES = new Set<PointTxType>([
+  PointTxType.AGENT_POINT_TRANSFER,
+  PointTxType.TRANSFER_IN,
+])
+
+/** Shared with per-user admin history. */
+export function resolvePointLedgerRevertability(params: {
+  txType: PointTxType
+  counterpartyId: string | null | undefined
+}): boolean {
+  if (!params.counterpartyId) return false
+  if (COIN_FUNDED_POINT_TX_TYPES.has(params.txType)) return false
+  return POINT_WALLET_SOURCE_PEER_TYPES.has(params.txType)
+}
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -555,6 +577,19 @@ export const adminTransactionsService = {
     const entry = await adminTransactionsRepository.findPointLedgerById(params.ledgerEntryId)
     if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
 
+    if (!resolvePointLedgerRevertability({
+      txType: entry.txType,
+      counterpartyId: entry.counterpartyId,
+    })) {
+      throw new AppError(
+        400,
+        COIN_FUNDED_POINT_TX_TYPES.has(entry.txType)
+          ? 'This point credit was funded from personal COIN (not a point-wallet transfer) and is not admin-revertable'
+          : 'Only point-wallet peer transfers (e.g. agent point transfer) are revertible via this endpoint',
+        'NOT_REVERTABLE',
+      )
+    }
+
     const existing = await adminTransactionsRepository.findExistingPointReversal(entry.id)
     if (existing) {
       throw new AppError(409, 'Ledger entry already reverted', 'ALREADY_REVERTED')
@@ -1057,8 +1092,11 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
             quantity: giftTx.quantity,
           }
         : null,
-      // Peer movement on POINT wallet (POST still needs parties; not a product "counterparty" filter).
-      canRevert: Boolean(e.counterpartyId),
+      // Point-wallet sourced peer transfers only (not coin-funded VIDEO_CALL / gifts / etc.).
+      canRevert: resolvePointLedgerRevertability({
+        txType: e.txType,
+        counterpartyId: e.counterpartyId,
+      }),
     }
   })
 }

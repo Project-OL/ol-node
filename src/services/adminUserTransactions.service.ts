@@ -1,4 +1,4 @@
-import { CoinTxType, WalletCurrencyType } from '@prisma/client'
+import { CoinTxType, PointTxType, WalletCurrencyType } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import {
   COIN_HISTORY_FILTER_VALUES,
@@ -17,7 +17,7 @@ import { coinTradingRepository } from '../repositories/coinTrading.repository'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { coinTradingService } from './coinTrading.service'
-import { resolveCoinLedgerRevertability } from './adminTransactions.service'
+import { resolveCoinLedgerRevertability, resolvePointLedgerRevertability } from './adminTransactions.service'
 
 function parseTradingTypes(filters?: string[]): CoinTxType[] | undefined {
   if (!filters?.length) return undefined
@@ -83,10 +83,13 @@ async function attachCoinRevertFlags<T extends HistoryRow>(
   })
 }
 
-function attachPointRevertFlags<T extends HistoryRow>(rows: T[]) {
+function attachPointRevertFlags<T extends HistoryRow & { txType?: string }>(rows: T[]) {
   return rows.map((row) => ({
     ...row,
-    canRevert: Boolean(row.counterpartyId),
+    canRevert: resolvePointLedgerRevertability({
+      txType: row.txType as PointTxType,
+      counterpartyId: typeof row.counterpartyId === 'string' ? row.counterpartyId : null,
+    }),
     revertVia: null as null,
   }))
 }
