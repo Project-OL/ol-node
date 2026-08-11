@@ -14,6 +14,7 @@ import { auditService } from './audit.service'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { faceRegistrationService } from './faceRegistration.service'
 import { faceRegistrationValidationService } from './face-registration/face-registration.validation.service'
+import { faceLivenessConfigService } from './faceLivenessConfig.service'
 import { FACE_REGISTRATION_ERRORS } from '../constants/face-registration-errors'
 import { buildDuplicateMatchDetails } from './face-registration/face-duplicate-match.service'
 
@@ -89,6 +90,14 @@ export const faceVerificationService = {
     body: { s3Key: string; clientRequestId: string },
     ctx: RequestCtx,
   ) {
+    if (await faceLivenessConfigService.isLivenessRequired()) {
+      throw new AppError(
+        403,
+        'Face Liveness registration is required. Use POST /api/v1/face-registration/session with Amplify Face Liveness.',
+        'FACE_LIVENESS_REQUIRED',
+      )
+    }
+
     const lockKey = RedisKeys.faceRegisterLock(userId)
     const locked = await redisClient.set(lockKey, '1', 'EX', 30, 'NX')
     if (!locked) {

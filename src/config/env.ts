@@ -59,7 +59,16 @@ const envSchema = z
     FACE_MIN_DETECT_CONFIDENCE: z.coerce.number().min(0).max(100).default(98),
     FACE_VERIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(4000),
     FACE_INDEX_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
+    /**
+     * Seed / fallback: block legacy `POST /face-verification/register` when true.
+     * Runtime value is admin-toggleable via `face_liveness_config` (seeded from this on first create).
+     */
     FACE_LIVENESS_REQUIRED: z.coerce.boolean().default(false),
+    /**
+     * Seed / fallback: require mintable STS creds on `POST /face-registration/session`.
+     * Runtime value is admin-toggleable via `face_liveness_config`.
+     */
+    FACE_LIVENESS_CREDENTIALS_REQUIRED: z.coerce.boolean().default(false),
     FACE_REGISTER_RATE_PER_HOUR: z.coerce.number().int().positive().default(5),
     FACE_VERIFY_RATE_PER_HOUR: z.coerce.number().int().positive().default(10),
     /** `worker-face-index` sleep between Postgres polls (ms). */

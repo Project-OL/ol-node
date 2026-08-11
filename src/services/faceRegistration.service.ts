@@ -15,6 +15,7 @@ import { computeFaceRegistrationRiskScore } from './face-registration/face-regis
 import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
 import { publishServerFrameToUser } from '../utils/ws-publisher'
 import type { ServerFrame } from '../realtime/types'
+import { faceLivenessConfigService } from './faceLivenessConfig.service'
 import { rootLogger } from '../utils/rootLogger'
 
 const log = rootLogger.child({ module: 'faceRegistration.service' })
@@ -73,6 +74,18 @@ export const faceRegistrationService = {
     const existing = await faceVerificationRepository.getProfileByUserId(userId)
     if (existing?.status === 'INDEXED') {
       throw new AppError(409, 'Face profile already indexed', 'FACE_REG_ALREADY_INDEXED')
+    }
+
+    // Mint Amplify STS creds before CreateFaceLivenessSession so a missing role
+    // does not leave orphan AWS/DB sessions when credentialsRequired is on.
+    const credentialsRequired = await faceLivenessConfigService.isCredentialsRequired()
+    const credentials = await mintFaceLivenessCredentials(userId)
+    if (credentialsRequired && !credentials) {
+      throw new AppError(
+        503,
+        'Face Liveness temporary credentials are required but could not be minted. Configure FACE_LIVENESS_STS_ROLE_ARN and IAM trust, or disable credentialsRequired in admin system-settings.',
+        'FACE_LIVENESS_CREDENTIALS_UNAVAILABLE',
+      )
     }
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
@@ -147,8 +160,6 @@ export const faceRegistrationService = {
     })
 
     log.info({ userId, sessionId: session.id, awsSessionId }, 'face_registration_session_created')
-
-    const credentials = await mintFaceLivenessCredentials(userId)
 
     return {
       sessionId: session.id,

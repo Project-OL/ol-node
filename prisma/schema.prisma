@@ -1664,6 +1664,20 @@ model MessagingConfig {
   @@map("messaging_config")
 }
 
+/// Singleton: Face Liveness gates (legacy register block + Amplify STS credentials required).
+/// Admin `GET|PUT /admin/system-settings/face-liveness`. First create seeds from env.
+model FaceLivenessConfig {
+  id                   Int      @id @default(1)
+  /// When true, legacy `POST /face-verification/register` is rejected.
+  livenessRequired     Boolean  @default(false) @map("liveness_required")
+  /// When true, `POST /face-registration/session` fails if STS temp creds cannot be minted.
+  credentialsRequired  Boolean  @default(false) @map("credentials_required")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  updatedByUserId      String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("face_liveness_config")
+}
+
 /// Append-only GPS samples; `users.last_*` holds the current fix.
 model UserLocationSample {
   id        String   @id @default(uuid()) @db.Uuid
