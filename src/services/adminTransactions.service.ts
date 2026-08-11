@@ -938,6 +938,43 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
   const giftTxs = await adminTransactionsRepository.findGiftTransactionsByIds(giftTxIds)
   const giftTxMap = new Map(giftTxs.map((g) => [g.id, g]))
 
+  // Personal COIN GIFT_SEND rows usually lack refId — resolve gift_transactions heuristically.
+  const unresolvedGiftSends = page.filter((e) => {
+    if (e.txType !== CoinTxType.GIFT_SEND || !e.counterpartyId) return false
+    const direct = e.refId ?? readMetaString(e.metadata, 'giftTransactionId')
+    return !(direct && giftTxMap.has(direct))
+  })
+  const nearGifts = await adminTransactionsRepository.findGiftTransactionsNearCoinDebits(
+    unresolvedGiftSends.map((e) => ({
+      senderUserId: e.wallet.user.id,
+      receiverUserId: e.counterpartyId!,
+      coinCost: Number(e.amount),
+      giftId: readMetaString(e.metadata, 'giftId'),
+      createdAt: e.createdAt,
+    })),
+  )
+  for (const g of nearGifts) giftTxMap.set(g.id, g)
+
+  const giftTxByLedgerId = new Map<string, (typeof nearGifts)[number]>()
+  for (const e of unresolvedGiftSends) {
+    const giftId = readMetaString(e.metadata, 'giftId')
+    const matches = nearGifts.filter(
+      (g) =>
+        g.senderUserId === e.wallet.user.id &&
+        g.receiverUserId === e.counterpartyId &&
+        g.coinCost === Number(e.amount) &&
+        (!giftId || g.giftId === giftId) &&
+        Math.abs(g.createdAt.getTime() - e.createdAt.getTime()) <= 15_000,
+    )
+    if (matches.length === 0) continue
+    matches.sort(
+      (a, b) =>
+        Math.abs(a.createdAt.getTime() - e.createdAt.getTime()) -
+        Math.abs(b.createdAt.getTime() - e.createdAt.getTime()),
+    )
+    giftTxByLedgerId.set(e.id, matches[0]!)
+  }
+
   const storeItemIds = page
     .map((e) => readMetaString(e.metadata, 'storeItemId'))
     .filter((id): id is string => !!id)
@@ -957,6 +994,17 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
     transferByLedger.set(t.senderLedgerEntryId, t)
     transferByLedger.set(t.recipientLedgerEntryId, t)
   }
+
+  const allGiftIdsOnPage = [
+    ...new Set([
+      ...giftTxs.map((g) => g.id),
+      ...nearGifts.map((g) => g.id),
+      ...[...giftTxByLedgerId.values()].map((g) => g.id),
+    ]),
+  ]
+  const existingGiftReversals =
+    await adminTransactionsRepository.findExistingGiftReversals(allGiftIdsOnPage)
+  const revertedGiftIds = new Set(existingGiftReversals.map((r) => r.giftTransactionId))
 
   // Trading-coin and personal-coin rows can share a page only if currency filter is omitted;
   // our list endpoints always filter by currency, but still partition for safety.
@@ -996,7 +1044,8 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
   return page.map((e) => {
     const cp = e.counterpartyId ? userMap.get(e.counterpartyId) : undefined
     const giftRef = e.refId ?? readMetaString(e.metadata, 'giftTransactionId')
-    const giftTx = giftRef ? giftTxMap.get(giftRef) : undefined
+    const giftTx =
+      (giftRef ? giftTxMap.get(giftRef) : undefined) ?? giftTxByLedgerId.get(e.id)
     const storeItemId = readMetaString(e.metadata, 'storeItemId')
     const storeItem = storeItemId ? storeMap.get(storeItemId) : undefined
     const vip = vipMap.get(e.id)
@@ -1061,14 +1110,65 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
             tradingCoinsDebited: tradingTransfer.tradingCoinsDebited.toString(),
             coinsCredited: tradingTransfer.coinsCredited.toString(),
             recipientWalletType: tradingTransfer.recipientWalletType,
+            reversedAt: tradingTransfer.reversedAt?.toISOString() ?? null,
           }
         : null,
-      // Only TRADING_COIN peer rows are revertible from the admin explorer.
-      // Personal COIN never — use gift / coin-trading-transfer revert routes.
-      canRevert:
-        e.wallet.currencyType === WalletCurrencyType.TRADING_COIN && Boolean(e.counterpartyId),
+      ...resolveCoinLedgerRevertability({
+        currencyType: e.wallet.currencyType,
+        ledgerEntryId: e.id,
+        counterpartyId: e.counterpartyId,
+        giftTxId: giftTx?.id,
+        giftAlreadyReverted: giftTx ? revertedGiftIds.has(giftTx.id) : false,
+        tradingTransfer: tradingTransfer
+          ? { id: tradingTransfer.id, reversedAt: tradingTransfer.reversedAt }
+          : null,
+      }),
     }
   })
+}
+
+/** Where admin should POST when `canRevert` is true (personal COIN never uses coin_ledger). */
+export type AdminCoinRevertVia = {
+  endpoint: 'coin_ledger' | 'gift' | 'coin_trading_transfer'
+  id: string
+}
+
+function resolveCoinLedgerRevertability(params: {
+  currencyType: WalletCurrencyType
+  ledgerEntryId: string
+  counterpartyId: string | null
+  giftTxId?: string
+  giftAlreadyReverted: boolean
+  tradingTransfer: { id: string; reversedAt: Date | null } | null
+}): { canRevert: boolean; revertVia: AdminCoinRevertVia | null } {
+  if (
+    params.currencyType === WalletCurrencyType.TRADING_COIN &&
+    Boolean(params.counterpartyId)
+  ) {
+    return {
+      canRevert: true,
+      revertVia: { endpoint: 'coin_ledger', id: params.ledgerEntryId },
+    }
+  }
+
+  // Personal COIN: route via gift / trading-transfer revert APIs (not coin ledger revert).
+  if (params.giftTxId && !params.giftAlreadyReverted) {
+    return {
+      canRevert: true,
+      revertVia: { endpoint: 'gift', id: params.giftTxId },
+    }
+  }
+  if (params.tradingTransfer && params.tradingTransfer.reversedAt == null) {
+    return {
+      canRevert: true,
+      revertVia: {
+        endpoint: 'coin_trading_transfer',
+        id: params.tradingTransfer.id,
+      },
+    }
+  }
+
+  return { canRevert: false, revertVia: null }
 }
 
 async function enrichPointLedgerRows(page: PointLedgerRow[]) {

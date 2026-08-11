@@ -508,6 +508,48 @@ export const adminTransactionsRepository = {
     })
   },
 
+  /**
+   * Coin GIFT_SEND ledger rows historically omit refId / giftTransactionId.
+   * Match gift_transactions by sender + receiver + coinCost (+ optional giftId)
+   * within a small createdAt window.
+   */
+  async findGiftTransactionsNearCoinDebits(
+    candidates: Array<{
+      senderUserId: string
+      receiverUserId: string
+      coinCost: number
+      giftId?: string
+      createdAt: Date
+    }>,
+  ) {
+    if (candidates.length === 0) return []
+    const or = candidates.map((c) => ({
+      senderUserId: c.senderUserId,
+      receiverUserId: c.receiverUserId,
+      coinCost: c.coinCost,
+      ...(c.giftId ? { giftId: c.giftId } : {}),
+      createdAt: {
+        gte: new Date(c.createdAt.getTime() - 15_000),
+        lte: new Date(c.createdAt.getTime() + 15_000),
+      },
+    }))
+    return prismaRead.giftTransaction.findMany({
+      where: { OR: or },
+      include: {
+        gift: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            displayImageUrl: true,
+            coinCost: true,
+            vipOnly: true,
+          },
+        },
+      },
+    })
+  },
+
   async findStoreItemsByIds(ids: string[]) {
     if (ids.length === 0) return []
     return prismaRead.storeItem.findMany({

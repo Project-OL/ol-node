@@ -171,6 +171,7 @@ export const coinTradingRepository = {
         tradingCoinsDebited: true,
         coinsCredited: true,
         recipientWalletType: true,
+        reversedAt: true,
       },
     })
   },
