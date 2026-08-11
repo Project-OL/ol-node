@@ -1,6 +1,6 @@
 import type { Conversation, ConversationType, Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import type { PlatformConversationType } from '../lib/platform-conversations.constants'
 import { makeDirectPairKey } from '../utils/direct-pair-key'
 
@@ -15,6 +15,19 @@ const conversationMemberUserSelect = {
   avatarUrl: true,
 } as const
 
+export type ConversationMemberUser = {
+  id: string
+  username: string
+  firstName: string | null
+  lastName: string | null
+  /** firstName + lastName (space); empty when both missing. */
+  name: string
+  publicId: bigint
+  defaultPublicId: bigint
+  currentVipPublicId: bigint | null
+  avatarUrl: string | null
+}
+
 export type ConversationWithMembers = Conversation & {
   members: Array<{
     id: string
@@ -26,6 +39,28 @@ export type ConversationWithMembers = Conversation & {
     mutedUntil: Date | null
     isDeleted: boolean
     deletedAt: Date | null
+    user: ConversationMemberUser
+  }>
+}
+
+function mapConversationMemberUser(user: {
+  id: string
+  username: string
+  firstName: string | null
+  lastName: string | null
+  publicId: bigint
+  defaultPublicId: bigint
+  currentVipPublicId: bigint | null
+  avatarUrl: string | null
+}): ConversationMemberUser {
+  return {
+    ...user,
+    name: formatUserName(user),
+  }
+}
+
+function withNamedMembers<T extends {
+  members: Array<{
     user: {
       id: string
       username: string
@@ -37,6 +72,14 @@ export type ConversationWithMembers = Conversation & {
       avatarUrl: string | null
     }
   }>
+}>(conv: T): T {
+  return {
+    ...conv,
+    members: conv.members.map((m) => ({
+      ...m,
+      user: mapConversationMemberUser(m.user),
+    })),
+  }
 }
 
 export type ConversationWithMembersAndLastMessage = ConversationWithMembers & {
@@ -114,7 +157,7 @@ export async function createConversation(data: {
     },
   })
   if (!withMembers) throw new Error('Conversation not found after create')
-  return withMembers as unknown as ConversationWithMembers
+  return withNamedMembers(withMembers) as unknown as ConversationWithMembers
 }
 
 export async function findPlatformConversationForUser(
@@ -327,7 +370,7 @@ export async function findConversationById(
     const member = conv.members.find((m) => m.userId === userId)
     if (!member || member.isDeleted) return null
   }
-  return conv as unknown as ConversationWithMembersAndLastMessage
+  return withNamedMembers(conv) as unknown as ConversationWithMembersAndLastMessage
 }
 
 export async function listConversationsForUser(
@@ -391,7 +434,7 @@ export async function listConversationsForUser(
     members: c.members.map((m) => ({
       id: m.user.id,
       username: m.user.username,
-      name: buildUserDisplayName(m.user),
+      name: formatUserName(m.user),
       avatarUrl: m.user.avatarUrl,
       defaultPublicId: m.user.defaultPublicId.toString(),
       displayPublicId: resolveDisplayPublicId(m.user),

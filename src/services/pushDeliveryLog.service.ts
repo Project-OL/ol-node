@@ -5,7 +5,7 @@ import {
   type PushDeliveryLog,
 } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { rootLogger } from '../utils/rootLogger'
 
 const log = rootLogger.child({ module: 'push-delivery-log' })
@@ -242,7 +242,7 @@ function mapDelivery(
     user: {
       userId: row.user.id,
       username: row.user.username,
-      name: buildUserDisplayName(row.user),
+      name: formatUserName(row.user),
       publicId: row.user.publicId.toString(),
       displayPublicId: resolveDisplayPublicId(row.user),
       avatarUrl: row.user.avatarUrl,

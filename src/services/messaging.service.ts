@@ -7,7 +7,7 @@ import {
 } from '../repositories/message.repository'
 import { blockRepository } from '../repositories/block.repository'
 import { blockService } from './block.service'
-import { resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { prisma } from '../config/database'
 import { followRepository } from '../repositories/follow.repository'
 import { userSettingsService } from './userSettings.service'
@@ -411,8 +411,15 @@ export const messagingService = {
               throw new AppError(403, 'Forbidden', 'FORBIDDEN')
             }
             await cacheService.delete(RedisKeys.userConversations(initiatorId))
+            const conversation = {
+              ...withMembers,
+              members: withMembers.members.map((m) => ({
+                ...m,
+                user: { ...m.user, name: formatUserName(m.user) },
+              })),
+            }
             return {
-              conversation: withMembers as Awaited<
+              conversation: conversation as Awaited<
                 ReturnType<typeof conversationRepository.createConversation>
               >,
               isNew: false,

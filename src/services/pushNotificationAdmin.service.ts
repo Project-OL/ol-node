@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import type { ListPushUsersQuery, ListPushDeliveriesQuery } from '../models/push-notification.schemas'
 import { pushNotificationService } from './pushNotification.service'
 import { pushDeliveryLogService } from './pushDeliveryLog.service'
@@ -81,7 +81,7 @@ export const pushNotificationAdminService = {
     const users: PushEligibleUser[] = rows.map((u) => ({
       userId: u.id,
       username: u.username,
-      name: buildUserDisplayName(u),
+      name: formatUserName(u),
       publicId: u.publicId.toString(),
       displayPublicId: resolveDisplayPublicId(u),
       avatarUrl: u.avatarUrl,

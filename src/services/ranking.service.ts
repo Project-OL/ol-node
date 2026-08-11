@@ -18,7 +18,7 @@ import {
   countryCacheKeySegment,
   normalizeCountryOptional,
 } from '../utils/agency-country'
-import { buildUserDisplayName } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName } from '../utils/user-display'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import {
   getPeriodKeys,
@@ -331,6 +331,7 @@ export const rankingService = {
               userId: row.entityId,
               username: mysteryOn ? '****' : (u?.username ?? ''),
               displayName: mysteryOn ? 'Mystery' : displayName,
+              name: mysteryOn ? '' : u ? formatUserName(u) : '',
               avatarUrl: mysteryOn ? null : (u?.avatarUrl ?? null),
               country: u?.country ?? null,
               gender: mysteryOn ? null : (u?.gender ?? null),

@@ -8,7 +8,7 @@ import { redisClient, RedisKeys } from '../config/redis'
 import { signAccess, signRefresh, verifyRefresh, parseJwtExpiresToSeconds } from '../utils/jwt'
 import { AppError } from '../middlewares/errorHandler'
 import { env } from '../config/env'
-import { displayNameFromUser } from '../utils/profileDisplay'
+import { formatUserName } from '../utils/user-display'
 import { computeDeviceBindingHash, hashIp, hashUserAgent } from '../utils/deviceFingerprint'
 import { authSessionMetrics } from './auth-observability'
 import { auditService } from './audit.service'
@@ -316,7 +316,7 @@ export const sessionService = {
           userId: user.id,
           publicId,
           passwordSet,
-          name: displayNameFromUser(user),
+          name: formatUserName(user),
           avatarUrl: user.avatarUrl,
           deviceId: session.deviceId,
           sessionId: session.id,

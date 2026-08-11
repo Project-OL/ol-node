@@ -5,16 +5,39 @@ import { storageService } from './storage.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { ReportStatus } from '@prisma/client'
 import type { AdminReportListQuery } from '../models/support-admin.schemas'
+import { formatUserName } from '../utils/user-display'
 
 interface AdminActor {
   id: string
   role: string
 }
 
+function withName<T extends { firstName?: string | null; lastName?: string | null } | null | undefined>(
+  u: T,
+): T extends null | undefined ? T : T & { name: string } {
+  if (u == null) return u as any
+  return { ...u, name: formatUserName(u) } as any
+}
+
 function withEvidenceUrls<T extends { evidenceS3Keys: string[] }>(report: T) {
   return {
     ...report,
     evidenceUrls: report.evidenceS3Keys.map((key) => storageService.getCdnOrS3PublicUrl(key)),
+  }
+}
+
+function mapReportUsers<
+  T extends {
+    evidenceS3Keys: string[]
+    reporter?: { firstName?: string | null; lastName?: string | null } | null
+    reportedUser?: { firstName?: string | null; lastName?: string | null } | null
+  },
+>(report: T) {
+  const withUrls = withEvidenceUrls(report)
+  return {
+    ...withUrls,
+    reporter: withName(report.reporter),
+    reportedUser: withName(report.reportedUser),
   }
 }
 
@@ -38,7 +61,7 @@ export const reportAdminService = {
       take: query.limit,
     })
     return toJsonSafe({
-      reports: reports.map(withEvidenceUrls),
+      reports: reports.map(mapReportUsers),
       pagination: { page: query.page, limit: query.limit, total, hasMore: skip + reports.length < total },
     })
   },
@@ -46,7 +69,7 @@ export const reportAdminService = {
   async getReport(reportId: string) {
     const report = await reportRepository.findById(reportId)
     if (!report) throw new AppError(404, 'Report not found', 'REPORT_NOT_FOUND')
-    return toJsonSafe(withEvidenceUrls(report))
+    return toJsonSafe(mapReportUsers(report))
   },
 
   /** First (and only) writer of ReportStatus beyond the PENDING default. */
@@ -66,7 +89,7 @@ export const reportAdminService = {
       reviewedByAdminId: actor.id,
       resolutionNote: input.resolutionNote,
     })
-    return toJsonSafe(withEvidenceUrls(updated))
+    return toJsonSafe(mapReportUsers(updated))
   },
 
   /**
@@ -116,7 +139,7 @@ export const reportAdminService = {
     }
 
     return toJsonSafe({
-      report: withEvidenceUrls(updated),
+      report: mapReportUsers(updated),
       ticket: { id: ticket.id.toString(), publicId: ticket.publicId },
     })
   },

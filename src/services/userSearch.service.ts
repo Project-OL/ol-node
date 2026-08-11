@@ -15,6 +15,7 @@ import { prismaRead } from '../config/database'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { presenceService } from './presence.service'
 import { videoCallSettingsService } from './video-call.service'
+import { buildUserDisplayName, formatUserName } from '../utils/user-display'
 
 export type ResolvedPublicIdentity = {
   userId: string
@@ -48,12 +49,6 @@ export const userSearchService = {
     const user = await userRepository.findByPublicId(numericId)
     if (!user) return null
 
-    const fullName =
-      user.firstName && user.lastName
-        ? `${user.firstName} ${user.lastName}`
-        : (user.firstName ?? user.lastName)
-    const displayName = fullName && fullName.trim().length > 0 ? fullName : user.username
-
     const presence = viewerId
       ? await presenceService.getPublicPresenceForUser(viewerId, user.id)
       : {
@@ -66,7 +61,7 @@ export const userSearchService = {
     return {
       userId: user.id,
       username: user.username ?? '',
-      name: displayName,
+      name: formatUserName(user),
       publicId: String(user.publicId),
       displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
       isAgency: Boolean(user.isAgent),
@@ -147,11 +142,7 @@ export const userSearchService = {
       agencyTag = { isAgent: false, isHost: false }
     }
 
-    const fullName =
-      user.firstName && user.lastName
-        ? `${user.firstName} ${user.lastName}`
-        : (user.firstName ?? user.lastName)
-    const displayName = fullName && fullName.trim().length > 0 ? fullName : user.username
+    const displayName = buildUserDisplayName(user)
 
     const displayPublicId = String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId)
 
@@ -176,7 +167,7 @@ export const userSearchService = {
       publicId: String(user.publicId),
       displayPublicId,
       isAgency: Boolean(user.isAgent),
-      name: displayName,
+      name: formatUserName(user),
       displayName,
       avatarUrl: user.avatarUrl,
       bio: user.bio ?? null,

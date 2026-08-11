@@ -9,7 +9,7 @@ import { vipMembershipRepository } from '../repositories/vipMembership.repositor
 import { vipMembershipService } from './vip-membership.service'
 import { richTierService } from './rich-tier.service'
 import { walletLevelService } from './user-level.service'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 
 function daysRemainingFor(expiresAt: Date, now = new Date()): number {
   if (expiresAt.getTime() <= now.getTime()) return 0
@@ -33,7 +33,7 @@ function mapCounterparty(u: GuardianUserCard, levels?: { livestreamLevel: number
     userId: u.id,
     username: u.username,
     displayName,
-    name: displayName,
+    name: formatUserName(u),
     avatarUrl: u.avatarUrl,
     publicId: u.publicId.toString(),
     displayPublicId: resolveDisplayPublicId(u),

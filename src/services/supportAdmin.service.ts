@@ -18,6 +18,7 @@ import type {
   AdminTicketMessagesQuerySchema,
   AdminUploadUrlSchema,
 } from '../models/support-admin.schemas'
+import { formatUserName } from '../utils/user-display'
 
 const PRESIGN_TTL_SEC = 600
 
@@ -49,6 +50,13 @@ function toJsonSafe<T>(value: T): T {
   ) as T
 }
 
+function withName<T extends { firstName?: string | null; lastName?: string | null } | null | undefined>(
+  u: T,
+): T extends null | undefined ? T : T & { name: string } {
+  if (u == null) return u as any
+  return { ...u, name: formatUserName(u) } as any
+}
+
 async function invalidateUserCaches(userId: string, ticketId: bigint): Promise<void> {
   await Promise.all([
     redisClient.del(RedisKeys.supportTicketList(userId)),
@@ -74,10 +82,15 @@ function assertCanAct(actor: AdminActor, ticket: { assignedAdminId: string | nul
   }
 }
 
-function ticketDto<T extends { status: SupportTicketStatus; assignedAdminId: string | null }>(
+function ticketDto<T extends { status: SupportTicketStatus; assignedAdminId: string | null; user?: any }>(
   ticket: T,
 ) {
-  return { ...ticket, stage: deriveStage(ticket) }
+  const { user, ...rest } = ticket as T & { user?: any }
+  return {
+    ...rest,
+    ...(user !== undefined ? { user: withName(user) } : {}),
+    stage: deriveStage(ticket),
+  }
 }
 
 export const supportAdminService = {
@@ -138,7 +151,10 @@ export const supportAdminService = {
 
     return toJsonSafe({
       ticket: ticketDto(ticket),
-      messages: [...messages].reverse(),
+      messages: [...messages].reverse().map((m) => ({
+        ...m,
+        sender: withName(m.sender),
+      })),
       notes,
       hasMore: messages.length === messageQuery.limit,
       nextCursor:
@@ -168,7 +184,10 @@ export const supportAdminService = {
     await supportRepository.updateReadPointer(ticketId, 'SUPPORT', message.id)
     await invalidateUserCaches(ticket.userId, ticketId)
 
-    return toJsonSafe(message)
+    return toJsonSafe({
+      ...message,
+      sender: withName(message.sender),
+    })
   },
 
   async resolve(

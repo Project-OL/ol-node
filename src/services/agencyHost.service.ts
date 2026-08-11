@@ -14,7 +14,7 @@ import { walletService } from './wallet.service'
 import { walletLevelService } from './user-level.service'
 import { userRepository } from '../repositories/user.repository'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 
 type HostEarningsAgg = {
   hostEarnings: bigint
@@ -73,7 +73,7 @@ function mapHostProfileFields(
     userId: host.id,
     publicId: host.publicId.toString(),
     displayPublicId: resolveDisplayPublicId(host),
-    name: displayName,
+    name: formatUserName(host),
     gender: host.gender,
     age: computeAge(host.dateOfBirth),
     country: host.country ?? null,

@@ -2,7 +2,7 @@ import { prisma, prismaRead } from '../config/database'
 import type { UserFollow, User } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import type { TaggedUser } from '../types/post.types'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { userNotBlockedWithFilter } from '../utils/block-relationship'
 
 interface FollowWithUser {
@@ -400,7 +400,7 @@ export const followRepository = {
       return {
         userId: user.id,
         displayName,
-        name: displayName,
+        name: formatUserName(user),
         publicId: String(user.publicId),
         displayPublicId: resolveDisplayPublicId(user),
         avatarUrl: user.avatarUrl,

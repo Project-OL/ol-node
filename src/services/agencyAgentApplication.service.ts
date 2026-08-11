@@ -3,6 +3,7 @@ import { AppError } from '../middlewares/errorHandler'
 import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { storageService } from './storage.service'
+import { formatUserName } from '../utils/user-display'
 
 function faceImageUrlFromProfile(
   faceProfile: { s3KeyReference?: string | null } | null | undefined,
@@ -66,6 +67,7 @@ export const agencyAgentApplicationService = {
           username: row.user.username,
           firstName: row.user.firstName,
           lastName: row.user.lastName,
+          name: formatUserName(row.user),
           defaultPublicId: row.user.defaultPublicId?.toString(),
           avatarUrl: row.user.avatarUrl ?? null,
           faceImageUrl: faceImageUrlFromProfile(row.user.faceProfile),

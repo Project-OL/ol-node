@@ -3,7 +3,7 @@ import { prisma, prismaRead } from '../config/database'
 import { redisClient, RedisKeys } from '../config/redis'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
 import { endOfUTCDay, startOfUTCDay, toUTCDateOnly, utcNow } from '../utils/datetime'
-import { buildUserDisplayName } from '../utils/user-display'
+import { formatUserName } from '../utils/user-display'
 
 /**
  * Read-only aggregation repository for the agency agent dashboard.
@@ -436,8 +436,7 @@ export const agencyDashboardRepository = {
     const items: HostCommissionItem[] = rows.map((r) => ({
       hostUserId: r.hostUserId,
       displayName: r.displayName ?? null,
-      name: buildUserDisplayName({
-        username: r.displayName ?? '',
+      name: formatUserName({
         firstName: r.firstName,
         lastName: r.lastName,
       }),
@@ -575,8 +574,7 @@ export const agencyDashboardRepository = {
       hostUserId,
       displayName: user?.username ?? null,
       name: user
-        ? buildUserDisplayName({
-            username: user.username,
+        ? formatUserName({
             firstName: user.firstName,
             lastName: user.lastName,
           })

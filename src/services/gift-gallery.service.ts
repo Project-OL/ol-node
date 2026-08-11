@@ -3,6 +3,7 @@ import { giftGalleryRepository } from '../repositories/gift-gallery.repository'
 import { giftRepository } from '../repositories/gift.repository'
 import { AppError } from '../middlewares/errorHandler'
 import { getActivePeriod, getMonthEndIso } from '../utils/galleryPeriod'
+import { formatUserName } from '../utils/user-display'
 import type { GlobalGalleryWithSections } from '../repositories/gift-gallery.repository'
 
 export type GalleryResponse = {
@@ -35,6 +36,7 @@ export type GalleryResponse = {
         username: string
         firstName: string | null
         lastName: string | null
+        name: string
         avatarUrl: string | null
       } | null
     }>
@@ -79,6 +81,7 @@ function firstGifterDto(p: {
     username: p.firstGifter.username,
     firstName: p.firstGifter.firstName,
     lastName: p.firstGifter.lastName,
+    name: formatUserName(p.firstGifter),
     avatarUrl: p.firstGifter.avatarUrl,
   }
 }

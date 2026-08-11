@@ -11,7 +11,7 @@ import {
   redisClient,
   RedisKeys,
 } from '../config/redis'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { storeAdminService } from './store-admin.service'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -27,6 +27,8 @@ export type AdminUserSearchMatchType =
 
 export interface AdminUserSearchResultItem {
   userId: string
+  firstName: string | null
+  lastName: string | null
   name: string
   username: string
   publicId: string
@@ -43,6 +45,8 @@ export interface AdminUserSearchResultItem {
 
 export interface AdminUserSearchHistoryItem {
   userId: string
+  firstName: string | null
+  lastName: string | null
   name: string
   username: string
   publicId: string
@@ -68,7 +72,9 @@ function mapRow(
 ): AdminUserSearchResultItem {
   return {
     userId: row.id,
-    name: buildUserDisplayName(row),
+    firstName: row.firstName,
+    lastName: row.lastName,
+    name: formatUserName(row),
     username: row.username,
     publicId: String(row.publicId),
     displayPublicId: resolveDisplayPublicId(row),
@@ -133,7 +139,9 @@ export const adminUserSearchService = {
       if (!row) continue
       users.push({
         userId: row.id,
-        name: buildUserDisplayName(row),
+        firstName: row.firstName,
+        lastName: row.lastName,
+        name: formatUserName(row),
         username: row.username,
         publicId: String(row.publicId),
         displayPublicId: resolveDisplayPublicId(row),

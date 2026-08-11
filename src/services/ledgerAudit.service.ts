@@ -24,6 +24,7 @@ import {
   checkLedgerBalanceChain,
   pointLedgerBalanceCarriesForward,
 } from './ledger-audit/ledger-balance-chain.helpers'
+import { formatUserName } from '../utils/user-display'
 
 const LOOKBACK_MS = 26 * 60 * 60 * 1000
 const PAGE = 500
@@ -46,6 +47,7 @@ function userSnapshot(u: {
     currentVipPublicId: u.currentVipPublicId?.toString() ?? null,
     firstName: u.firstName,
     lastName: u.lastName,
+    name: formatUserName(u),
     vipSubscriptionActive: u.vipSubscriptionActive,
     vipSubscriptionExpiresAt: u.vipSubscriptionExpiresAt?.toISOString() ?? null,
   }
@@ -786,6 +788,7 @@ export const ledgerAuditService = {
             currentVipPublicId: flag.user.currentVipPublicId?.toString() ?? null,
             firstName: flag.user.firstName,
             lastName: flag.user.lastName,
+            name: formatUserName(flag.user),
             displayId: (
               flag.user.currentVipPublicId ?? flag.user.publicId
             ).toString(),

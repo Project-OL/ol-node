@@ -12,7 +12,7 @@ import { AppError } from '../middlewares/errorHandler'
 import type { ServerFrame } from '../realtime/types'
 import { storageService } from '../services/storage.service'
 import { messagingConfigService } from '../services/messagingConfig.service'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 
 export type MediaItemInput = {
   s3Key: string
@@ -476,7 +476,7 @@ function mapToMessageWithDetails(
       publicId: msg.sender.publicId,
       defaultPublicId: msg.sender.defaultPublicId,
       currentVipPublicId: msg.sender.currentVipPublicId,
-      name: buildUserDisplayName(msg.sender),
+      name: formatUserName(msg.sender),
       displayPublicId: resolveDisplayPublicId(msg.sender),
       avatarUrl: msg.sender.avatarUrl,
     },

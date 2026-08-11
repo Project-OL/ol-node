@@ -3,7 +3,7 @@ import { prismaRead } from '../config/database'
 import { walletRepository } from './wallet.repository'
 import { WalletCurrencyType } from '@prisma/client'
 import { coinLedgerRepository } from './coin-ledger.repository'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 
 const transferUserSelect = {
   id: true,
@@ -224,7 +224,7 @@ export const coinTradingRepository = {
           username: user.username,
           firstName: user.firstName,
           lastName: user.lastName,
-          name: buildUserDisplayName(user),
+          name: formatUserName(user),
           avatarUrl: user.avatarUrl,
           publicId: user.publicId.toString(),
           displayPublicId: resolveDisplayPublicId(user),

@@ -15,9 +15,26 @@ const statusActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('ban') }),
 ])
 
+const firstNamePatchSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(50)
+  .refine((s) => !/[\p{Cc}]/u.test(s), 'Name cannot contain control characters')
+
+const lastNamePatchSchema = z
+  .string()
+  .trim()
+  .max(50)
+  .refine((s) => !/[\p{Cc}]/u.test(s), 'Name cannot contain control characters')
+
 export const adminUserPatchBodySchema = z
   .object({
     username: z.string().trim().min(2).max(255).optional(),
+    /** Legal / display first name. Non-empty when provided (cannot clear via this API). */
+    firstName: firstNamePatchSchema.optional(),
+    /** Legal / display last name. Empty string clears to null. */
+    lastName: lastNamePatchSchema.optional(),
     email: z.string().email().optional(),
     phone: z.string().trim().min(8).max(32).optional(),
     gender: genderSchema.nullable().optional(),

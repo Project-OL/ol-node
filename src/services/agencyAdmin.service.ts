@@ -10,7 +10,7 @@ import { storageService } from './storage.service'
 import { agencyCommissionService, agencyTierWindowMetricNote } from './agencyCommission.service'
 import { env } from '../config/env'
 import { displayNameFromUser } from '../utils/profileDisplay'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { formatPointsAsUsd } from '../utils/points-currency'
 import {
   addUtcDays,
@@ -444,6 +444,7 @@ export const agencyAdminService = {
           hostUserId: r.hostUserId,
           joinedAt: r.joinedAt.toISOString(),
           displayName: buildUserDisplayName(r.host),
+          name: formatUserName(r.host),
           publicId: String(r.host.publicId),
           displayPublicId: resolveDisplayPublicId(r.host),
           username: r.host.username,
@@ -542,6 +543,7 @@ export const agencyAdminService = {
       return {
         userId: u.id,
         displayName: buildUserDisplayName(u),
+        name: formatUserName(u),
         publicId: String(u.publicId),
         displayPublicId: resolveDisplayPublicId(u),
         username: u.username,

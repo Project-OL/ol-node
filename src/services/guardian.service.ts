@@ -28,7 +28,7 @@ import {
   syncLevelCacheFromApplyResult,
   type LevelApplyResult,
 } from './user-level.service'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { publishServerFrameToUser, publishServerFrameToGuardianWatchers } from '../utils/ws-publisher'
 import type { ServerFrame } from '../realtime/types'
 
@@ -271,7 +271,7 @@ function mapToListItem(
       id: related.id,
       username: related.username,
       displayName,
-      name: displayName,
+      name: formatUserName(related),
       avatarUrl: related.avatarUrl,
       publicId: related.publicId.toString(),
       displayPublicId: resolveDisplayPublicId(related),
@@ -597,7 +597,7 @@ export const guardianService = {
         userId: top.guardianUserId,
         publicId: guardianUser.publicId.toString(),
         displayPublicId,
-        name: displayName,
+        name: formatUserName(guardianUser),
         avatarUrl: guardianUser.avatarUrl,
       },
     }
@@ -714,7 +714,7 @@ export const guardianService = {
           userId: top.guardianUserId,
           publicId: guardianUser.publicId.toString(),
           displayPublicId,
-          name: displayName,
+          name: formatUserName(guardianUser),
           avatarUrl: guardianUser.avatarUrl,
         },
       }

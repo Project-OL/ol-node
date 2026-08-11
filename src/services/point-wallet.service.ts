@@ -42,6 +42,7 @@ import {
   buildCounterpartyDetailsMap,
   COUNTERPARTY_USER_SELECT,
 } from '../utils/ledger-transaction-enrichment'
+import { buildUserDisplayName, formatUserName } from '../utils/user-display'
 import { enqueuePlatformLedgerMessage } from '../queues/platform-message.queue'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
@@ -59,20 +60,12 @@ type LedgerUserRow = {
   publicId: bigint
 }
 
-function ledgerUserDisplayName(user: LedgerUserRow): string {
-  const fullName =
-    user.firstName && user.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : (user.firstName ?? user.lastName)
-  const trimmed = fullName?.trim()
-  return trimmed && trimmed.length > 0 ? trimmed : user.username
-}
-
 function mapLedgerParticipant(user: LedgerUserRow) {
   return {
     userId: user.id,
     username: user.username,
-    displayName: ledgerUserDisplayName(user),
+    name: formatUserName(user),
+    displayName: buildUserDisplayName(user),
     publicId: user.publicId.toString(),
     avatarUrl: user.avatarUrl,
   }
@@ -147,7 +140,7 @@ async function buildPointTransactionDetail(
   const counterpartyForPayment = counterpartyRow
     ? {
         publicId: counterpartyRow.publicId.toString(),
-        displayName: ledgerUserDisplayName(counterpartyRow),
+        displayName: buildUserDisplayName(counterpartyRow),
       }
     : null
 

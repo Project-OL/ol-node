@@ -15,6 +15,7 @@ import type {
   GetMessagesQuery,
   GetAllTicketsQuery,
 } from '../models/support.schemas'
+import { formatUserName } from '../utils/user-display'
 
 /** Agency promotion / CS force-exit use explicit admin routes (`/admin/agency/*`); do not auto-invoke from ticket lifecycle here. */
 const AUTO_REPLY_CONTENT = 'Thank you for your feedback, we will reply you within 24 hours.'
@@ -27,6 +28,13 @@ function toJsonSafe<T>(value: T): T {
       typeof jsonValue === 'bigint' ? jsonValue.toString() : jsonValue,
     ),
   ) as T
+}
+
+function withName<T extends { firstName?: string | null; lastName?: string | null } | null | undefined>(
+  u: T,
+): T extends null | undefined ? T : T & { name: string } {
+  if (u == null) return u as any
+  return { ...u, name: formatUserName(u) } as any
 }
 
 async function invalidateCaches(userId: string, ticketId: bigint): Promise<void> {
@@ -224,9 +232,13 @@ export const supportService = {
     return toJsonSafe({
       ticket: {
         ...ticket,
+        user: withName(ticket.user),
         ...ticketUserFlags(ticket),
       },
-      messages: chronological,
+      messages: chronological.map((m) => ({
+        ...m,
+        sender: withName(m.sender),
+      })),
       hasMore: messages.length === messageQuery.limit,
       nextCursor:
         messages.length === messageQuery.limit ? String(messages[messages.length - 1]!.id) : null,
@@ -284,7 +296,10 @@ export const supportService = {
       )
     }
 
-    return toJsonSafe(message)
+    return toJsonSafe({
+      ...message,
+      sender: withName(message.sender),
+    })
   },
 
   async closeTicket(ticketId: bigint, csUserId: string) {
@@ -413,6 +428,7 @@ export const supportService = {
           | undefined
         return {
           ...ticket,
+          user: withName(ticket.user),
           hasUnreadMessages: hasUnreadForActor(
             {
               userLastReadMessageId: ticket.userLastReadMessageId ?? null,

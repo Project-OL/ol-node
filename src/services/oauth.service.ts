@@ -20,7 +20,7 @@ import { cacheService } from '../services/cache.service'
 import { providerService } from '../services/provider.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { AuthProvider } from '../models/types'
-import { displayNameFromUser } from '../utils/profileDisplay'
+import { formatUserName } from '../utils/user-display'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 export interface OAuthUserInfo {
@@ -173,7 +173,7 @@ export const oauthService = {
         ipAddress,
         userAgent,
         loginType: provider,
-        displayName: displayNameFromUser(user),
+        displayName: formatUserName(user),
         avatarUrl: user.avatarUrl,
         isSupport: user.isSupport ?? false,
       })
@@ -264,7 +264,7 @@ export const oauthService = {
       ipAddress,
       userAgent,
       loginType: provider,
-      displayName: displayNameFromUser(user),
+      displayName: formatUserName(user),
       avatarUrl: user.avatarUrl,
       isSupport: false,
     })

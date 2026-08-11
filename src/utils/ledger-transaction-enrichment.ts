@@ -1,6 +1,7 @@
 import { CoinTxType, LedgerDirection, PointTxType, Prisma } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { getTransactionName, type LedgerWalletContext } from '../config/transaction-display-names'
+import { formatUserName } from './user-display'
 
 export const COUNTERPARTY_USER_SELECT = {
   id: true,
@@ -48,21 +49,12 @@ type LedgerEntryLike = {
   createdAt: Date
 }
 
-function userDisplayName(user: CounterpartyUserRow): string {
-  const fullName =
-    user.firstName && user.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : (user.firstName ?? user.lastName)
-  const trimmed = fullName?.trim()
-  return trimmed && trimmed.length > 0 ? trimmed : user.username
-}
-
 export function mapUserCounterpartyDetails(
   user: CounterpartyUserRow,
 ): NonNullable<CounterpartyDetails> {
   return {
     userId: user.id,
-    name: userDisplayName(user),
+    name: formatUserName(user),
     publicId: user.publicId.toString(),
     avatarUrl: user.avatarUrl,
   }
@@ -219,7 +211,7 @@ export async function buildCounterpartyDetailsMap(
           addedByAdmin: admin
             ? {
                 adminUserId: adminId,
-                name: userDisplayName(admin),
+                name: formatUserName(admin),
                 publicId: admin.publicId.toString(),
               }
             : { adminUserId: adminId },

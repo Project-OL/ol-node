@@ -7,7 +7,7 @@ import { withdrawalRepository } from '../repositories/withdrawal.repository'
 import { payrollAssignmentRepository } from '../repositories/payrollAssignment.repository'
 import { storageService } from './storage.service'
 import { mapPaymentMethodMaskedForAgent } from '../utils/payment-method-mask'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 
 type AdminUserCard = {
   id: string
@@ -27,7 +27,7 @@ function mapUserCard(u: AdminUserCard) {
     userId: u.id,
     username: u.username,
     displayName,
-    name: displayName,
+    name: formatUserName(u),
     publicId: u.publicId.toString(),
     displayPublicId: resolveDisplayPublicId(u),
     avatarUrl: u.avatarUrl,

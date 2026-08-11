@@ -187,7 +187,7 @@ async function readThroughActiveSubscriberCount(creatorId: string): Promise<numb
   return count
 }
 
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 
 export type TopCreatorCard = {
   userId: string
@@ -205,7 +205,7 @@ function mapTopCreatorRow(row: TopCreatorQueryRow): TopCreatorCard {
     userId: row.id,
     publicId: row.publicId.toString(),
     displayPublicId: resolveDisplayPublicId(row),
-    name: displayName,
+    name: formatUserName(row),
     displayName,
     avatarUrl: row.avatarUrl,
     subscriberCount: row._count.creatorSubsAsHost,
@@ -482,7 +482,7 @@ export const subscriptionService = {
         userId: r.creator.id,
         publicId: r.creator.publicId.toString(),
         displayPublicId: resolveDisplayPublicId(r.creator),
-        name: displayName,
+        name: formatUserName(r.creator),
         username: r.creator.username,
         displayName,
         avatarUrl: r.creator.avatarUrl,
@@ -510,7 +510,7 @@ export const subscriptionService = {
         userId: r.subscriber.id,
         publicId: r.subscriber.publicId.toString(),
         displayPublicId: resolveDisplayPublicId(r.subscriber),
-        name: displayName,
+        name: formatUserName(r.subscriber),
         username: r.subscriber.username,
         displayName,
         avatarUrl: r.subscriber.avatarUrl,

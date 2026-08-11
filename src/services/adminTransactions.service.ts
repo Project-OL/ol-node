@@ -15,7 +15,7 @@ import {
 } from '../repositories/admin-transactions.repository'
 import { coinTradingRepository } from '../repositories/coinTrading.repository'
 import { getTransactionName } from '../config/transaction-display-names'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { auditService } from './audit.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
@@ -54,6 +54,7 @@ const UUID_RE =
 export type AdminUserBrief = {
   userId: string
   username: string
+  name: string
   displayName: string
   publicId: string
   displayPublicId: string
@@ -64,6 +65,7 @@ function mapUserBrief(u: AdminTxnUserRow): AdminUserBrief {
   return {
     userId: u.id,
     username: u.username,
+    name: formatUserName(u),
     displayName: buildUserDisplayName(u),
     publicId: String(u.publicId),
     displayPublicId: resolveDisplayPublicId(u),

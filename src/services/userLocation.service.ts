@@ -1,7 +1,7 @@
 import { AppError } from '../middlewares/errorHandler'
 import { userLocationRepository } from '../repositories/userLocation.repository'
 import { userRepository } from '../repositories/user.repository'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import type { ReportLocationBody } from '../models/user-location.schemas'
 
 function decimalToNumber(v: { toString(): string } | null | undefined): number | null {
@@ -141,7 +141,7 @@ export const userLocationService = {
             userId: r.user.id,
             username: r.user.username,
             displayName,
-            name: displayName,
+            name: formatUserName(r.user),
             publicId: r.user.publicId.toString(),
             displayPublicId: resolveDisplayPublicId(r.user),
             avatarUrl: r.user.avatarUrl,

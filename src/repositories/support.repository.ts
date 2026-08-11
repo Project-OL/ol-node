@@ -316,7 +316,12 @@ export const supportRepository = {
     imageUrl?: string
     isAutoReply?: boolean
   }) {
-    return prisma.supportMessage.create({ data })
+    return prisma.supportMessage.create({
+      data,
+      include: {
+        sender: { select: senderSelect },
+      },
+    })
   },
 
   async findMessages(ticketId: bigint, opts: { cursor?: bigint; take: number }) {

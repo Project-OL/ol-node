@@ -27,7 +27,7 @@ import { walletLevelService } from './user-level.service'
 import { storeAdminService } from './store-admin.service'
 import { adminUserSearchService } from './adminUserSearch.service'
 import { phoneSchema } from '../models/schemas'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { normalizeCountryOptional } from '../utils/agency-country'
 import { normalizeGenderStored } from '../utils/profileDisplay'
 
@@ -185,7 +185,9 @@ export const adminUserDetailService = {
     const detail = {
       userId: row.id,
       username: row.username,
-      name: buildUserDisplayName(row),
+      firstName: row.firstName,
+      lastName: row.lastName,
+      name: formatUserName(row),
       publicId: row.publicId.toString(),
       avatarUrl: row.avatarUrl,
       bio: row.bio,
@@ -270,6 +272,16 @@ export const adminUserDetailService = {
 
     if (body.username != null) {
       await userRepository.update(userId, { username: body.username })
+    }
+
+    if (body.firstName !== undefined || body.lastName !== undefined) {
+      const profilePatch: { firstName?: string; lastName?: string | null } = {}
+      if (body.firstName !== undefined) profilePatch.firstName = body.firstName
+      if (body.lastName !== undefined) {
+        profilePatch.lastName = body.lastName.length > 0 ? body.lastName : null
+      }
+      await userRepository.updateProfile(userId, profilePatch)
+      await meService.invalidateUserCaches(userId)
     }
 
     if (body.gender !== undefined) {

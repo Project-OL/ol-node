@@ -1,4 +1,5 @@
 import { prismaRead } from '../config/database'
+import { buildUserDisplayName, formatUserName } from '../utils/user-display'
 
 export type FanSpendTotalsRow = {
   senderUserId: string
@@ -101,8 +102,7 @@ function displayName(u: {
   lastName: string | null
   username: string
 }): string {
-  const parts = [u.firstName, u.lastName].filter(Boolean).join(' ').trim()
-  return parts || u.username
+  return buildUserDisplayName(u)
 }
 
 export function mapUserToRankingFields(
@@ -111,6 +111,7 @@ export function mapUserToRankingFields(
   return {
     userId: u.id,
     username: u.username,
+    name: formatUserName(u),
     displayName: displayName(u),
     avatarUrl: u.avatarUrl,
     wealthLevel: u.walletUserLevels[0]?.currentLevel ?? 1,

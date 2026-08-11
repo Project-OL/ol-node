@@ -14,7 +14,7 @@ import { faceVerificationAdminService } from './face-verification-admin.service'
 import { agencyHostService } from './agencyHost.service'
 import { deviceBanService } from './device-ban.service'
 import { storageService } from './storage.service'
-import { buildUserDisplayName } from '../utils/user-display'
+import { formatUserName } from '../utils/user-display'
 
 function generateTemporaryPassword(): string {
   const suffix = randomBytes(9)
@@ -99,7 +99,7 @@ export const adminUserModerationService = {
         ? {
             userId: u.id,
             username: u.username,
-            name: buildUserDisplayName(u),
+            name: formatUserName(u),
             avatarUrl: u.avatarUrl,
           }
         : null

@@ -7,7 +7,7 @@ import {
 } from '../repositories/customGift.repository'
 import { coinWalletService } from './coin-wallet.service'
 import { walletService } from './wallet.service'
-import { buildUserDisplayName } from '../utils/user-display'
+import { formatUserName } from '../utils/user-display'
 import { toRequestDto, type CustomGiftRequestDto } from './customGift.service'
 import type {
   CompleteCustomGiftRequestBody,
@@ -40,7 +40,7 @@ function toAdminDto(row: CustomGiftRequestWithUserAndGift): AdminCustomGiftReque
       id: row.user.id,
       username: row.user.username,
       publicId: row.user.publicId.toString(),
-      name: buildUserDisplayName(row.user),
+      name: formatUserName(row.user),
       avatarUrl: row.user.avatarUrl,
       country: row.user.country,
     },

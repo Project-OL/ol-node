@@ -9,7 +9,7 @@ import { subscriptionService } from './subscription.service'
 import { invalidateSocialCountsCache } from './follow.service'
 import { followRepository } from '../repositories/follow.repository'
 
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 
 export type BlockListItem = {
   id: string
@@ -165,7 +165,7 @@ export const blockService = {
           username: b.blocked.username,
           defaultPublicId: b.blocked.defaultPublicId.toString(),
           displayPublicId: resolveDisplayPublicId(b.blocked),
-          name: buildUserDisplayName(b.blocked),
+          name: formatUserName(b.blocked),
           avatarUrl: b.blocked.avatarUrl ?? null,
         },
       })),

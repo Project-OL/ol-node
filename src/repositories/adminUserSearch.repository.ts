@@ -86,14 +86,28 @@ export const adminUserSearchRepository = {
   },
 
   async searchByName(query: string, limit: number): Promise<AdminUserSearchRow[]> {
+    const q = query.trim()
+    const spaceIdx = q.indexOf(' ')
+    const or: Prisma.UserWhereInput[] = [
+      { username: { contains: q, mode: 'insensitive' } },
+      { firstName: { contains: q, mode: 'insensitive' } },
+      { lastName: { contains: q, mode: 'insensitive' } },
+    ]
+    // "Jane Doe" → firstName contains Jane AND lastName contains Doe (multi-match list).
+    if (spaceIdx > 0) {
+      const first = q.slice(0, spaceIdx).trim()
+      const last = q.slice(spaceIdx + 1).trim()
+      if (first.length > 0 && last.length > 0) {
+        or.push({
+          AND: [
+            { firstName: { contains: first, mode: 'insensitive' } },
+            { lastName: { contains: last, mode: 'insensitive' } },
+          ],
+        })
+      }
+    }
     return prismaRead.user.findMany({
-      where: {
-        OR: [
-          { username: { contains: query, mode: 'insensitive' } },
-          { firstName: { contains: query, mode: 'insensitive' } },
-          { lastName: { contains: query, mode: 'insensitive' } },
-        ],
-      },
+      where: { OR: or },
       take: limit,
       orderBy: { createdAt: 'desc' },
       select: adminUserSearchSelect,

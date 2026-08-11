@@ -9,23 +9,11 @@ import { superHostService } from './super-host.service'
 import { guardianService } from './guardian.service'
 import { privacyService } from './privacy.service'
 import { isBlockedEitherWay } from '../utils/block-relationship'
+import { buildUserDisplayName, formatUserName } from '../utils/user-display'
 
 export interface AuditMeta {
   request?: { ip?: string; headers?: Record<string, string | undefined> }
   deviceId?: string | null
-}
-
-function buildDisplayName(user: {
-  username: string
-  firstName: string | null
-  lastName: string | null
-}): string {
-  const fullName =
-    user.firstName && user.lastName
-      ? `${user.firstName} ${user.lastName}`
-      : (user.firstName ?? user.lastName)
-  const trimmed = fullName?.trim()
-  return trimmed && trimmed.length > 0 ? trimmed : user.username
 }
 
 function computeAge(dob: Date | null): number | null {
@@ -75,7 +63,7 @@ async function buildVisitCards(items: VisitRowLike[]): Promise<UserCardWithVisit
     const user = row.user
     const level = levels.get(user.id)
     const subscriberCount = subscriberCounts.get(user.id) ?? 0
-    const displayName = buildDisplayName(user)
+    const displayName = buildUserDisplayName(user)
     const age = computeAge(user.dateOfBirth)
 
     return {
@@ -85,7 +73,7 @@ async function buildVisitCards(items: VisitRowLike[]): Promise<UserCardWithVisit
       publicId: String(user.publicId),
       displayPublicId: String(user.currentVipPublicId ?? user.defaultPublicId ?? user.publicId),
       isAgency: Boolean(user.isAgent),
-      name: displayName,
+      name: formatUserName(user),
       displayName,
       avatarUrl: user.avatarUrl,
       country: user.country ?? null,

@@ -33,7 +33,7 @@ import { AppError } from '../middlewares/errorHandler'
 import { emailSchema, phoneSchema } from '../models/schemas'
 import type { AuthProvider, CheckAvailabilityResult, JwtAccessPayload } from '../models/types'
 import { deviceService } from './device.service'
-import { displayNameFromUser } from '../utils/profileDisplay'
+import { formatUserName } from '../utils/user-display'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 const SIGNUP_VERIFIED_TTL = 300
@@ -199,7 +199,7 @@ export const authV2Service = {
         userId: user.id,
         publicId: Number(publicId),
         passwordSet: true,
-        name: username,
+        name: formatUserName({}),
         avatarUrl: null,
         jti: crypto.randomUUID(),
         tokenVersion: 0,
@@ -266,7 +266,7 @@ export const authV2Service = {
       ipAddress: getIp(request),
       userAgent: getUserAgent(request),
       loginType: 'password',
-      displayName: displayNameFromUser(updated!),
+      displayName: formatUserName(updated!),
       avatarUrl: updated!.avatarUrl,
       isSupport: updated!.isSupport ?? false,
     })
@@ -327,7 +327,7 @@ export const authV2Service = {
       ipAddress: getIp(request),
       userAgent: getUserAgent(request),
       loginType: 'otp',
-      displayName: displayNameFromUser(user),
+      displayName: formatUserName(user),
       avatarUrl: user.avatarUrl,
       isSupport: user.isSupport ?? false,
     })
@@ -404,7 +404,7 @@ export const authV2Service = {
       ipAddress: getIp(request),
       userAgent: getUserAgent(request),
       loginType: 'password',
-      displayName: displayNameFromUser(user),
+      displayName: formatUserName(user),
       avatarUrl: user.avatarUrl,
       isSupport: user.isSupport ?? false,
     })
@@ -1075,7 +1075,7 @@ export const authV2Service = {
       valid: true as const,
       userId: user.id,
       publicId: Number(user.publicId),
-      name: displayNameFromUser(user),
+      name: formatUserName(user),
       avatarUrl: user.avatarUrl,
       passwordSet: user.passwordSet,
       status: user.status,

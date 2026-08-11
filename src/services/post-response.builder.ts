@@ -1,6 +1,6 @@
 import { postRepository } from '../repositories/post.repository'
 import type { PostAuthor, PostResponse, TaggedUser } from '../types/post.types'
-import { buildUserDisplayName, resolveDisplayPublicId } from '../utils/user-display'
+import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 
 export type PostWithRelations = NonNullable<Awaited<ReturnType<typeof postRepository.findById>>>
 
@@ -30,7 +30,7 @@ function toTaggedUser(user: {
   return {
     userId: user.id,
     displayName,
-    name: displayName,
+    name: formatUserName(user),
     publicId: String(user.publicId),
     displayPublicId: resolveDisplayPublicId(user),
     avatarUrl: user.avatarUrl,

@@ -5,7 +5,7 @@ import { agencyRepository } from '../repositories/agency.repository'
 import { agencyCoinsellerRepository } from '../repositories/agencyCoinseller.repository'
 import { agencyCoinsellerService } from './agencyCoinseller.service'
 import { walletLevelService } from './user-level.service'
-import { buildUserDisplayName } from '../utils/user-display'
+import { formatUserName } from '../utils/user-display'
 import { countryCacheKeySegment } from '../utils/agency-country'
 
 export type AgencyRankingPeriod = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'ALL_TIME'
@@ -27,7 +27,7 @@ export type AgencyPublicProfile = {
   /** Agency owner `users.avatar_url` (CDN URL or null). */
   avatarUrl: string | null
   displayName: string
-  /** Agency owner first + last name when set; otherwise username. */
+  /** Agency owner first + last (strict); empty if both missing. No owner → agency displayName. */
   name: string
   totalHostsCount: number
   lifetimeHostEarningsPoints: string
@@ -123,7 +123,7 @@ export function mapAgencyToPublicProfile(params: {
     transferChannel: params.coinseller?.transferChannel ?? 'EPAY',
     avatarUrl: owner?.avatarUrl ?? null,
     displayName: agency.displayName,
-    name: owner ? buildUserDisplayName(owner) : agency.displayName,
+    name: owner ? formatUserName(owner) : agency.displayName,
     totalHostsCount: agency.totalHostsCount,
     lifetimeHostEarningsPoints: agency.lifetimeHostEarningsPoints.toString(),
     currentLevel: agency.currentLevel,

@@ -40,7 +40,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users'],
         description:
-          'Search users by name, user id (UUID), public id, email, phone (E.164), or device id. Use `type=auto` (default) or force a field. Exact single matches are recorded in per-admin search history.',
+          'Search users by name (username / firstName / lastName; multi-match list), user id (UUID), public id, email, phone (E.164), or device id. Use `type=auto` (default) or force a field. Exact single matches are recorded in per-admin search history.',
         querystring: {
           type: 'object',
           required: ['q'],
@@ -93,7 +93,8 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Users'],
-        description: 'Full user profile for admin (identity, VIP, agency, device, status). Also records search history.',
+        description:
+          'Full user profile for admin (identity incl. firstName/lastName/name, VIP, agency, device, status). Also records search history.',
         params: {
           type: 'object',
           required: ['userId'],
@@ -292,7 +293,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users'],
         description:
-          'Partial update — send only fields to change (e.g. `{ "gender": "female" }`). Omitting username/name never clears them. Gender is locked while face verification is active (`FACE_VERIFIED_GENDER_LOCKED`). Revokes sessions on status change.',
+          'Partial update — send only fields to change (e.g. `{ "firstName": "Jane" }`, `{ "gender": "female" }`). Optional `firstName` (non-empty) / `lastName` (empty string clears). Omitting username/name fields never clears them. Gender is locked while face verification is active (`FACE_VERIFIED_GENDER_LOCKED`). Revokes sessions on status change.',
         params: {
           type: 'object',
           required: ['userId'],

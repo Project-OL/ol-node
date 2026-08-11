@@ -14,10 +14,10 @@ import { signAccess } from '../utils/jwt'
 import { AppError } from '../middlewares/errorHandler'
 import { storageService } from './storage.service'
 import {
-  displayNameFromUser,
   normalizeGenderStored,
   splitDisplayName,
 } from '../utils/profileDisplay'
+import { formatUserName } from '../utils/user-display'
 import { detectImageMimeFromBuffer, extensionForImageMime } from '../utils/imageMagic'
 import {
   freeUsernameChangeEligibility,
@@ -81,7 +81,7 @@ function formatDateOfBirthUtc(d: Date): string {
 function toProfileCache(
   row: NonNullable<Awaited<ReturnType<typeof userRepository.findForMe>>>,
 ): MeProfileCache {
-  const name = displayNameFromUser(row)
+  const name = formatUserName(row)
   const displayPublicId = (row.currentVipPublicId ?? row.defaultPublicId ?? row.publicId).toString()
   const usernameUpdatedAt = row.usernameUpdatedAt?.toISOString() ?? null
   const usernameEligibility = freeUsernameChangeEligibility(row.usernameUpdatedAt)
@@ -464,14 +464,13 @@ export const meService = {
       acceptVideoCalls,
     })
 
-    const displayName = displayNameFromUser(fresh)
     const userTv = jwtCtx.tokenVersion ?? (await userRepository.getTokenVersion(userId)) ?? 0
     const accessPayload: Parameters<typeof signAccess>[0] = {
       sub: userId,
       userId,
       publicId: Number(fresh.publicId),
       passwordSet: fresh.passwordSet,
-      name: displayName,
+      name: formatUserName(fresh),
       avatarUrl: fresh.avatarUrl,
       jti: crypto.randomUUID(),
       deviceId: jwtCtx.deviceId,
