@@ -33,16 +33,6 @@ import {
 
 const TX_TIMEOUT_MS = 20_000
 
-/** Coin spend types that awarded wealth XP on the original debit. */
-const WEALTH_REVERT_COIN_TYPES = new Set<CoinTxType>([
-  CoinTxType.GIFT_SEND,
-  CoinTxType.STORE_ITEM_PURCHASE,
-  CoinTxType.GUARDIAN_PURCHASE,
-  CoinTxType.CREATOR_SUBSCRIPTION,
-  CoinTxType.VIDEO_CALL,
-  CoinTxType.CUSTOM_GIFT_REQUEST,
-])
-
 /** Point credit types that awarded livestream XP (and may have agency commission). */
 const LIVESTREAM_REVERT_POINT_TYPES = new Set<PointTxType>([
   PointTxType.GIFT_RECEIVE,
@@ -412,12 +402,11 @@ export const adminTransactionsService = {
   },
 
   /**
-   * Revert a coin (personal or trading) ledger peer transfer:
+   * Revert a **TRADING_COIN** ledger peer transfer:
    * 1) debit receiver  2) credit sender. Fails if receiver lacks balance.
    *
-   * Trading-coin → personal/trading transfers (`coin_trading_transfers`) restore
-   * the agent’s **TRADING_COIN** wallet even when the ledger row being reverted
-   * sits on the recipient’s personal COIN wallet.
+   * Personal COIN ledger rows are not revertible via this route (`NOT_REVERTABLE`).
+   * Use `POST …/coin-trading-transfers/:transferId/revert` or gift revert instead.
    */
   async revertCoinLedgerEntry(params: {
     ledgerEntryId: string
@@ -428,65 +417,24 @@ export const adminTransactionsService = {
     const entry = await adminTransactionsRepository.findCoinLedgerById(params.ledgerEntryId)
     if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
 
+    if (entry.wallet.currencyType !== WalletCurrencyType.TRADING_COIN) {
+      const linkedTransfers = await coinTradingRepository.findTransfersByLedgerEntryIds([
+        entry.id,
+      ])
+      const linked = linkedTransfers[0]
+      throw new AppError(
+        400,
+        linked
+          ? 'Personal coin ledger rows are not revertible here — use POST /admin/transactions/coin-trading-transfers/:transferId/revert'
+          : 'Only TRADING_COIN ledger peer rows are revertible via this endpoint',
+        'NOT_REVERTABLE',
+        linked ? { transferId: linked.id } : undefined,
+      )
+    }
+
     const existing = await adminTransactionsRepository.findExistingCoinReversal(entry.id)
     if (existing) {
       throw new AppError(409, 'Ledger entry already reverted', 'ALREADY_REVERTED')
-    }
-
-    const linkedTransfers = await coinTradingRepository.findTransfersByLedgerEntryIds([entry.id])
-    const linked = linkedTransfers[0]
-    if (linked) {
-      const transfer = await coinTradingRepository.getTransferById(linked.id)
-      if (!transfer) {
-        throw new AppError(404, 'Transfer not found', 'TRANSFER_NOT_FOUND')
-      }
-      if (transfer.reversedAt) {
-        throw new AppError(409, 'Transfer already reversed', 'TRANSFER_ALREADY_REVERSED')
-      }
-
-      await coinTradingService.reverseTransfer(
-        params.adminUserId,
-        transfer.id,
-        params.reason,
-      )
-
-      auditService.log({
-        userId: params.adminUserId,
-        actionType: 'ADMIN_TRANSACTION_REVERT_TRADING_TRANSFER',
-        actionStatus: 'success',
-        actionDetails: {
-          transferId: transfer.id,
-          originalLedgerEntryId: entry.id,
-          reason: params.reason,
-          senderAgentUserId: transfer.senderAgentUserId,
-          recipientUserId: transfer.recipientUserId,
-          restoredCurrencyType: WalletCurrencyType.TRADING_COIN,
-          recipientWalletType: transfer.recipientWalletType,
-          via: 'coin_ledger_entry',
-        },
-      })
-
-      return {
-        ok: true as const,
-        originalLedgerEntryId: entry.id,
-        transferId: transfer.id,
-        senderUserId: transfer.senderAgentUserId,
-        receiverUserId: transfer.recipientUserId,
-        amount: transfer.coinsCredited.toString(),
-        currencyType: entry.wallet.currencyType,
-        restoredToCurrencyType: WalletCurrencyType.TRADING_COIN,
-        recipientWalletType: transfer.recipientWalletType,
-        tradingCoinsCreditedToSender: transfer.tradingCoinsDebited.toString(),
-        coinsDebitedFromReceiver: transfer.coinsCredited.toString(),
-        debitLedgerEntryId: null as string | null,
-        creditLedgerEntryId: null as string | null,
-        sideEffects: {
-          wealthXpReversed: false,
-          livestreamXpReversed: false,
-          agencyCommissionReversed: false,
-          restoredToOriginalSource: true,
-        },
-      }
     }
 
     const { senderUserId, receiverUserId } = resolvePeerParties({
@@ -494,7 +442,7 @@ export const adminTransactionsService = {
       walletUserId: entry.wallet.userId,
       counterpartyId: entry.counterpartyId,
     })
-    const currencyType = entry.wallet.currencyType
+    const currencyType = WalletCurrencyType.TRADING_COIN
     const amount = entry.amount
     const baseKey =
       params.idempotencyKey?.trim() || `admin-revert:coin:${entry.id}:${randomUUID()}`
@@ -505,9 +453,7 @@ export const adminTransactionsService = {
           const debit = await coinWalletService.debit(
             receiverUserId,
             amount,
-            currencyType === WalletCurrencyType.TRADING_COIN
-              ? CoinTxType.TRADING_TRANSFER_REVERSAL
-              : CoinTxType.ADJUSTMENT,
+            CoinTxType.TRADING_TRANSFER_REVERSAL,
             tx,
             {
               idempotencyKey: `admin-revert:coin:${entry.id}:debit`,
@@ -526,9 +472,7 @@ export const adminTransactionsService = {
           const credit = await coinWalletService.credit(
             senderUserId,
             amount,
-            currencyType === WalletCurrencyType.TRADING_COIN
-              ? CoinTxType.TRADING_TRANSFER_REVERSAL
-              : CoinTxType.ADJUSTMENT,
+            CoinTxType.TRADING_TRANSFER_REVERSAL,
             tx,
             {
               idempotencyKey: `admin-revert:coin:${entry.id}:credit`,
@@ -545,33 +489,13 @@ export const adminTransactionsService = {
             },
           )
 
-          let wealthResult = null
-          if (
-            currencyType === WalletCurrencyType.COIN &&
-            WEALTH_REVERT_COIN_TYPES.has(entry.txType)
-          ) {
-            // Original spend awarded wealth XP to the sender — claw it back.
-            wealthResult = await walletLevelService.applyDebit(
-              tx,
-              senderUserId,
-              LevelType.WEALTH,
-              amount,
-            )
-          }
-
-          return { debit, credit, wealthResult }
+          return { debit, credit }
         },
         { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
       )
 
-      if (currencyType === WalletCurrencyType.COIN) {
-        await walletService.adjustCoinBalanceCache(receiverUserId, -amount)
-        await walletService.adjustCoinBalanceCache(senderUserId, amount)
-      } else {
-        await walletService.adjustTradingBalanceCache(receiverUserId)
-        await walletService.adjustTradingBalanceCache(senderUserId)
-      }
-      await syncLevelCacheFromApplyResult(senderUserId, LevelType.WEALTH, result.wealthResult)
+      await walletService.adjustTradingBalanceCache(receiverUserId)
+      await walletService.adjustTradingBalanceCache(senderUserId)
 
       auditService.log({
         userId: params.adminUserId,
@@ -586,7 +510,7 @@ export const adminTransactionsService = {
           reason: params.reason,
           debitLedgerEntryId: result.debit.ledgerEntryId,
           creditLedgerEntryId: result.credit.ledgerEntryId,
-          wealthXpReversed: Boolean(result.wealthResult),
+          wealthXpReversed: false,
           idempotencyKey: baseKey,
         },
       })
@@ -601,25 +525,17 @@ export const adminTransactionsService = {
         debitLedgerEntryId: result.debit.ledgerEntryId,
         creditLedgerEntryId: result.credit.ledgerEntryId,
         sideEffects: {
-          wealthXpReversed: Boolean(result.wealthResult),
+          wealthXpReversed: false,
           livestreamXpReversed: false,
           agencyCommissionReversed: false,
         },
       }
     } catch (err) {
       if (err instanceof AppError && err.code === 'INSUFFICIENT_COINS') {
-        if (currencyType === WalletCurrencyType.TRADING_COIN) {
-          throw new AppError(
-            402,
-            'Insufficient trading coins on receiver to revert',
-            'INSUFFICIENT_TRADING_COINS',
-            err.details,
-          )
-        }
         throw new AppError(
           402,
-          'Insufficient coins on receiver to revert',
-          'INSUFFICIENT_COINS',
+          'Insufficient trading coins on receiver to revert',
+          'INSUFFICIENT_TRADING_COINS',
           err.details,
         )
       }
@@ -1147,7 +1063,10 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
             recipientWalletType: tradingTransfer.recipientWalletType,
           }
         : null,
-      canRevert: Boolean(e.counterpartyId),
+      // Only TRADING_COIN peer rows are revertible from the admin explorer.
+      // Personal COIN never — use gift / coin-trading-transfer revert routes.
+      canRevert:
+        e.wallet.currencyType === WalletCurrencyType.TRADING_COIN && Boolean(e.counterpartyId),
     }
   })
 }

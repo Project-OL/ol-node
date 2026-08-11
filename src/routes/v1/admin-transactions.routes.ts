@@ -152,7 +152,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Transactions'],
         description:
-          'Revert a personal/trading coin peer ledger entry: debit receiver, then credit sender. Requires counterparty.',
+          'Revert a TRADING_COIN peer ledger entry only: debit receiver, then credit sender. Personal COIN rows return NOT_REVERTABLE — use gift or coin-trading-transfer revert instead.',
       },
     },
     async (request, reply) => {
