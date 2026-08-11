@@ -267,10 +267,10 @@ export const adminTransactionsService = {
       limit: query.limit,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
-    const giftIds = page.map((g) => g.id)
-    const existing = await adminTransactionsRepository.findExistingGiftReversals(giftIds)
-    const reverted = new Set(existing.map((e) => e.giftTransactionId))
-    return {
+  const giftIds = page.map((g) => g.id)
+  const existing = await adminTransactionsRepository.findExistingGiftReversals(giftIds)
+  const reverted = new Set(existing.map((e) => e.giftTransactionId))
+  return {
       entries: page.map((g) => ({
         id: g.id,
         sender: mapUserBrief(g.sender),
@@ -288,7 +288,10 @@ export const adminTransactionsService = {
         quantity: g.quantity,
         context: g.context,
         createdAt: g.createdAt.toISOString(),
-        canRevert: !reverted.has(g.id),
+        // Gift funding source is personal COIN — not admin-revertable under
+        // point / trading-coin source-wallet policy.
+        canRevert: false as const,
+        alreadyReverted: reverted.has(g.id),
       })),
       nextCursor,
       hasMore,
@@ -694,180 +697,19 @@ export const adminTransactionsService = {
   },
 
   /**
-   * Gift revert (cross-currency): debit points from receiver, then credit coins to sender.
+   * Gift revert disabled — gifts are funded from personal COIN.
+   * Admin reverts are limited to POINT / TRADING_COIN sourced movements.
    */
-  async revertGiftTransaction(params: {
+  async revertGiftTransaction(_params: {
     giftTransactionId: string
     adminUserId: string
     reason: string
   }) {
-    const giftTx = await adminTransactionsRepository.findGiftTransactionById(
-      params.giftTransactionId,
+    throw new AppError(
+      400,
+      'Gift transactions are not admin-revertable (funded from personal COIN, not points or trading coins)',
+      'NOT_REVERTABLE',
     )
-    if (!giftTx) throw new AppError(404, 'Gift transaction not found', 'GIFT_TRANSACTION_NOT_FOUND')
-
-    const existing = await adminTransactionsRepository.findExistingGiftReversal(giftTx.id)
-    if (existing) {
-      throw new AppError(409, 'Gift transaction already reverted', 'ALREADY_REVERTED')
-    }
-
-    const points = BigInt(giftTx.pointsAwarded)
-    const coins = BigInt(giftTx.coinCost)
-
-    try {
-      const result = await prisma.$transaction(
-        async (tx) => {
-          // Prefer reversing commission before host point debit so agent clawback
-          // fails fast if the agent already spent commission points.
-          const hostPointEntry =
-            points > 0n
-              ? await tx.pointLedgerEntry.findFirst({
-                  where: {
-                    refId: giftTx.id,
-                    txType: PointTxType.GIFT_RECEIVE,
-                    direction: LedgerDirection.CREDIT,
-                  },
-                  select: { id: true },
-                })
-              : null
-
-          let commission = {
-            bustAgentUserId: null as string | null,
-            reversed: false,
-            commissionPoints: null as string | null,
-          }
-          if (hostPointEntry) {
-            commission = await agencyCommissionService.reverseCommission(
-              { hostLedgerEntryId: hostPointEntry.id, reason: params.reason },
-              tx,
-            )
-          }
-
-          const debit =
-            points > 0n
-              ? await pointWalletService.debit(
-                  giftTx.receiverUserId,
-                  points,
-                  PointTxType.ADJUSTMENT,
-                  tx,
-                  {
-                    idempotencyKey: `admin-revert:gift:${giftTx.id}:debit`,
-                    description: `Admin gift revert (points): ${params.reason}`.slice(0, 500),
-                    counterpartyId: giftTx.senderUserId,
-                    refId: giftTx.id,
-                    availabilityCheck: true,
-                    metadata: {
-                      adminUserId: params.adminUserId,
-                      source: 'admin_gift_revert',
-                      giftTransactionId: giftTx.id,
-                      reason: params.reason,
-                    },
-                  },
-                )
-              : null
-
-          const credit = await coinWalletService.credit(
-            giftTx.senderUserId,
-            coins,
-            CoinTxType.GIFT_REFUND,
-            tx,
-            {
-              idempotencyKey: `admin-revert:gift:${giftTx.id}:credit`,
-              description: `Admin gift revert (coins): ${params.reason}`.slice(0, 500),
-              counterpartyId: giftTx.receiverUserId,
-              currencyType: WalletCurrencyType.COIN,
-              applyWealthCredit: false,
-              metadata: {
-                adminUserId: params.adminUserId,
-                source: 'admin_gift_revert',
-                giftTransactionId: giftTx.id,
-                reason: params.reason,
-              },
-            },
-          )
-
-          const wealthResult = await walletLevelService.applyDebit(
-            tx,
-            giftTx.senderUserId,
-            LevelType.WEALTH,
-            coins,
-          )
-          const livestreamResult =
-            points > 0n
-              ? await walletLevelService.applyDebit(
-                  tx,
-                  giftTx.receiverUserId,
-                  LevelType.LIVESTREAM,
-                  points,
-                )
-              : null
-
-          return { debit, credit, wealthResult, livestreamResult, commission }
-        },
-        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
-      )
-
-      await walletService.adjustCoinBalanceCache(giftTx.senderUserId, coins)
-      if (points > 0n) {
-        await walletService.adjustPointBalanceCache(giftTx.receiverUserId, -points)
-      }
-      await syncLevelCacheFromApplyResult(giftTx.senderUserId, LevelType.WEALTH, result.wealthResult)
-      await syncLevelCacheFromApplyResult(
-        giftTx.receiverUserId,
-        LevelType.LIVESTREAM,
-        result.livestreamResult,
-      )
-      if (result.commission.bustAgentUserId) {
-        await agencyCommissionService.afterCommissionCreditCommit(result.commission.bustAgentUserId)
-      }
-
-      auditService.log({
-        userId: params.adminUserId,
-        actionType: 'ADMIN_TRANSACTION_REVERT_GIFT',
-        actionStatus: 'success',
-        actionDetails: {
-          giftTransactionId: giftTx.id,
-          senderUserId: giftTx.senderUserId,
-          receiverUserId: giftTx.receiverUserId,
-          coins: coins.toString(),
-          points: points.toString(),
-          reason: params.reason,
-          debitPointLedgerEntryId: result.debit?.ledgerEntryId ?? null,
-          creditCoinLedgerEntryId: result.credit.ledgerEntryId,
-          wealthXpReversed: true,
-          livestreamXpReversed: Boolean(result.livestreamResult),
-          agencyCommissionReversed: result.commission.reversed,
-          commissionPoints: result.commission.commissionPoints,
-        },
-      })
-
-      return {
-        ok: true as const,
-        giftTransactionId: giftTx.id,
-        senderUserId: giftTx.senderUserId,
-        receiverUserId: giftTx.receiverUserId,
-        coinsCredited: coins.toString(),
-        pointsDebited: points.toString(),
-        debitPointLedgerEntryId: result.debit?.ledgerEntryId ?? null,
-        creditCoinLedgerEntryId: result.credit.ledgerEntryId,
-        sideEffects: {
-          wealthXpReversed: true,
-          livestreamXpReversed: Boolean(result.livestreamResult),
-          agencyCommissionReversed: result.commission.reversed,
-          commissionPoints: result.commission.commissionPoints,
-        },
-      }
-    } catch (err) {
-      if (err instanceof AppError && err.code === 'INSUFFICIENT_POINTS') {
-        throw new AppError(
-          402,
-          'Insufficient points on receiver to revert gift',
-          'INSUFFICIENT_POINTS',
-          err.details,
-        )
-      }
-      throw err
-    }
   },
 
   /** Coin-trading transfer revert — debit recipient first, then credit sender. */
@@ -995,17 +837,6 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
     transferByLedger.set(t.recipientLedgerEntryId, t)
   }
 
-  const allGiftIdsOnPage = [
-    ...new Set([
-      ...giftTxs.map((g) => g.id),
-      ...nearGifts.map((g) => g.id),
-      ...[...giftTxByLedgerId.values()].map((g) => g.id),
-    ]),
-  ]
-  const existingGiftReversals =
-    await adminTransactionsRepository.findExistingGiftReversals(allGiftIdsOnPage)
-  const revertedGiftIds = new Set(existingGiftReversals.map((r) => r.giftTransactionId))
-
   // Trading-coin and personal-coin rows can share a page only if currency filter is omitted;
   // our list endpoints always filter by currency, but still partition for safety.
   const coinDetails = await buildAdminCounterpartyDetailsMap(
@@ -1117,8 +948,6 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
         currencyType: e.wallet.currencyType,
         ledgerEntryId: e.id,
         counterpartyId: e.counterpartyId,
-        giftTxId: giftTx?.id,
-        giftAlreadyReverted: giftTx ? revertedGiftIds.has(giftTx.id) : false,
         tradingTransfer: tradingTransfer
           ? { id: tradingTransfer.id, reversedAt: tradingTransfer.reversedAt }
           : null,
@@ -1127,9 +956,13 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
   })
 }
 
-/** Where admin should POST when `canRevert` is true (personal COIN never uses coin_ledger). */
+/**
+ * Revert only when funding source is TRADING_COIN (or a trading-transfer)
+ * or when listing POINT peers elsewhere. Personal COIN / gifts are never
+ * revertable via coin ledger flags — gifts use personal COIN as source.
+ */
 export type AdminCoinRevertVia = {
-  endpoint: 'coin_ledger' | 'gift' | 'coin_trading_transfer'
+  endpoint: 'coin_ledger' | 'coin_trading_transfer'
   id: string
 }
 
@@ -1137,27 +970,9 @@ function resolveCoinLedgerRevertability(params: {
   currencyType: WalletCurrencyType
   ledgerEntryId: string
   counterpartyId: string | null
-  giftTxId?: string
-  giftAlreadyReverted: boolean
   tradingTransfer: { id: string; reversedAt: Date | null } | null
 }): { canRevert: boolean; revertVia: AdminCoinRevertVia | null } {
-  if (
-    params.currencyType === WalletCurrencyType.TRADING_COIN &&
-    Boolean(params.counterpartyId)
-  ) {
-    return {
-      canRevert: true,
-      revertVia: { endpoint: 'coin_ledger', id: params.ledgerEntryId },
-    }
-  }
-
-  // Personal COIN: route via gift / trading-transfer revert APIs (not coin ledger revert).
-  if (params.giftTxId && !params.giftAlreadyReverted) {
-    return {
-      canRevert: true,
-      revertVia: { endpoint: 'gift', id: params.giftTxId },
-    }
-  }
+  // Agent→user (or peer) transfer funded by TRADING_COIN — preferred dedicated path.
   if (params.tradingTransfer && params.tradingTransfer.reversedAt == null) {
     return {
       canRevert: true,
@@ -1165,6 +980,17 @@ function resolveCoinLedgerRevertability(params: {
         endpoint: 'coin_trading_transfer',
         id: params.tradingTransfer.id,
       },
+    }
+  }
+
+  // TRADING_COIN peer movement (implementation still needs a peer to reverse).
+  if (
+    params.currencyType === WalletCurrencyType.TRADING_COIN &&
+    Boolean(params.counterpartyId)
+  ) {
+    return {
+      canRevert: true,
+      revertVia: { endpoint: 'coin_ledger', id: params.ledgerEntryId },
     }
   }
 
@@ -1230,6 +1056,7 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
             quantity: giftTx.quantity,
           }
         : null,
+      // Peer movement on POINT wallet (POST still needs parties; not a product "counterparty" filter).
       canRevert: Boolean(e.counterpartyId),
     }
   })
