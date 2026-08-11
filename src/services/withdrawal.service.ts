@@ -1717,6 +1717,11 @@ export const withdrawalService = {
       if (!(err instanceof AppError && err.statusCode === 404)) throw err
     }
 
+    const primaryLedgerEntry =
+      pointTransaction?.entries.find((e) => e.txType === 'WITHDRAWAL') ??
+      pointTransaction?.entries[0] ??
+      null
+
     return {
       id: row.id,
       status: hostStatus,
@@ -1737,6 +1742,9 @@ export const withdrawalService = {
       disputeTicketId: row.disputeTicketId ?? null,
       assignmentCount: row.assignmentCount,
       payoutRef: row.payoutRef ?? null,
+      /** Same values as primary WITHDRAWAL ledger entry in point history detail. */
+      orderNumber: primaryLedgerEntry?.orderNumber ?? null,
+      platformId: primaryLedgerEntry?.platformId ?? null,
       pointTransaction,
     }
   },
