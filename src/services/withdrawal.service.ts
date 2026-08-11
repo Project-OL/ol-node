@@ -1707,6 +1707,16 @@ export const withdrawalService = {
 
     const maskedMethod = row.paymentMethod ? mapPaymentMethodMaskedForHost(row.paymentMethod) : null
 
+    /** Same shape as `GET /wallet/points/history/by-ref/:refId` (ledger parity). */
+    let pointTransaction: Awaited<
+      ReturnType<typeof pointWalletService.getTransactionsByRefId>
+    > | null = null
+    try {
+      pointTransaction = await pointWalletService.getTransactionsByRefId(userId, withdrawalId)
+    } catch (err) {
+      if (!(err instanceof AppError && err.statusCode === 404)) throw err
+    }
+
     return {
       id: row.id,
       status: hostStatus,
@@ -1727,6 +1737,7 @@ export const withdrawalService = {
       disputeTicketId: row.disputeTicketId ?? null,
       assignmentCount: row.assignmentCount,
       payoutRef: row.payoutRef ?? null,
+      pointTransaction,
     }
   },
 
