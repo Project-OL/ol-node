@@ -966,7 +966,8 @@ export type AdminCoinRevertVia = {
   id: string
 }
 
-function resolveCoinLedgerRevertability(params: {
+/** Exported for per-user admin history parity with global explorer lists. */
+export function resolveCoinLedgerRevertability(params: {
   currencyType: WalletCurrencyType
   ledgerEntryId: string
   counterpartyId: string | null
