@@ -4,6 +4,7 @@ import { systemAdminService } from '../../services/systemAdmin.service'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import { passwordSchema } from '../../models/schemas'
+import { mintAdminWsTicket } from '../../services/ws-ticket.service'
 
 const LoginBody = z.object({
   email: z.string().email(),
@@ -109,5 +110,12 @@ export async function registerAdminAuthRoutes(app: FastifyInstance) {
 
   app.get('/auth/me', { preHandler: [authenticateAdmin] }, async (req, reply) => {
     return reply.send({ admin: req.adminUser })
+  })
+
+  /** Mint a short-lived single-use WS upgrade ticket for the authenticated admin. */
+  app.post('/auth/ws-ticket', { preHandler: [authenticateAdmin] }, async (req, reply) => {
+    if (!req.adminUser) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    const result = await mintAdminWsTicket(req.adminUser.id)
+    return reply.send(result)
   })
 }

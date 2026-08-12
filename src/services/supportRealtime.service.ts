@@ -8,6 +8,31 @@ import type { ServerFrame } from '../realtime/types'
 
 const WATCH_TTL_SEC = 86_400
 
+export type SupportTicketStatusChangedInput = {
+  ticketId: bigint
+  ticketPublicId: string
+  status: 'PENDING_REVIEW' | 'CLOSED'
+  resolution: 'RESOLVED' | 'REJECTED' | null
+  assignedAdminId: string | null
+}
+
+/** Emit SUPPORT_TICKET_STATUS_CHANGED to the ticket room (user + any watching admin receive it). */
+export async function notifySupportTicketStatusChanged(
+  input: SupportTicketStatusChangedInput,
+): Promise<void> {
+  const ticketId = input.ticketId.toString()
+  const frame = {
+    t: 'SUPPORT_TICKET_STATUS_CHANGED' as const,
+    ticketId,
+    ticketPublicId: input.ticketPublicId,
+    status: input.status,
+    resolution: input.resolution,
+    assignedAdminId: input.assignedAdminId,
+    changedAt: new Date().toISOString(),
+  }
+  await publishServerFrameToSupportTicket(ticketId, frame)
+}
+
 export type SupportMessageNotifyInput = {
   ticketId: bigint
   ticketPublicId: string

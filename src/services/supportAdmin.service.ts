@@ -3,7 +3,10 @@ import { supportRepository } from '../repositories/support.repository'
 import { systemAdminRepository } from '../repositories/systemAdmin.repository'
 import { storageService } from './storage.service'
 import { csaNotificationService } from './csaNotification.service'
-import { notifySupportTicketMessage } from './supportRealtime.service'
+import {
+  notifySupportTicketMessage,
+  notifySupportTicketStatusChanged,
+} from './supportRealtime.service'
 import { enqueueSupportTicketAutoclose } from '../queues/support-autoclose.queue'
 import { AppError } from '../middlewares/errorHandler'
 import type {
@@ -306,6 +309,16 @@ export const supportAdminService = {
       })
     })
 
+    void notifySupportTicketStatusChanged({
+      ticketId,
+      ticketPublicId: ticket.publicId,
+      status: 'PENDING_REVIEW',
+      resolution: input.resolution,
+      assignedAdminId: ticket.assignedAdminId ?? actor.id,
+    }).catch((err) => {
+      console.warn('[support-admin] status-changed notify failed', { ticketId: ticketId.toString(), err })
+    })
+
     try {
       await enqueueSupportTicketAutoclose(ticketId, resolvedAt)
     } catch (err) {
@@ -346,6 +359,17 @@ export const supportAdminService = {
       ...(ticket.assignedAdminId ? {} : { assignedAdminId: actor.id, assignedAt: now }),
     })
     await invalidateUserCaches(ticket.userId, ticketId)
+
+    void notifySupportTicketStatusChanged({
+      ticketId,
+      ticketPublicId: ticket.publicId,
+      status: 'CLOSED',
+      resolution,
+      assignedAdminId: ticket.assignedAdminId ?? actor.id,
+    }).catch((err) => {
+      console.warn('[support-admin] status-changed notify failed (forceClose)', { ticketId: ticketId.toString(), err })
+    })
+
     return toJsonSafe(await ticketDto(updated))
   },
 

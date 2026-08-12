@@ -242,8 +242,11 @@ export const oauthService = {
         isPrimary: true,
       },
     ]
-    // Persist Facebook Graph email so /me and admin user detail show it (email AuthIdentifier).
-    if (provider === 'facebook' && userInfo.email) {
+    // Persist the OAuth-provided email as an 'email' AuthIdentifier so it is
+    // visible in /me, admin user detail, and future email-login flows.
+    // Applies to all three providers (Google, Facebook, Apple) whenever the
+    // provider returns a verified email.
+    if (userInfo.email) {
       identifiers.push({
         userId: user.id,
         provider: 'email',
@@ -296,6 +299,26 @@ export const oauthService = {
       isVerified: true,
       isPrimary: false,
     })
+    // If the OAuth provider returns an email and the user doesn't yet have one
+    // stored, persist it now as a verified 'email' AuthIdentifier.
+    if (userInfo.email) {
+      const existing = await authIdentifierRepository.findByProviderAndIdentifier(
+        'email',
+        userInfo.email,
+      )
+      if (!existing) {
+        await prisma.authIdentifier.create({
+          data: {
+            userId,
+            provider: 'email',
+            identifier: userInfo.email,
+            isVerified: true,
+            verifiedAt: new Date(),
+            isPrimary: false,
+          },
+        })
+      }
+    }
     await auditService.log({
       userId,
       actionType: 'provider_bind',

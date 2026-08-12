@@ -14,7 +14,11 @@ import { presenceService } from '../services/presence.service'
 
 import { guardianService } from '../services/guardian.service'
 
-import { consumeWsTicket } from '../services/ws-ticket.service'
+import {
+  consumeWsTicket,
+  isAdminPrincipal,
+  adminIdFromPrincipal,
+} from '../services/ws-ticket.service'
 
 import { connectionRegistry, type RegisteredSocket } from './connection-registry'
 
@@ -184,7 +188,7 @@ async function handleLeaveGuardian(socketId: string, targetUserIds: string[]): P
 async function handleJoinSupportTicket(
   app: FastifyInstance,
   socket: WebSocket,
-  userId: string,
+  principal: string,
   socketId: string,
   ticketIdRaw: string,
 ): Promise<void> {
@@ -201,8 +205,18 @@ async function handleJoinSupportTicket(
   }
 
   const ticket = await supportRepository.findTicketById(ticketId)
-  if (!ticket || ticket.userId !== userId) {
-    app.log.warn({ userId, ticketId: ticketIdRaw }, '[ws] JOIN_SUPPORT_TICKET rejected')
+  if (!ticket) {
+    sendServerFrame(socket, {
+      t: 'ERROR',
+      code: 'SUPPORT_TICKET_FORBIDDEN',
+      message: 'Not allowed to join this support ticket',
+    })
+    return
+  }
+
+  const isAdmin = isAdminPrincipal(principal)
+  if (!isAdmin && ticket.userId !== principal) {
+    app.log.warn({ principal, ticketId: ticketIdRaw }, '[ws] JOIN_SUPPORT_TICKET rejected')
     sendServerFrame(socket, {
       t: 'ERROR',
       code: 'SUPPORT_TICKET_FORBIDDEN',
@@ -212,13 +226,16 @@ async function handleJoinSupportTicket(
   }
 
   const ticketKey = ticketId.toString()
-  const rs: RegisteredSocket = { socketId, userId, ws: socket }
+  const rs: RegisteredSocket = { socketId, userId: principal, ws: socket }
   const firstForSocket = supportTicketRooms.join(ticketKey, socketId, rs)
   if (firstForSocket) {
     await redisConversationSubscriber.subscribe(RedisKeys.supportTicketChannel(ticketKey))
   }
-  await markSupportTicketWatching(ticketKey, userId)
-  app.log.info({ userId, socketId, ticketId: ticketKey, msg: 'ws join_support_ticket' }, 'realtime')
+  // Only track the user-side watch counter (used to suppress FCM push); admins don't need it.
+  if (!isAdmin) {
+    await markSupportTicketWatching(ticketKey, principal)
+  }
+  app.log.info({ principal, socketId, ticketId: ticketKey, msg: 'ws join_support_ticket' }, 'realtime')
 }
 
 async function handleLeaveSupportTicket(
@@ -259,27 +276,31 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
     },
 
     async (socket: WebSocket, request: FastifyRequest) => {
-      const userId = await consumeWsTicket((request.query as { ticket?: string }).ticket)
+      const principal = await consumeWsTicket((request.query as { ticket?: string }).ticket)
 
-      if (!userId) {
+      if (!principal) {
         socket.close(WS_UNAUTHORIZED, 'Unauthorized ticket')
 
         return
       }
 
+      const isAdmin = isAdminPrincipal(principal)
+      const userId = isAdmin ? adminIdFromPrincipal(principal) : principal
+
       const socketId = crypto.randomUUID()
 
-      connectionRegistry.add(userId, socketId, socket)
+      connectionRegistry.add(principal, socketId, socket)
 
-      const rs: RegisteredSocket = { socketId, userId, ws: socket }
+      const rs: RegisteredSocket = { socketId, userId: principal, ws: socket }
 
-      void presenceService.recordSocketConnected(userId)
-
-      if (userInboxRooms.join(userId, socketId, rs)) {
-        await redisConversationSubscriber.subscribe(RedisKeys.userInboxChannel(userId))
+      if (!isAdmin) {
+        void presenceService.recordSocketConnected(userId)
+        if (userInboxRooms.join(principal, socketId, rs)) {
+          await redisConversationSubscriber.subscribe(RedisKeys.userInboxChannel(principal))
+        }
       }
 
-      app.log.info({ userId, socketId, msg: 'ws connect' }, 'realtime')
+      app.log.info({ principal, userId, isAdmin, socketId, msg: 'ws connect' }, 'realtime')
 
       let idleTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -323,20 +344,20 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
         const supportTicketIds = supportTicketRooms.leaveAllForSocket(socketId)
         for (const tid of supportTicketIds) {
           void redisConversationSubscriber.unsubscribe(RedisKeys.supportTicketChannel(tid))
-          void unmarkSupportTicketWatching(tid, userId)
+          if (!isAdmin) void unmarkSupportTicketWatching(tid, principal)
         }
 
-        const inboxIds = userInboxRooms.leaveAllForSocket(socketId)
-
-        for (const uid of inboxIds) {
-          void redisConversationSubscriber.unsubscribe(RedisKeys.userInboxChannel(uid))
+        if (!isAdmin) {
+          const inboxIds = userInboxRooms.leaveAllForSocket(socketId)
+          for (const uid of inboxIds) {
+            void redisConversationSubscriber.unsubscribe(RedisKeys.userInboxChannel(uid))
+          }
+          void presenceService.recordSocketDisconnected(userId)
         }
 
-        void presenceService.recordSocketDisconnected(userId)
+        connectionRegistry.remove(principal, socketId)
 
-        connectionRegistry.remove(userId, socketId)
-
-        app.log.info({ userId, socketId, msg: 'ws close' }, 'realtime')
+        app.log.info({ principal, userId, isAdmin, socketId, msg: 'ws close' }, 'realtime')
       }
 
       socket.on('close', (code: number, reason: Buffer) => {
@@ -396,75 +417,51 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
             const frame = parsed.data
 
             if (frame.t === 'JOIN') {
-              app.log.info(
-                { userId, socketId, conversationId: frame.conversationId, msg: 'ws join' },
-                'realtime',
-              )
-
-              await handleJoin(app, socket, userId, socketId, frame.conversationId)
+              if (!isAdmin) {
+                app.log.info({ userId, socketId, conversationId: frame.conversationId, msg: 'ws join' }, 'realtime')
+                await handleJoin(app, socket, userId, socketId, frame.conversationId)
+              }
             } else if (frame.t === 'LEAVE') {
-              app.log.info(
-                { userId, socketId, conversationId: frame.conversationId, msg: 'ws leave' },
-                'realtime',
-              )
-
-              await handleLeave(socketId, frame.conversationId)
+              if (!isAdmin) {
+                app.log.info({ userId, socketId, conversationId: frame.conversationId, msg: 'ws leave' }, 'realtime')
+                await handleLeave(socketId, frame.conversationId)
+              }
             } else if (frame.t === 'PING') {
-              void presenceService.refreshOnlineHeartbeat(userId)
-
+              if (!isAdmin) void presenceService.refreshOnlineHeartbeat(userId)
               sendServerFrame(socket, { t: 'PONG', ts: frame.ts })
             } else if (frame.t === 'TYPING') {
-              await messagingService.handleTypingFrame(
-                userId,
-                frame.conversationId,
-                frame.isTyping,
-              )
+              if (!isAdmin) await messagingService.handleTypingFrame(userId, frame.conversationId, frame.isTyping)
             } else if (frame.t === 'RECORDING') {
-              await messagingService.handleRecordingFrame(
-                userId,
-                frame.conversationId,
-                frame.isRecording,
-              )
+              if (!isAdmin) await messagingService.handleRecordingFrame(userId, frame.conversationId, frame.isRecording)
             } else if (frame.t === 'READ') {
-              messagingService.scheduleReadReceipt(
-                userId,
-                frame.conversationId,
-                frame.lastReadMessageId,
-              )
+              if (!isAdmin) messagingService.scheduleReadReceipt(userId, frame.conversationId, frame.lastReadMessageId)
             } else if (frame.t === 'JOIN_PRESENCE') {
-              await handleJoinPresence(socket, socketId, userId, frame.userIds)
+              if (!isAdmin) await handleJoinPresence(socket, socketId, userId, frame.userIds)
             } else if (frame.t === 'LEAVE_PRESENCE') {
-              await handleLeavePresence(socketId, frame.userIds)
+              if (!isAdmin) await handleLeavePresence(socketId, frame.userIds)
             } else if (frame.t === 'JOIN_GUARDIAN') {
-              app.log.info(
-                { userId, socketId, targetUserIds: frame.userIds, msg: 'ws join_guardian' },
-                'realtime',
-              )
-              await handleJoinGuardian(socket, socketId, userId, frame.userIds)
+              if (!isAdmin) await handleJoinGuardian(socket, socketId, userId, frame.userIds)
             } else if (frame.t === 'LEAVE_GUARDIAN') {
-              app.log.info(
-                { userId, socketId, targetUserIds: frame.userIds, msg: 'ws leave_guardian' },
-                'realtime',
-              )
-              await handleLeaveGuardian(socketId, frame.userIds)
+              if (!isAdmin) await handleLeaveGuardian(socketId, frame.userIds)
             } else if (frame.t === 'JOIN_SUPPORT_TICKET') {
-              await handleJoinSupportTicket(app, socket, userId, socketId, frame.ticketId)
+              await handleJoinSupportTicket(app, socket, principal, socketId, frame.ticketId)
             } else if (frame.t === 'LEAVE_SUPPORT_TICKET') {
-              await handleLeaveSupportTicket(userId, socketId, frame.ticketId)
+              await handleLeaveSupportTicket(principal, socketId, frame.ticketId)
             } else if (frame.t === 'RESUME') {
-              const rows = await messagingService.getResumeSyncStates(userId, frame.conversations)
-
-              for (const r of rows) {
-                sendServerFrame(socket, {
-                  t: 'SYNC_STATE',
-                  conversationId: r.conversationId,
-                  latestSeq: r.latestSeq,
-                  hasGap: r.hasGap,
-                })
+              if (!isAdmin) {
+                const rows = await messagingService.getResumeSyncStates(userId, frame.conversations)
+                for (const r of rows) {
+                  sendServerFrame(socket, {
+                    t: 'SYNC_STATE',
+                    conversationId: r.conversationId,
+                    latestSeq: r.latestSeq,
+                    hasGap: r.hasGap,
+                  })
+                }
               }
             }
           } catch (e) {
-            app.log.warn({ e, userId, socketId }, '[ws] message handler error')
+            app.log.warn({ e, userId, isAdmin, socketId }, '[ws] message handler error')
           }
         })()
       })
