@@ -219,8 +219,10 @@ export const agencyService = {
     }
 
     let initialLevel = 'D'
-    if (params.commissionTier != null && params.commissionTier.trim() !== '') {
-      const tierRow = await agencyCommissionRepository.getLevelRow(params.commissionTier.trim())
+    const explicitTier =
+      params.commissionTier != null && params.commissionTier.trim() !== ''
+    if (explicitTier) {
+      const tierRow = await agencyCommissionRepository.getLevelRow(params.commissionTier!.trim())
       if (!tierRow) {
         throw new AppError(400, 'Invalid commission tier', 'INVALID_COMMISSION_TIER')
       }
@@ -261,6 +263,13 @@ export const agencyService = {
           where: { userId: userRow.id },
           data: { currentLevel: initialLevel },
         })
+        if (explicitTier) {
+          await agencyCommissionService.snapshotAdminTierLock(userRow.id, initialLevel, {
+            tx,
+            now,
+            actualWindowTotal: 0n,
+          })
+        }
         await tx.user.update({
           where: { id: userRow.id },
           data: { isAgent: true },
@@ -295,6 +304,7 @@ export const agencyService = {
     await agencyService.bustCachesForAgency(agency.userId, agency.defaultPublicId)
     await agencyCoinsellerService._bustCache(agency.userId)
     await agencyService.bustRankingCache()
+    await agencyCommissionService.bustAgentCommissionCaches(agency.userId)
     await meServiceInvalidateSafe(params.applicantUserId)
 
     return { agency, created: true as const }
@@ -452,15 +462,12 @@ export const agencyService = {
   },
 
   async setCommissionTier(agencyUserId: string, commissionTier: string) {
-    const tierRow = await agencyCommissionRepository.getLevelRow(commissionTier)
-    if (!tierRow) {
-      throw new AppError(400, 'Invalid commission tier', 'INVALID_COMMISSION_TIER')
-    }
     const agency = await agencyRepository.getAgencyByUserId(agencyUserId)
     if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
-    await agencyRepository.setCommissionLevel(agencyUserId, tierRow.level)
+    const lock = await agencyCommissionService.snapshotAdminTierLock(agencyUserId, commissionTier)
+    await agencyCommissionService.bustAgentCommissionCaches(agencyUserId)
     await agencyService.onAgencyMutation(agencyUserId)
-    return { ok: true as const, commissionTier: tierRow.level }
+    return { ok: true as const, ...lock }
   },
 
   async setPayrollEnabled(userId: string, enabled: boolean) {

@@ -23,6 +23,10 @@ import {
   utcYearMonth,
 } from '../utils/datetime'
 import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
+import {
+  effectiveTierWindowTotal,
+  serializeAgencyTierLock,
+} from '../utils/agency-tier-lock'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -34,6 +38,29 @@ function isAgencySuspended(agency: { pausedAt: Date | null; pausedUntil: Date | 
 
 function agencyStatusLabel(agency: { pausedAt: Date | null; pausedUntil: Date | null }): string {
   return isAgencySuspended(agency) ? 'SUSPENDED' : 'ACTIVE'
+}
+
+function tierLockFields(
+  agency: {
+    currentWindowTotalPoints: bigint
+    tierLockLevel: string | null
+    tierLockUntil: Date | null
+    tierLockBonusPoints: bigint | null
+  },
+  lockMinWindowPoints: bigint | null,
+  now: Date = utcNow(),
+) {
+  const lock = serializeAgencyTierLock(agency, now)
+  const { effective } = effectiveTierWindowTotal({
+    actual: agency.currentWindowTotalPoints,
+    lock: agency,
+    lockLevelMinWindowPoints: lockMinWindowPoints,
+    now,
+  })
+  return {
+    ...lock,
+    effectiveWindowTotalPoints: effective.toString(),
+  }
 }
 
 function pctChange(today: bigint, yesterday: bigint): number | null {
@@ -312,6 +339,14 @@ export const agencyAdminService = {
       thisMonthEarningsPoints: monthPoints.toString(),
       thisMonthEarningsUsd: formatPointsAsUsd(monthPoints),
       commissionTier: agency.currentLevel,
+      currentWindowTotalPoints: agency.currentWindowTotalPoints.toString(),
+      ...tierLockFields(
+        agency,
+        agency.tierLockLevel
+          ? ((await agencyCommissionRepository.getLevelRow(agency.tierLockLevel))?.minWindowPoints ??
+              null)
+          : null,
+      ),
       payrollPrivilegeGranted: agency.payrollPrivilegeGranted,
       payrollEnabled: agency.payrollEnabled,
       status: agencyStatusLabel(agency),
@@ -352,10 +387,17 @@ export const agencyAdminService = {
    */
   async forceRecomputeLevel(identifier: string) {
     const agency = await resolveAgencyByIdentifier(identifier)
+    const lockMin = async (row: typeof agency) =>
+      row.tierLockLevel
+        ? ((await agencyCommissionRepository.getLevelRow(row.tierLockLevel))?.minWindowPoints ??
+            null)
+        : null
+
     const before = {
       currentLevel: agency.currentLevel,
       currentWindowTotalPoints: agency.currentWindowTotalPoints.toString(),
       lastLevelRecomputedAt: agency.lastLevelRecomputedAt?.toISOString() ?? null,
+      ...tierLockFields(agency, await lockMin(agency)),
     }
 
     await agencyCommissionService.recomputeAgencyLevel(agency.userId, {
@@ -395,6 +437,7 @@ export const agencyAdminService = {
         currentLevel: afterRow.currentLevel,
         currentWindowTotalPoints: afterRow.currentWindowTotalPoints.toString(),
         lastLevelRecomputedAt: afterRow.lastLevelRecomputedAt?.toISOString() ?? null,
+        ...tierLockFields(afterRow, await lockMin(afterRow)),
       },
     }
   },

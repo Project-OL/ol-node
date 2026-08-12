@@ -1951,11 +1951,12 @@ model LiveStream {
   streamId      String    @unique @map("stream_id")
   streamKey     String    @map("stream_key")
   playbackId    String?   @map("playback_id")
-  isLive        Boolean   @default(false) @map("is_live")
-  startedAt     DateTime? @map("started_at")
-  endedAt       DateTime? @map("ended_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  isLive                   Boolean   @default(false) @map("is_live")
+  startedAt                DateTime? @map("started_at")
+  endedAt                  DateTime? @map("ended_at")
+  effectiveDurationSeconds Int       @default(0) @map("effective_duration_seconds")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -2191,6 +2192,12 @@ model Agency {
   currentLevel               String    @default("D") @map("current_level") @db.VarChar(8)
   currentWindowTotalPoints   BigInt    @default(0) @map("current_window_total_points")
   lastLevelRecomputedAt      DateTime? @map("last_level_recomputed_at")
+  /// Admin-assigned base tier; recomputes cannot drop below this until `tierLockUntil`.
+  tierLockLevel              String?   @map("tier_lock_level") @db.VarChar(8)
+  /// End of admin tier lock (assignment time + rolling-window duration snapshotted at set).
+  tierLockUntil              DateTime? @map("tier_lock_until")
+  /// Signed bonus: minWindowPoints(lockLevel) − actual window total at assignment.
+  tierLockBonusPoints        BigInt?   @map("tier_lock_bonus_points")
   lastPayrollAssignedAt      DateTime? @map("last_payroll_assigned_at")
   createdAt                  DateTime  @default(now()) @map("created_at")
   updatedAt                  DateTime  @updatedAt @map("updated_at")

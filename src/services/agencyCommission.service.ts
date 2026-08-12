@@ -30,6 +30,13 @@ import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from 
 import { walletService } from './wallet.service'
 import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
 import { env } from '../config/env'
+import {
+  computeTierLockBonus,
+  effectiveTierWindowTotal,
+  lockUntilFromNow,
+  matchAgencyLevel,
+  serializeAgencyTierLock,
+} from '../utils/agency-tier-lock'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 export const MIN_AGENT_POINT_TRANSFER = AGENT_POINT_TRANSFER_STEP
@@ -463,8 +470,12 @@ export const agencyCommissionService = {
       currentLiveRatePercent: snap.currentLiveRateBp / 100,
       currentMatchChatRatePercent: snap.currentMatchChatRateBp / 100,
       currentWindowTotalPoints: snap.currentWindowTotalPoints,
+      effectiveWindowTotalPoints: snap.effectiveWindowTotalPoints,
       nextLevel: snap.nextLevel,
       nextLevelRequirementPoints: snap.lackingPointsToNextLevel,
+      tierLockLevel: snap.tierLockLevel,
+      tierLockUntil: snap.tierLockUntil,
+      tierLockBonusPoints: snap.tierLockBonusPoints,
     }
   },
 
@@ -604,8 +615,61 @@ export const agencyCommissionService = {
   },
 
   /**
+   * Snapshot an admin-assigned tier as a rolling-window floor (signed bonus).
+   * Sets `currentLevel` immediately; later recomputes cannot drop below it until `lockUntil`.
+   */
+  async snapshotAdminTierLock(
+    agencyUserId: string,
+    level: string,
+    opts?: { tx?: Prisma.TransactionClient; now?: Date; actualWindowTotal?: bigint },
+  ): Promise<{
+    commissionTier: string
+    actualWindowTotalPoints: string
+    tierLockLevel: string
+    tierLockUntil: string
+    tierLockBonusPoints: string
+  }> {
+    const now = opts?.now ?? utcNow()
+    const tierRow = await agencyCommissionRepository.getLevelRow(level)
+    if (!tierRow) {
+      throw new AppError(400, 'Invalid commission tier', 'INVALID_COMMISSION_TIER')
+    }
+    const actual =
+      opts?.actualWindowTotal ??
+      (
+        await this.resolveTierWindowTotal(agencyUserId, {
+          preferPrimary: true,
+          now,
+        })
+      ).total
+    const { totalMinutes } = await agencyCommissionConfigService.resolveRollingWindowBounds(now)
+    const bonus = computeTierLockBonus(tierRow.minWindowPoints, actual)
+    const lockUntil = lockUntilFromNow(now, totalMinutes)
+    const client = opts?.tx ?? prisma
+    await client.agency.update({
+      where: { userId: agencyUserId },
+      data: {
+        currentLevel: tierRow.level,
+        currentWindowTotalPoints: actual,
+        lastLevelRecomputedAt: now,
+        tierLockLevel: tierRow.level,
+        tierLockUntil: lockUntil,
+        tierLockBonusPoints: bonus,
+      },
+    })
+    return {
+      commissionTier: tierRow.level,
+      actualWindowTotalPoints: actual.toString(),
+      tierLockLevel: tierRow.level,
+      tierLockUntil: lockUntil.toISOString(),
+      tierLockBonusPoints: bonus.toString(),
+    }
+  },
+
+  /**
    * Match agency commission tier to the env-configured rolling-window metric
-   * (see {@link resolveTierWindowTotal}).
+   * (see {@link resolveTierWindowTotal}). While an admin tier lock is active,
+   * matching uses actual + signed bonus with a floor at the assigned tier.
    */
   async recomputeAgencyLevel(
     agencyUserId: string,
@@ -613,11 +677,17 @@ export const agencyCommissionService = {
   ): Promise<void> {
     const now = utcNow()
 
+    const cur = await prisma.agency.findUnique({
+      where: { userId: agencyUserId },
+      select: {
+        lastLevelRecomputedAt: true,
+        tierLockLevel: true,
+        tierLockUntil: true,
+        tierLockBonusPoints: true,
+      },
+    })
+
     if (!opts?.skipDailyDedupe) {
-      const cur = await prismaRead.agency.findUnique({
-        where: { userId: agencyUserId },
-        select: { lastLevelRecomputedAt: true },
-      })
       if (
         cur?.lastLevelRecomputedAt &&
         utcDateString(cur.lastLevelRecomputedAt) === utcDateString(now)
@@ -626,19 +696,25 @@ export const agencyCommissionService = {
       }
     }
 
-    const { total } = await this.resolveTierWindowTotal(agencyUserId, {
+    const { total: actual } = await this.resolveTierWindowTotal(agencyUserId, {
       preferPrimary: true,
       now,
     })
     const levels = await agencyCommissionRepository.getLevelConfig()
-    let newLevel = 'D'
-    for (let i = levels.length - 1; i >= 0; i--) {
-      const row = levels[i]!
-      if (total >= row.minWindowPoints) {
-        newLevel = row.level
-        break
-      }
-    }
+    const lockLevelRow = cur?.tierLockLevel
+      ? (levels.find((l) => l.level === cur.tierLockLevel) ?? null)
+      : null
+    const { effective, lockActive } = effectiveTierWindowTotal({
+      actual,
+      lock: {
+        tierLockLevel: cur?.tierLockLevel ?? null,
+        tierLockUntil: cur?.tierLockUntil ?? null,
+        tierLockBonusPoints: cur?.tierLockBonusPoints ?? null,
+      },
+      lockLevelMinWindowPoints: lockLevelRow?.minWindowPoints ?? null,
+      now,
+    })
+    const newLevel = matchAgencyLevel(effective, levels)
 
     await prisma.$transaction(
       async (tx) => {
@@ -646,8 +722,15 @@ export const agencyCommissionService = {
           where: { userId: agencyUserId },
           data: {
             currentLevel: newLevel,
-            currentWindowTotalPoints: total,
+            currentWindowTotalPoints: actual,
             lastLevelRecomputedAt: now,
+            ...(lockActive
+              ? {}
+              : {
+                  tierLockLevel: null,
+                  tierLockUntil: null,
+                  tierLockBonusPoints: null,
+                }),
           },
         })
       },
@@ -694,11 +777,15 @@ export const agencyCommissionService = {
   ): Promise<{
     currentLevel: string
     currentWindowTotalPoints: string
+    effectiveWindowTotalPoints: string
     currentLiveRateBp: number
     currentMatchChatRateBp: number
     nextLevel: string | null
     nextLevelMinWindowPoints: string | null
     lackingPointsToNextLevel: string | null
+    tierLockLevel: string | null
+    tierLockUntil: string | null
+    tierLockBonusPoints: string | null
     periodDays: number | null
     from: string | null
     to: string | null
@@ -734,6 +821,28 @@ export const agencyCommissionService = {
       preferPrimary: true,
     })
     const windowTotal = windowMetric.total
+    const now = utcNow()
+    const lockLevelRow = ag.tierLockLevel
+      ? (levels.find((l) => l.level === ag.tierLockLevel) ?? null)
+      : null
+    const { effective } = effectiveTierWindowTotal({
+      actual: windowTotal,
+      lock: {
+        tierLockLevel: ag.tierLockLevel,
+        tierLockUntil: ag.tierLockUntil,
+        tierLockBonusPoints: ag.tierLockBonusPoints,
+      },
+      lockLevelMinWindowPoints: lockLevelRow?.minWindowPoints ?? null,
+      now,
+    })
+    const lockDto = serializeAgencyTierLock(
+      {
+        tierLockLevel: ag.tierLockLevel,
+        tierLockUntil: ag.tierLockUntil,
+        tierLockBonusPoints: ag.tierLockBonusPoints,
+      },
+      now,
+    )
 
     const [agg, liveDurationSeconds, dailyEarnings] = await Promise.all([
       agencyCommissionRepository.aggregateLedgerByTxTypeForAgencyHosts({
@@ -750,18 +859,20 @@ export const agencyCommissionService = {
 
     let lacking: bigint | null = null
     if (nextRow) {
-      const gap = nextRow.minWindowPoints - windowTotal
+      const gap = nextRow.minWindowPoints - effective
       lacking = gap > 0n ? gap : 0n
     }
 
     const snap = {
       currentLevel: ag.currentLevel,
       currentWindowTotalPoints: windowTotal.toString(),
+      effectiveWindowTotalPoints: effective.toString(),
       currentLiveRateBp: cfg?.liveRateBp ?? 400,
       currentMatchChatRateBp: cfg?.matchChatRateBp ?? 400,
       nextLevel: nextRow?.level ?? null,
       nextLevelMinWindowPoints: nextRow?.minWindowPoints.toString() ?? null,
       lackingPointsToNextLevel: lacking?.toString() ?? null,
+      ...lockDto,
       periodDays: periodParams.from && periodParams.to ? null : (periodParams.periodDays ?? 30),
       from: periodParams.from ?? null,
       to: periodParams.to ?? null,
