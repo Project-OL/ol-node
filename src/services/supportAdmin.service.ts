@@ -110,6 +110,10 @@ export async function enrichAdminTicket<T extends AdminTicketEnrichInput>(ticket
     ticket.status === 'PENDING_REVIEW'
       ? await supportContestEndsAt(ticket.resolvedAt ?? null)
       : null
+  const daysSinceReviewed =
+    ticket.resolvedAt != null
+      ? Math.floor((Date.now() - ticket.resolvedAt.getTime()) / 86_400_000)
+      : null
   return {
     ...rest,
     ...(user !== undefined ? { user: withName(user) } : {}),
@@ -118,6 +122,7 @@ export async function enrichAdminTicket<T extends AdminTicketEnrichInput>(ticket
     subTypeLabel,
     initialSubmission: buildTicketInitialSubmission(ticket),
     ...(pendingReviewUntil ? { pendingReviewUntil } : {}),
+    ...(daysSinceReviewed != null ? { daysSinceReviewed } : {}),
   }
 }
 
@@ -151,6 +156,8 @@ export const supportAdminService = {
       type: query.type as SupportTicketType | undefined,
       assignedAdminId,
       unassigned,
+      minDaysSinceReviewed: query.minDaysSinceReviewed,
+      maxDaysSinceReviewed: query.maxDaysSinceReviewed,
       skip,
       take: query.limit,
     })

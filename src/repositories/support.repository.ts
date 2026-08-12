@@ -168,6 +168,41 @@ export const supportRepository = {
     return map
   },
 
+  /** Closed-ticket count per assigned CSA (status CLOSED). */
+  async countClosedByAdminIds(adminIds: string[]) {
+    if (adminIds.length === 0) return new Map<string, number>()
+    const rows = await prismaRead.supportTicket.groupBy({
+      by: ['assignedAdminId'],
+      where: { assignedAdminId: { in: adminIds }, status: 'CLOSED' },
+      _count: { _all: true },
+    })
+    const map = new Map<string, number>()
+    for (const row of rows) {
+      if (row.assignedAdminId) map.set(row.assignedAdminId, row._count._all)
+    }
+    return map
+  },
+
+  /** Star-rating aggregates per assigned CSA. */
+  async ratingStatsByAdminIds(adminIds: string[]) {
+    if (adminIds.length === 0) return new Map<string, { avgRating: number | null; ratingCount: number }>()
+    const rows = await prismaRead.supportTicket.groupBy({
+      by: ['assignedAdminId'],
+      where: { assignedAdminId: { in: adminIds }, rating: { not: null } },
+      _avg: { rating: true },
+      _count: { rating: true },
+    })
+    const map = new Map<string, { avgRating: number | null; ratingCount: number }>()
+    for (const row of rows) {
+      if (!row.assignedAdminId) continue
+      map.set(row.assignedAdminId, {
+        avgRating: row._avg.rating,
+        ratingCount: row._count.rating,
+      })
+    }
+    return map
+  },
+
   async findActiveTicketsByAdmin(adminId: string) {
     return prismaRead.supportTicket.findMany({
       where: { assignedAdminId: adminId, status: { not: 'CLOSED' } },
@@ -183,9 +218,28 @@ export const supportRepository = {
     unassigned?: boolean
     /** When true, only tickets that have a star rating (typically with status=CLOSED). */
     ratedOnly?: boolean
+    /** Only tickets whose resolvedAt is at least this many days ago (CSA resolve/reject). */
+    minDaysSinceReviewed?: number
+    /** Only tickets whose resolvedAt is within this many days (inclusive). */
+    maxDaysSinceReviewed?: number
     skip: number
     take: number
   }) {
+    const resolvedAtFilter: Prisma.DateTimeNullableFilter | undefined = (() => {
+      const hasMin = opts.minDaysSinceReviewed != null && opts.minDaysSinceReviewed >= 0
+      const hasMax = opts.maxDaysSinceReviewed != null && opts.maxDaysSinceReviewed >= 0
+      if (!hasMin && !hasMax) return undefined
+      const now = Date.now()
+      const filter: Prisma.DateTimeNullableFilter = { not: null }
+      if (hasMin) {
+        filter.lte = new Date(now - opts.minDaysSinceReviewed! * 86_400_000)
+      }
+      if (hasMax) {
+        filter.gte = new Date(now - opts.maxDaysSinceReviewed! * 86_400_000)
+      }
+      return filter
+    })()
+
     const where: Prisma.SupportTicketWhereInput = {
       ...(opts.status ? { status: opts.status } : {}),
       ...(opts.priority ? { priority: opts.priority } : {}),
@@ -193,6 +247,7 @@ export const supportRepository = {
       ...(opts.assignedAdminId ? { assignedAdminId: opts.assignedAdminId } : {}),
       ...(opts.unassigned ? { assignedAdminId: null, status: { not: 'CLOSED' } } : {}),
       ...(opts.ratedOnly ? { rating: { not: null } } : {}),
+      ...(resolvedAtFilter ? { resolvedAt: resolvedAtFilter } : {}),
     }
     const [tickets, total] = await Promise.all([
       prismaRead.supportTicket.findMany({

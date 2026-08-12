@@ -21,6 +21,10 @@ export const AdminTicketListQuerySchema = z.object({
   type: SupportTicketTypeEnum.optional(),
   /** 'me' (default for CSAs) | 'unassigned' | an admin id (SUPER_ADMIN only) | 'all' (SUPER_ADMIN only). */
   assignedTo: z.string().max(64).optional(),
+  /** Tickets resolved/rejected at least N full days ago (uses resolvedAt). */
+  minDaysSinceReviewed: z.coerce.number().int().min(0).max(365).optional(),
+  /** Tickets resolved/rejected within the last N full days (uses resolvedAt). */
+  maxDaysSinceReviewed: z.coerce.number().int().min(0).max(365).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })

@@ -19,7 +19,13 @@ import { normalizeCountry, normalizeCountryOptional } from '../utils/agency-coun
 
 const EXPORT_ROW_CAP = 10_000
 
-type CsaRow = ReturnType<typeof toCsaDto> & { isOnline: boolean; openTicketCount: number }
+type CsaRow = ReturnType<typeof toCsaDto> & {
+  isOnline: boolean
+  openTicketCount: number
+  closedTicketCount: number
+  avgRating: number | null
+  ratingCount: number
+}
 
 function toCsaDto(admin: SystemAdmin) {
   return {
@@ -115,16 +121,24 @@ export const csaManagementService = {
     })
 
     const ids = items.map((a) => a.id)
-    const [online, loads] = await Promise.all([
+    const [online, openLoads, closedLoads, ratingStats] = await Promise.all([
       onlineFlags(ids),
       supportRepository.countOpenByAdminIds(ids),
+      supportRepository.countClosedByAdminIds(ids),
+      supportRepository.ratingStatsByAdminIds(ids),
     ])
 
-    const csas: CsaRow[] = items.map((a) => ({
-      ...toCsaDto(a),
-      isOnline: online.get(a.id) ?? false,
-      openTicketCount: loads.get(a.id) ?? 0,
-    }))
+    const csas: CsaRow[] = items.map((a) => {
+      const ratings = ratingStats.get(a.id)
+      return {
+        ...toCsaDto(a),
+        isOnline: online.get(a.id) ?? false,
+        openTicketCount: openLoads.get(a.id) ?? 0,
+        closedTicketCount: closedLoads.get(a.id) ?? 0,
+        avgRating: ratings?.avgRating ?? null,
+        ratingCount: ratings?.ratingCount ?? 0,
+      }
+    })
 
     return {
       csas,
