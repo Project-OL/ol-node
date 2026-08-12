@@ -4,6 +4,7 @@ import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import {
   adminTransactionRevertBodySchema,
   adminTransactionsListQuerySchema,
+  adminPlatformProfitSummaryQuerySchema,
 } from '../../models/admin-transactions.schemas'
 import { adminTransactionsService } from '../../services/adminTransactions.service'
 
@@ -11,6 +12,14 @@ const preAuth = [authenticateAdmin]
 
 function parseListQuery(query: unknown) {
   const parsed = adminTransactionsListQuerySchema.safeParse(query ?? {})
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+  }
+  return parsed.data
+}
+
+function parseProfitSummaryQuery(query: unknown) {
+  const parsed = adminPlatformProfitSummaryQuerySchema.safeParse(query ?? {})
   if (!parsed.success) {
     throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
   }
@@ -27,6 +36,23 @@ function parseRevertBody(body: unknown) {
 
 export default async function adminTransactionsRoutes(app: FastifyInstance) {
   // ── Lists ─────────────────────────────────────────────────────────────
+
+  app.get(
+    '/transactions/platform-profit/summary',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Transactions'],
+        description:
+          'Platform profit totals (coins / points / trading coins) for an optional date window. Net of agency commission on coin→point flows.',
+      },
+    },
+    async (request, reply) => {
+      return reply.send(
+        await adminTransactionsService.getPlatformProfitSummary(parseProfitSummaryQuery(request.query)),
+      )
+    },
+  )
 
   app.get(
     '/transactions/coins',

@@ -35,6 +35,10 @@ import {
   buildAdminCounterpartyDetailsMap,
   type CounterpartyDetails,
 } from '../utils/ledger-transaction-enrichment'
+import {
+  platformProfitService,
+} from './platform-profit.service'
+import { ZERO_PLATFORM_PROFIT } from '../utils/platform-profit'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -296,10 +300,11 @@ export const adminTransactionsService = {
       limit: query.limit,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
-  const giftIds = page.map((g) => g.id)
-  const existing = await adminTransactionsRepository.findExistingGiftReversals(giftIds)
-  const reverted = new Set(existing.map((e) => e.giftTransactionId))
-  return {
+    const giftIds = page.map((g) => g.id)
+    const existing = await adminTransactionsRepository.findExistingGiftReversals(giftIds)
+    const reverted = new Set(existing.map((e) => e.giftTransactionId))
+    const agencyByRef = await platformProfitService.sumAgencyCommissionByRefIds(giftIds)
+    return {
       entries: page.map((g) => ({
         id: g.id,
         sender: mapUserBrief(g.sender),
@@ -321,10 +326,23 @@ export const adminTransactionsService = {
         // point / trading-coin source-wallet policy.
         canRevert: false as const,
         alreadyReverted: reverted.has(g.id),
+        platformProfit: platformProfitService.profitForGiftRow({
+          coinCost: g.coinCost,
+          pointsAwarded: g.pointsAwarded,
+          agencyCommissionPoints: agencyByRef.get(g.id) ?? 0n,
+        }),
       })),
       nextCursor,
       hasMore,
     }
+  },
+
+  async getPlatformProfitSummary(query: { from?: string; to?: string }) {
+    const totals = await platformProfitService.summarizePlatformProfit({
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+    })
+    return { platformProfitTotals: totals }
   },
 
   async listSubscriptions(query: AdminTransactionsListQuery) {
@@ -386,6 +404,7 @@ export const adminTransactionsService = {
         expiresAtBefore: p.expiresAtBefore?.toISOString() ?? null,
         expiresAtAfter: p.expiresAtAfter.toISOString(),
         createdAt: p.createdAt.toISOString(),
+        platformProfit: platformProfitService.profitForFullCoinSpend(p.coinCost),
       })),
       nextCursor,
       hasMore,
@@ -427,6 +446,7 @@ export const adminTransactionsService = {
         expiredAt: p.expiredAt?.toISOString() ?? null,
         revokedAt: p.revokedAt?.toISOString() ?? null,
         createdAt: p.createdAt.toISOString(),
+        platformProfit: platformProfitService.profitForFullCoinSpend(BigInt(p.coinsPaid)),
       })),
       nextCursor,
       hasMore,
@@ -894,6 +914,35 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
     transferByLedger.set(t.recipientLedgerEntryId, t)
   }
 
+  const giftIdsForProfit = [
+    ...new Set(
+      [
+        ...[...giftTxMap.values()].map((g) => g.id),
+        ...[...giftTxByLedgerId.values()].map((g) => g.id),
+      ].filter(Boolean),
+    ),
+  ]
+  const splitRefIds = page
+    .filter(
+      (e) =>
+        e.direction === LedgerDirection.DEBIT &&
+        e.wallet.currencyType === WalletCurrencyType.COIN &&
+        (e.txType === CoinTxType.VIDEO_CALL ||
+          e.txType === CoinTxType.CREATOR_SUBSCRIPTION ||
+          e.txType === CoinTxType.GUARDIAN_PURCHASE) &&
+        e.refId,
+    )
+    .map((e) => e.refId as string)
+  const agencyByRefId = await platformProfitService.sumAgencyCommissionByRefIds([
+    ...giftIdsForProfit,
+    ...splitRefIds,
+  ])
+  const hostPointsByRefId = await platformProfitService.sumHostPointsByRefIds(splitRefIds, [
+    PointTxType.VIDEO_CALL,
+    PointTxType.SUBSCRIPTION,
+    PointTxType.GUARDIAN_PURCHASE,
+  ])
+
   // Trading-coin and personal-coin rows can share a page only if currency filter is omitted;
   // our list endpoints always filter by currency, but still partition for safety.
   const coinDetails = await buildAdminCounterpartyDetailsMap(
@@ -1001,6 +1050,24 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
             reversedAt: tradingTransfer.reversedAt?.toISOString() ?? null,
           }
         : null,
+      platformProfit:
+        e.direction === LedgerDirection.DEBIT &&
+        e.wallet.currencyType === WalletCurrencyType.COIN
+          ? platformProfitService.profitForCoinDebitRow({
+              txType: e.txType,
+              amount: e.amount,
+              gift: giftTx
+                ? {
+                    id: giftTx.id,
+                    coinCost: giftTx.coinCost,
+                    pointsAwarded: giftTx.pointsAwarded,
+                  }
+                : null,
+              agencyByRefId,
+              hostPointsByRefId,
+              refId: e.refId,
+            })
+          : ZERO_PLATFORM_PROFIT,
       ...resolveCoinLedgerRevertability({
         currencyType: e.wallet.currencyType,
         ledgerEntryId: e.id,
@@ -1079,7 +1146,13 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
     withdrawalIds.length > 0
       ? await prismaRead.withdrawal.findMany({
           where: { id: { in: withdrawalIds } },
-          select: { id: true, status: true, requestedAt: true },
+          select: {
+            id: true,
+            status: true,
+            requestedAt: true,
+            platformFeePoints: true,
+            agentRewardPoints: true,
+          },
         })
       : []
   const withdrawalMap = new Map(withdrawals.map((w) => [w.id, w]))
@@ -1141,6 +1214,16 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
             quantity: giftTx.quantity,
           }
         : null,
+      platformProfit:
+        e.direction === LedgerDirection.DEBIT &&
+        (e.txType === PointTxType.WITHDRAWAL ||
+          e.txType === PointTxType.WITHDRAWAL_ESCROW_SETTLED) &&
+        withdrawal
+          ? platformProfitService.profitForWithdrawalRow({
+              platformFeePoints: withdrawal.platformFeePoints,
+              agentRewardPoints: withdrawal.agentRewardPoints,
+            })
+          : ZERO_PLATFORM_PROFIT,
       canRevert: withdrawalCanRevert
         ? true
         : resolvePointLedgerRevertability({

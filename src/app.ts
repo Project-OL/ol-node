@@ -70,6 +70,7 @@ import pushNotificationAdminRoutes from './routes/v1/push-notification-admin.rou
 import ledgerAuditAdminRoutes from './routes/v1/ledger-audit-admin.routes'
 import adminUserWalletRoutes from './routes/v1/admin-user-wallet.routes'
 import adminTransactionsRoutes from './routes/v1/admin-transactions.routes'
+import adminCurrencyRoutes from './routes/v1/admin-currency.routes'
 import adminUserModerationRoutes from './routes/v1/admin-user-moderation.routes'
 import adminUserRestrictionRoutes from './routes/v1/admin-user-restriction.routes'
 import postAdminRoutes from './routes/v1/post-admin.routes'
@@ -242,6 +243,7 @@ export async function buildApp() {
       await adminApp.register(giftAdminRoutes)
       await adminApp.register(adminUserWalletRoutes)
       await adminApp.register(adminTransactionsRoutes)
+      await adminApp.register(adminCurrencyRoutes)
       await adminApp.register(adminUserModerationRoutes)
       await adminApp.register(adminUserRestrictionRoutes)
       await adminApp.register(userAdminRoutes)
