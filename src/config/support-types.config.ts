@@ -88,3 +88,40 @@ const HIGH_PRIORITY_SUBTYPES = new Set([
 export function getDefaultPriority(subType: string): 'HIGH' | 'NORMAL' {
   return HIGH_PRIORITY_SUBTYPES.has(subType) ? 'HIGH' : 'NORMAL'
 }
+
+export function resolveSupportTypeLabels(
+  type: string,
+  subType: string,
+): { typeLabel: string; subTypeLabel: string } {
+  const typeConf = SUPPORT_TYPE_CONFIG.find((t) => t.key === type)
+  const subConf = typeConf?.subTypes.find((s) => s.key === subType)
+  return {
+    typeLabel: typeConf?.label ?? type,
+    subTypeLabel: subConf?.label ?? subType,
+  }
+}
+
+/** User's opening submission when the ticket was created (admin workbench). */
+export function buildTicketInitialSubmission(ticket: {
+  type: string
+  subType: string
+  description: string
+  imageUrl?: string | null
+  refType?: string | null
+  refId?: string | null
+  createdAt: Date
+}) {
+  const { typeLabel, subTypeLabel } = resolveSupportTypeLabels(ticket.type, ticket.subType)
+  return {
+    type: ticket.type,
+    subType: ticket.subType,
+    typeLabel,
+    subTypeLabel,
+    description: ticket.description,
+    imageUrl: ticket.imageUrl ?? null,
+    ...(ticket.refType && ticket.refId
+      ? { transactionRef: { refType: ticket.refType, refId: ticket.refId } }
+      : {}),
+    submittedAt: ticket.createdAt,
+  }
+}

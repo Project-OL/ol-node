@@ -19,6 +19,7 @@ import type {
   AdminTicketMessagesQuerySchema,
   AdminUploadUrlSchema,
 } from '../models/support-admin.schemas'
+import { buildTicketInitialSubmission, resolveSupportTypeLabels } from '../config/support-types.config'
 import { formatUserName } from '../utils/user-display'
 
 const PRESIGN_TTL_SEC = 600
@@ -83,15 +84,34 @@ function assertCanAct(actor: AdminActor, ticket: { assignedAdminId: string | nul
   }
 }
 
-function ticketDto<T extends { status: SupportTicketStatus; assignedAdminId: string | null; user?: any }>(
-  ticket: T,
-) {
-  const { user, ...rest } = ticket as T & { user?: any }
+type AdminTicketEnrichInput = {
+  type: SupportTicketType
+  subType: string
+  description: string
+  imageUrl?: string | null
+  refType?: string | null
+  refId?: string | null
+  createdAt: Date
+  status: SupportTicketStatus
+  assignedAdminId: string | null
+  user?: { firstName?: string | null; lastName?: string | null } | null
+}
+
+export function enrichAdminTicket<T extends AdminTicketEnrichInput>(ticket: T) {
+  const { user, ...rest } = ticket
+  const { typeLabel, subTypeLabel } = resolveSupportTypeLabels(ticket.type, ticket.subType)
   return {
     ...rest,
     ...(user !== undefined ? { user: withName(user) } : {}),
     stage: deriveStage(ticket),
+    typeLabel,
+    subTypeLabel,
+    initialSubmission: buildTicketInitialSubmission(ticket),
   }
+}
+
+function ticketDto<T extends AdminTicketEnrichInput>(ticket: T) {
+  return enrichAdminTicket(ticket)
 }
 
 export const supportAdminService = {

@@ -24,7 +24,7 @@ interface AdminAccessPayload {
   role: AdminRole
   iss: 'offoo-admin'
   type: 'access'
-  /** Bound for CUSTOMER_SUPPORT so a new login can invalidate prior access JWTs. */
+  /** Bound for single-session roles so a new login can invalidate prior access JWTs. */
   sessionId?: string
 }
 
@@ -174,8 +174,8 @@ export const systemAdminService = {
     const tokenHash = await bcrypt.hash(refreshToken, 10)
     await systemAdminRepository.updateSessionTokenHash(session.id, tokenHash)
 
-    // CSA: only one active session — revoke peers after minting this one (new login wins).
-    if (admin.role === 'CUSTOMER_SUPPORT') {
+    // Single-session roles: revoke peers after minting this one (new login wins).
+    if (usesSingleAdminSession(admin.role)) {
       await systemAdminRepository.revokeOtherSessions(admin.id, session.id)
     }
 
@@ -185,7 +185,7 @@ export const systemAdminService = {
       accessToken: signAccessToken(
         admin.id,
         admin.role,
-        admin.role === 'CUSTOMER_SUPPORT' ? session.id : undefined,
+        usesSingleAdminSession(admin.role) ? session.id : undefined,
       ),
       refreshToken,
       admin: {
@@ -226,7 +226,7 @@ export const systemAdminService = {
       throw new AppError(401, 'Admin not found or inactive', 'ADMIN_INVALID_CREDENTIALS')
     }
 
-    const bindSession = session.admin.role === 'CUSTOMER_SUPPORT' ? session.id : undefined
+    const bindSession = usesSingleAdminSession(session.admin.role) ? session.id : undefined
     return {
       accessToken: signAccessToken(session.admin.id, session.admin.role, bindSession),
     }
@@ -301,8 +301,8 @@ export const systemAdminService = {
         throw new AppError(401, 'Admin not found or inactive', 'ADMIN_INVALID_CREDENTIALS')
       }
 
-      // CSA single-session: access JWT must match a non-revoked AdminSession.
-      if (admin.role === 'CUSTOMER_SUPPORT') {
+      // Single-session roles: access JWT must match a non-revoked AdminSession.
+      if (usesSingleAdminSession(admin.role)) {
         if (!payload.sessionId) {
           throw new AppError(401, 'Admin token invalid or expired', 'ADMIN_TOKEN_INVALID')
         }
@@ -338,6 +338,10 @@ async function recordLoginFailure(failKey: string): Promise<void> {
   } catch {
     // Redis unavailable — fail open; the DB lockout still protects known accounts.
   }
+}
+
+function usesSingleAdminSession(role: AdminRole): boolean {
+  return role === 'CUSTOMER_SUPPORT' || role === 'SUPER_ADMIN'
 }
 
 function shouldEnforceIpWhitelist(role: AdminRole): boolean {

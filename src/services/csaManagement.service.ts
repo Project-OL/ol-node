@@ -14,7 +14,7 @@ import type {
   AddCsaIpInput,
 } from '../models/csa-admin.schemas'
 import type { AdminStatus, SupportTicketStatus, SystemAdmin } from '@prisma/client'
-import { deriveStage } from './supportAdmin.service'
+import { enrichAdminTicket } from './supportAdmin.service'
 import { normalizeCountry, normalizeCountryOptional } from '../utils/agency-country'
 
 const EXPORT_ROW_CAP = 10_000
@@ -339,10 +339,7 @@ export const csaManagementService = {
       adminId,
       avgRating: performance.avgRating,
       ratingCount: performance.ratingCount,
-      tickets: tickets.map((t) => ({
-        ...t,
-        stage: deriveStage(t),
-      })),
+      tickets: tickets.map((t) => enrichAdminTicket(t)),
       pagination: {
         page: query.page,
         limit: query.limit,

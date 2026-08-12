@@ -201,7 +201,7 @@ export const systemAdminRepository = {
     })
   },
 
-  /** Revoke every active session except `exceptSessionId` (CSA single-session login). */
+  /** Revoke every active session except `exceptSessionId` (single-session admin login). */
   async revokeOtherSessions(adminId: string, exceptSessionId: string) {
     return prisma.adminSession.updateMany({
       where: { adminId, revokedAt: null, id: { not: exceptSessionId } },

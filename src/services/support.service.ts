@@ -125,6 +125,14 @@ export const supportService = {
 
     await supportRepository.createMessage({
       ticketId: ticket.id,
+      senderUserId: userId,
+      senderType: 'USER',
+      content: input.description,
+      imageUrl: input.imageUrl,
+    })
+
+    await supportRepository.createMessage({
+      ticketId: ticket.id,
       senderUserId: undefined,
       senderType: 'SUPPORT',
       content: AUTO_REPLY_CONTENT,

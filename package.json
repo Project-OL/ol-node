@@ -35,6 +35,7 @@
         "db:migrate": "prisma migrate dev",
         "db:migrate:prod": "prisma migrate deploy",
         "db:generate": "prisma generate",
+        "deploy:ol-dev": "bash scripts/remote-deploy-ol-dev.sh",
         "db:studio": "prisma studio",
         "db:seed": "tsx prisma/seed.ts",
         "wallet:enqueue-level-backfill": "tsx scripts/enqueue-level-backfill.ts",
