@@ -267,7 +267,9 @@ export const adminTransactionsService = {
         recipientLedgerEntryId: t.recipientLedgerEntryId,
         reversedAt: t.reversedAt?.toISOString() ?? null,
         reverseReason: t.reverseReason,
-        reversedBy: t.reversedBy ? mapUserBrief(t.reversedBy) : null,
+        /** Always null historically (field wrongly FK'd to users); prefer reversedByAdminId. */
+        reversedBy: null,
+        reversedByAdminId: t.reversedByAdminId,
         createdAt: t.createdAt.toISOString(),
         canRevert: t.reversedAt == null,
       })),
@@ -766,12 +768,14 @@ export const adminTransactionsService = {
     )
 
     auditService.log({
-      userId: params.adminUserId,
+      // audit_logs.user_id FKs to users — admins are system_admins, so leave null.
+      userId: null,
       actionType: 'ADMIN_TRANSACTION_REVERT_TRADING_TRANSFER',
       actionStatus: 'success',
       actionDetails: {
         transferId: transfer.id,
         reason: params.reason,
+        adminUserId: params.adminUserId,
         senderAgentUserId: transfer.senderAgentUserId,
         recipientUserId: transfer.recipientUserId,
       },

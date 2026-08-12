@@ -80,14 +80,14 @@ export const coinTradingRepository = {
     return tx.coinTradingTransfer.create({ data })
   },
   async reverseTransfer(
-    params: { id: string; reversedByUserId: string; reason: string },
+    params: { id: string; reversedByAdminId: string; reason: string },
     tx: Prisma.TransactionClient,
   ) {
     return tx.coinTradingTransfer.update({
       where: { id: params.id },
       data: {
         reversedAt: new Date(),
-        reversedByUserId: params.reversedByUserId,
+        reversedByAdminId: params.reversedByAdminId,
         reverseReason: params.reason,
       },
     })

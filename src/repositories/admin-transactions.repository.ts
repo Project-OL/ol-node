@@ -243,7 +243,6 @@ export const adminTransactionsRepository = {
       include: {
         senderAgent: { select: adminTxnUserSelect },
         recipient: { select: adminTxnUserSelect },
-        reversedBy: { select: adminTxnUserSelect },
       },
     })
   },

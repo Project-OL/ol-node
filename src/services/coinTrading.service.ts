@@ -903,7 +903,7 @@ export const coinTradingService = {
             },
           )
           await coinTradingRepository.reverseTransfer(
-            { id: transfer.id, reversedByUserId: adminUserId, reason },
+            { id: transfer.id, reversedByAdminId: adminUserId, reason },
             tx,
           )
         },

@@ -176,7 +176,6 @@ model User {
   tradingCoinTopupOrders       CoinTradingTopupOrder[]       @relation("TradingCoinTopupsByAgent")
   tradingCoinTransfersSent     CoinTradingTransfer[]         @relation("TradingCoinTransferSender")
   tradingCoinTransfersReceived CoinTradingTransfer[]         @relation("TradingCoinTransferRecipient")
-  tradingCoinTransferReversals CoinTradingTransfer[]         @relation("TradingCoinTransferReversedBy")
   paymentMethods               UserPaymentMethod[]
   withdrawals                  Withdrawal[]
   locationSamples              UserLocationSample[]
@@ -1445,14 +1444,14 @@ model CoinTradingTransfer {
   senderLedgerEntryId    String    @map("sender_ledger_entry_id") @db.Uuid
   recipientLedgerEntryId String    @map("recipient_ledger_entry_id") @db.Uuid
   idempotencyKey         String    @unique @map("idempotency_key") @db.VarChar(200)
-  reversedAt             DateTime? @map("reversed_at")
-  reversedByUserId       String?   @map("reversed_by_user_id") @db.Uuid
-  reverseReason          String?   @map("reverse_reason") @db.Text
-  createdAt              DateTime  @default(now()) @map("created_at")
+  reversedAt DateTime? @map("reversed_at")
+  /// `system_admins.id` — no FK (admins are not app users; same pattern as `banned_devices.banned_by_admin_id`).
+  reversedByAdminId String?  @map("reversed_by_user_id") @db.Uuid
+  reverseReason     String?  @map("reverse_reason") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at")
 
-  senderAgent User  @relation("TradingCoinTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
-  recipient   User  @relation("TradingCoinTransferRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
-  reversedBy  User? @relation("TradingCoinTransferReversedBy", fields: [reversedByUserId], references: [id], onDelete: SetNull)
+  senderAgent User @relation("TradingCoinTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
+  recipient   User @relation("TradingCoinTransferRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
 
   @@index([senderAgentUserId, createdAt(sort: Desc)])
   @@index([recipientUserId, createdAt(sort: Desc)])
