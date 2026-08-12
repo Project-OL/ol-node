@@ -14,6 +14,7 @@ import type {
 } from '../models/admin-currency.schemas'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { adminWalletService } from './adminWallet.service'
+import { adminAuditMetaFromRequest } from '../utils/admin-audit'
 import { platformProfitService } from './platform-profit.service'
 
 const userSelect = {
@@ -91,6 +92,7 @@ export const adminCurrencyService = {
   async adjust(params: {
     adminUserId: string
     body: AdminCurrencyAdjustBody
+    auditMeta?: ReturnType<typeof adminAuditMetaFromRequest>
   }) {
     const amount = BigInt(params.body.amount)
     const { userId, currency, direction, description, idempotencyKey, forceTradingCredit } =
@@ -104,6 +106,7 @@ export const adminCurrencyService = {
           coins: amount,
           description,
           idempotencyKey,
+          auditMeta: params.auditMeta,
         })
       }
       if (currency === 'POINT') {
@@ -113,6 +116,7 @@ export const adminCurrencyService = {
           points: amount,
           description,
           idempotencyKey,
+          auditMeta: params.auditMeta,
         })
       }
       return adminWalletService.creditUserWallets({
@@ -122,6 +126,7 @@ export const adminCurrencyService = {
         description,
         idempotencyKey,
         forceTradingCredit,
+        auditMeta: params.auditMeta,
       })
     }
 
@@ -132,6 +137,7 @@ export const adminCurrencyService = {
         amount,
         description,
         idempotencyKey,
+        auditMeta: params.auditMeta,
       })
     }
     if (currency === 'POINT') {
@@ -141,6 +147,7 @@ export const adminCurrencyService = {
         amount,
         description,
         idempotencyKey,
+        auditMeta: params.auditMeta,
       })
     }
     return adminWalletService.debitTradingCoins({
@@ -149,6 +156,7 @@ export const adminCurrencyService = {
       amount,
       description,
       idempotencyKey,
+      auditMeta: params.auditMeta,
     })
   },
 

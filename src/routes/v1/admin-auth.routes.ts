@@ -5,6 +5,8 @@ import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import { passwordSchema } from '../../models/schemas'
 import { mintAdminWsTicket } from '../../services/ws-ticket.service'
+import { auditService } from '../../services/audit.service'
+import { adminAuditMetaFromRequest } from '../../utils/admin-audit'
 
 const LoginBody = z.object({
   email: z.string().email(),
@@ -46,6 +48,13 @@ export async function registerAdminAuthRoutes(app: FastifyInstance) {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     })
+    auditService.logAdmin({
+      adminUserId: result.admin.id,
+      actionType: 'ADMIN_LOGIN',
+      actionStatus: 'success',
+      destination: 'Admin login',
+      request: adminAuditMetaFromRequest(req),
+    })
     return reply.code(200).send(result)
   })
 
@@ -57,6 +66,13 @@ export async function registerAdminAuthRoutes(app: FastifyInstance) {
 
   app.post('/auth/logout', { preHandler: [authenticateAdmin] }, async (req, reply) => {
     if (req.adminUser) {
+      auditService.logAdmin({
+        adminUserId: req.adminUser.id,
+        actionType: 'ADMIN_LOGOUT',
+        actionStatus: 'success',
+        destination: 'Admin logout',
+        request: adminAuditMetaFromRequest(req),
+      })
       await systemAdminService.logout(req.adminUser.id)
     }
     return reply.code(204).send()

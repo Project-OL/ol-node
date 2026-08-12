@@ -12,6 +12,7 @@ import { walletService } from './wallet.service'
 import { getUserWalletFreezeFlags } from './wallet-freeze.service'
 import { walletLevelService } from './user-level.service'
 import { LevelType } from '@prisma/client'
+import type { AdminAuditRequestMeta } from '../utils/admin-audit'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -44,6 +45,7 @@ export const adminWalletService = {
     idempotencyKey?: string
     /** When true, credits trading coins even if the user is not an agency agent. */
     forceTradingCredit?: boolean
+    auditMeta?: AdminAuditRequestMeta
   }): Promise<AdminWalletCreditResult> {
     const hasCoins = params.coins != null && params.coins > 0n
     const hasPoints = params.points != null && params.points > 0n
@@ -145,17 +147,19 @@ export const adminWalletService = {
       }
     }
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
       actionType: 'ADMIN_WALLET_CREDIT',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.targetUserId,
         credited,
         skipped: Object.keys(skipped).length > 0 ? skipped : undefined,
         description,
         idempotencyKey: baseKey,
       },
+      destination: `Wallet credit for user ${params.targetUserId}`,
+      request: params.auditMeta,
     })
 
     return {
@@ -173,6 +177,7 @@ export const adminWalletService = {
     amount: bigint
     description?: string
     idempotencyKey?: string
+    auditMeta?: AdminAuditRequestMeta
   }) {
     if (params.amount <= 0n) {
       throw new AppError(400, 'Amount must be positive', 'INVALID_REQUEST')
@@ -198,16 +203,18 @@ export const adminWalletService = {
     )
     await walletService.adjustCoinBalanceCache(params.targetUserId, -params.amount)
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
       actionType: 'ADMIN_WALLET_DEBIT_COINS',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.targetUserId,
         amount: params.amount.toString(),
         description,
         idempotencyKey: baseKey,
       },
+      destination: `Personal coin debit for user ${params.targetUserId}`,
+      request: params.auditMeta,
     })
 
     return {
@@ -224,6 +231,7 @@ export const adminWalletService = {
     amount: bigint
     description?: string
     idempotencyKey?: string
+    auditMeta?: AdminAuditRequestMeta
   }) {
     if (params.amount <= 0n) {
       throw new AppError(400, 'Amount must be positive', 'INVALID_REQUEST')
@@ -249,16 +257,18 @@ export const adminWalletService = {
     )
     await walletService.adjustTradingBalanceCache(params.targetUserId)
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
       actionType: 'ADMIN_WALLET_DEBIT_TRADING',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.targetUserId,
         amount: params.amount.toString(),
         description,
         idempotencyKey: baseKey,
       },
+      destination: `Trading coin debit for user ${params.targetUserId}`,
+      request: params.auditMeta,
     })
 
     return {
@@ -275,6 +285,7 @@ export const adminWalletService = {
     amount: bigint
     description?: string
     idempotencyKey?: string
+    auditMeta?: AdminAuditRequestMeta
   }) {
     if (params.amount <= 0n) {
       throw new AppError(400, 'Amount must be positive', 'INVALID_REQUEST')
@@ -300,16 +311,18 @@ export const adminWalletService = {
 
     await walletService.adjustPointBalanceCache(params.targetUserId, -params.amount)
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
       actionType: 'ADMIN_WALLET_DEBIT_POINTS',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.targetUserId,
         amount: params.amount.toString(),
         description,
         idempotencyKey: baseKey,
       },
+      destination: `Point debit for user ${params.targetUserId}`,
+      request: params.auditMeta,
     })
 
     return {
@@ -324,11 +337,13 @@ export const adminWalletService = {
     const user = await userRepository.findById(targetUserId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     await userRepository.update(targetUserId, { personalCoinsFrozen: frozen })
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId,
       actionType: frozen ? 'ADMIN_FREEZE_PERSONAL_COINS' : 'ADMIN_UNFREEZE_PERSONAL_COINS',
       actionStatus: 'success',
-      actionDetails: { targetUserId, frozen },
+      actionDetails: { frozen },
+      destination: `${frozen ? 'Freeze' : 'Unfreeze'} personal coins for user ${targetUserId}`,
     })
     return { ok: true as const, userId: targetUserId, personalCoinsFrozen: frozen }
   },
@@ -337,11 +352,13 @@ export const adminWalletService = {
     const user = await userRepository.findById(targetUserId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     await userRepository.update(targetUserId, { tradingCoinsFrozen: frozen })
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId,
       actionType: frozen ? 'ADMIN_FREEZE_TRADING_COINS' : 'ADMIN_UNFREEZE_TRADING_COINS',
       actionStatus: 'success',
-      actionDetails: { targetUserId, frozen },
+      actionDetails: { frozen },
+      destination: `${frozen ? 'Freeze' : 'Unfreeze'} trading coins for user ${targetUserId}`,
     })
     return { ok: true as const, userId: targetUserId, tradingCoinsFrozen: frozen }
   },
@@ -361,11 +378,13 @@ export const adminWalletService = {
       cancelledWithdrawalIds = cancelled.cancelledIds
     }
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId,
       actionType: frozen ? 'ADMIN_FREEZE_POINTS' : 'ADMIN_UNFREEZE_POINTS',
       actionStatus: 'success',
-      actionDetails: { targetUserId, frozen, cancelledWithdrawalIds },
+      actionDetails: { frozen, cancelledWithdrawalIds },
+      destination: `${frozen ? 'Freeze' : 'Unfreeze'} points for user ${targetUserId}`,
     })
     return {
       ok: true as const,
@@ -398,11 +417,13 @@ export const adminWalletService = {
       cancelledWithdrawalIds = cancelled.cancelledIds
     }
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId,
       actionType: frozen ? 'ADMIN_FREEZE_ALL_WALLETS' : 'ADMIN_UNFREEZE_ALL_WALLETS',
       actionStatus: 'success',
-      actionDetails: { targetUserId, frozen, cancelledWithdrawalIds },
+      actionDetails: { frozen, cancelledWithdrawalIds },
+      destination: `${frozen ? 'Freeze' : 'Unfreeze'} all wallets for user ${targetUserId}`,
     })
     return {
       ok: true as const,
@@ -431,18 +452,19 @@ export const adminWalletService = {
       targetLevel: params.targetLevel,
     })
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
       actionType: 'ADMIN_SET_USER_LEVEL',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.targetUserId,
         levelType: params.type,
         targetLevel: params.targetLevel,
         previousLevel: result.previousLevel,
         currentLevel: result.currentLevel,
         reason: params.reason ?? null,
       },
+      destination: `Set ${params.type} level to ${params.targetLevel} for user ${params.targetUserId}`,
     })
 
     return {

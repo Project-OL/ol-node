@@ -486,6 +486,8 @@ model UserActiveStoreItems {
 model AuditLog {
   id            String   @id @default(uuid()) @db.Uuid
   userId        String?  @map("user_id") @db.Uuid
+  /// System admin actor (`system_admins.id`) — no FK.
+  adminUserId   String?  @map("admin_user_id") @db.Uuid
   actionType    String   @map("action_type") @db.VarChar(100)
   actionStatus  String   @map("action_status") @db.VarChar(50) // success, failed
   actionDetails Json?    @map("action_details")
@@ -497,6 +499,7 @@ model AuditLog {
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([adminUserId])
   @@index([actionType])
   @@index([createdAt(sort: Desc)])
   @@map("audit_logs")

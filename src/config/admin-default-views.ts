@@ -234,6 +234,11 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/currency/adjustments',
     'GET /admin/users/search',
   ],
+  AdminActivityView: [
+    'GET /admin/activity-logs',
+    'GET /admin/activity-logs/action-types',
+    'GET /admin/users/search',
+  ],
   BannerAdminView: [
     'GET /admin/banners',
     'POST /admin/banners',

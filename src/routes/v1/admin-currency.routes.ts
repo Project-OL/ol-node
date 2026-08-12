@@ -7,6 +7,7 @@ import {
   adminCurrencySupplySummaryQuerySchema,
 } from '../../models/admin-currency.schemas'
 import { adminCurrencyService } from '../../services/adminCurrency.service'
+import { adminAuditMetaFromRequest } from '../../utils/admin-audit'
 
 const preAuth = [authenticateAdmin]
 
@@ -34,6 +35,7 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
         await adminCurrencyService.adjust({
           adminUserId: request.adminUser!.id,
           body: parsed.data,
+          auditMeta: adminAuditMetaFromRequest(request),
         }),
       )
     },

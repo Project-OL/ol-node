@@ -549,8 +549,9 @@ export const adminTransactionsService = {
       await walletService.adjustTradingBalanceCache(receiverUserId)
       await walletService.adjustTradingBalanceCache(senderUserId)
 
-      auditService.log({
-        userId: params.adminUserId,
+      auditService.logAdmin({
+        adminUserId: params.adminUserId,
+        targetUserId: receiverUserId,
         actionType: 'ADMIN_TRANSACTION_REVERT_COIN',
         actionStatus: 'success',
         actionDetails: {
@@ -565,6 +566,7 @@ export const adminTransactionsService = {
           wealthXpReversed: false,
           idempotencyKey: baseKey,
         },
+        destination: `Revert coin ledger ${entry.id}`,
       })
 
       return {
@@ -724,8 +726,9 @@ export const adminTransactionsService = {
         await agencyCommissionService.afterCommissionCreditCommit(result.commission.bustAgentUserId)
       }
 
-      auditService.log({
-        userId: params.adminUserId,
+      auditService.logAdmin({
+        adminUserId: params.adminUserId,
+        targetUserId: receiverUserId,
         actionType: 'ADMIN_TRANSACTION_REVERT_POINT',
         actionStatus: 'success',
         actionDetails: {
@@ -741,6 +744,7 @@ export const adminTransactionsService = {
           commissionPoints: result.commission.commissionPoints,
           idempotencyKey: baseKey,
         },
+        destination: `Revert point ledger ${entry.id}`,
       })
 
       return {
@@ -805,18 +809,18 @@ export const adminTransactionsService = {
       params.reason,
     )
 
-    auditService.log({
-      // audit_logs.user_id FKs to users — admins are system_admins, so leave null.
-      userId: null,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: transfer.recipientUserId,
       actionType: 'ADMIN_TRANSACTION_REVERT_TRADING_TRANSFER',
       actionStatus: 'success',
       actionDetails: {
         transferId: transfer.id,
         reason: params.reason,
-        adminUserId: params.adminUserId,
         senderAgentUserId: transfer.senderAgentUserId,
         recipientUserId: transfer.recipientUserId,
       },
+      destination: `Revert trading transfer ${transfer.id}`,
     })
 
     return {

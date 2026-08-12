@@ -1,4 +1,5 @@
 import { auditRepository } from '../repositories/audit.repository'
+import type { AdminAuditRequestMeta } from '../utils/admin-audit'
 
 function getIp(request: {
   ip?: string
@@ -24,16 +25,18 @@ export const auditService = {
    * Log an audit event (fire-and-forget). Does not await DB; avoids adding latency to the request.
    * Provide either `request` (for IP/user-agent) or explicit `ipAddress`/`userAgent`.
    * @param params.userId - Subject user (optional for anonymous actions).
+   * @param params.adminUserId - System admin actor (`system_admins.id`).
    * @param params.actionType - e.g. 'login', 'logout', 'password_change', 'provider_bind'.
    * @param params.actionStatus - 'success' | 'failed'.
    * @param params.actionDetails - Optional JSON-serializable details.
    */
   log(params: {
     userId?: string | null
+    adminUserId?: string | null
     actionType: string
     actionStatus: 'success' | 'failed'
     actionDetails?: Record<string, unknown>
-    request?: { ip?: string; headers?: Record<string, string | undefined> }
+    request?: AdminAuditRequestMeta
     ipAddress?: string
     userAgent?: string
     deviceId?: string | null
@@ -43,6 +46,7 @@ export const auditService = {
     auditRepository
       .log({
         userId: params.userId,
+        adminUserId: params.adminUserId,
         actionType: params.actionType,
         actionStatus: params.actionStatus,
         actionDetails: params.actionDetails,
@@ -51,5 +55,41 @@ export const auditService = {
         deviceId: params.deviceId,
       })
       .catch((err) => console.error('[audit] log failed', err))
+  },
+
+  /**
+   * Log a system-admin action. Sets `adminUserId`, optional target user on `userId`,
+   * merges adminUserId into actionDetails for legacy readers, and captures IP when provided.
+   */
+  logAdmin(params: {
+    adminUserId: string
+    targetUserId?: string | null
+    actionType: string
+    actionStatus: 'success' | 'failed'
+    actionDetails?: Record<string, unknown>
+    destination?: string
+    request?: AdminAuditRequestMeta
+    ipAddress?: string
+    userAgent?: string
+    deviceId?: string | null
+  }) {
+    const details: Record<string, unknown> = {
+      ...(params.actionDetails ?? {}),
+      adminUserId: params.adminUserId,
+    }
+    if (params.targetUserId) details.targetUserId = params.targetUserId
+    if (params.destination) details.destination = params.destination
+
+    this.log({
+      adminUserId: params.adminUserId,
+      userId: params.targetUserId ?? null,
+      actionType: params.actionType,
+      actionStatus: params.actionStatus,
+      actionDetails: details,
+      request: params.request,
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+      deviceId: params.deviceId,
+    })
   },
 }
