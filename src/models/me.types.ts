@@ -80,6 +80,8 @@ export interface MeResponseDto extends MeProfileCache {
     asAgent?: {
       agencyPublicId: string
       displayName: string
+      /** Owner first + last (`formatUserName`); empty if both missing. */
+      name: string
       avatarUrl: string | null
       totalHostsCount: number
       currentLevel: string
@@ -91,6 +93,8 @@ export interface MeResponseDto extends MeProfileCache {
     asHost?: {
       agencyPublicId: string
       agencyDisplayName: string
+      /** Agency owner first + last (`formatUserName`); empty if both missing. */
+      name: string
       avatarUrl: string | null
       joinedAt: string
       pendingLeaveApplication?: { id: string; autoApproveAt: string }

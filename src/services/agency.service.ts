@@ -18,6 +18,7 @@ import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApp
 import { supportRepository } from '../repositories/support.repository'
 import { rootLogger } from '../utils/rootLogger'
 import { displayNameFromUser } from '../utils/profileDisplay'
+import { formatUserName } from '../utils/user-display'
 import { agencyCommissionService } from './agencyCommission.service'
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyKycService } from './agencyKyc.service'
@@ -38,6 +39,8 @@ export function mapHostAgencyMeBlock(
   return {
     agencyPublicId: hostRow.agency.defaultPublicId.toString(),
     agencyDisplayName: hostRow.agency.displayName,
+    /** Agency owner first + last (empty if both missing). */
+    name: formatUserName(hostRow.agency.user ?? {}),
     avatarUrl: hostRow.agency.user?.avatarUrl ?? null,
     joinedAt: hostRow.joinedAt.toISOString(),
     pendingLeaveApplication: pendingLeave
@@ -318,7 +321,7 @@ export const agencyService = {
       agencyHostRepository.getHostWithAgency(userId),
       prismaRead.user.findUnique({
         where: { id: userId },
-        select: { avatarUrl: true },
+        select: { avatarUrl: true, firstName: true, lastName: true },
       }),
     ])
 
@@ -338,6 +341,8 @@ export const agencyService = {
     return {
       owned,
       ownedAvatarUrl: owned ? (selfProfile?.avatarUrl ?? null) : null,
+      /** Agency owner first + last when `owned` is set; empty string if both missing. */
+      ownedName: owned ? formatUserName(selfProfile ?? {}) : null,
       hostMembership: hostRow,
       pendingJoinInbox: pendingJoin,
       pendingLeaveInbox: pendingLeave,
@@ -362,7 +367,7 @@ export const agencyService = {
       owned
         ? prismaRead.user.findUnique({
             where: { id: userId },
-            select: { avatarUrl: true },
+            select: { avatarUrl: true, firstName: true, lastName: true },
           })
         : null,
       owned ? agencyCommissionService.buildMeAgentCommissionSummary(userId) : undefined,
@@ -374,6 +379,7 @@ export const agencyService = {
         ? {
             agencyPublicId: owned.defaultPublicId.toString(),
             displayName: owned.displayName,
+            name: formatUserName(selfProfile ?? {}),
             avatarUrl: selfProfile?.avatarUrl ?? null,
             totalHostsCount: owned.totalHostsCount,
             currentLevel: owned.currentLevel,

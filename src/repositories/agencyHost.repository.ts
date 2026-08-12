@@ -33,7 +33,7 @@ export const agencyHostRepository = {
       include: {
         agency: {
           include: {
-            user: { select: { avatarUrl: true } },
+            user: { select: { avatarUrl: true, firstName: true, lastName: true } },
           },
         },
       },

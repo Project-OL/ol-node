@@ -117,6 +117,7 @@ export default async function agencyRoutes(app: FastifyInstance) {
         ? {
             agencyPublicId: view.owned.defaultPublicId.toString(),
             displayName: view.owned.displayName,
+            name: view.ownedName ?? '',
             avatarUrl: view.ownedAvatarUrl,
             totalHostsCount: view.owned.totalHostsCount,
             currentLevel: view.owned.currentLevel,
