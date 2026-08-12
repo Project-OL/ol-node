@@ -339,7 +339,7 @@ export const csaManagementService = {
       adminId,
       avgRating: performance.avgRating,
       ratingCount: performance.ratingCount,
-      tickets: tickets.map((t) => enrichAdminTicket(t)),
+      tickets: await Promise.all(tickets.map((t) => enrichAdminTicket(t))),
       pagination: {
         page: query.page,
         limit: query.limit,

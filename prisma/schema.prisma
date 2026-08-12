@@ -1663,6 +1663,17 @@ model MessagingConfig {
   @@map("messaging_config")
 }
 
+/// Singleton: PENDING_REVIEW contest window before auto-close (resolve/reject tickets).
+model SupportConfig {
+  id              Int      @id @default(1)
+  /// Duration from `resolvedAt` during which the user may reply to contest.
+  reviewWindowMs  Int      @default(86400000) @map("review_window_ms")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("support_config")
+}
+
 /// Singleton: Face Liveness gates (legacy register block + Amplify STS credentials required).
 /// Admin `GET|PUT /admin/system-settings/face-liveness`. First create seeds from env.
 model FaceLivenessConfig {

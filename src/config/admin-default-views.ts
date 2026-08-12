@@ -158,6 +158,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/agency/withdrawal/payout-rails',
     'GET /admin/system-settings/messaging',
     'PUT /admin/system-settings/messaging',
+    'GET /admin/system-settings/support',
+    'PUT /admin/system-settings/support',
     'GET /admin/system-settings/face-liveness',
     'PUT /admin/system-settings/face-liveness',
   ],

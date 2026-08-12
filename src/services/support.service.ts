@@ -17,6 +17,7 @@ import type {
   GetAllTicketsQuery,
 } from '../models/support.schemas'
 import { formatUserName } from '../utils/user-display'
+import { supportContestEndsAt } from './supportConfig.service'
 
 /** Agency promotion / CS force-exit use explicit admin routes (`/admin/agency/*`); do not auto-invoke from ticket lifecycle here. */
 const AUTO_REPLY_CONTENT = 'Thank you for your feedback, we will reply you within 24 hours.'
@@ -243,6 +244,11 @@ export const supportService = {
         ...ticket,
         user: withName(ticket.user),
         ...ticketUserFlags(ticket),
+        ...(ticket.status === 'PENDING_REVIEW'
+          ? {
+              pendingReviewUntil: await supportContestEndsAt(ticket.resolvedAt),
+            }
+          : {}),
       },
       messages: chronological.map((m) => ({
         ...m,

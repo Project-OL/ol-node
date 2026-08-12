@@ -20,6 +20,11 @@ import type {
   AdminUploadUrlSchema,
 } from '../models/support-admin.schemas'
 import { buildTicketInitialSubmission, resolveSupportTypeLabels } from '../config/support-types.config'
+import {
+  formatSupportReviewWindowLabel,
+  supportConfigService,
+  supportContestEndsAt,
+} from './supportConfig.service'
 import { formatUserName } from '../utils/user-display'
 
 const PRESIGN_TTL_SEC = 600
@@ -94,12 +99,17 @@ type AdminTicketEnrichInput = {
   createdAt: Date
   status: SupportTicketStatus
   assignedAdminId: string | null
+  resolvedAt?: Date | null
   user?: { firstName?: string | null; lastName?: string | null } | null
 }
 
-export function enrichAdminTicket<T extends AdminTicketEnrichInput>(ticket: T) {
+export async function enrichAdminTicket<T extends AdminTicketEnrichInput>(ticket: T) {
   const { user, ...rest } = ticket
   const { typeLabel, subTypeLabel } = resolveSupportTypeLabels(ticket.type, ticket.subType)
+  const pendingReviewUntil =
+    ticket.status === 'PENDING_REVIEW'
+      ? await supportContestEndsAt(ticket.resolvedAt ?? null)
+      : null
   return {
     ...rest,
     ...(user !== undefined ? { user: withName(user) } : {}),
@@ -107,10 +117,11 @@ export function enrichAdminTicket<T extends AdminTicketEnrichInput>(ticket: T) {
     typeLabel,
     subTypeLabel,
     initialSubmission: buildTicketInitialSubmission(ticket),
+    ...(pendingReviewUntil ? { pendingReviewUntil } : {}),
   }
 }
 
-function ticketDto<T extends AdminTicketEnrichInput>(ticket: T) {
+async function ticketDto<T extends AdminTicketEnrichInput>(ticket: T) {
   return enrichAdminTicket(ticket)
 }
 
@@ -145,7 +156,7 @@ export const supportAdminService = {
     })
 
     return toJsonSafe({
-      tickets: tickets.map(ticketDto),
+      tickets: await Promise.all(tickets.map((t) => ticketDto(t))),
       pagination: { page: query.page, limit: query.limit, total, hasMore: skip + tickets.length < total },
     })
   },
@@ -171,7 +182,7 @@ export const supportAdminService = {
     }
 
     return toJsonSafe({
-      ticket: ticketDto(ticket),
+      ticket: await ticketDto(ticket),
       messages: [...messages].reverse().map((m) => ({
         ...m,
         sender: withName(m.sender),
@@ -247,8 +258,9 @@ export const supportAdminService = {
 
     const resolvedAt = new Date()
     const label = input.resolution === 'RESOLVED' ? 'resolved' : 'rejected'
-    // Reason is required in chat; append the 24h contest window notice.
-    const closingContent = `${input.note.trim()}\n\n(This ticket was marked ${label}. It will close automatically in 24 hours unless you reply.)`
+    const windowMs = await supportConfigService.getReviewWindowMs()
+    const windowLabel = formatSupportReviewWindowLabel(windowMs)
+    const closingContent = `${input.note.trim()}\n\n(This ticket was marked ${label}. It will close automatically in ${windowLabel} unless you reply.)`
 
     const closingMessage = await supportRepository.createMessage({
       ticketId,
@@ -296,7 +308,7 @@ export const supportAdminService = {
       })
     }
 
-    return toJsonSafe(ticketDto(updated))
+    return toJsonSafe(await ticketDto(updated))
   },
 
   async forceClose(actor: AdminActor, ticketId: bigint) {
@@ -327,7 +339,7 @@ export const supportAdminService = {
       ...(ticket.assignedAdminId ? {} : { assignedAdminId: actor.id, assignedAt: now }),
     })
     await invalidateUserCaches(ticket.userId, ticketId)
-    return toJsonSafe(ticketDto(updated))
+    return toJsonSafe(await ticketDto(updated))
   },
 
   async assign(actor: AdminActor, ticketId: bigint, targetAdminId: string) {
@@ -372,7 +384,7 @@ export const supportAdminService = {
       { ticketId },
     )
 
-    return toJsonSafe(ticketDto(updated))
+    return toJsonSafe(await ticketDto(updated))
   },
 
   async claim(actor: AdminActor, ticketId: bigint) {
@@ -387,7 +399,7 @@ export const supportAdminService = {
     const updated = await supportRepository.assignTicket(ticketId, actor.id, {
       setStatusAssigned: ticket.status === 'OPEN' || ticket.status === 'AWAITING_REPLY',
     })
-    return toJsonSafe(ticketDto(updated))
+    return toJsonSafe(await ticketDto(updated))
   },
 
   async setPriority(actor: AdminActor, ticketId: bigint, priority: SupportTicketPriority) {
@@ -398,7 +410,7 @@ export const supportAdminService = {
     assertCanAct(actor, ticket)
 
     const updated = await supportRepository.updateTicketStatus(ticketId, ticket.status, { priority })
-    return toJsonSafe(ticketDto(updated))
+    return toJsonSafe(await ticketDto(updated))
   },
 
   async addNote(actor: AdminActor, ticketId: bigint, content: string) {

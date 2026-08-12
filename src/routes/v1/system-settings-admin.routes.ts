@@ -8,10 +8,12 @@ import {
   ReplaceVideoCallPriceCapsSchema,
   WalletLevelConfigsReplaceSchema,
 } from '../../models/system-rates-admin.schemas'
+import { SupportConfigUpdateSchema } from '../../models/supportConfig.schemas'
 import { MessagingConfigUpdateSchema } from '../../models/messagingConfig.schemas'
 import { FaceLivenessConfigUpdateSchema } from '../../models/faceLivenessConfig.schemas'
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
 import { messagingConfigService } from '../../services/messagingConfig.service'
+import { supportConfigService } from '../../services/supportConfig.service'
 import { faceLivenessConfigService } from '../../services/faceLivenessConfig.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { videoCallPriceCapService } from '../../services/videoCallPriceCap.service'
@@ -26,6 +28,7 @@ import { videoCallPriceCapService } from '../../services/videoCallPriceCap.servi
  * GET|PUT /v1/admin/system-settings/wallet-level-configs
  * GET|PUT /v1/admin/system-settings/video-call-price-caps
  * GET|PUT /v1/admin/system-settings/messaging
+ * GET|PUT /v1/admin/system-settings/support
  * GET|PUT /v1/admin/system-settings/face-liveness
  */
 export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
@@ -140,6 +143,25 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = MessagingConfigUpdateSchema.parse(request.body ?? {})
       return reply.send(await messagingConfigService.updateConfig(adminUserId, body))
+    },
+  )
+
+  app.get(
+    '/system-settings/support',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await supportConfigService.getConfig())
+    },
+  )
+
+  app.put(
+    '/system-settings/support',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = SupportConfigUpdateSchema.parse(request.body ?? {})
+      return reply.send(await supportConfigService.updateConfig(adminUserId, body))
     },
   )
 

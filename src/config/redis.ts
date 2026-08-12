@@ -367,6 +367,8 @@ export const RedisKeys = {
   payrollConfig: () => 'payroll:config',
   payoutRailConfig: () => 'withdrawal:payout-rail-config',
   messagingConfig: () => 'messaging:config',
+  /** Support ticket PENDING_REVIEW contest window (admin system settings). */
+  supportConfig: () => 'support:config',
   faceLivenessConfig: () => 'face-liveness:config',
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
   ratelimitWithdrawalCreate: (userId: string) => `ratelimit:withdrawal:create:${userId}`,
@@ -543,6 +545,7 @@ export const AGENCY_COMMISSION_WINDOW_CONFIG_TTL = 300
 export const PAYOUT_RAIL_CONFIG_TTL = 300
 /** Shared message edit/delete action window singleton. */
 export const MESSAGING_CONFIG_TTL = 300
+export const SUPPORT_CONFIG_TTL = 300
 /** Face Liveness admin gates singleton. */
 export const FACE_LIVENESS_CONFIG_TTL = 300
 /** Agent payroll dashboard summary (tab counts + toggle). */
