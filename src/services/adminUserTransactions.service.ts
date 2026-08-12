@@ -18,6 +18,12 @@ import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { coinTradingService } from './coinTrading.service'
 import { resolveCoinLedgerRevertability, resolvePointLedgerRevertability } from './adminTransactions.service'
+import {
+  ADMIN_WITHDRAWAL_LEDGER_TX_TYPES,
+  isAdminWithdrawalRevertable,
+} from '../utils/admin-withdrawal-revert'
+import { prismaRead } from '../config/database'
+import type { AdminCoinRevertVia } from './adminTransactions.service'
 
 function parseTradingTypes(filters?: string[]): CoinTxType[] | undefined {
   if (!filters?.length) return undefined
@@ -83,15 +89,62 @@ async function attachCoinRevertFlags<T extends HistoryRow>(
   })
 }
 
-function attachPointRevertFlags<T extends HistoryRow & { txType?: string }>(rows: T[]) {
-  return rows.map((row) => ({
-    ...row,
-    canRevert: resolvePointLedgerRevertability({
-      txType: row.txType as PointTxType,
-      counterpartyId: typeof row.counterpartyId === 'string' ? row.counterpartyId : null,
-    }),
-    revertVia: null as null,
-  }))
+async function attachPointRevertFlags<T extends HistoryRow & { txType?: string; refId?: string | null }>(
+  rows: T[],
+): Promise<
+  Array<T & { canRevert: boolean; revertVia: AdminCoinRevertVia | null }>
+> {
+  const withdrawalIds = [
+    ...new Set(
+      rows
+        .filter(
+          (r) =>
+            r.txType &&
+            ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(r.txType as PointTxType) &&
+            typeof r.refId === 'string' &&
+            r.refId,
+        )
+        .map((r) => r.refId as string),
+    ),
+  ]
+  const withdrawals =
+    withdrawalIds.length > 0
+      ? await prismaRead.withdrawal.findMany({
+          where: { id: { in: withdrawalIds } },
+          select: { id: true, status: true, requestedAt: true },
+        })
+      : []
+  const withdrawalMap = new Map(withdrawals.map((w) => [w.id, w]))
+
+  return rows.map((row) => {
+    const withdrawal =
+      row.txType &&
+      ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(row.txType as PointTxType) &&
+      typeof row.refId === 'string'
+        ? withdrawalMap.get(row.refId)
+        : undefined
+    if (
+      withdrawal &&
+      isAdminWithdrawalRevertable({
+        status: withdrawal.status,
+        requestedAt: withdrawal.requestedAt,
+      })
+    ) {
+      return {
+        ...row,
+        canRevert: true,
+        revertVia: { endpoint: 'withdrawal', id: withdrawal.id },
+      }
+    }
+    return {
+      ...row,
+      canRevert: resolvePointLedgerRevertability({
+        txType: row.txType as PointTxType,
+        counterpartyId: typeof row.counterpartyId === 'string' ? row.counterpartyId : null,
+      }),
+      revertVia: null,
+    }
+  })
 }
 
 export const adminUserTransactionsService = {
@@ -142,7 +195,7 @@ export const adminUserTransactionsService = {
     })
     return {
       ...history,
-      entries: attachPointRevertFlags(history.entries ?? []),
+      entries: await attachPointRevertFlags(history.entries ?? []),
     }
   },
 

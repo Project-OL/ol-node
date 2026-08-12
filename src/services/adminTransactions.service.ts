@@ -6,7 +6,7 @@ import {
   WalletCurrencyType,
 } from '@prisma/client'
 import { randomUUID } from 'crypto'
-import { prisma } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import type { AdminTransactionsListQuery } from '../models/admin-transactions.schemas'
 import {
@@ -16,10 +16,15 @@ import {
 import { coinTradingRepository } from '../repositories/coinTrading.repository'
 import { getTransactionName } from '../config/transaction-display-names'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import {
+  ADMIN_WITHDRAWAL_LEDGER_TX_TYPES,
+  isAdminWithdrawalRevertable,
+} from '../utils/admin-withdrawal-revert'
 import { auditService } from './audit.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { coinTradingService } from './coinTrading.service'
+import { withdrawalService } from './withdrawal.service'
 import { walletService } from './wallet.service'
 import {
   syncLevelCacheFromApplyResult,
@@ -579,6 +584,19 @@ export const adminTransactionsService = {
     const entry = await adminTransactionsRepository.findPointLedgerById(params.ledgerEntryId)
     if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
 
+    if (ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(entry.txType) && entry.refId && UUID_RE.test(entry.refId)) {
+      const row = await withdrawalService.adminReverseWithdrawal(
+        params.adminUserId,
+        entry.refId,
+        params.reason,
+      )
+      return {
+        ok: true as const,
+        via: 'withdrawal' as const,
+        withdrawal: withdrawalService.serializeWithdrawal(row),
+      }
+    }
+
     if (!resolvePointLedgerRevertability({
       txType: entry.txType,
       counterpartyId: entry.counterpartyId,
@@ -1001,7 +1019,7 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
  * revertable via coin ledger flags — gifts use personal COIN as source.
  */
 export type AdminCoinRevertVia = {
-  endpoint: 'coin_ledger' | 'coin_trading_transfer'
+  endpoint: 'coin_ledger' | 'coin_trading_transfer' | 'withdrawal'
   id: string
 }
 
@@ -1050,6 +1068,22 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
   const giftTxs = await adminTransactionsRepository.findGiftTransactionsByIds(giftTxIds)
   const giftTxMap = new Map(giftTxs.map((g) => [g.id, g]))
 
+  const withdrawalIds = [
+    ...new Set(
+      page
+        .filter((e) => ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(e.txType) && e.refId && UUID_RE.test(e.refId))
+        .map((e) => e.refId as string),
+    ),
+  ]
+  const withdrawals =
+    withdrawalIds.length > 0
+      ? await prismaRead.withdrawal.findMany({
+          where: { id: { in: withdrawalIds } },
+          select: { id: true, status: true, requestedAt: true },
+        })
+      : []
+  const withdrawalMap = new Map(withdrawals.map((w) => [w.id, w]))
+
   const counterpartyDetailsMap = await buildAdminCounterpartyDetailsMap(
     page.map((e) => ({
       id: e.id,
@@ -1069,6 +1103,17 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
     const cp = e.counterpartyId ? userMap.get(e.counterpartyId) : undefined
     const giftRef = e.refId ?? readMetaString(e.metadata, 'giftTransactionId')
     const giftTx = giftRef ? giftTxMap.get(giftRef) : undefined
+
+    const withdrawal =
+      ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(e.txType) && e.refId
+        ? withdrawalMap.get(e.refId)
+        : undefined
+    const withdrawalCanRevert = withdrawal
+      ? isAdminWithdrawalRevertable({
+          status: withdrawal.status,
+          requestedAt: withdrawal.requestedAt,
+        })
+      : false
 
     return {
       id: e.id,
@@ -1096,11 +1141,15 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
             quantity: giftTx.quantity,
           }
         : null,
-      // Point-wallet sourced peer transfers only (not coin-funded VIDEO_CALL / gifts / etc.).
-      canRevert: resolvePointLedgerRevertability({
-        txType: e.txType,
-        counterpartyId: e.counterpartyId,
-      }),
+      canRevert: withdrawalCanRevert
+        ? true
+        : resolvePointLedgerRevertability({
+            txType: e.txType,
+            counterpartyId: e.counterpartyId,
+          }),
+      revertVia: withdrawalCanRevert
+        ? ({ endpoint: 'withdrawal', id: withdrawal!.id } satisfies AdminCoinRevertVia)
+        : null,
     }
   })
 }

@@ -46,6 +46,10 @@ import {
 } from '../utils/payment-method-mask'
 import { formatDuration } from '../utils/withdrawal-formatters'
 import { resolvePlatformFeeRateBp } from '../utils/payroll-fee'
+import {
+  ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS,
+  isAdminWithdrawalRevertable,
+} from '../utils/admin-withdrawal-revert'
 import type { DisputeWithdrawalInput } from '../models/withdrawal.schemas'
 import type { InboxAssignmentRow } from '../repositories/payrollAssignment.repository'
 import type { AssignmentListCursor } from '../repositories/payrollAssignment.repository'
@@ -1463,7 +1467,12 @@ export const withdrawalService = {
     })
   },
 
-  async adminReverseWithdrawal(adminUserId: string, withdrawalId: string, reason: string) {
+  async adminReverseWithdrawal(
+    adminUserId: string,
+    withdrawalId: string,
+    reason: string,
+    opts?: { bypassAgeLimit?: boolean },
+  ) {
     const w = await prismaRead.withdrawal.findUnique({
       where: { id: withdrawalId },
     })
@@ -1482,6 +1491,22 @@ export const withdrawalService = {
     ]
     if (!REVERSIBLE.includes(w.status)) {
       throw new AppError(400, 'Withdrawal cannot be reversed', 'INVALID_STATE')
+    }
+
+    if (!opts?.bypassAgeLimit) {
+      if (!isAdminWithdrawalRevertable({ status: w.status, requestedAt: w.requestedAt })) {
+        const ageMs = Date.now() - w.requestedAt.getTime()
+        throw new AppError(
+          400,
+          `Withdrawal can only be reversed within ${ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS / (24 * 60 * 60 * 1000)} days of request`,
+          'WITHDRAWAL_REVERT_WINDOW_EXPIRED',
+          {
+            requestedAt: w.requestedAt.toISOString(),
+            maxAgeMs: ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS,
+            ageMs,
+          },
+        )
+      }
     }
 
     const isV2 = w.withdrawalVersion === 2
@@ -1659,6 +1684,7 @@ export const withdrawalService = {
         adminUserId,
         row.id,
         'Points frozen by admin — withdrawal cancelled and escrow released',
+        { bypassAgeLimit: true },
       )
       cancelledIds.push(row.id)
     }
@@ -1795,6 +1821,8 @@ export const withdrawalService = {
       disputeTicketId: w.disputeTicketId,
       paymentMethodId: w.paymentMethodId,
       failReason: w.failReason ?? null,
+      /** Admin reverse eligibility (≤4 days from requestedAt + reversible status). */
+      canRevert: isAdminWithdrawalRevertable({ status: w.status, requestedAt: w.requestedAt }),
     }
   },
 

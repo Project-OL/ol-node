@@ -8,6 +8,7 @@ import { payrollAssignmentRepository } from '../repositories/payrollAssignment.r
 import { storageService } from './storage.service'
 import { mapPaymentMethodMaskedForAgent } from '../utils/payment-method-mask'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import { isAdminWithdrawalRevertable } from '../utils/admin-withdrawal-revert'
 
 type AdminUserCard = {
   id: string
@@ -79,6 +80,11 @@ function mapAdminAssignment(
       /** Processing reward credited to the agency agent. */
       agentRewardPoints: (w.agentRewardPoints ?? 0n).toString(),
       notes: w.notes ?? null,
+      /** True when admin may POST `/admin/agency/withdrawal/:id/reverse` (≤4 days + status). */
+      canRevert: isAdminWithdrawalRevertable({
+        status: w.status,
+        requestedAt: w.requestedAt,
+      }),
     },
     paymentMethod: w.paymentMethod ? mapPaymentMethodMaskedForAgent(w.paymentMethod) : null,
   }
