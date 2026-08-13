@@ -46,7 +46,8 @@ export default async function adminUserModerationRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Users', 'Face verification'],
-        description: 'Face verification status for a user (profile + KYC + isFaceVerified).',
+        description:
+          'Face verification status for a user (profile + KYC + isFaceVerified). Includes why a face is not indexed and matched-user details on duplicate.',
       },
     },
     async (request, reply) => {

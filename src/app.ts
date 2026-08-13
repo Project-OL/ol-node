@@ -8,6 +8,7 @@ import websocket from '@fastify/websocket'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 import compress from '@fastify/compress'
+import * as zlib from 'zlib'
 
 import { env } from './config/env'
 import { logger } from './config/logger'
@@ -117,6 +118,17 @@ export async function buildApp() {
     global: true,
     encodings: ['gzip', 'deflate', 'br'],
     threshold: 1024,
+    // Node's brotli default is quality 11 (max) — lab/scripts/benchmark-brotli.ts
+    // (see lab/reports/brotli-benchmark.md) shows quality 11 costs 100-200x more
+    // CPU than quality 6 on 15-100KB+ JSON payloads (e.g. 209ms vs 1.8ms on a
+    // ~120KB payload) for only a few percentage points of extra compression
+    // ratio — quality 6 sits just before that cost cliff while keeping ~all of
+    // the ratio benefit.
+    brotliOptions: {
+      params: {
+        [zlib.constants.BROTLI_PARAM_QUALITY]: 6,
+      },
+    },
   })
 
   if (env.NODE_ENV !== 'production') {

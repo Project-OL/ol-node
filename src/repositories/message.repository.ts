@@ -255,7 +255,14 @@ export type SendMessageWithOutboxInput = {
 }
 
 export type SendMessageWithOutboxResult =
-  | { status: 'created'; message: MessageWithDetails; outboxId: bigint }
+  | {
+      status: 'created'
+      message: MessageWithDetails
+      outboxId: bigint
+      /** Exact payload persisted to `message_outbox.payload` — lets a caller that
+       * already needs to publish it inline skip a re-fetch to get the same bytes. */
+      outboxPayload: Record<string, unknown>
+    }
   | { status: 'duplicate'; message: MessageWithDetails }
 
 function messageToJsonSafeRecord(msg: MessageWithDetails): Record<string, unknown> {
@@ -377,6 +384,7 @@ export async function sendMessageWithOutbox(
         status: 'created',
         message,
         outboxId: outbox.id,
+        outboxPayload: frame as unknown as Record<string, unknown>,
       }
     },
     {

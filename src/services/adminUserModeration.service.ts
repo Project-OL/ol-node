@@ -14,7 +14,8 @@ import { faceVerificationAdminService } from './face-verification-admin.service'
 import { agencyHostService } from './agencyHost.service'
 import { deviceBanService } from './device-ban.service'
 import { storageService } from './storage.service'
-import { formatUserName } from '../utils/user-display'
+import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import { explainFaceProfileStatus } from '../utils/face-profile-status'
 
 function generateTemporaryPassword(): string {
   const suffix = randomBytes(9)
@@ -85,29 +86,58 @@ export const adminUserModerationService = {
       }
     }
 
-    const [duplicateOfUser, matchedUser] = await Promise.all([
-      profile?.duplicateOfUserId
-        ? userRepository.findById(profile.duplicateOfUserId)
-        : Promise.resolve(null),
-      profile?.matchedUserId
-        ? userRepository.findById(profile.matchedUserId)
-        : Promise.resolve(null),
-    ])
+    const relatedIds = [
+      ...new Set(
+        [profile?.duplicateOfUserId, profile?.matchedUserId].filter(
+          (id): id is string => Boolean(id),
+        ),
+      ),
+    ]
+    const relatedRows =
+      relatedIds.length > 0 ? await userRepository.findDisplayRowsByIds(relatedIds) : []
+    const relatedById = new Map(relatedRows.map((u) => [u.id, u]))
 
-    const toUserSummary = (u: Awaited<ReturnType<typeof userRepository.findById>>) =>
-      u
-        ? {
-            userId: u.id,
-            username: u.username,
-            name: formatUserName(u),
-            avatarUrl: u.avatarUrl,
-          }
-        : null
+    const toUserSummary = (id: string | null | undefined) => {
+      if (!id) return null
+      const u = relatedById.get(id)
+      if (!u) return null
+      return {
+        userId: u.id,
+        username: u.username,
+        name: formatUserName(u),
+        avatarUrl: u.avatarUrl,
+        publicId: String(u.publicId),
+        displayPublicId: resolveDisplayPublicId(u),
+      }
+    }
+
+    const duplicateOfUser = toUserSummary(profile?.duplicateOfUserId)
+    const matchedUser = toUserSummary(profile?.matchedUserId)
+    const hasReferenceImage = Boolean(refKey)
+    const isIndexed = Boolean(
+      profile?.status === 'INDEXED' &&
+        profile.rekognitionFaceId?.trim() &&
+        profile.s3KeyReference?.trim(),
+    )
+    const kycFaceVerified = Boolean(kyc?.faceVerified)
+    const explanation = explainFaceProfileStatus({
+      status: profile?.status,
+      failureReason: profile?.failureReason,
+      hasReferenceImage,
+      kycFaceVerified,
+      isIndexed,
+      faceMatchSimilarity: profile?.faceMatchSimilarity,
+      matchedUserName: matchedUser?.name || matchedUser?.username || duplicateOfUser?.name,
+    })
 
     return {
       userId,
       isFaceVerified,
-      kycFaceVerified: Boolean(kyc?.faceVerified),
+      kycFaceVerified,
+      hasReferenceImage,
+      statusLabel: explanation.statusLabel,
+      statusDetail: explanation.statusDetail,
+      notIndexedReason: explanation.notIndexedReason,
       profile: profile
         ? {
             faceProfileId: profile.id,
@@ -115,11 +145,23 @@ export const adminUserModerationService = {
             rekognitionFaceId: profile.rekognitionFaceId,
             collectionId: profile.collectionId,
             indexedAt: profile.indexedAt?.toISOString() ?? null,
+            lastVerifiedAt: profile.lastVerifiedAt?.toISOString() ?? null,
             revokedAt: profile.revokedAt?.toISOString() ?? null,
+            failureReason: profile.failureReason,
+            imageQualityScore: profile.imageQualityScore,
+            livenessConfidence: profile.livenessConfidence,
+            faceMatchSimilarity: profile.faceMatchSimilarity,
+            qualityChecksPassed: profile.qualityChecksPassed,
+            detectedGender: profile.detectedGender,
+            hasReferenceImage,
+            isIndexed,
+            statusLabel: explanation.statusLabel,
+            statusDetail: explanation.statusDetail,
+            notIndexedReason: explanation.notIndexedReason,
             duplicateOfUserId: profile.duplicateOfUserId,
             matchedUserId: profile.matchedUserId,
-            duplicateOfUser: toUserSummary(duplicateOfUser),
-            matchedUser: toUserSummary(matchedUser),
+            duplicateOfUser,
+            matchedUser,
             referenceImageUrl,
           }
         : null,

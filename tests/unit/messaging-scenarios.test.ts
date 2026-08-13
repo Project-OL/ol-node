@@ -153,6 +153,7 @@ vi.mock('../../src/repositories/follow.repository', () => ({
 vi.mock('../../src/services/userRestriction.service', () => ({
   userRestrictionService: {
     assertNotRestricted: vi.fn().mockResolvedValue(undefined),
+    assertMessagingAllowed: vi.fn().mockResolvedValue(undefined),
   },
 }))
 

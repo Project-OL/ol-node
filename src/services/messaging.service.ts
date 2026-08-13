@@ -35,7 +35,12 @@ import { AppError } from '../middlewares/errorHandler'
 import { MediaProcessingStatus } from '@prisma/client'
 import { publishServerFrameToConversation, publishToConversation } from '../utils/ws-publisher'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
-import { publishMessageOutboxRow } from './messaging-outbox.service'
+import {
+  publishMessageOutboxRowInline,
+  type OutboxMember,
+  type OutboxSender,
+} from './messaging-outbox.service'
+import { buildOutboxContext } from '../utils/outbox-context'
 import { enqueueMessageMediaAudioProcessing } from '../queues/message-media-audio.queue'
 import { enqueueAutoReply } from '../queues/agencyAutoReply.queue'
 import { prismaRead } from '../config/database'
@@ -236,8 +241,12 @@ async function applyNewMessageSideEffects(params: {
   conversationId: string
   msg: MessageWithDetails
   outboxId: bigint
+  outboxPayload: Record<string, unknown>
   otherMemberIds: string[]
   senderId: string
+  conversationType: string
+  members: OutboxMember[]
+  sender: OutboxSender | null
 }): Promise<void> {
   const msgKey = RedisKeys.convMessages(params.conversationId)
   const pipe = redisClient.pipeline()
@@ -251,7 +260,14 @@ async function applyNewMessageSideEffects(params: {
   await pipe.exec()
 
   try {
-    await publishMessageOutboxRow(params.outboxId)
+    await publishMessageOutboxRowInline({
+      outboxId: params.outboxId,
+      conversationId: params.conversationId,
+      payload: params.outboxPayload,
+      members: params.members,
+      conversationType: params.conversationType,
+      sender: params.sender,
+    })
   } catch (err) {
     rootLogger.warn({ err, outboxId: params.outboxId.toString() }, 'inline outbox publish failed')
     await enqueueMessageOutboxPublish(params.outboxId)
@@ -562,8 +578,10 @@ export const messagingService = {
         conversationId,
         msg,
         outboxId: result.outboxId,
+        outboxPayload: result.outboxPayload,
         otherMemberIds,
         senderId,
+        ...buildOutboxContext(conv, senderId),
       })
     }
 
@@ -677,8 +695,10 @@ export const messagingService = {
         conversationId,
         msg,
         outboxId: result.outboxId,
+        outboxPayload: result.outboxPayload,
         otherMemberIds,
         senderId,
+        ...buildOutboxContext(conv, senderId),
       })
     }
 
@@ -730,8 +750,10 @@ export const messagingService = {
       conversationId,
       msg: result.message,
       outboxId: result.outboxId,
+      outboxPayload: result.outboxPayload,
       otherMemberIds,
       senderId: senderUserId,
+      ...buildOutboxContext(conv, senderUserId),
     })
   },
 

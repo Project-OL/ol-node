@@ -68,6 +68,7 @@ vi.mock('../../src/queues/messaging.queue', () => ({
 
 import {
   publishMessageOutboxRow,
+  publishMessageOutboxRowInline,
   sweepStaleMessageOutbox,
 } from '../../src/services/messaging-outbox.service';
 
@@ -160,4 +161,130 @@ describe('messaging-outbox.service', () => {
     )
     expect(publish.mock.calls.length).toBe(2)
   })
+});
+
+describe('publishMessageOutboxRowInline', () => {
+  beforeEach(() => {
+    findUnique.mockReset();
+    update.mockReset();
+    memberFindMany.mockReset();
+    publish.mockReset();
+    conversationFindUnique.mockReset();
+    userFindUnique.mockReset();
+    sendToUser.mockReset();
+    publish.mockResolvedValue(1);
+    update.mockResolvedValue({});
+    sendToUser.mockResolvedValue(undefined);
+  });
+
+  // Phase 5b: the whole point of the inline path is that it never needs to
+  // ask Postgres for anything — the caller already has it. Every test below
+  // asserts these four calls stay at zero, which is the acceptance evidence
+  // in place of a live latency benchmark (see CHANGELOG-remediation.md).
+  function expectNoRedundantDbReads() {
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(memberFindMany).not.toHaveBeenCalled();
+    expect(conversationFindUnique).not.toHaveBeenCalled();
+    expect(userFindUnique).not.toHaveBeenCalled();
+  }
+
+  it('publishes to the conversation channel and marks published, without any DB reads', async () => {
+    await publishMessageOutboxRowInline({
+      outboxId: 9n,
+      conversationId: 'conv-inline',
+      payload: { t: 'NEW_MESSAGE', seq: 1 },
+      members: [],
+      conversationType: 'DIRECT',
+      sender: null,
+    });
+
+    expect(publish).toHaveBeenCalledWith(
+      'msg:conv:conv-inline',
+      JSON.stringify({ t: 'NEW_MESSAGE', seq: 1 }),
+    );
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 9n },
+      data: expect.objectContaining({ publishedAt: expect.any(Date) }),
+    });
+    expectNoRedundantDbReads();
+  });
+
+  it('publishes MESSAGE_DIGEST to other members and a push notification, using only the passed-in params', async () => {
+    await publishMessageOutboxRowInline({
+      outboxId: 10n,
+      conversationId: 'conv-inline-2',
+      payload: {
+        t: 'NEW_MESSAGE',
+        seq: 5,
+        message: { id: 'msg-1', senderId: 'sender-1', type: 'TEXT', content: 'hi', isDeleted: false },
+      },
+      members: [
+        { userId: 'sender-1', isMuted: false, mutedUntil: null },
+        { userId: 'peer-2', isMuted: false, mutedUntil: null },
+      ],
+      conversationType: 'DIRECT',
+      sender: { firstName: 'Sam', lastName: 'Sender', username: 'sam' },
+    });
+
+    expect(publish).toHaveBeenCalledWith(
+      'msg:user:peer-2',
+      JSON.stringify({
+        t: 'MESSAGE_DIGEST',
+        conversationId: 'conv-inline-2',
+        seq: 5,
+        senderId: 'sender-1',
+        message: { id: 'msg-1', type: 'TEXT', content: 'hi', createdAt: undefined, isDeleted: false },
+      }),
+    );
+    expect(sendToUser).toHaveBeenCalledWith(
+      'peer-2',
+      expect.objectContaining({ title: 'Sam Sender' }),
+      { source: 'NEW_MESSAGE' },
+    );
+    expectNoRedundantDbReads();
+  });
+
+  it('does not push to a muted recipient', async () => {
+    await publishMessageOutboxRowInline({
+      outboxId: 11n,
+      conversationId: 'conv-inline-3',
+      payload: {
+        t: 'NEW_MESSAGE',
+        seq: 6,
+        message: { id: 'msg-2', senderId: 'sender-1', type: 'TEXT', content: 'hi' },
+      },
+      members: [
+        { userId: 'sender-1', isMuted: false, mutedUntil: null },
+        { userId: 'muted-peer', isMuted: true, mutedUntil: null },
+      ],
+      conversationType: 'DIRECT',
+      sender: { firstName: 'Sam', lastName: null, username: 'sam' },
+    });
+
+    expect(sendToUser).not.toHaveBeenCalled();
+    expectNoRedundantDbReads();
+  });
+
+  it('does not push for a non-pushable conversation type', async () => {
+    await publishMessageOutboxRowInline({
+      outboxId: 12n,
+      conversationId: 'conv-inline-4',
+      payload: {
+        t: 'NEW_MESSAGE',
+        seq: 7,
+        message: { id: 'msg-3', senderId: 'sender-1', type: 'TEXT', content: 'hi' },
+      },
+      members: [
+        { userId: 'sender-1', isMuted: false, mutedUntil: null },
+        { userId: 'peer-2', isMuted: false, mutedUntil: null },
+      ],
+      conversationType: 'PLATFORM_SUPPORT',
+      sender: { firstName: 'Sam', lastName: null, username: 'sam' },
+    });
+
+    expect(sendToUser).not.toHaveBeenCalled();
+    // Digest fan-out is independent of the push gate — still fires.
+    expect(publish).toHaveBeenCalledWith('msg:user:peer-2', expect.any(String));
+    expectNoRedundantDbReads();
+  });
 });
