@@ -123,4 +123,17 @@ export const giftGalleryAdminRepository = {
       return created
     })
   },
+
+  async removeGiftsFromSection(sectionId: string, giftIds: string[]) {
+    const existing = await prisma.giftGallerySectionItem.findMany({
+      where: { sectionId, giftId: { in: giftIds } },
+      select: { id: true, giftId: true },
+    })
+    if (existing.length === 0) return existing
+
+    await prisma.giftGallerySectionItem.deleteMany({
+      where: { sectionId, giftId: { in: giftIds } },
+    })
+    return existing
+  },
 }

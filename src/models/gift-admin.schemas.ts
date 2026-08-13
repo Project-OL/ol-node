@@ -144,3 +144,7 @@ export const ReorderGalleryCategoriesBodySchema = z.object({
 export const AddGiftsToGalleryCategoryBodySchema = z.object({
   giftIds: z.array(z.string().uuid()).min(1),
 })
+
+export const RemoveGiftsFromGalleryCategoryBodySchema = z.object({
+  giftIds: z.array(z.string().uuid()).min(1).max(100),
+})

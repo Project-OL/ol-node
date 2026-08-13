@@ -248,7 +248,7 @@ export const userSearchService = {
       adminTags: composePublicAdminTags({
         stored: user.adminTags ?? [],
         isAgency: Boolean(user.isAgent),
-        isFullGallery: shared.galleryCompletion.isFullGallery,
+        isFullGallery: Boolean(shared.galleryCompletion?.isFullGallery),
         vipMembership: shared.vipMembership,
         richTier: shared.richTier,
       }),

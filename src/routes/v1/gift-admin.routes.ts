@@ -19,6 +19,7 @@ import {
   UpdateGalleryCategoryBodySchema,
   ReorderGalleryCategoriesBodySchema,
   AddGiftsToGalleryCategoryBodySchema,
+  RemoveGiftsFromGalleryCategoryBodySchema,
 } from '../../models/gift-admin.schemas'
 import {
   giftAdminService,
@@ -407,6 +408,19 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         body.giftIds,
       )
       return reply.status(201).send(result)
+    },
+  )
+
+  app.delete<{ Params: { sectionId: string } }>(
+    '/gift-gallery/categories/:sectionId/gifts',
+    { preHandler: preAuth },
+    async (request: FastifyRequest<{ Params: { sectionId: string } }>, reply: FastifyReply) => {
+      const body = RemoveGiftsFromGalleryCategoryBodySchema.parse(request.body ?? {})
+      const result = await giftGalleryAdminService.removeGiftsFromCategory(
+        request.params.sectionId,
+        body.giftIds,
+      )
+      return reply.send(result)
     },
   )
 }

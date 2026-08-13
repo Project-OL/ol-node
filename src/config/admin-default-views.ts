@@ -201,6 +201,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/gift-gallery/categories',
     'PATCH /admin/gift-gallery/categories/:sectionId',
     'POST /admin/gift-gallery/categories/:sectionId/gifts',
+    'DELETE /admin/gift-gallery/categories/:sectionId/gifts',
     'POST /admin/gift-gallery/categories/reorder',
     'DELETE /admin/gift-gallery/categories/:sectionId',
   ],

@@ -152,4 +152,25 @@ export const giftGalleryAdminService = {
       })),
     }
   },
+
+  async removeGiftsFromCategory(sectionId: string, giftIds: string[]) {
+    const existing = await giftGalleryAdminRepository.findSectionById(sectionId)
+    if (!existing) throw new AppError(404, 'Gallery category not found', 'NOT_FOUND')
+
+    const uniqueIds = [...new Set(giftIds)]
+    const removed = await giftGalleryAdminRepository.removeGiftsFromSection(sectionId, uniqueIds)
+
+    if (removed.length > 0) {
+      const { year, month } = await galleryPeriodForSection(existing)
+      await giftGalleryService.invalidateMonthCaches(year, month)
+    }
+
+    return {
+      sectionId,
+      removed: removed.map((row) => ({
+        itemId: row.id,
+        giftId: row.giftId,
+      })),
+    }
+  },
 }
