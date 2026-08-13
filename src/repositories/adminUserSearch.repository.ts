@@ -87,13 +87,14 @@ export const adminUserSearchRepository = {
 
   async searchByName(query: string, limit: number): Promise<AdminUserSearchRow[]> {
     const q = query.trim()
-    const spaceIdx = q.indexOf(' ')
     const or: Prisma.UserWhereInput[] = [
       { username: { contains: q, mode: 'insensitive' } },
       { firstName: { contains: q, mode: 'insensitive' } },
       { lastName: { contains: q, mode: 'insensitive' } },
     ]
-    // "Jane Doe" → firstName contains Jane AND lastName contains Doe (multi-match list).
+    const spaceIdx = q.indexOf(' ')
+    // "Jane Doe" → firstName contains Jane AND lastName contains Doe.
+    // A single token like "Jane" already matches firstName (or lastName / username) above.
     if (spaceIdx > 0) {
       const first = q.slice(0, spaceIdx).trim()
       const last = q.slice(spaceIdx + 1).trim()

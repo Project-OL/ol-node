@@ -40,7 +40,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users'],
         description:
-          'Search users by name (username / firstName / lastName; multi-match list), user id (UUID), public id, email, phone (E.164), or device id. Use `type=auto` (default) or force a field. Exact single matches are recorded in per-admin search history.',
+          'Search users by name (first name alone, last name, full name, or username; multi-match list), user id (UUID), public id, email, phone (E.164), or device id. Use `type=auto` (default) or force a field. Exact single matches are recorded in per-admin search history.',
         querystring: {
           type: 'object',
           required: ['q'],

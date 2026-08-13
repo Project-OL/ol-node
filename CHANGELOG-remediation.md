@@ -507,3 +507,144 @@ tests — 8 files/22 tests added this phase), ✅ `test:http` unchanged (15/15,
 49/49), ✅ `npm run typecheck` clean, ✅ this entry names the two items found
 but explicitly deferred (the `cacheRedis.service.ts` Redis-breaker gap, and
 OAuth token verification) rather than silently absorbing or omitting them.
+
+---
+
+## Phase 5 — Hot-path latency: 5a Brotli, 5b outbox re-fetch elimination (2026-08-14)
+
+Neither sub-item had an existing baseline — Phase 0 explicitly flagged this.
+5b's benchmarking approach needed a decision from the user: there's no local
+Postgres in this repo, only the real AWS RDS dev endpoint. A live k6
+message-send scenario would write real rows to that shared dev DB repeatedly
+under load, a bigger footprint than the read-only GET soak test Phase 0 had
+already declined to run. **Decision (confirmed with the user): no live load
+test for 5b** — the before/after evidence is a DB-round-trip-count proxy
+(redundant Postgres reads eliminated, verified by tests asserting they're
+never called), not a measured wall-clock number. 5a needed no such call —
+brotli benchmarking is pure local CPU/zlib work, no live infra involved.
+
+### 5a. Brotli compression tuning
+
+`src/app.ts`'s `@fastify/compress` registration already had `threshold: 1024`
+(the "skip compression below a size threshold" idea from the plan was already
+in place) but no `brotliOptions` — Node defaults to quality 11 (max) on every
+compressed response regardless of size.
+
+New `lab/scripts/benchmark-brotli.ts` (`npx tsx lab/scripts/benchmark-brotli.ts`,
+output in `lab/reports/brotli-benchmark.{json,md}`) benchmarked quality levels
+1–11 against three representative payload sizes (median of 5 runs/cell, local
+CPU only):
+
+| Payload | Quality 6 | Quality 11 | Cost ratio | Ratio lost by capping at 6 |
+|---|---|---|---|---|
+| small (652B, wallet balance) | 0.285ms / 231B | 1.552ms / 224B | 5.4x | 231 vs 224 bytes — negligible |
+| medium (13.9KB, message list) | 0.738ms / 633B | 37.762ms / 571B | 51x | 4.5% vs 4.1% ratio |
+| large (123.8KB, report export) | 1.767ms / 4450B | 209.125ms / 3443B | 118x | 3.6% vs 2.8% ratio |
+
+Quality 11 costs 5–118x more CPU than quality 6 for a few percentage points
+of extra compression on payloads over ~10KB (and is essentially a wash under
+1KB). **Set `brotliOptions.params[BROTLI_PARAM_QUALITY] = 6`** — the last
+point before the steep cost cliff (quality 9→10→11 costs 4.9ms→32.6ms→209ms
+on the large payload for 3.6%→3.4%→2.8% ratio), keeping ~97% of the
+compression benefit at roughly 1% of the CPU cost.
+
+**Test:** the benchmark script's own output is the acceptance evidence
+(table above); `test:http` already exercises real compressed responses
+end-to-end and stayed green under the new config.
+
+### 5b. `messaging-outbox.service.ts` re-fetch elimination
+
+**Instrumented and confirmed before changing code:** `publishMessageOutboxRow`
+is called two ways — inline, synchronously, in the same request that just
+sent the message (`messaging.service.ts`'s `applyNewMessageSideEffects`, 3
+call sites), and from a queue job / stale sweep that only ever has an
+`outboxId`. It re-fetched everything from Postgres every time — correct for
+the queue-job caller, but for the inline caller **all 4 of its reads were
+redundant**: `messageOutbox.findUnique` (payload — the caller already built
+and persisted this exact object moments earlier), `conversationMember
+.findMany` (mute status — already on `conv.members` from
+`conversationRepository.findConversationById`, called at the top of the same
+request), `conversation.findUnique` (type — same `conv` object), `user
+.findUnique` (sender profile — same `conv.members`).
+
+**Correctness detail found and handled:** `findConversationById`'s `members`
+include is unfiltered (includes departed members), while the original
+re-fetch filtered `isDeleted: false`. The extracted `buildOutboxContext`
+helper (`src/utils/outbox-context.ts`) applies that same filter, so a member
+who left a conversation still doesn't get a digest publish or push via the
+faster path — matching today's behavior exactly, not just "close enough."
+
+**Shape of the change:** split `messaging-outbox.service.ts`'s publish logic
+into a private `publishOutboxPayload` core (Redis fan-out + push + mark
+published, taking members/type/sender as params) with two entry points —
+`publishMessageOutboxRow(outboxId)` (unchanged signature/behavior, used by
+the queue-job/sweep paths, now parallelizes its 3 conditional reads via
+`Promise.all` instead of sequential) and the new `publishMessageOutboxRowInline`
+(used by the inline path, skips all 4 reads). `message.repository.ts`'s
+`SendMessageWithOutboxResult` gained an additive `outboxPayload` field so the
+caller gets the exact persisted bytes rather than reconstructing them.
+`platformMessaging.service.ts`'s parallel (much lower-volume, differently-
+shaped) outbox call was named and left untouched — out of scope for this
+phase.
+
+**DB-call-count proxy (in place of a live latency benchmark, per the decision
+above):** new tests in `messaging-outbox.service.test.ts` assert
+`publishMessageOutboxRowInline` never calls `messageOutbox.findUnique`,
+`conversationMember.findMany`, `conversation.findUnique`, or `user.findUnique`
+— **4 sequential Postgres round trips eliminated per inline message send.**
+New `tests/unit/outbox-context.test.ts` proves the `isDeleted` filter and
+sender-resolution logic in isolation.
+
+**Pre-existing test breakage found while verifying the full suite (unrelated
+to this phase, fixed as mechanical test-mock updates only — no source
+changes):** `tests/unit/messaging-scenarios.test.ts` and
+`tests/unit/messaging.text-coins-dm-bypass.test.ts` mocked
+`userRestrictionService` without `assertMessagingAllowed`, which
+`messaging.service.ts`'s `canUserMessage` already called in the committed
+`HEAD` (confirmed via `git diff` — zero diff on the source files involved,
+so this predates this session entirely). `tests/unit/account-deletion.service
+.test.ts` similarly mocked `RedisKeys` without `userMeAssembled`, which
+`me.service.ts`'s `invalidateUserCaches` already called. All three fixed by
+adding the missing mock entries. Separately, `presence.service.test.ts` and
+`direct-pair-and-presence.test.ts` fail intermittently **only** under full-
+suite parallel load (timeouts / undefined reads) and pass reliably in
+isolation (verified twice each) — pre-existing test-runner contention
+flakiness, not a real bug, left as-is.
+
+### Verification
+
+```
+npm run typecheck   → clean
+npx vitest run       → 159/160 non-skipped files green in the worst observed
+                        full-suite run (1 flaky file, passes in isolation);
+                        clean runs show 160/160, 10 skipped, 936 total tests
+                        (907-909 passed depending on flake, 26 skipped) —
+                        9 files / 22 tests added this phase
+npm run test:http    → 15/15 files, 49/49 tests
+```
+
+**Rollback:** both plain git reverts. 5a is a single config value — reverting
+restores implicit max quality, no data/API shape change. 5b changes internal
+call shapes only (additive fields on `SendMessageWithOutboxResult` and
+`applyNewMessageSideEffects`'s params) — no request/response or schema
+change; the inline path's existing try/catch still falls back to
+`enqueueMessageOutboxPublish` on any error, so a bug in the new code degrades
+to the pre-Phase-5 queue-job path rather than failing the send. No feature
+flag needed for either.
+
+**Acceptance:** ✅ 5a and 5b shipped separately with their own before/after
+evidence, ✅ 5a's benchmark table above (no prior baseline existed, per Phase
+0), ✅ 5b's DB-call-count proxy in place of a live benchmark (user-confirmed
+decision, reasoning recorded above), ✅ full suite green modulo one
+full-suite-only flaky file that passes in isolation, ✅ `test:http` green,
+✅ `npm run typecheck` clean, ✅ this entry names the pre-existing test
+breakage found and fixed (mechanical mock updates, not product-behavior
+changes) and the flaky file left as-is with its own verification.
+
+## After Phase 5
+
+All five phases of `docs/REMEDIATION_PLAN.md` are now shipped. The plan's own
+closing instruction — re-run the original 4-parameter audit rubric
+(scalability, ultra-low latency, production-grade, concurrency) against the
+shipped state — has not been done as part of this phase and should be its own
+follow-up when requested, not folded in here.

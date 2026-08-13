@@ -1,6 +1,6 @@
 import { AppError } from '../middlewares/errorHandler'
 import { normalizePhone } from '../lib/utils/phone.util'
-import type { AdminUserSearchQuery, AdminUserSearchType } from '../models/admin-user-search.schemas'
+import type { AdminUserSearchQuery } from '../models/admin-user-search.schemas'
 import {
   adminUserSearchRepository,
   type AdminUserSearchRow,
@@ -12,10 +12,11 @@ import {
   RedisKeys,
 } from '../config/redis'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import {
+  ADMIN_USER_SEARCH_UUID_RE,
+  resolveAdminUserSearchAutoType,
+} from '../utils/admin-user-search-type'
 import { storeAdminService } from './store-admin.service'
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export type AdminUserSearchMatchType =
   | 'userId'
@@ -88,13 +89,6 @@ function mapRow(
   }
 }
 
-function resolveAutoType(query: string): Exclude<AdminUserSearchType, 'auto'> {
-  if (UUID_RE.test(query)) return 'userId'
-  if (/^\d+$/.test(query)) return 'publicId'
-  if (EMAIL_RE.test(query)) return 'email'
-  if (normalizePhone(query)) return 'phone'
-  if (query.length >= 8 && /^[a-zA-Z0-9_-]+$/.test(query)) return 'deviceId'
-  return 'name'
 }
 
 export const adminUserSearchService = {
@@ -162,7 +156,8 @@ export const adminUserSearchService = {
     matchedBy: AdminUserSearchMatchType | null
   }> {
     const query = params.q.trim()
-    const effectiveType = params.type === 'auto' ? resolveAutoType(query) : params.type
+    const effectiveType =
+      params.type === 'auto' ? resolveAdminUserSearchAutoType(query) : params.type
     const includeStore = params.includeStore ?? true
 
     const attachStore = async (result: {
@@ -202,7 +197,7 @@ export const adminUserSearchService = {
     }
 
     if (effectiveType === 'userId') {
-      if (!UUID_RE.test(query)) {
+      if (!ADMIN_USER_SEARCH_UUID_RE.test(query)) {
         throw new AppError(400, 'Invalid user id (UUID expected)', 'INVALID_REQUEST')
       }
       const row = await adminUserSearchRepository.findByUserId(query)
@@ -264,7 +259,17 @@ export const adminUserSearchService = {
     }
 
     if (effectiveType === 'deviceId') {
-      return maybeRecordExact(await this.searchByDevice(query, params.limit, includeStore))
+      const deviceResult = await maybeRecordExact(
+        await this.searchByDevice(query, params.limit, includeStore),
+      )
+      if (params.type === 'auto' && deviceResult.users.length === 0) {
+        const rows = await adminUserSearchRepository.searchByName(query, params.limit)
+        return attachStore({
+          users: rows.map((row) => mapRow(row, 'name')),
+          matchedBy: rows.length > 0 ? 'name' : null,
+        })
+      }
+      return deviceResult
     }
 
     const rows = await adminUserSearchRepository.searchByName(query, params.limit)
