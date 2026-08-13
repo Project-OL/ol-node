@@ -12,6 +12,9 @@ vi.mock('../../src/config/env', () => ({
     FACE_CONTENT_MODERATION_ENABLED: false,
     LOG_LEVEL: 'silent',
     NODE_ENV: 'test',
+    DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
+    DATABASE_POOL_MAX: 20,
+    LAB_REQUEST_METRICS: false,
   },
 }))
 
@@ -35,6 +38,7 @@ vi.mock('../../src/config/redis', () => ({
     faceVerifyRateLimitIp: (ip: string) => `vi:${ip}`,
     faceVerifyIdem: (u: string, c: string) => `vi:${u}:${c}`,
     faceVerifyLastPass: (u: string) => `vp:${u}`,
+    faceLivenessConfig: () => 'face-liveness:config',
   },
 }))
 
@@ -95,6 +99,14 @@ vi.mock('../../src/repositories/agencyApplicationKyc.repository', () => ({
   },
 }))
 
+const getOrCreateLivenessConfig = vi.fn()
+vi.mock('../../src/repositories/faceLivenessConfig.repository', () => ({
+  faceLivenessConfigRepository: {
+    getOrCreate: (...a: unknown[]) => getOrCreateLivenessConfig(...a),
+    update: vi.fn(),
+  },
+}))
+
 describe('faceVerificationService', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -110,6 +122,12 @@ describe('faceVerificationService', () => {
     repo.recordAttempt.mockResolvedValue({ id: 'attempt-1' })
     repo.createPendingProfile.mockResolvedValue({ id: 'profile-1' })
     checkForNudity.mockResolvedValue({ isNudityDetected: false, labels: [] })
+    getOrCreateLivenessConfig.mockResolvedValue({
+      id: 1,
+      livenessRequired: false,
+      credentialsRequired: false,
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    })
   })
 
   it('rejects registration when validation pipeline fails', async () => {

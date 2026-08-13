@@ -104,7 +104,7 @@ export const adminWalletService = {
           const month = await richTierService.applyRecharge(params.targetUserId, coins, tx)
           return { ...credit, recharge: month }
         },
-        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+        { timeout: TX_TIMEOUT_MS },
       )
       await walletService.adjustCoinBalanceCache(params.targetUserId, coins)
       if (recharge) {
@@ -136,7 +136,7 @@ export const adminWalletService = {
               applyWealthCredit: false,
               currencyType: WalletCurrencyType.TRADING_COIN,
             }),
-          { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+          { timeout: TX_TIMEOUT_MS },
         )
         await walletService.adjustTradingBalanceCache(params.targetUserId)
         credited.tradingCoins = tradingCoins.toString()
@@ -199,7 +199,7 @@ export const adminWalletService = {
           metadata,
           currencyType: WalletCurrencyType.COIN,
         }),
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
     await walletService.adjustCoinBalanceCache(params.targetUserId, -params.amount)
 
@@ -253,7 +253,7 @@ export const adminWalletService = {
           metadata,
           currencyType: WalletCurrencyType.TRADING_COIN,
         }),
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
     await walletService.adjustTradingBalanceCache(params.targetUserId)
 
@@ -306,7 +306,7 @@ export const adminWalletService = {
           description,
           metadata,
         }),
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
 
     await walletService.adjustPointBalanceCache(params.targetUserId, -params.amount)

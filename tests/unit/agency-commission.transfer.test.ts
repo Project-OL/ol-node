@@ -33,6 +33,14 @@ vi.mock("../../src/services/wallet.service", () => ({
   },
 }));
 
+const isIndexedForUser = vi.fn();
+
+vi.mock("../../src/repositories/faceVerification.repository", () => ({
+  faceVerificationRepository: {
+    isIndexedForUser: (...a: unknown[]) => isIndexedForUser(...a),
+  },
+}));
+
 const prismaAgencyFindUnique = vi.fn();
 const prismaAgentTransferFindUnique = vi.fn();
 const prismaAgentTransferFindUniqueTx = vi.fn();
@@ -59,6 +67,7 @@ import { agencyCommissionService } from "../../src/services/agencyCommission.ser
 
 beforeEach(() => {
   vi.clearAllMocks();
+  isIndexedForUser.mockResolvedValue(true);
   prismaAgencyFindUnique.mockResolvedValue({ userId: "a2" });
   prismaAgentTransferFindUnique.mockResolvedValue(null);
   prismaAgentTransferFindUniqueTx.mockResolvedValue(null);

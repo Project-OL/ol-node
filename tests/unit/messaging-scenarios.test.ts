@@ -43,6 +43,9 @@ vi.mock('../../src/repositories/message.repository', () => ({
     upsertReaction: (...a: unknown[]) => mocks.upsertReaction(...a),
     softDeleteMessage: (...a: unknown[]) => mocks.softDeleteMessage(...a),
   },
+  // Named export (not on messageRepository) — identity passthrough is enough
+  // since these tests don't assert on gift/post metadata enrichment.
+  attachMessageExtrasFromMetadata: (msg: unknown) => msg,
 }))
 
 vi.mock('../../src/services/cache.service', () => ({
@@ -145,6 +148,12 @@ vi.mock('../../src/services/userSettings.service', () => ({
 
 vi.mock('../../src/repositories/follow.repository', () => ({
   followRepository: { existsFollow: vi.fn().mockResolvedValue(true) },
+}))
+
+vi.mock('../../src/services/userRestriction.service', () => ({
+  userRestrictionService: {
+    assertNotRestricted: vi.fn().mockResolvedValue(undefined),
+  },
 }))
 
 vi.mock('../../src/services/message-send-media.service', () => ({
@@ -264,6 +273,7 @@ describe('messaging negative scenarios', () => {
     it('marks conversation deleted and busts message hot cache', async () => {
       mocks.findConversationById.mockResolvedValue({
         id: 'conv-1',
+        type: 'DIRECT',
         members: [{ userId: 'user-1', deletedAt: null }],
       })
       mocks.markConversationDeleted.mockResolvedValue(undefined)

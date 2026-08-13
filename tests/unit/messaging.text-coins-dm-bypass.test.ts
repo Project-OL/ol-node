@@ -19,6 +19,11 @@ vi.mock("../../src/services/userSettings.service", () => ({
 vi.mock("../../src/repositories/follow.repository", () => ({
   followRepository: { existsFollow },
 }));
+vi.mock("../../src/services/userRestriction.service", () => ({
+  userRestrictionService: {
+    assertNotRestricted: vi.fn().mockResolvedValue(undefined),
+  },
+}));
 vi.mock("../../src/config/redis", () => ({
   redisClient: {
     del: vi.fn().mockResolvedValue(1),

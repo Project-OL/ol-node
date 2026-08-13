@@ -8,6 +8,9 @@ export type RoomSocket = RegisteredSocket
  */
 class SupportTicketRooms {
   private readonly ticketToSockets = new Map<string, Map<string, RoomSocket>>()
+  /** Reverse index: socketId -> ticket ids it has joined. Keeps leaveAllForSocket
+   *  O(rooms joined by this socket) instead of O(all rooms on the pod). */
+  private readonly socketToTickets = new Map<string, Set<string>>()
 
   join(ticketId: string, socketKey: string, rs: RoomSocket): boolean {
     let inner = this.ticketToSockets.get(ticketId)
@@ -17,6 +20,14 @@ class SupportTicketRooms {
     }
     const first = !inner.has(socketKey)
     inner.set(socketKey, rs)
+
+    let tickets = this.socketToTickets.get(socketKey)
+    if (!tickets) {
+      tickets = new Set()
+      this.socketToTickets.set(socketKey, tickets)
+    }
+    tickets.add(ticketId)
+
     return first
   }
 
@@ -25,18 +36,29 @@ class SupportTicketRooms {
     if (!inner || !inner.has(socketKey)) return false
     inner.delete(socketKey)
     if (inner.size === 0) this.ticketToSockets.delete(ticketId)
+
+    const tickets = this.socketToTickets.get(socketKey)
+    if (tickets) {
+      tickets.delete(ticketId)
+      if (tickets.size === 0) this.socketToTickets.delete(socketKey)
+    }
+
     return true
   }
 
   leaveAllForSocket(socketKey: string): string[] {
+    const tickets = this.socketToTickets.get(socketKey)
+    if (!tickets) return []
     const emptied: string[] = []
-    for (const [ticketId, inner] of this.ticketToSockets) {
-      if (inner.has(socketKey)) {
+    for (const ticketId of tickets) {
+      const inner = this.ticketToSockets.get(ticketId)
+      if (inner?.has(socketKey)) {
         inner.delete(socketKey)
         emptied.push(ticketId)
         if (inner.size === 0) this.ticketToSockets.delete(ticketId)
       }
     }
+    this.socketToTickets.delete(socketKey)
     return emptied
   }
 

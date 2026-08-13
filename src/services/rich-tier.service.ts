@@ -20,7 +20,7 @@ export const RECHARGE_TX_TYPES = new Set<CoinTxType>([
   CoinTxType.ADJUSTMENT,
 ])
 
-/** Minimum coins to reach Rich tier N (N = 1..10). Must match `rich_tier_configs` seed. */
+/** Minimum coins to reach Rich tier N (N = 1..10). Seed / fallback when `rich_tier_configs` is empty. */
 export const RICH_TIER_THRESHOLDS: readonly bigint[] = [
   3_000_000n,
   5_000_000n,
@@ -34,19 +34,55 @@ export const RICH_TIER_THRESHOLDS: readonly bigint[] = [
   1_000_000_000n,
 ] as const
 
-const INTERACTIVE_TX_TIMEOUT_MS = 20_000
+export const RICH_TIER_DISPLAY_NAMES: readonly string[] = [
+  'RICH I',
+  'RICH II',
+  'RICH III',
+  'RICH IV',
+  'RICH V',
+  'RICH VI',
+  'RICH VII',
+  'RICH VIII',
+  'RICH IX',
+  'RICH X',
+] as const
 
-export function thresholdForTier(tier: number): bigint {
-  if (tier < 1 || tier > 10) return 0n
-  return RICH_TIER_THRESHOLDS[tier - 1]!
+export type RichTierLadderRow = {
+  tier: number
+  minRechargeCoins: bigint
+  displayName: string
 }
 
-/** Highest Rich tier (0..10) for monotonic recharge progress. */
-export function computeTier(coinsBigInt: bigint): number {
+export function defaultRichTierLadder(): RichTierLadderRow[] {
+  return RICH_TIER_THRESHOLDS.map((minRechargeCoins, i) => ({
+    tier: i + 1,
+    minRechargeCoins,
+    displayName: RICH_TIER_DISPLAY_NAMES[i]!,
+  }))
+}
+
+const INTERACTIVE_TX_TIMEOUT_MS = 20_000
+
+function sortedLadder(ladder: readonly RichTierLadderRow[]): RichTierLadderRow[] {
+  return [...ladder].sort((a, b) => a.tier - b.tier || (a.minRechargeCoins < b.minRechargeCoins ? -1 : 1))
+}
+
+export function thresholdForTier(
+  tier: number,
+  ladder: readonly RichTierLadderRow[] = defaultRichTierLadder(),
+): bigint {
+  return ladder.find((r) => r.tier === tier)?.minRechargeCoins ?? 0n
+}
+
+/** Highest Rich tier for monotonic recharge progress against the given ladder. */
+export function computeTier(
+  coinsBigInt: bigint,
+  ladder: readonly RichTierLadderRow[] = defaultRichTierLadder(),
+): number {
   let tier = 0
-  for (let i = 0; i < RICH_TIER_THRESHOLDS.length; i++) {
-    if (coinsBigInt >= RICH_TIER_THRESHOLDS[i]!) {
-      tier = i + 1
+  for (const row of sortedLadder(ladder)) {
+    if (coinsBigInt >= row.minRechargeCoins) {
+      tier = row.tier
     } else {
       break
     }
@@ -55,11 +91,14 @@ export function computeTier(coinsBigInt: bigint): number {
 }
 
 /** Carryover coins applied at UTC month rollover toward the *next* month’s progress. */
-export function applyRetentionRule(newTier: number): bigint {
+export function applyRetentionRule(
+  newTier: number,
+  ladder: readonly RichTierLadderRow[] = defaultRichTierLadder(),
+): bigint {
   if (newTier <= 2) return 0n
-  if (newTier <= 6) return thresholdForTier(newTier - 2) / 2n
-  if (newTier <= 9) return thresholdForTier(newTier - 3) / 2n
-  if (newTier === 10) return thresholdForTier(7) / 2n
+  if (newTier <= 6) return thresholdForTier(newTier - 2, ladder) / 2n
+  if (newTier <= 9) return thresholdForTier(newTier - 3, ladder) / 2n
+  if (newTier === 10) return thresholdForTier(7, ladder) / 2n
   return 0n
 }
 
@@ -88,31 +127,58 @@ async function isUserVipActive(userId: string): Promise<boolean> {
   return lastVip != null && lastVip.isActive && lastVip.revokedAt == null && lastVip.expiresAt > now
 }
 
-async function loadConfigMap(): Promise<Map<number, string>> {
-  const redis = redisClient
+type CachedLadderRow = { tier: number; minRechargeCoins?: string; displayName: string }
+
+function parseCachedLadder(raw: string): RichTierLadderRow[] | null {
+  try {
+    const parsed = JSON.parse(raw) as CachedLadderRow[]
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    if (parsed[0]?.minRechargeCoins == null) return null
+    const ladder: RichTierLadderRow[] = []
+    for (const row of parsed) {
+      if (!Number.isInteger(row.tier) || row.minRechargeCoins == null) continue
+      ladder.push({
+        tier: row.tier,
+        minRechargeCoins: BigInt(row.minRechargeCoins),
+        displayName: row.displayName,
+      })
+    }
+    return ladder.length > 0 ? sortedLadder(ladder) : null
+  } catch {
+    return null
+  }
+}
+
+async function loadLadder(): Promise<RichTierLadderRow[]> {
   const key = RedisKeys.richConfig()
   try {
-    const cached = await redis.get(key)
+    const cached = await redisClient.get(key)
     if (cached) {
-      const parsed = JSON.parse(cached) as { tier: number; displayName: string }[]
-      return new Map(parsed.map((r) => [r.tier, r.displayName]))
+      const parsed = parseCachedLadder(cached)
+      if (parsed) return parsed
     }
   } catch {
     /* cold path */
   }
   const rows = await richTierRepository.getConfig()
-  const map = new Map(rows.map((r) => [r.tier, r.displayName]))
+  const ladder = rows.length > 0 ? sortedLadder(rows) : defaultRichTierLadder()
   try {
     await redisClient.set(
       key,
-      JSON.stringify(rows.map((r) => ({ tier: r.tier, displayName: r.displayName }))),
+      JSON.stringify(
+        ladder.map((r) => ({
+          tier: r.tier,
+          minRechargeCoins: r.minRechargeCoins.toString(),
+          displayName: r.displayName,
+        })),
+      ),
       'EX',
       RICH_CONFIG_TTL,
     )
   } catch {
     /* ignore */
   }
-  return map
+  return ladder
 }
 
 async function getMonthRechargeCoinsCached(
@@ -143,6 +209,7 @@ function buildSnapshotCore(params: {
   /** Persisted badge tier from `user_rich_tier.currentTier` (live on recharge; rollover may correct down). */
   badgeTier: number
   displayMap: Map<number, string>
+  ladder: readonly RichTierLadderRow[]
   evaluatedFromYear: number
   evaluatedFromMonth: number
   currentMonthRechargeCoins: bigint
@@ -151,8 +218,10 @@ function buildSnapshotCore(params: {
 }): RichStateCached {
   const displayName =
     params.badgeTier > 0 ? (params.displayMap.get(params.badgeTier) ?? null) : null
-  const progressTier = computeTier(params.currentMonthProgressCoins)
-  const nextTh = progressTier < 10 ? thresholdForTier(progressTier + 1) : null
+  const progressTier = computeTier(params.currentMonthProgressCoins, params.ladder)
+  const maxTier = params.ladder.reduce((m, r) => Math.max(m, r.tier), 0)
+  const nextTh =
+    progressTier < maxTier ? thresholdForTier(progressTier + 1, params.ladder) : null
   const lacking =
     nextTh != null
       ? nextTh > params.currentMonthProgressCoins
@@ -190,14 +259,17 @@ export const richTierService = {
     const agg = await richTierRepository.getMonthlyAggregateInTx(userId, year, month, tx)
     const monthTotal = agg?.totalRechargeCoins ?? amountCoins
 
-    const richTierRow = await tx.userRichTier.findUnique({
-      where: { userId },
-      select: { currentTier: true, carryoverCoins: true },
-    })
+    const [richTierRow, ladder] = await Promise.all([
+      tx.userRichTier.findUnique({
+        where: { userId },
+        select: { currentTier: true, carryoverCoins: true },
+      }),
+      loadLadder(),
+    ])
     const carryover = richTierRow?.carryoverCoins ?? 0n
     const previousTier = richTierRow?.currentTier ?? 0
     const liveProgress = carryover + monthTotal
-    const liveTier = computeTier(liveProgress)
+    const liveTier = computeTier(liveProgress, ladder)
 
     if (liveTier !== previousTier) {
       await tx.userRichTier.upsert({
@@ -249,11 +321,12 @@ export const richTierService = {
       /* cold */
     }
 
-    const [row, displayMap, ym] = await Promise.all([
+    const [row, ladder, ym] = await Promise.all([
       richTierRepository.getUserRichTier(userId),
-      loadConfigMap(),
+      loadLadder(),
       Promise.resolve(utcYearMonth(utcNow())),
     ])
+    const displayMap = new Map(ladder.map((r) => [r.tier, r.displayName]))
     const carry = row?.carryoverCoins ?? 0n
     const monthTotal = await getMonthRechargeCoinsCached(userId, ym.year, ym.month)
     const progress = carry + monthTotal
@@ -261,6 +334,7 @@ export const richTierService = {
     const core = buildSnapshotCore({
       badgeTier,
       displayMap,
+      ladder,
       evaluatedFromYear: row?.evaluatedFromYear ?? 0,
       evaluatedFromMonth: row?.evaluatedFromMonth ?? 0,
       currentMonthRechargeCoins: monthTotal,
@@ -287,6 +361,7 @@ export const richTierService = {
     prevYear: number,
     prevMonth: number,
   ): Promise<void> {
+    const ladder = await loadLadder()
     await prisma.$transaction(
       async (tx) => {
         if (await richTierRepository.historyExists(userId, prevYear, prevMonth, tx)) {
@@ -307,8 +382,8 @@ export const richTierService = {
         })
         const pure = aggRow?.totalRechargeCoins ?? 0n
         const progressTotal = carryIn + pure
-        const effectiveTier = computeTier(progressTotal)
-        const newCarryover = applyRetentionRule(effectiveTier)
+        const effectiveTier = computeTier(progressTotal, ladder)
+        const newCarryover = applyRetentionRule(effectiveTier, ladder)
         const rolledAt = new Date()
         await richTierRepository.upsertUserRichTier(
           {
@@ -336,7 +411,6 @@ export const richTierService = {
         )
       },
       {
-        isolationLevel: 'Serializable',
         timeout: INTERACTIVE_TX_TIMEOUT_MS,
       },
     )
@@ -403,8 +477,63 @@ export const richTierService = {
   async getTierConfig(): Promise<
     Array<{ tier: number; minRechargeCoins: string; displayName: string }>
   > {
-    const rows = await richTierRepository.getConfig()
-    return rows.map((r) => ({
+    const ladder = await loadLadder()
+    return ladder.map((r) => ({
+      tier: r.tier,
+      minRechargeCoins: r.minRechargeCoins.toString(),
+      displayName: r.displayName,
+    }))
+  },
+
+  async replaceTierConfig(
+    tiers: Array<{ tier: number; minRechargeCoins: string; displayName: string }>,
+  ): Promise<Array<{ tier: number; minRechargeCoins: string; displayName: string }>> {
+    const parsed = tiers.map((t) => ({
+      tier: t.tier,
+      minRechargeCoins: BigInt(t.minRechargeCoins),
+      displayName: t.displayName.trim(),
+    }))
+    if (parsed.length !== 10) {
+      throw new AppError(400, 'Exactly 10 rich tiers (1–10) are required', 'VALIDATION_ERROR')
+    }
+    const sorted = [...parsed].sort((a, b) => a.tier - b.tier)
+    for (let i = 0; i < 10; i++) {
+      const row = sorted[i]!
+      if (row.tier !== i + 1) {
+        throw new AppError(400, 'Tiers must be uniquely 1 through 10', 'VALIDATION_ERROR')
+      }
+      if (row.minRechargeCoins <= 0n) {
+        throw new AppError(400, 'minRechargeCoins must be a positive integer', 'VALIDATION_ERROR')
+      }
+      if (!row.displayName) {
+        throw new AppError(400, 'displayName is required', 'VALIDATION_ERROR')
+      }
+      if (i > 0 && row.minRechargeCoins <= sorted[i - 1]!.minRechargeCoins) {
+        throw new AppError(
+          400,
+          'minRechargeCoins must strictly increase with tier',
+          'VALIDATION_ERROR',
+        )
+      }
+    }
+    await richTierRepository.replaceConfig(sorted)
+    try {
+      await redisClient.set(
+        RedisKeys.richConfig(),
+        JSON.stringify(
+          sorted.map((r) => ({
+            tier: r.tier,
+            minRechargeCoins: r.minRechargeCoins.toString(),
+            displayName: r.displayName,
+          })),
+        ),
+        'EX',
+        RICH_CONFIG_TTL,
+      )
+    } catch {
+      await richTierService.refreshConfigCache()
+    }
+    return sorted.map((r) => ({
       tier: r.tier,
       minRechargeCoins: r.minRechargeCoins.toString(),
       displayName: r.displayName,

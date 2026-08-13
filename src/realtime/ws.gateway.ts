@@ -119,7 +119,9 @@ async function handleJoinPresence(
   targetUserIds: string[],
 ): Promise<void> {
   const rs: RegisteredSocket = { socketId, userId, ws: socket }
-  const targets = [...new Set(targetUserIds)].filter((id) => id && id !== userId)
+  const targets = [...new Set(targetUserIds)]
+    .filter((id) => id && id !== userId)
+    .slice(0, env.WS_MAX_PRESENCE_JOINS_PER_SOCKET)
 
   for (const targetUserId of targets) {
     const bump = presenceRooms.join(targetUserId, socketId, rs)
@@ -158,8 +160,9 @@ async function handleJoinGuardian(
   targetUserIds: string[],
 ): Promise<void> {
   const rs: RegisteredSocket = { socketId, userId: viewerUserId, ws: socket }
+  const targets = [...new Set(targetUserIds)].slice(0, env.WS_MAX_PRESENCE_JOINS_PER_SOCKET)
 
-  for (const targetUserId of new Set(targetUserIds)) {
+  for (const targetUserId of targets) {
     const bump = guardianRooms.join(targetUserId, socketId, rs)
     if (bump) {
       await redisConversationSubscriber.subscribe(RedisKeys.guardianWatchChannel(targetUserId))
@@ -374,8 +377,10 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
         app.log.warn({ err, userId, socketId, msg: 'ws error' }, 'realtime')
       })
 
+      let inboundChain = Promise.resolve()
       socket.on('message', (raw: Buffer | ArrayBuffer | Buffer[]) => {
-        void (async () => {
+        inboundChain = inboundChain
+          .then(async () => {
           try {
             const byteLen = incomingBytesLength(raw)
 
@@ -463,7 +468,10 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
           } catch (e) {
             app.log.warn({ e, userId, isAdmin, socketId }, '[ws] message handler error')
           }
-        })()
+        })
+        .catch((e) => {
+          app.log.warn({ e, userId, isAdmin, socketId }, '[ws] inbound chain error')
+        })
       })
     },
   )

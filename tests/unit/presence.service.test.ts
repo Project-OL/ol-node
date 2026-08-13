@@ -6,6 +6,8 @@ const incr = vi.fn()
 
 const set = vi.fn()
 
+const get = vi.fn()
+
 const del = vi.fn()
 
 const evalMock = vi.fn()
@@ -26,6 +28,8 @@ vi.mock('../../src/config/redis', () => ({
 
     set,
 
+    get,
+
     del,
 
     eval: evalMock,
@@ -35,6 +39,8 @@ vi.mock('../../src/config/redis', () => ({
   },
 
   PRESENCE_HEARTBEAT_TTL_SEC: 60,
+
+  PRESENCE_LAST_ACTIVE_THROTTLE_TTL_SEC: 60,
 
   RedisKeys: {
 
@@ -58,6 +64,8 @@ describe('presenceService', () => {
 
     set.mockReset()
 
+    get.mockReset()
+
     del.mockReset()
 
     evalMock.mockReset()
@@ -71,9 +79,10 @@ describe('presenceService', () => {
 
   it('recordSocketConnected publishes when count becomes 1', async () => {
 
-    incr.mockResolvedValueOnce(1)
-
-    set.mockResolvedValueOnce('OK')
+    // eval atomically INCRs presence:count and peeks the previous online flag,
+    // returning [count, wasOnlineFlag]; the SET of online:{userId} happens
+    // inside the Lua script itself, not via a separate redisClient.set call.
+    evalMock.mockResolvedValueOnce([1, 0])
 
     publish.mockResolvedValueOnce(1)
 
@@ -81,8 +90,10 @@ describe('presenceService', () => {
 
     await presenceService.recordSocketConnected('u1')
 
-    expect(set).toHaveBeenCalledWith('online:u1', '1', 'EX', 60)
-    expect(touchUserLastActive).toHaveBeenCalledWith('u1')
+    expect(touchUserLastActive).toHaveBeenCalledWith('u1', {
+      throttleSec: 60,
+      presenceGate: true,
+    })
     expect(publish).toHaveBeenCalled()
 
     const payload = publish.mock.calls[0]?.[1] as string
@@ -95,7 +106,8 @@ describe('presenceService', () => {
 
   it('recordSocketConnected skips publish when count > 1', async () => {
 
-    incr.mockResolvedValueOnce(2)
+    // count=2 (not the first socket) and wasOnline=1 (already online) → no publish.
+    evalMock.mockResolvedValueOnce([2, 1])
 
     const { presenceService } = await import('../../src/services/presence.service')
 
@@ -140,7 +152,10 @@ describe('presenceService', () => {
     await presenceService.refreshOnlineHeartbeat('u1')
 
     expect(set).toHaveBeenCalledWith('online:u1', '1', 'EX', 60)
-    expect(touchUserLastActive).toHaveBeenCalledWith('u1')
+    expect(touchUserLastActive).toHaveBeenCalledWith('u1', {
+      throttleSec: 60,
+      presenceGate: true,
+    })
   })
 
 })

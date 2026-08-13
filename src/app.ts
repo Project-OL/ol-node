@@ -14,7 +14,7 @@ import { logger } from './config/logger'
 import { redisClient } from './config/redis'
 import { errorHandler } from './middlewares/errorHandler'
 import { notFoundHandler } from './middlewares/notFoundHandler'
-import { requestIdHook, requestLoggerHook } from './middlewares/requestLogger'
+import { isHealthPath, requestIdHook, requestLoggerHook } from './middlewares/requestLogger'
 import {
   requestTimingOnRequest,
   requestTimingOnResponse,
@@ -95,6 +95,7 @@ import { schedulePublicIdPregen } from './queues/public-id-pregen.queue'
 import { publicIdPreGenerationService } from './services/public-id-pre-generation.service'
 import { rootLogger } from './utils/rootLogger'
 import { registerRealtimeGateway } from './realtime/ws.gateway'
+import { globalRequestTimeoutHook } from './utils/requestTimeout'
 
 const REQUEST_TIMEOUT_MS = 30_000
 
@@ -115,6 +116,7 @@ export async function buildApp() {
   await app.register(compress, {
     global: true,
     encodings: ['gzip', 'deflate', 'br'],
+    threshold: 1024,
   })
 
   if (env.NODE_ENV !== 'production') {
@@ -140,7 +142,9 @@ export async function buildApp() {
     sign: { algorithm: 'HS256', expiresIn: env.JWT_ACCESS_EXPIRES_IN },
   })
 
-  await app.register(websocket)
+  if (env.WS_EMBED_IN_API) {
+    await app.register(websocket)
+  }
 
   await app.register(helmet, {
     contentSecurityPolicy: env.NODE_ENV === 'production',
@@ -184,6 +188,7 @@ export async function buildApp() {
     timeWindow: env.RATE_LIMIT_TIME_WINDOW,
     ...(labInMemoryRateLimit ? {} : { redis: redisClient }),
     skipOnError: labInMemoryRateLimit,
+    allowList: (req) => isHealthPath(req.url),
     keyGenerator: (req) => {
       const xff = req.headers['x-forwarded-for']
       if (typeof xff === 'string' && xff.length > 0) {
@@ -201,6 +206,7 @@ export async function buildApp() {
   app.addHook('onRequest', requestIdHook)
   app.addHook('onRequest', requestLoggerHook)
   app.addHook('onRequest', requestTimingOnRequest)
+  app.addHook('onRequest', globalRequestTimeoutHook(isHealthPath))
   app.addHook('onSend', requestTimingOnSend)
   app.addHook('onResponse', requestTimingOnResponse)
 
@@ -283,7 +289,12 @@ export async function buildApp() {
   await app.register(bannerRoutes, { prefix: `${prefix}/banners` })
   await app.register(customGiftRoutes, { prefix: `${prefix}/custom-gifts` })
 
-  registerRealtimeGateway(app)
+  if (env.WS_EMBED_IN_API) {
+    app.log.warn(
+      'WS gateway embedded in API process (WS_EMBED_IN_API=true) — ensure this is intentional and not double-running alongside a dedicated ws-server',
+    )
+    registerRealtimeGateway(app)
+  }
 
   app.addHook('onReady', async () => {
     try {

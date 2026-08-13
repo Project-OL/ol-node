@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client'
-import { prismaRead } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 
 export type UserRichTierRow = {
   userId: string
@@ -274,5 +274,30 @@ export const richTierRepository = {
       minRechargeCoins: r.minRechargeCoins,
       displayName: r.displayName,
     }))
+  },
+
+  async replaceConfig(
+    rows: Array<{ tier: number; minRechargeCoins: bigint; displayName: string }>,
+  ): Promise<void> {
+    const keepTiers = rows.map((r) => r.tier)
+    await prisma.$transaction(async (tx) => {
+      await tx.richTierConfig.deleteMany({
+        where: { tier: { notIn: keepTiers } },
+      })
+      for (const row of rows) {
+        await tx.richTierConfig.upsert({
+          where: { tier: row.tier },
+          create: {
+            tier: row.tier,
+            minRechargeCoins: row.minRechargeCoins,
+            displayName: row.displayName,
+          },
+          update: {
+            minRechargeCoins: row.minRechargeCoins,
+            displayName: row.displayName,
+          },
+        })
+      }
+    })
   },
 }

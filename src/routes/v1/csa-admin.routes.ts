@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { authenticateAdmin, requireAdminRole } from '../../middlewares/adminAuth.middleware'
 import { parseRequest } from '../../utils/zod-request'
+import { SLOW_REPORT_TIMEOUT_MS } from '../../utils/requestTimeout'
 import { csaManagementService } from '../../services/csaManagement.service'
 import { adminViewService } from '../../services/adminView.service'
 import { AssignViewsSchema } from '../../models/admin-view.schemas'
@@ -45,7 +46,7 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
     return reply.send(result)
   })
 
-  app.get('/csas/export', { preHandler: preAuth }, async (req, reply) => {
+  app.get('/csas/export', { preHandler: preAuth, config: { timeoutMs: SLOW_REPORT_TIMEOUT_MS } }, async (req, reply) => {
     const query = parseRequest(ExportCsasQuerySchema, req.query)
     const { csv } = await csaManagementService.exportCsasCsv(query.status)
     const date = new Date().toISOString().slice(0, 10)

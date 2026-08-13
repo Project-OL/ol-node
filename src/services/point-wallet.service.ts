@@ -7,7 +7,7 @@ import { pointLedgerRepository } from '../repositories/point-ledger.repository'
 import { mapDbUnavailable, walletService } from './wallet.service'
 import { auditService } from './audit.service'
 import { WalletCurrencyType, PointTxType, LedgerDirection, LevelType } from '@prisma/client'
-import { assertPointsDebitAllowed } from './wallet-freeze.service'
+import { assertPointsDebitAllowed, assertPointsDebitAllowedInTx } from './wallet-freeze.service'
 import { walletLevelService } from './user-level.service'
 import {
   utcDayFromTimestamp,
@@ -315,7 +315,7 @@ export const pointWalletService = {
           bustAgentUserId: ac.bustAgentUserId,
         }
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      { timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
 
     void enqueuePlatformLedgerMessage('point', entry.id).catch(() => {})
@@ -753,10 +753,6 @@ export const pointWalletService = {
       }
     }
 
-    if (options.freezeCheck !== false) {
-      await assertPointsDebitAllowed(userId)
-    }
-
     const wallet = await tx.wallet.upsert({
       where: {
         userId_currencyType: {
@@ -768,6 +764,9 @@ export const pointWalletService = {
       update: {},
     })
     await walletRepository.lockForUpdate(tx, wallet.id)
+    if (options.freezeCheck !== false) {
+      await assertPointsDebitAllowedInTx(tx, userId)
+    }
     const last = await tx.pointLedgerEntry.findFirst({
       where: { walletId: wallet.id },
       orderBy: { createdAt: 'desc' },

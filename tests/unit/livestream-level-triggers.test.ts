@@ -29,6 +29,13 @@ vi.mock('../../src/services/withdrawal.service', () => ({
   withdrawalService: { createWithdrawal: vi.fn() },
 }))
 
+const onHostPointCredit = vi.fn().mockResolvedValue(undefined)
+vi.mock('../../src/services/ranking.service', () => ({
+  rankingService: {
+    onHostPointCredit: (...a: unknown[]) => onHostPointCredit(...a),
+  },
+}))
+
 vi.mock('../../src/config/redis', () => ({
   redisClient: { get: vi.fn(), set: vi.fn(), del: vi.fn() },
   getRedisForRead: () => ({ get: vi.fn() }),

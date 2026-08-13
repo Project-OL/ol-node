@@ -48,7 +48,7 @@ export default async function adminUserRestrictionRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users', 'Moderation'],
         description:
-          'Apply one restriction type until restrictedUntil. Other types are unchanged. Optional reportId links to a user report.',
+          'Apply one restriction type until restrictedUntil. For MESSAGING_DISABLE, optional targetUserIds limits the ban to those recipients; extend:true unions targets and keeps the later expiry. Other types are unchanged. Optional reportId links to a user report.',
       },
     },
     async (request, reply) => {
@@ -68,6 +68,8 @@ export default async function adminUserRestrictionRoutes(app: FastifyInstance) {
           reason: parsed.data.reason,
           reportId: parsed.data.reportId,
           adminUserId: request.adminUser!.id,
+          targetUserIds: parsed.data.targetUserIds,
+          extend: parsed.data.extend,
         }),
       )
     },

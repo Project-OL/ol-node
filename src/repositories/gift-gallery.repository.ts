@@ -112,7 +112,7 @@ export const giftGalleryRepository = {
         })
         return { created: true }
       },
-      { isolationLevel: 'Serializable' },
+      { timeout: 15_000 },
     )
   },
 
@@ -151,7 +151,7 @@ export const giftGalleryRepository = {
 
         return gallery
       },
-      { isolationLevel: 'Serializable' },
+      { timeout: 15_000 },
     )
   },
 }

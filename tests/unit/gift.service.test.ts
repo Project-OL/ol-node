@@ -47,8 +47,15 @@ describe('giftService.patch', () => {
     await giftService.patch('511b15fd-bcf3-468c-b771-4525198b5ea1', {
       displayImageUrl: 'https://images.unsplash.com/photo-1562690868-60bbe7293e94',
     })
-    expect(redisDel).toHaveBeenCalledWith('gifts:list')
-    expect(redisDel).toHaveBeenCalledWith('gifts:tag:classic')
+    // invalidateGiftCaches also busts legacy :vip/:novip suffixed keys (see the
+    // RedisKeys comment in config/redis.ts) alongside the plain key.
+    expect(redisDel).toHaveBeenCalledWith('gifts:list', 'gifts:list:vip', 'gifts:list:novip', 'gifts:list')
+    expect(redisDel).toHaveBeenCalledWith(
+      'gifts:tag:classic',
+      'gifts:tag:classic:vip',
+      'gifts:tag:classic:novip',
+      'gifts:tag:classic',
+    )
     expect(invalidateActiveMonthCaches).toHaveBeenCalled()
   })
 })

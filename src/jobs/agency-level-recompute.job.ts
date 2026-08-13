@@ -9,6 +9,7 @@ import { enqueueAgencyRecomputeBatch } from '../queues/agency-commission.queue'
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyCommissionService } from '../services/agencyCommission.service'
 import { utcDateString, utcNow } from '../utils/datetime'
+import { mapPool } from '../utils/map-pool'
 
 export async function processAgencyLevelRecomputeJob(job: Job): Promise<void> {
   if (job.name === AGENCY_LEVEL_JOB_MASTER) {
@@ -44,8 +45,8 @@ async function handleMaster(job: Job<{ utcDate?: string; force?: boolean }>): Pr
 
 async function handleBatch(job: Job<{ agencyUserIds: string[] }>): Promise<void> {
   const { agencyUserIds } = job.data
-  for (const id of agencyUserIds) {
-    // Always refresh after UTC date roll (same-day dedupe would skip midnight slide).
-    await agencyCommissionService.recomputeAgencyLevel(id, { skipDailyDedupe: true })
-  }
+  // Always refresh after UTC date roll (same-day dedupe would skip midnight slide).
+  await mapPool(agencyUserIds, env.WORKER_CONCURRENCY_DEFAULT, (id) =>
+    agencyCommissionService.recomputeAgencyLevel(id, { skipDailyDedupe: true }),
+  )
 }

@@ -86,10 +86,12 @@ export async function publishMessageOutboxRow(outboxId: bigint): Promise<void> {
         isDeleted: msg.isDeleted ?? false,
       },
     })
+    const digestPipe = redisClient.pipeline()
     for (const m of members) {
       if (m.userId === parsed.message.senderId) continue
-      await redisClient.publish(RedisKeys.userInboxChannel(m.userId), digestStr)
+      digestPipe.publish(RedisKeys.userInboxChannel(m.userId), digestStr)
     }
+    if (digestPipe.length > 0) await digestPipe.exec()
 
     await maybePushNewMessageNotifications({
       conversationId: row.conversationId,

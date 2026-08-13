@@ -7,6 +7,21 @@ const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     PORT: z.coerce.number().default(3000),
+    /** Dedicated WS process (`src/ws-server.ts`). */
+    WS_PORT: z.coerce.number().default(3001),
+    /**
+     * When `true` / `1`, the API process also registers GET /ws (single-process
+     * dev/small-deploy mode). Default is `false` — production should run the
+     * dedicated `npm run dev:ws` / `start:ws` process and route `/ws` to
+     * `WS_PORT`, so an API pod started without this explicitly set never
+     * silently double-runs the WS gateway alongside a dedicated ws-server.
+     */
+    WS_EMBED_IN_API: z
+      .string()
+      .default('false')
+      .transform((s) => s === 'true' || s === '1'),
+    /** `all` = one process (default). Split with `worker:realtime` + `worker:general`. */
+    WORKER_QUEUES: z.enum(['all', 'general', 'realtime']).default('all'),
     API_VERSION: z.string().default('v1'),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
@@ -14,13 +29,23 @@ const envSchema = z
     DATABASE_DIRECT_URL: z.string().url().optional(),
     DATABASE_READ_URL: z.string().url().optional(), // optional read replica for scaling reads
     DATABASE_POOL_MIN: z.coerce.number().default(2),
+    /** Applied as Prisma `connection_limit` when the URL does not already set one. */
     DATABASE_POOL_MAX: z.coerce.number().default(20),
 
     REDIS_URL: z.string().url(),
     REDIS_READ_URL: z.string().url().optional(),
     REDIS_PASSWORD: z.string().optional(),
     REDIS_TTL_ME: z.coerce.number().default(900),
+    /** Short assembled GET /users/me blob (profile + enrichments). */
+    REDIS_TTL_ME_ASSEMBLED: z.coerce.number().int().min(5).max(120).default(20),
+    /** Requester-independent GET /users/search card enrichments. */
+    REDIS_TTL_USER_SEARCH_CARD: z.coerce.number().int().min(15).max(300).default(60),
     REDIS_TTL_PROFILE: z.coerce.number().default(3600),
+    /**
+     * Fraction of non-health requests logged at info (0–1).
+     * `/health` is never logged. Set `< 1` in production to cut log CPU.
+     */
+    REQUEST_LOG_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(1),
     REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().default(3000),
 
     JWT_ACCESS_SECRET: z.string().min(32),
@@ -225,6 +250,18 @@ const envSchema = z
     WS_IDLE_TIMEOUT_MS: z.coerce.number().default(180_000),
     /** Max JOINed conversation channels per socket (Phase 4). */
     WS_MAX_CONV_JOINS_PER_SOCKET: z.coerce.number().default(200),
+    /** Max JOIN_PRESENCE / JOIN_GUARDIAN targets per socket. */
+    WS_MAX_PRESENCE_JOINS_PER_SOCKET: z.coerce.number().int().min(1).max(500).default(100),
+    /** Drop outbound WS frames when the socket buffer exceeds this (bytes). */
+    WS_SEND_BUFFER_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
+
+    WORKER_CONCURRENCY_DEFAULT: z.coerce.number().int().positive().default(2),
+    WORKER_CONCURRENCY_OUTBOX: z.coerce.number().int().positive().default(8),
+    WORKER_CONCURRENCY_PLATFORM_MESSAGE: z.coerce.number().int().positive().default(10),
+    WORKER_CONCURRENCY_PUSH: z.coerce.number().int().positive().default(10),
+    WORKER_CONCURRENCY_AGENCY_AUTO_REPLY: z.coerce.number().int().positive().default(20),
+    WORKER_CONCURRENCY_LIVE_SESSION: z.coerce.number().int().positive().default(5),
+    WORKER_CONCURRENCY_MESSAGE_MEDIA: z.coerce.number().int().positive().default(4),
 
     // LiveKit
     LIVEKIT_URL: z.string().url().optional(),

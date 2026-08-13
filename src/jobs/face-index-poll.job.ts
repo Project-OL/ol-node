@@ -14,12 +14,18 @@ export async function runFaceIndexPollOnce(): Promise<number> {
     take: batch,
     select: { id: true, userId: true, s3KeyReference: true },
   })
-  for (const row of rows) {
-    await faceVerificationService.processIndexingJob({
-      userId: row.userId,
-      faceProfileId: row.id,
-      s3Key: row.s3KeyReference,
-    })
+  const concurrency = Math.min(3, rows.length)
+  for (let i = 0; i < rows.length; i += concurrency) {
+    const slice = rows.slice(i, i + concurrency)
+    await Promise.all(
+      slice.map((row) =>
+        faceVerificationService.processIndexingJob({
+          userId: row.userId,
+          faceProfileId: row.id,
+          s3Key: row.s3KeyReference,
+        }),
+      ),
+    )
   }
   return rows.length
 }

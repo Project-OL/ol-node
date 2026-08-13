@@ -27,6 +27,7 @@ import { agencyCommissionService } from '../../services/agencyCommission.service
 import { agencyKycService } from '../../services/agencyKyc.service'
 import { coinTradingService } from '../../services/coinTrading.service'
 import { payrollAdminService } from '../../services/payrollAdmin.service'
+import { SLOW_REPORT_TIMEOUT_MS } from '../../utils/requestTimeout'
 import { agencyCommissionConfigService } from '../../services/agencyCommissionConfig.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { withdrawalService } from '../../services/withdrawal.service'
@@ -512,6 +513,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     '/:identifier/hosts/earnings',
     {
       preHandler: [authenticateAdmin],
+      config: { timeoutMs: SLOW_REPORT_TIMEOUT_MS },
       schema: {
         tags: ['Admin', 'Agency'],
         description:
@@ -543,6 +545,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     '/:identifier/commission/history',
     {
       preHandler: [authenticateAdmin],
+      config: { timeoutMs: SLOW_REPORT_TIMEOUT_MS },
       schema: {
         tags: ['Admin', 'Agency'],
         description:

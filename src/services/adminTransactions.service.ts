@@ -14,6 +14,8 @@ import {
   type AdminTxnUserRow,
 } from '../repositories/admin-transactions.repository'
 import { coinTradingRepository } from '../repositories/coinTrading.repository'
+import { walletRepository } from '../repositories/wallet.repository'
+import { lockWalletsInOrder } from '../utils/wallet-lock-order'
 import { getTransactionName } from '../config/transaction-display-names'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import {
@@ -502,6 +504,17 @@ export const adminTransactionsService = {
     try {
       const result = await prisma.$transaction(
         async (tx) => {
+          // Deterministic id-order locking (not receiver-then-sender) so this
+          // can never lock-order-invert against a concurrent live transfer on
+          // the same wallet pair, which locks via the same helper.
+          const receiverWallet = await walletRepository.getOrCreate(
+            receiverUserId,
+            currencyType,
+            tx,
+          )
+          const senderWallet = await walletRepository.getOrCreate(senderUserId, currencyType, tx)
+          await lockWalletsInOrder(tx, [receiverWallet, senderWallet])
+
           const debit = await coinWalletService.debit(
             receiverUserId,
             amount,
@@ -543,7 +556,7 @@ export const adminTransactionsService = {
 
           return { debit, credit }
         },
-        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+        { timeout: TX_TIMEOUT_MS },
       )
 
       await walletService.adjustTradingBalanceCache(receiverUserId)
@@ -649,6 +662,21 @@ export const adminTransactionsService = {
     try {
       const result = await prisma.$transaction(
         async (tx) => {
+          // Deterministic id-order locking (not receiver-then-sender) so this
+          // can never lock-order-invert against a concurrent live transfer on
+          // the same wallet pair, which locks via the same helper.
+          const receiverWallet = await walletRepository.getOrCreate(
+            receiverUserId,
+            WalletCurrencyType.POINT,
+            tx,
+          )
+          const senderWallet = await walletRepository.getOrCreate(
+            senderUserId,
+            WalletCurrencyType.POINT,
+            tx,
+          )
+          await lockWalletsInOrder(tx, [receiverWallet, senderWallet])
+
           const debit = await pointWalletService.debit(
             receiverUserId,
             amount,
@@ -712,7 +740,7 @@ export const adminTransactionsService = {
 
           return { debit, credit, livestreamResult, commission }
         },
-        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+        { timeout: TX_TIMEOUT_MS },
       )
 
       await walletService.adjustPointBalanceCache(receiverUserId, -amount)

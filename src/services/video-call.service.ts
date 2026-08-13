@@ -28,7 +28,9 @@ import { utcDayFromTimestamp } from '../utils/datetime'
 import { callerCoinDebitForCall } from '../config/host-revenue-shares'
 import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import { videoCallPriceCapService } from './videoCallPriceCap.service'
+import { livekitCircuitBreaker } from '../utils/circuitBreaker'
 import { assertCoinDebitAllowed } from './wallet-freeze.service'
+import { lockWalletsInOrder } from '../utils/wallet-lock-order'
 
 /** Public call-settings shape — always populated (virtual defaults when no DB row). */
 export type VideoCallSettingsDto = {
@@ -211,7 +213,16 @@ export const videoCallSessionService = {
     // Create LiveKit room and tokens
     const roomName = `videocall-${uuidv4()}`
     const lk = getLivekitClient()
-    await lk.createRoom({ name: roomName, emptyTimeout: 120, maxParticipants: 2 })
+    if (livekitCircuitBreaker.shouldSkip()) {
+      throw new AppError(502, 'Video call service temporarily unavailable', 'LIVEKIT_CIRCUIT_OPEN')
+    }
+    try {
+      await lk.createRoom({ name: roomName, emptyTimeout: 120, maxParticipants: 2 })
+      livekitCircuitBreaker.recordSuccess()
+    } catch (err) {
+      livekitCircuitBreaker.recordFailure()
+      throw err
+    }
 
     const [callerToken, creatorToken] = await Promise.all([
       buildToken(callerId, roomName),
@@ -290,8 +301,11 @@ export const videoCallSessionService = {
 
     await prisma.$transaction(
       async (tx) => {
-        // Lock caller wallet
-        await walletRepository.lockForUpdate(tx, callerCoinWallet.id)
+        // Deterministic id-order locking (not caller-then-creator) so this can
+        // never lock-order-invert against another code path that locks these
+        // two wallet types in the opposite order — see lockWalletsInOrder's
+        // other call sites (admin revert, live transfer, coin-trading exchange).
+        await lockWalletsInOrder(tx, [callerCoinWallet, creatorPointWallet])
 
         const lastCoin = await tx.coinLedgerEntry.findFirst({
           where: { walletId: callerCoinWallet.id },
@@ -324,9 +338,7 @@ export const videoCallSessionService = {
           callerDebit,
         )
 
-        // Lock creator point wallet and credit
-        await walletRepository.lockForUpdate(tx, creatorPointWallet.id)
-
+        // creatorPointWallet already locked above via lockWalletsInOrder.
         const lastPoint = await tx.pointLedgerEntry.findFirst({
           where: { walletId: creatorPointWallet.id },
           orderBy: { createdAt: 'desc' },
@@ -379,7 +391,7 @@ export const videoCallSessionService = {
           hostPricePerMin,
         )
       },
-      { isolationLevel: 'Serializable' },
+      { timeout: 20_000 },
     )
 
     await syncLevelCacheFromApplyResult(session.callerId, LevelType.WEALTH, callerWealthResult)
@@ -430,11 +442,13 @@ export const videoCallSessionService = {
     // Best-effort: delete the LiveKit room
     try {
       const session = await videoCallRepository.getSession(sessionId)
-      if (session) {
+      if (session && !livekitCircuitBreaker.shouldSkip()) {
         const lk = getLivekitClient()
         await lk.deleteRoom(session.livekitRoom)
+        livekitCircuitBreaker.recordSuccess()
       }
     } catch {
+      livekitCircuitBreaker.recordFailure()
       // Non-critical — room will auto-expire via emptyTimeout
     }
   },

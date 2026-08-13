@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { PointTxType, Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+import { rootLogger } from '../utils/rootLogger'
 import {
   redisClient,
   RedisKeys,
@@ -675,72 +676,82 @@ export const agencyCommissionService = {
     agencyUserId: string,
     opts?: { skipDailyDedupe?: boolean },
   ): Promise<void> {
-    const now = utcNow()
+    const MAX_CAS_ATTEMPTS = 5
 
-    const cur = await prisma.agency.findUnique({
-      where: { userId: agencyUserId },
-      select: {
-        lastLevelRecomputedAt: true,
-        tierLockLevel: true,
-        tierLockUntil: true,
-        tierLockBonusPoints: true,
-      },
-    })
+    for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
+      const now = utcNow()
 
-    if (!opts?.skipDailyDedupe) {
-      if (
-        cur?.lastLevelRecomputedAt &&
-        utcDateString(cur.lastLevelRecomputedAt) === utcDateString(now)
-      ) {
+      const cur = await prisma.agency.findUnique({
+        where: { userId: agencyUserId },
+        select: {
+          lastLevelRecomputedAt: true,
+          tierLockLevel: true,
+          tierLockUntil: true,
+          tierLockBonusPoints: true,
+        },
+      })
+
+      if (!opts?.skipDailyDedupe) {
+        if (
+          cur?.lastLevelRecomputedAt &&
+          utcDateString(cur.lastLevelRecomputedAt) === utcDateString(now)
+        ) {
+          return
+        }
+      }
+
+      const { total: actual } = await this.resolveTierWindowTotal(agencyUserId, {
+        preferPrimary: true,
+        now,
+      })
+      const levels = await agencyCommissionRepository.getLevelConfig()
+      const lockLevelRow = cur?.tierLockLevel
+        ? (levels.find((l) => l.level === cur.tierLockLevel) ?? null)
+        : null
+      const { effective, lockActive } = effectiveTierWindowTotal({
+        actual,
+        lock: {
+          tierLockLevel: cur?.tierLockLevel ?? null,
+          tierLockUntil: cur?.tierLockUntil ?? null,
+          tierLockBonusPoints: cur?.tierLockBonusPoints ?? null,
+        },
+        lockLevelMinWindowPoints: lockLevelRow?.minWindowPoints ?? null,
+        now,
+      })
+      const newLevel = matchAgencyLevel(effective, levels)
+
+      // Compare-and-swap on lastLevelRecomputedAt (bumped on every real write,
+      // including live-credit calls which pass skipDailyDedupe): if another
+      // concurrent recompute committed since we read `cur` above, `count` is 0
+      // and we retry from a fresh read instead of overwriting its result with
+      // data we computed from now-stale state (lost-update under concurrent
+      // commission credits to the same agency).
+      const { count } = await prisma.agency.updateMany({
+        where: { userId: agencyUserId, lastLevelRecomputedAt: cur?.lastLevelRecomputedAt ?? null },
+        data: {
+          currentLevel: newLevel,
+          currentWindowTotalPoints: actual,
+          lastLevelRecomputedAt: now,
+          ...(lockActive
+            ? {}
+            : {
+                tierLockLevel: null,
+                tierLockUntil: null,
+                tierLockBonusPoints: null,
+              }),
+        },
+      })
+
+      if (count === 1) {
+        await this.bustAgentCommissionCaches(agencyUserId)
         return
       }
     }
 
-    const { total: actual } = await this.resolveTierWindowTotal(agencyUserId, {
-      preferPrimary: true,
-      now,
-    })
-    const levels = await agencyCommissionRepository.getLevelConfig()
-    const lockLevelRow = cur?.tierLockLevel
-      ? (levels.find((l) => l.level === cur.tierLockLevel) ?? null)
-      : null
-    const { effective, lockActive } = effectiveTierWindowTotal({
-      actual,
-      lock: {
-        tierLockLevel: cur?.tierLockLevel ?? null,
-        tierLockUntil: cur?.tierLockUntil ?? null,
-        tierLockBonusPoints: cur?.tierLockBonusPoints ?? null,
-      },
-      lockLevelMinWindowPoints: lockLevelRow?.minWindowPoints ?? null,
-      now,
-    })
-    const newLevel = matchAgencyLevel(effective, levels)
-
-    await prisma.$transaction(
-      async (tx) => {
-        await tx.agency.update({
-          where: { userId: agencyUserId },
-          data: {
-            currentLevel: newLevel,
-            currentWindowTotalPoints: actual,
-            lastLevelRecomputedAt: now,
-            ...(lockActive
-              ? {}
-              : {
-                  tierLockLevel: null,
-                  tierLockUntil: null,
-                  tierLockBonusPoints: null,
-                }),
-          },
-        })
-      },
-      {
-        isolationLevel: 'Serializable',
-        timeout: INTERACTIVE_TX_TIMEOUT_MS,
-      },
+    rootLogger.warn(
+      { agencyUserId },
+      'recomputeAgencyLevel: exhausted CAS retries, skipping this cycle',
     )
-
-    await this.bustAgentCommissionCaches(agencyUserId)
   },
 
   /**

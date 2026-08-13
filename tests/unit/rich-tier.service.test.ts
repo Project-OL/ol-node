@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Prisma } from "@prisma/client";
 import { CoinTxType } from "@prisma/client";
-import { RECHARGE_TX_TYPES } from "../../src/services/rich-tier.service";
 
 const historyExists = vi.fn();
 const upsertUserRichTier = vi.fn();
@@ -11,6 +10,7 @@ const insertHistory = vi.fn();
 const getUserRichTier = vi.fn();
 const getMonthlyAggregate = vi.fn();
 const getConfig = vi.fn();
+const replaceConfig = vi.fn();
 const listHistory = vi.fn();
 
 vi.mock("../../src/repositories/richTier.repository", () => ({
@@ -24,6 +24,7 @@ vi.mock("../../src/repositories/richTier.repository", () => ({
     historyExists: (...a: unknown[]) => historyExists(...a),
     listHistory: (...a: unknown[]) => listHistory(...a),
     getConfig: (...a: unknown[]) => getConfig(...a),
+    replaceConfig: (...a: unknown[]) => replaceConfig(...a),
   },
 }));
 
@@ -64,17 +65,31 @@ vi.mock("../../src/config/database", () => ({
   prismaRead: {},
 }));
 
-import { richTierService } from "../../src/services/rich-tier.service";
+vi.mock("../../src/services/ranking.service", () => ({
+  rankingService: {
+    onRecharge: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+import {
+  computeTier,
+  defaultRichTierLadder,
+  RECHARGE_TX_TYPES,
+  richTierService,
+  RICH_TIER_THRESHOLDS,
+} from "../../src/services/rich-tier.service";
 
 describe("richTierService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     redisGet.mockResolvedValue(null);
-    getConfig.mockResolvedValue([
-      { tier: 1, minRechargeCoins: 3_000_000n, displayName: "RICH I" },
-      { tier: 2, minRechargeCoins: 5_000_000n, displayName: "RICH II" },
-      { tier: 3, minRechargeCoins: 10_000_000n, displayName: "RICH III" },
-    ]);
+    getConfig.mockResolvedValue(
+      defaultRichTierLadder().map((r) => ({
+        tier: r.tier,
+        minRechargeCoins: r.minRechargeCoins,
+        displayName: r.displayName,
+      })),
+    );
     findMostRecent.mockResolvedValue(null);
   });
 
@@ -128,6 +143,10 @@ describe("richTierService", () => {
   it("applyRecharge writes live badge tier when recharge crosses threshold", async () => {
     const userRichTierUpsert = vi.fn();
     const tx = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ country: "US" }),
+      },
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
       userRichTier: {
         findUnique: vi.fn().mockResolvedValue({ currentTier: 0, carryoverCoins: 0n }),
         upsert: userRichTierUpsert,
@@ -156,6 +175,10 @@ describe("richTierService", () => {
   it("applyRecharge skips user_rich_tier write when tier unchanged", async () => {
     const userRichTierUpsert = vi.fn();
     const tx = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ country: "US" }),
+      },
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
       userRichTier: {
         findUnique: vi.fn().mockResolvedValue({ currentTier: 2, carryoverCoins: 0n }),
         upsert: userRichTierUpsert,
@@ -177,6 +200,10 @@ describe("richTierService", () => {
   it("applyRecharge can jump multiple tiers in one recharge", async () => {
     const userRichTierUpsert = vi.fn();
     const tx = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ country: "US" }),
+      },
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
       userRichTier: {
         findUnique: vi.fn().mockResolvedValue({ currentTier: 0, carryoverCoins: 0n }),
         upsert: userRichTierUpsert,
@@ -374,5 +401,45 @@ describe("richTierService", () => {
       }),
       txMock,
     );
+  });
+
+  it("computeTier uses the default seed ladder", () => {
+    expect(computeTier(0n)).toBe(0);
+    expect(computeTier(RICH_TIER_THRESHOLDS[0]!)).toBe(1);
+    expect(computeTier(RICH_TIER_THRESHOLDS[9]!)).toBe(10);
+  });
+
+  it("replaceTierConfig upserts 10 strictly increasing tiers and busts redis", async () => {
+    const next = defaultRichTierLadder().map((r) => ({
+      tier: r.tier,
+      minRechargeCoins: (r.minRechargeCoins + 1n).toString(),
+      displayName: r.displayName,
+    }));
+    replaceConfig.mockResolvedValue(undefined);
+    getConfig.mockResolvedValue(
+      next.map((r) => ({
+        tier: r.tier,
+        minRechargeCoins: BigInt(r.minRechargeCoins),
+        displayName: r.displayName,
+      })),
+    );
+    const out = await richTierService.replaceTierConfig(next);
+    expect(replaceConfig).toHaveBeenCalled();
+    expect(redisSet).toHaveBeenCalled();
+    expect(out).toHaveLength(10);
+    expect(out[0]?.minRechargeCoins).toBe((RICH_TIER_THRESHOLDS[0]! + 1n).toString());
+  });
+
+  it("replaceTierConfig rejects non-monotonic thresholds", async () => {
+    const bad = defaultRichTierLadder().map((r) => ({
+      tier: r.tier,
+      minRechargeCoins: r.minRechargeCoins.toString(),
+      displayName: r.displayName,
+    }));
+    bad[1]!.minRechargeCoins = "1000";
+    await expect(richTierService.replaceTierConfig(bad)).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(replaceConfig).not.toHaveBeenCalled();
   });
 });

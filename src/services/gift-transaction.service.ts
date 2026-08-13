@@ -24,28 +24,27 @@ import { vipMembershipService } from './vip-membership.service'
 import { fanSpendIncrementForGift } from './vip-membership.helpers'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { assertNotBlockedEitherWay } from '../utils/block-relationship'
+import { rootLogger } from '../utils/rootLogger'
+import { giftSendMetrics } from './giftSend.metrics'
 import { isSerializationAbort, isUniqueViolation } from '../utils/txRetry'
-import { assertCoinDebitAllowed } from './wallet-freeze.service'
+import { assertCoinDebitAllowed, assertCoinDebitAllowedInTx } from './wallet-freeze.service'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 /** Serialization/deadlock aborts are expected under concurrent sends - bounded retry. */
 const SEND_TX_MAX_ATTEMPTS = 3
 
 async function invalidateAfterGiftSend(params: {
-  senderId: string
   receiverId: string
-  year: number
-  month: number
   dayKey: string
   weekKey: string
   monthKey: string
 }) {
   try {
-    await redisClient.del(RedisKeys.walletCoinBalance(params.senderId))
-    await redisClient.del(RedisKeys.walletPointBalance(params.receiverId))
-    await redisClient.del(RedisKeys.fanRanking(params.receiverId, 'day', params.dayKey))
-    await redisClient.del(RedisKeys.fanRanking(params.receiverId, 'week', params.weekKey))
-    await redisClient.del(RedisKeys.fanRanking(params.receiverId, 'month', params.monthKey))
+    const pipe = redisClient.pipeline()
+    pipe.del(RedisKeys.fanRanking(params.receiverId, 'day', params.dayKey))
+    pipe.del(RedisKeys.fanRanking(params.receiverId, 'week', params.weekKey))
+    pipe.del(RedisKeys.fanRanking(params.receiverId, 'month', params.monthKey))
+    await pipe.exec()
   } catch {
     // best-effort
   }
@@ -89,7 +88,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
   const shares = await hostRevenueShareConfigService.getShares()
   const pointsAwarded = Number(hostPointsFromGift(BigInt(coinCost), shares.giftReceiveBp))
   const giftLabel = quantity > 1 ? `${gift.name} ×${quantity}` : gift.name
-  const { dayKey, weekKey, monthKey, year, month } = getPeriodKeys()
+  const { dayKey, weekKey, monthKey } = getPeriodKeys()
 
   type LevelRet = Awaited<ReturnType<typeof walletLevelService.applyCredit>>
 
@@ -99,10 +98,12 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
         const senderCoinWallet = await walletRepository.getOrCreate(
           params.senderUserId,
           WalletCurrencyType.COIN,
+          tx,
         )
         const receiverPointWallet = await walletRepository.getOrCreate(
           params.receiverUserId,
           WalletCurrencyType.POINT,
+          tx,
         )
 
         const ordered = [senderCoinWallet, receiverPointWallet].sort((a, b) =>
@@ -111,6 +112,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
         for (const w of ordered) {
           await walletRepository.lockForUpdate(tx, w.id)
         }
+        await assertCoinDebitAllowedInTx(tx, params.senderUserId, WalletCurrencyType.COIN)
 
         const lastCoin = await tx.coinLedgerEntry.findFirst({
           where: { walletId: senderCoinWallet.id },
@@ -154,6 +156,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
 
         let livestreamResult: LevelRet | null = null
         let bustAgentUserId: string | null = null
+        let receiverPointsAfter: bigint | null = null
         const giftTxRefId = pointsAwarded > 0 ? randomUUID() : null
 
         if (pointsAwarded > 0 && giftTxRefId) {
@@ -164,6 +167,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
             select: { balanceAfter: true },
           })
           const ptBal = lastPt?.balanceAfter ?? 0n
+          receiverPointsAfter = ptBal + pt
 
           const ptEntry = await pointLedgerRepository.insert(tx, {
             walletId: receiverPointWallet.id,
@@ -206,16 +210,6 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
           )
           bustAgentUserId = ac.bustAgentUserId
 
-          const { rankingService } = await import('./ranking.service')
-          await rankingService.onHostPointCredit(
-            {
-              hostUserId: params.receiverUserId,
-              amount: pt,
-              txType: PointTxType.GIFT_RECEIVE,
-              day: utcDayFromTimestamp(new Date()),
-            },
-            tx,
-          )
         }
 
         const gt = await giftTransactionRepository.create(tx, {
@@ -229,36 +223,11 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
           quantity,
         })
 
-        const coinIncrement = fanSpendIncrementForGift(
-          BigInt(coinCost),
-          senderHasActiveVipMembership,
-        )
-        for (const periodType of ['day', 'week', 'month'] as const) {
-          const key = periodType === 'day' ? dayKey : periodType === 'week' ? weekKey : monthKey
-          await tx.fanSpend.upsert({
-            where: {
-              senderUserId_receiverUserId_periodType_periodKey: {
-                senderUserId: params.senderUserId,
-                receiverUserId: params.receiverUserId,
-                periodType,
-                periodKey: key,
-              },
-            },
-            create: {
-              senderUserId: params.senderUserId,
-              receiverUserId: params.receiverUserId,
-              periodType,
-              periodKey: key,
-              coinsSpent: coinIncrement,
-            },
-            update: {
-              coinsSpent: { increment: coinIncrement },
-            },
-          })
-        }
-
         return {
           transactionId: gt.id,
+          senderCoinsRemaining: coinBal - cost,
+          receiverPointsAfter,
+          hostPointsCredited: pointsAwarded > 0 ? BigInt(pointsAwarded) : 0n,
           wealthResult,
           livestreamResult,
           bustAgentUserId,
@@ -288,8 +257,53 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
     }
   }
 
-  await walletService.adjustCoinBalanceCache(params.senderUserId, 0n)
-  await walletService.adjustPointBalanceCache(params.receiverUserId, 0n)
+  await walletService.writeCoinBalanceCache(params.senderUserId, txResult.senderCoinsRemaining)
+  if (txResult.receiverPointsAfter != null) {
+    await walletService.writePointBalanceCache(params.receiverUserId, txResult.receiverPointsAfter)
+  }
+
+  const coinIncrement = fanSpendIncrementForGift(BigInt(coinCost), senderHasActiveVipMembership)
+  await Promise.all(
+    (['day', 'week', 'month'] as const).map((periodType) => {
+      const key = periodType === 'day' ? dayKey : periodType === 'week' ? weekKey : monthKey
+      return prisma.fanSpend.upsert({
+        where: {
+          senderUserId_receiverUserId_periodType_periodKey: {
+            senderUserId: params.senderUserId,
+            receiverUserId: params.receiverUserId,
+            periodType,
+            periodKey: key,
+          },
+        },
+        create: {
+          senderUserId: params.senderUserId,
+          receiverUserId: params.receiverUserId,
+          periodType,
+          periodKey: key,
+          coinsSpent: coinIncrement,
+        },
+        update: {
+          coinsSpent: { increment: coinIncrement },
+        },
+      })
+    }),
+  ).catch((err) => {
+    console.error('[Gift send] fanSpend upsert failed', err)
+  })
+
+  if (txResult.hostPointsCredited > 0n) {
+    const { rankingService } = await import('./ranking.service')
+    await rankingService
+      .onHostPointCredit({
+        hostUserId: params.receiverUserId,
+        amount: txResult.hostPointsCredited,
+        txType: PointTxType.GIFT_RECEIVE,
+        day: utcDayFromTimestamp(new Date()),
+      })
+      .catch((err) => {
+        console.error('[Gift send] ranking increment failed', err)
+      })
+  }
 
   if (txResult.wealthResult) {
     await walletLevelService.refreshCache(
@@ -320,10 +334,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
   }
 
   await invalidateAfterGiftSend({
-    senderId: params.senderUserId,
     receiverId: params.receiverUserId,
-    year,
-    month,
     dayKey,
     weekKey,
     monthKey,
@@ -343,8 +354,6 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
     console.error('[Gift send] recordGiftProgress failed', err)
   }
 
-  const senderCoinsRemaining = await walletService.getCoinBalance(params.senderUserId)
-
   return {
     transactionId: txResult.transactionId,
     giftName: gift.name,
@@ -352,7 +361,7 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
     unitCoinCost,
     coinCost,
     pointsAwarded,
-    senderCoinsRemaining: Number(senderCoinsRemaining),
+    senderCoinsRemaining: Number(txResult.senderCoinsRemaining),
     galleryUpdated,
     galleryNowFull,
   }
@@ -361,7 +370,19 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
 export const giftTransactionService = {
   async sendGift(params: SendGiftParams) {
     if (!params.idempotencyKey) {
-      // Legacy path: per-request ledger keys, no replay window.
+      // Legacy path: per-request ledger keys, no replay window. Observability
+      // only for now (remediation plan Phase 3c, step 1) — logs + counts how
+      // much real traffic still omits the key, ahead of a later, separately
+      // coordinated step that makes it required.
+      giftSendMetrics.bumpMissingIdempotencyKey()
+      rootLogger.warn(
+        {
+          senderUserId: params.senderUserId,
+          giftId: params.giftId,
+          context: params.context,
+        },
+        'gift-send missing idempotencyKey — legacy path, no replay protection',
+      )
       return executeSendGift(params, `gift:${crypto.randomUUID()}`)
     }
 

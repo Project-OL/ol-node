@@ -39,6 +39,7 @@ vi.mock('../../src/repositories/vip-assignment.repository', () => ({
 }))
 
 const cacheGet = vi.fn()
+const cacheGetAssembled = vi.fn()
 const cacheSet = vi.fn()
 const cacheDel = vi.fn()
 const cacheExists = vi.fn()
@@ -46,7 +47,13 @@ const cacheTtl = vi.fn()
 
 vi.mock('../../src/services/cacheRedis.service', () => ({
   cacheRedisService: {
-    get: (...a: unknown[]) => cacheGet(...a),
+    get: (...a: unknown[]) => {
+      const key = a[0] as string
+      if (typeof key === 'string' && key.includes(':assembled:')) {
+        return cacheGetAssembled(...a)
+      }
+      return cacheGet(...a)
+    },
     set: (...a: unknown[]) => cacheSet(...a),
     del: (...a: unknown[]) => cacheDel(...a),
     exists: (...a: unknown[]) => cacheExists(...a),
@@ -122,11 +129,10 @@ vi.mock('../../src/services/vip-membership.service', () => ({
   },
 }))
 
+const buildMeAgencyBlock = vi.fn()
 vi.mock('../../src/services/agency.service', () => ({
   agencyService: {
-    buildMeAgencyBlock: vi.fn().mockResolvedValue({
-      role: 'NONE' as const,
-    }),
+    buildMeAgencyBlock: (...a: unknown[]) => buildMeAgencyBlock(...a),
   },
 }))
 
@@ -160,9 +166,11 @@ vi.mock('../../src/config/redis', () => ({
   }),
   RedisKeys: {
     userMe: (id: string) => `user:me:${id}`,
+    userMeAssembled: (id: string) => `user:me:assembled:${id}`,
     userProfile: (id: string) => `user:profile:${id}`,
     userUsernameLock: (id: string) => `user:username_lock:${id}`,
     userActiveVipId: (id: string) => `user:active-vip:${id}`,
+    userSearchCard: (id: string) => `user:search:card:${id}`,
   },
 }))
 
@@ -196,7 +204,10 @@ function baseRow(over: Partial<Record<string, unknown>> = {}) {
 describe('meService', () => {
   beforeEach(() => {
     cacheGet.mockReset()
+    cacheGetAssembled.mockReset()
+    cacheGetAssembled.mockResolvedValue(null)
     cacheSet.mockReset()
+    cacheSet.mockResolvedValue(undefined)
     cacheDel.mockReset()
     cacheExists.mockReset()
     cacheTtl.mockReset()
@@ -266,6 +277,8 @@ describe('meService', () => {
     isFaceVerifiedForUser.mockResolvedValue(false)
     getAcceptVideoCalls.mockReset()
     getAcceptVideoCalls.mockResolvedValue(true)
+    buildMeAgencyBlock.mockReset()
+    buildMeAgencyBlock.mockResolvedValue({ role: 'NONE' as const })
     getCoinBalance.mockResolvedValue(20_000n)
     getPointBalance.mockResolvedValue(0n)
     walletUserLevelGetByUser.mockResolvedValue(null)
@@ -375,6 +388,72 @@ describe('meService', () => {
     expect(out.data.isVipActive).toBe(false)
     expect(out.data.faceVerified).toBe(false)
     expect(cacheSet).toHaveBeenCalled()
+  })
+
+  it('getMe merges derived adminTags for agency, gallery, VIP, and rich tier', async () => {
+    cacheGet.mockResolvedValueOnce(null)
+    findForMe.mockResolvedValueOnce(baseRow({ adminTags: ['Risk review'] }))
+    buildMeAgencyBlock.mockResolvedValueOnce({ role: 'AGENT' as const })
+    getCompletionSummaryForUser.mockResolvedValueOnce({
+      isFullGallery: true,
+      receivedItems: 12,
+      totalItems: 12,
+      monthEndAt: '2026-04-30T23:59:59.999Z',
+      secondsRemaining: 100,
+    })
+    buildMeVipMembershipBlock.mockResolvedValueOnce({
+      isActive: true,
+      tier: 'DIAMOND',
+      daysRemaining: 10,
+      dailyClaimAvailable: true,
+      vipExclusiveProfileCard: true,
+      vipDistinguishedLogo: true,
+      vipExclusiveMessageBackground: true,
+      vipSpecialEntryEffect: true,
+      vipPreventBeingKicked: true,
+      vipLiveTranslationEnabled: true,
+    })
+    getCurrentTierForUserRich.mockResolvedValueOnce({
+      level: 1,
+      tier: 1,
+      displayName: 'RICH I',
+      evaluatedFromYear: 2026,
+      evaluatedFromMonth: 8,
+      amount: '3000000',
+      currentMonthRechargeCoins: '3000000',
+      currentMonthCarryoverCoins: '0',
+      currentMonthProgressCoins: '3000000',
+      nextTierThreshold: '5000000',
+      nextTierLackingCoins: '2000000',
+      badgeVisible: false,
+    })
+    const out = await meService.getMe('user-1')
+    expect(out.data.adminTags).toEqual([
+      'coinseller',
+      'gift collection',
+      'VIP Diamond',
+      'RICH I',
+      'Risk review',
+    ])
+  })
+
+  it('getMe uses SVIP derived tag when paid SVIP is active', async () => {
+    cacheGet.mockResolvedValueOnce(null)
+    findForMe.mockResolvedValueOnce(baseRow())
+    buildMeVipMembershipBlock.mockResolvedValueOnce({
+      isActive: true,
+      tier: 'SVIP',
+      daysRemaining: 5,
+      dailyClaimAvailable: false,
+      vipExclusiveProfileCard: true,
+      vipDistinguishedLogo: true,
+      vipExclusiveMessageBackground: true,
+      vipSpecialEntryEffect: true,
+      vipPreventBeingKicked: true,
+      vipLiveTranslationEnabled: true,
+    })
+    const out = await meService.getMe('user-1')
+    expect(out.data.adminTags).toEqual(['SVIP'])
   })
 
   it('getMe returns faceVerified true when indexed face profile exists', async () => {

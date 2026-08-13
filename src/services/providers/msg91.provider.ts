@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios'
 import { env } from '../../config/env'
 import type { OtpProviderResult, SmsOtpParams, WhatsappOtpParams } from './provider.types'
+import { msg91CircuitBreaker } from '../../utils/circuitBreaker'
 
 const MSG91_BASE_URL = 'https://control.msg91.com'
 
@@ -99,6 +100,9 @@ export function buildWhatsappOtpRequestBody(params: {
 
 export const msg91Provider = {
   async sendWhatsappOtp(params: WhatsappOtpParams): Promise<OtpProviderResult> {
+    if (msg91CircuitBreaker.shouldSkip()) {
+      return { success: false, error: 'MSG91 WhatsApp temporarily unavailable' }
+    }
     try {
       const body = buildWhatsappOtpRequestBody({
         phone: params.phone,
@@ -113,12 +117,14 @@ export const msg91Provider = {
         body,
         { headers: msg91AuthHeaders() },
       )
+      msg91CircuitBreaker.recordSuccess()
 
       return {
         success: true,
         providerMessageId: extractProviderMessageId(response.data),
       }
     } catch (error) {
+      msg91CircuitBreaker.recordFailure()
       if (isExpectedProviderError(error)) {
         return { success: false, error: providerErrorMessage(error) }
       }
@@ -127,6 +133,9 @@ export const msg91Provider = {
   },
 
   async sendSmsOtp(params: SmsOtpParams): Promise<OtpProviderResult> {
+    if (msg91CircuitBreaker.shouldSkip()) {
+      return { success: false, error: 'MSG91 SMS temporarily unavailable' }
+    }
     try {
       const variables = buildSmsTemplateVariables(params.otp, params.templateVariables)
       const response = await msg91Client.post(
@@ -141,12 +150,14 @@ export const msg91Provider = {
         },
         { headers: msg91AuthHeaders() },
       )
+      msg91CircuitBreaker.recordSuccess()
 
       return {
         success: true,
         providerMessageId: extractProviderMessageId(response.data),
       }
     } catch (error) {
+      msg91CircuitBreaker.recordFailure()
       if (isExpectedProviderError(error)) {
         return { success: false, error: providerErrorMessage(error) }
       }

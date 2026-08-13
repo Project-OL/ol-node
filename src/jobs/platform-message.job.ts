@@ -6,6 +6,8 @@ import { auditService } from '../services/audit.service'
 import { randomUUID } from 'crypto'
 import type { PlatformMessageMetadata } from '../models/platform-message.schemas'
 import { rootLogger } from '../utils/rootLogger'
+import { env } from '../config/env'
+import { mapPool } from '../utils/map-pool'
 import { NOTIFY_BROADCAST_STATE_TTL, RedisKeys, redisClient } from '../config/redis'
 import { BROADCAST_BATCH_SIZE, BROADCAST_STALE_MS } from '../queues/platform-message.constants'
 import {
@@ -167,8 +169,7 @@ export async function processPlatformNotificationBroadcastBatchJob(
 ): Promise<void> {
   const { campaignId, batchIndex, adminUserId, message, userIds } = job.data
 
-  let sent = 0
-  for (const userId of userIds) {
+  const results = await mapPool(userIds, env.WORKER_CONCURRENCY_PLATFORM_MESSAGE, async (userId) => {
     const metadata: PlatformMessageMetadata = {
       category: 'notification',
       campaignId,
@@ -181,8 +182,9 @@ export async function processPlatformNotificationBroadcastBatchJob(
       metadata,
       clientMessageId: `notify:${campaignId}:${userId}`,
     })
-    if (result.created) sent += 1
-  }
+    return result.created ? 1 : 0
+  })
+  const sent = results.reduce<number>((a, b) => a + b, 0)
 
   const stateKey = RedisKeys.notifyBroadcastState(campaignId)
   const pendingKey = RedisKeys.notifyBroadcastPending(campaignId)

@@ -33,9 +33,13 @@ vi.mock("../src/config/database", () => ({
     withdrawal: { findFirst: vi.fn() },
     payrollConfig: { findUnique: vi.fn() },
     agency: { findUnique: vi.fn() },
-    pointLedgerEntry: { aggregate: vi.fn() },
+    pointLedgerEntry: { aggregate: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    user: { findMany: vi.fn().mockResolvedValue([]) },
   },
-  prisma: { withdrawal: { update: vi.fn() } },
+  prisma: {
+    withdrawal: { update: vi.fn() },
+    wallet: { upsert: vi.fn().mockResolvedValue({ id: "wallet-1" }) },
+  },
 }));
 
 vi.mock("../src/config/redis", () => ({
@@ -61,6 +65,7 @@ vi.mock("../src/repositories/withdrawal.repository", () => ({
 vi.mock("../src/repositories/payrollAssignment.repository", () => ({
   payrollAssignmentRepository: {
     countInboxByStatus: vi.fn(),
+    findWaitingByWithdrawalId: vi.fn().mockResolvedValue(null),
   },
 }));
 
@@ -272,6 +277,7 @@ describe("agencyService.getPayrollSummary", () => {
   it("returns correct tabCounts from repository", async () => {
     vi.mocked(prismaRead.agency.findUnique).mockResolvedValue({
       payrollEnabled: true,
+      payrollPrivilegeGranted: true,
       pausedAt: null,
     } as never);
     vi.mocked(prismaRead.pointLedgerEntry.aggregate).mockResolvedValue({
@@ -291,6 +297,7 @@ describe("agencyService.getPayrollSummary", () => {
   it("sets takeOrderEnabled=false when agency is paused", async () => {
     vi.mocked(prismaRead.agency.findUnique).mockResolvedValue({
       payrollEnabled: true,
+      payrollPrivilegeGranted: true,
       pausedAt: new Date(),
     } as never);
     vi.mocked(prismaRead.pointLedgerEntry.aggregate).mockResolvedValue({

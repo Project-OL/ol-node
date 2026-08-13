@@ -4,6 +4,7 @@ import {
   MESSAGE_OUTBOX_PUBLISH_JOB,
   MESSAGE_OUTBOX_QUEUE,
   MESSAGE_OUTBOX_SWEEP_JOB,
+  READ_RECEIPT_SWEEP_JOB,
 } from './messaging.constants'
 
 const jobOpts = {
@@ -36,6 +37,24 @@ export async function registerMessageOutboxScheduledJobs(): Promise<void> {
     {
       repeat: { every: 5000 },
       jobId: 'message-outbox-sweep-repeat',
+      attempts: 1,
+      removeOnComplete: 100,
+    },
+  )
+}
+
+/**
+ * Called once from the realtime worker family — 5s sweep for read receipts
+ * whose in-process debounce timer (owned by ws-server.ts) was lost to a crash
+ * rather than a graceful shutdown (see flushAllPendingReadReceipts).
+ */
+export async function registerReadReceiptSweep(): Promise<void> {
+  await messageOutboxQueue.add(
+    READ_RECEIPT_SWEEP_JOB,
+    {},
+    {
+      repeat: { every: 5000 },
+      jobId: 'read-receipt-sweep-repeat',
       attempts: 1,
       removeOnComplete: 100,
     },

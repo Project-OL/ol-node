@@ -19,6 +19,7 @@ vi.mock("../../src/config/redis", () => ({
   RedisKeys: {
     ctBalance: (id: string) => `ct:balance:${id}`,
     ctRecentUsers: (id: string) => `ct:recent-users:${id}`,
+    ctPersonalExchangeRates: () => `ct:personal-exchange-rates`,
     walletCoinBalance: (id: string) => `wallet:coins:${id}`,
     walletPointBalance: (id: string) => `wallet:points:${id}`,
   },
@@ -40,10 +41,26 @@ vi.mock("../../src/services/wallet.service", () => ({
   },
 }));
 
+const lockForUpdateCalls: string[] = [];
+
 vi.mock("../../src/repositories/wallet.repository", () => ({
   walletRepository: {
-    getOrCreate: vi.fn(),
-    lockForUpdate: vi.fn(),
+    // Distinct id per currency type — a shared id across currencies would
+    // silently defeat lockWalletsInOrder's dedup-by-id logic in tests.
+    getOrCreate: vi.fn().mockImplementation(
+      (_userId: string, currencyType: WalletCurrencyType) => {
+        const idByType: Record<string, string> = {
+          [WalletCurrencyType.TRADING_COIN]: "wallet-trading",
+          [WalletCurrencyType.COIN]: "wallet-coin",
+          [WalletCurrencyType.POINT]: "wallet-point",
+        };
+        return { id: idByType[currencyType] ?? "wallet-coin", currencyType };
+      },
+    ),
+    lockForUpdate: vi.fn().mockImplementation(async (_tx: unknown, walletId: string) => {
+      lockForUpdateCalls.push(walletId);
+      return null;
+    }),
     bumpVersion: vi.fn(),
   },
 }));
@@ -83,6 +100,9 @@ vi.mock("../../src/repositories/coinTrading.repository", () => ({
     createTransfer: vi.fn().mockResolvedValue({ id: "transfer-1" }),
     getTopupRates: vi.fn(),
     getExchangeRates: vi.fn(),
+    getPersonalExchangeRates: vi.fn().mockResolvedValue([
+      { minUsdEquiv: 0, maxUsdEquiv: null, coinsPerUsd: 9200 },
+    ]),
   },
 }));
 
@@ -134,6 +154,13 @@ vi.mock("../../src/config/database", () => {
           coinTradingTransfer: {
             findUnique: vi.fn().mockResolvedValue(null),
           },
+          user: {
+            findUnique: vi.fn().mockResolvedValue({
+              personalCoinsFrozen: false,
+              tradingCoinsFrozen: false,
+              pointsFrozen: false,
+            }),
+          },
         };
         return fn(tx);
       }),
@@ -171,6 +198,13 @@ function makeTx() {
     },
     coinLedgerEntry: {
       findFirst: vi.fn().mockResolvedValue({ balanceAfter: 5000n }),
+    },
+    user: {
+      findUnique: vi.fn().mockResolvedValue({
+        personalCoinsFrozen: false,
+        tradingCoinsFrozen: false,
+        pointsFrozen: false,
+      }),
     },
   };
 }
@@ -286,6 +320,7 @@ describe("coinTradingService transfer/exchange wallet selection", () => {
     upsertCurrencyTypes.length = 0;
     exchangePointDebitKey = "";
     exchangeTradingCreditKey = "";
+    lockForUpdateCalls.length = 0;
     vi.clearAllMocks();
     vi.mocked(userRepository.findById).mockResolvedValue({
       id: "agent-1",
@@ -337,6 +372,27 @@ describe("coinTradingService transfer/exchange wallet selection", () => {
     expect(walletService.adjustTradingBalanceCache).toHaveBeenCalledWith(
       "agent-1",
     );
+    // Deterministic id-order locking (lockWalletsInOrder) up front, not
+    // point-then-coin call order — proves the fix, not just the debit/credit
+    // outcome. debit()/credit() each re-lock their own wallet internally
+    // afterward (harmless no-op re-lock within the same tx), so only the
+    // first two calls reflect lockWalletsInOrder's ordering.
+    expect(lockForUpdateCalls.slice(0, 2)).toEqual(["wallet-point", "wallet-trading"]);
+  });
+
+  it("exchange (non-agent, personal COIN) locks wallets in id order — the case that actually distinguishes the fix, since wallet-coin < wallet-point lexically (opposite of debit/credit call order)", async () => {
+    vi.mocked(userRepository.findById).mockResolvedValue({
+      id: "user-1",
+      isAgent: false,
+    } as never);
+
+    await coinTradingService.exchangePointsForTradingCoins("user-1", 20_000n);
+
+    expect(upsertCurrencyTypes).toContain(WalletCurrencyType.COIN);
+    expect(upsertCurrencyTypes).not.toContain(WalletCurrencyType.TRADING_COIN);
+    // Old (buggy) call-order would have been ["wallet-point", "wallet-coin"]
+    // (debit POINT, then credit COIN). Id-sorted order is the opposite.
+    expect(lockForUpdateCalls.slice(0, 2)).toEqual(["wallet-coin", "wallet-point"]);
   });
 
   it("exchangePointsForTradingCoins rejects non-multiple of 10,000 points", async () => {

@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import axios from 'axios'
 import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
+import { epayCircuitBreaker } from '../utils/circuitBreaker'
 
 type OrderType = 'PERSONAL_TOPUP' | 'TRADING_TOPUP'
 
@@ -15,10 +16,15 @@ const client = axios.create({
 })
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
+  if (epayCircuitBreaker.shouldSkip()) {
+    throw new AppError(502, 'Epay gateway temporarily unavailable', 'EPAY_CIRCUIT_OPEN')
+  }
   let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await fn()
+      const result = await fn()
+      epayCircuitBreaker.recordSuccess()
+      return result
     } catch (err) {
       lastErr = err
       const status = (err as { response?: { status?: number } })?.response?.status
@@ -27,6 +33,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2): Promise<T> {
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
   }
+  epayCircuitBreaker.recordFailure()
   throw new AppError(502, 'Epay gateway error', 'EPAY_GATEWAY_ERROR', {
     cause: String(lastErr),
   })

@@ -94,7 +94,7 @@ describe('securityPasswordRepository', () => {
 
     expect(update).toHaveBeenCalledWith({
       where: { userId: 'u1' },
-      data: { failedAttempts: 0, lockedUntil: null },
+      data: { failedAttempts: 0, lockedUntil: null, lastFailedAttemptAt: null },
     })
   })
 

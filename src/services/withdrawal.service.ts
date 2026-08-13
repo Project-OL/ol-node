@@ -659,7 +659,7 @@ export const withdrawalService = {
         assignmentIdOut = assignmentId
         expiresAtOut = expiresAt
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+      { timeout: INTERACTIVE_TX_MS },
     )
 
     if (selfAssignBlocked) {
@@ -729,7 +729,7 @@ export const withdrawalService = {
         withdrawalId = a.withdrawalId
         shouldReassign = true
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+      { timeout: INTERACTIVE_TX_MS },
     )
 
     await removePayrollSla(job.assignmentId)
@@ -798,7 +798,7 @@ export const withdrawalService = {
           withdrawalId = a.withdrawalId
         }
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+      { timeout: INTERACTIVE_TX_MS },
     )
 
     await removePayrollSla(assignmentId)
@@ -907,7 +907,7 @@ export const withdrawalService = {
         // Agency credits (host payout + processing reward) happen only after the
         // waitingHours dispute window elapses without a dispute (autoCompleteWaiting).
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+      { timeout: INTERACTIVE_TX_MS },
     )
 
     await removePayrollSla(assignmentId)
@@ -1044,7 +1044,7 @@ export const withdrawalService = {
           })
         }
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+      { timeout: INTERACTIVE_TX_MS },
     )
 
     await removePayrollWaiting(assignmentId)
@@ -1314,7 +1314,7 @@ export const withdrawalService = {
           })
         }
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+      { timeout: INTERACTIVE_TX_MS },
     )
 
     await removePayrollWaiting(assignment.id)
@@ -1435,7 +1435,7 @@ export const withdrawalService = {
           },
         })
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+      { timeout: INTERACTIVE_TX_MS },
     )
 
     await removePayrollWaiting(assignment.id)
@@ -1623,7 +1623,7 @@ export const withdrawalService = {
           tx,
         )
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_MS },
+      { timeout: INTERACTIVE_TX_MS },
     )
 
     if (openAssignment) {

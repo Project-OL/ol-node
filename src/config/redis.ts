@@ -183,6 +183,16 @@ export const RedisKeys = {
     `allowed-messaging:${recipientId}:${senderId}`,
   /** GET /users/me JSON cache */
   userMe: (userId: string) => `user:me:${userId}`,
+  /** Assembled GET /users/me payload (profile + enrichments, short TTL). */
+  userMeAssembled: (userId: string) => `user:me:assembled:${userId}`,
+  /** Requester-independent search-card enrichments (levels, VIP, agency tag, …). */
+  userSearchCard: (userId: string) => `user:search:card:${userId}`,
+  /** Latest READ cursor waiting to flush (cross-pod coalesce). */
+  readReceiptPending: (userId: string, conversationId: string) =>
+    `msg:read:pending:${userId}:${conversationId}`,
+  /** NX lock so only one pod flushes a conversation read cursor per debounce window. */
+  readReceiptFlushLock: (userId: string, conversationId: string) =>
+    `msg:read:flush:${userId}:${conversationId}`,
   /** Full profile cache (same payload shape as /me for now). */
   userProfile: (userId: string) => `user:profile:${userId}`,
   /** Display-name change lock (TTL = seconds until next calendar month UTC). */
@@ -385,7 +395,9 @@ export const RedisKeys = {
   /** Reserved for future rate limiting on session start. */
   liveStartRateLimit: (hostUserId: string) => `live:rl:start:${hostUserId}`,
   /**
-   * Active timed user moderation flag (value = ISO restrictedUntil).
+   * Active timed user moderation flag.
+   * Value: JSON `{ until: ISO, targetUserIds: string[] | null }` (null = all recipients).
+   * Legacy values were a bare ISO timestamp (treated as global).
    * Types: LIVE_CHAT_MUTE | LIVE_AUDIO_MUTE | MESSAGING_DISABLE | LIVE_STREAM_START_BAN
    */
   userRestriction: (userId: string, type: string) => `user:restriction:${userId}:${type}`,
@@ -441,6 +453,10 @@ export const RECORDING_THROTTLE_TTL_SEC = 2
 export const CONV_MEMBER_CACHE_TTL_SEC = 60
 /** Messaging: coalesce READ WS frames before DB + fan-out (ms). */
 export const READ_RECEIPT_DEBOUNCE_MS = 5000
+/** Pending lastReadMessageId TTL — longer than the debounce so a late flush still sees it. */
+export const READ_RECEIPT_PENDING_TTL_SEC = 15
+/** Cross-pod flush lock TTL (seconds), aligned with {@link READ_RECEIPT_DEBOUNCE_MS}. */
+export const READ_RECEIPT_FLUSH_LOCK_TTL_SEC = 5
 /** Messaging: typing indicator TTL (5s) — hot-cache / non-WS paths. */
 export const TYPING_TTL = 5
 /** WebSocket upgrade ticket TTL (15m). */

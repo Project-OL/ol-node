@@ -23,6 +23,12 @@ const feedQuerySchema = z.object({
   cursor: z.string().optional(),
 })
 
+/** Settings-style list, not an infinite-scroll feed — more generous bounds than feedQuerySchema. */
+const subscriptionListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  cursor: z.string().optional(),
+})
+
 const mutatePre = [authenticate, perUserRateLimit]
 
 export default async function subscriptionRoutes(app: FastifyInstance) {
@@ -67,7 +73,15 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       preHandler: [authenticate],
       schema: {
         tags: ['Subscriptions'],
-        description: 'List users the current user is actively subscribed to.',
+        description:
+          'List users the current user is actively subscribed to. Cursor-paginated (limit 1-200, default 100); additive nextCursor field, omit cursor for the first page.',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200, default: 100 },
+            cursor: { type: 'string' },
+          },
+        },
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -75,8 +89,20 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       if (!userId) {
         throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       }
-      const items = await subscriptionService.listMySubscriptions(userId)
-      return reply.status(200).send({ items })
+      const parsed = subscriptionListQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await subscriptionService.listMySubscriptions(
+        userId,
+        parsed.data.limit,
+        parsed.data.cursor,
+      )
+      return reply.status(200).send(result)
     },
   )
 
@@ -163,7 +189,15 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       preHandler: [authenticate],
       schema: {
         tags: ['Subscriptions'],
-        description: 'List users who are actively subscribed to the current user.',
+        description:
+          'List users who are actively subscribed to the current user. Cursor-paginated (limit 1-200, default 100); additive nextCursor field, omit cursor for the first page.',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200, default: 100 },
+            cursor: { type: 'string' },
+          },
+        },
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -171,8 +205,20 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       if (!userId) {
         throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       }
-      const items = await subscriptionService.listMySubscribers(userId)
-      return reply.status(200).send({ items })
+      const parsed = subscriptionListQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await subscriptionService.listMySubscribers(
+        userId,
+        parsed.data.limit,
+        parsed.data.cursor,
+      )
+      return reply.status(200).send(result)
     },
   )
 

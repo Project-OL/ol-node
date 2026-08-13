@@ -7,6 +7,7 @@ import {
   ReplaceRatesSchema,
   ReplaceVideoCallPriceCapsSchema,
   WalletLevelConfigsReplaceSchema,
+  ReplaceRichTierConfigSchema,
 } from '../../models/system-rates-admin.schemas'
 import { SupportConfigUpdateSchema } from '../../models/supportConfig.schemas'
 import { MessagingConfigUpdateSchema } from '../../models/messagingConfig.schemas'
@@ -17,6 +18,7 @@ import { supportConfigService } from '../../services/supportConfig.service'
 import { faceLivenessConfigService } from '../../services/faceLivenessConfig.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { videoCallPriceCapService } from '../../services/videoCallPriceCap.service'
+import { richTierService } from '../../services/rich-tier.service'
 
 /**
  * Platform-wide coin / point rate configs (System Settings).
@@ -27,6 +29,7 @@ import { videoCallPriceCapService } from '../../services/videoCallPriceCap.servi
  * GET|PUT /v1/admin/system-settings/coin-packages
  * GET|PUT /v1/admin/system-settings/wallet-level-configs
  * GET|PUT /v1/admin/system-settings/video-call-price-caps
+ * GET|PUT /v1/admin/system-settings/rich-tier
  * GET|PUT /v1/admin/system-settings/messaging
  * GET|PUT /v1/admin/system-settings/support
  * GET|PUT /v1/admin/system-settings/face-liveness
@@ -124,6 +127,23 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = ReplaceVideoCallPriceCapsSchema.parse(request.body ?? {})
       return reply.send(await videoCallPriceCapService.replaceCaps(body.tiers))
+    },
+  )
+
+  app.get(
+    '/system-settings/rich-tier',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send({ tiers: await richTierService.getTierConfig() })
+    },
+  )
+
+  app.put(
+    '/system-settings/rich-tier',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const body = ReplaceRichTierConfigSchema.parse(request.body ?? {})
+      return reply.send({ tiers: await richTierService.replaceTierConfig(body.tiers) })
     },
   )
 

@@ -62,7 +62,7 @@ export type UserCard = {
    * Default `true` when they have never configured call settings.
    */
   acceptVideoCalls?: boolean
-  /** Platform-admin labels (e.g. VIP, risk). */
+  /** Platform-admin labels plus derived status tags (coinseller, gift collection, VIP, rich tier). */
   adminTags?: string[]
   /** Paid VIP membership (Diamond/SVIP); cosmetic flags mirror `isActive`. */
   vipMembership?: {

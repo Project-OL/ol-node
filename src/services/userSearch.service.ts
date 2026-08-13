@@ -16,6 +16,110 @@ import { faceVerificationRepository } from '../repositories/faceVerification.rep
 import { presenceService } from './presence.service'
 import { videoCallSettingsService } from './video-call.service'
 import { buildUserDisplayName, formatUserName } from '../utils/user-display'
+import { cacheRedisService } from './cacheRedis.service'
+import { RedisKeys } from '../config/redis'
+import { env } from '../config/env'
+import { singleflight } from '../utils/singleflight'
+import { composePublicAdminTags } from '../utils/adminTags'
+
+type SearchCardShared = Pick<
+  UserCard,
+  | 'livestreamLevel'
+  | 'wealthLevel'
+  | 'richTier'
+  | 'subscriberCount'
+  | 'isSuperHost'
+  | 'activeGuardian'
+  | 'activeStoreItems'
+  | 'galleryCompletion'
+  | 'vipMembership'
+  | 'faceVerified'
+  | 'acceptVideoCalls'
+  | 'agencyTag'
+>
+
+function isSearchCardShared(value: SearchCardShared | null): value is SearchCardShared {
+  return value != null && typeof value.subscriberCount === 'number'
+}
+
+async function loadSearchCardShared(user: {
+  id: string
+  isAgent: boolean
+  currentAgencyId: string | null
+}): Promise<SearchCardShared> {
+  const key = RedisKeys.userSearchCard(user.id)
+  const cached = await cacheRedisService.get<SearchCardShared>(key)
+  if (isSearchCardShared(cached)) return cached
+
+  return singleflight(`search:card:${user.id}`, async () => {
+    const again = await cacheRedisService.get<SearchCardShared>(key)
+    if (isSearchCardShared(again)) return again
+
+    const agencyLookupId = user.isAgent ? user.id : (user.currentAgencyId ?? null)
+    const [
+      levels,
+      subscriberCounts,
+      isSuperHost,
+      activeGuardian,
+      activeStoreItems,
+      galleryCompletion,
+      richTier,
+      vipMembership,
+      faceVerified,
+      acceptVideoCalls,
+      agencyRow,
+    ] = await Promise.all([
+      walletLevelService.getDisplayLevelsForUsers([user.id]),
+      userSubscriberRepository.countSubscribersForCreators([user.id]),
+      superHostService.isSuperHost(user.id),
+      guardianService.getActiveGuardianSummary(user.id),
+      storeService.getActiveItemsForUser(user.id),
+      giftGalleryService.getCompletionSummaryForUser(user.id),
+      richTierService.getRichTierCardFields(user.id),
+      vipMembershipService.getActiveMembershipSummary(user.id),
+      faceVerificationRepository.isVerifiedForUser(user.id),
+      videoCallSettingsService.getAcceptVideoCalls(user.id),
+      agencyLookupId
+        ? prismaRead.agency.findUnique({
+            where: { userId: agencyLookupId },
+            select: { defaultPublicId: true },
+          })
+        : Promise.resolve(null),
+    ])
+    const level = levels.get(user.id)
+    const agencyTag: SearchCardShared['agencyTag'] =
+      user.isAgent && agencyRow
+        ? {
+            isAgent: true,
+            isHost: false,
+            agencyPublicId: agencyRow.defaultPublicId.toString(),
+          }
+        : user.currentAgencyId
+          ? {
+              isAgent: false,
+              isHost: true,
+              agencyPublicId: agencyRow?.defaultPublicId.toString(),
+            }
+          : { isAgent: false, isHost: false }
+
+    const shared: SearchCardShared = {
+      livestreamLevel: level?.livestreamLevel ?? 0,
+      wealthLevel: level?.wealthLevel ?? 0,
+      richTier,
+      subscriberCount: subscriberCounts.get(user.id) ?? 0,
+      isSuperHost,
+      activeGuardian,
+      activeStoreItems,
+      galleryCompletion,
+      vipMembership,
+      faceVerified,
+      acceptVideoCalls,
+      agencyTag,
+    }
+    void cacheRedisService.set(key, shared, env.REDIS_TTL_USER_SEARCH_CARD)
+    return shared
+  })
+}
 
 export type ResolvedPublicIdentity = {
   userId: string
@@ -83,64 +187,14 @@ export const userSearchService = {
       return null
     }
 
-    const levels = await walletLevelService.getDisplayLevelsForUsers([user.id])
-    const level = levels.get(user.id)
-    const subscriberCounts = await userSubscriberRepository.countSubscribersForCreators([user.id])
-    const subscriberCount = subscriberCounts.get(user.id) ?? 0
-
-    const [
-      isFollowing,
-      isFollowedBy,
-      isSuperHost,
-      activeGuardian,
-      activeStoreItems,
-      galleryCompletion,
-      blockedByMe,
-      userBlockedMe,
-      richTier,
-      vipMembership,
-      faceVerified,
-      acceptVideoCalls,
-    ] = await Promise.all([
+    const [shared, isFollowing, isFollowedBy, blockedByMe, userBlockedMe] = await Promise.all([
+      loadSearchCardShared(user),
       followRepository.existsFollow(requesterId, user.id),
       followRepository.existsFollow(user.id, requesterId),
-      superHostService.isSuperHost(user.id),
-      guardianService.getActiveGuardianSummary(user.id),
-      storeService.getActiveItemsForUser(user.id),
-      giftGalleryService.getCompletionSummaryForUser(user.id),
       blockRepository.isBlocked(requesterId, user.id),
       blockRepository.isBlocked(user.id, requesterId),
-      richTierService.getRichTierCardFields(user.id),
-      vipMembershipService.getActiveMembershipSummary(user.id),
-      faceVerificationRepository.isVerifiedForUser(user.id),
-      videoCallSettingsService.getAcceptVideoCalls(user.id),
     ])
     const isFriend = isFollowing && isFollowedBy
-
-    let agencyTag: { isAgent: boolean; isHost: boolean; agencyPublicId?: string } | undefined
-    const agentRow = await prismaRead.agency.findUnique({
-      where: { userId: user.id },
-      select: { defaultPublicId: true },
-    })
-    if (user.isAgent && agentRow) {
-      agencyTag = {
-        isAgent: true,
-        isHost: false,
-        agencyPublicId: agentRow.defaultPublicId.toString(),
-      }
-    } else if (user.currentAgencyId) {
-      const ag = await prismaRead.agency.findUnique({
-        where: { userId: user.currentAgencyId },
-        select: { defaultPublicId: true },
-      })
-      agencyTag = {
-        isAgent: false,
-        isHost: true,
-        agencyPublicId: ag?.defaultPublicId.toString(),
-      }
-    } else {
-      agencyTag = { isAgent: false, isHost: false }
-    }
 
     const displayName = buildUserDisplayName(user)
 
@@ -174,24 +228,30 @@ export const userSearchService = {
       country: user.country ?? null,
       gender: user.gender,
       age,
-      livestreamLevel: level?.livestreamLevel ?? 0,
-      wealthLevel: level?.wealthLevel ?? 0,
-      richTier,
-      subscriberCount,
+      livestreamLevel: shared.livestreamLevel,
+      wealthLevel: shared.wealthLevel,
+      richTier: shared.richTier,
+      subscriberCount: shared.subscriberCount,
       isFollowing,
       isFollowedBy,
       isFriend,
       blockedByMe,
       userBlockedMe,
-      isSuperHost,
-      activeGuardian,
-      activeStoreItems,
-      galleryCompletion,
-      vipMembership,
-      faceVerified,
-      acceptVideoCalls,
-      agencyTag,
-      adminTags: user.adminTags ?? [],
+      isSuperHost: shared.isSuperHost,
+      activeGuardian: shared.activeGuardian,
+      activeStoreItems: shared.activeStoreItems,
+      galleryCompletion: shared.galleryCompletion,
+      vipMembership: shared.vipMembership,
+      faceVerified: shared.faceVerified,
+      acceptVideoCalls: shared.acceptVideoCalls,
+      agencyTag: shared.agencyTag,
+      adminTags: composePublicAdminTags({
+        stored: user.adminTags ?? [],
+        isAgency: Boolean(user.isAgent),
+        isFullGallery: shared.galleryCompletion.isFullGallery,
+        vipMembership: shared.vipMembership,
+        richTier: shared.richTier,
+      }),
     }
   },
 }

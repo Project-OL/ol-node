@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { defineConfig, configDefaults } from 'vitest/config'
 import path from 'path'
 
 export default defineConfig({
@@ -10,6 +10,10 @@ export default defineConfig({
       'tests/**/*.spec.ts',
       'lab/concurrency/**/*.test.ts',
     ],
+    // tests/integration/** are explicit "real service" simulations run via their
+    // own dedicated scripts (e.g. npm run test:rich-tier-sim) against real
+    // DB/Redis — they're not meant to run under plain `npm test`.
+    exclude: [...configDefaults.exclude, 'tests/integration/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'lcov'],

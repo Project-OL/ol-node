@@ -46,7 +46,7 @@ export interface MeProfileCache {
   usernameUpdatedAt: string | null
   canChangeUsername: boolean
   usernameNextChangeAt: string | null
-  /** Platform-admin labels; empty when none assigned. */
+  /** Platform-admin labels plus derived status tags (coinseller, gift collection, VIP, rich tier). */
   adminTags: string[]
 }
 

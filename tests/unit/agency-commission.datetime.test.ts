@@ -8,10 +8,12 @@ import {
 import { AppError } from "../../src/middlewares/errorHandler";
 
 describe("agency commission UTC helpers", () => {
-  it("rolling window uses yesterday as latest full day", () => {
+  it("rolling window uses today as the latest day", () => {
+    // Commission query periods include today (2026-08-07) — the rolling window
+    // ends on today UTC, not yesterday.
     const now = new Date("2026-05-04T15:30:00.000Z");
     const { fromDay, toDay } = agencyCommissionRollingWindowDays(now);
-    expect(toDay.toISOString().slice(0, 10)).toBe("2026-05-03");
+    expect(toDay.toISOString().slice(0, 10)).toBe("2026-05-04");
     expect(fromDay.toISOString().slice(0, 10)).toBe("2026-04-04");
   });
 

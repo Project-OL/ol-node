@@ -37,6 +37,7 @@ import {
 import { enrichLedgerEntries } from '../utils/ledger-transaction-enrichment'
 import { pointLedgerRepository } from '../repositories/point-ledger.repository'
 import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
+import { lockWalletsInOrder } from '../utils/wallet-lock-order'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -612,7 +613,7 @@ export const coinTradingService = {
           data: { status: 'COMPLETED', ledgerEntryId: entry.id },
         })
       },
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
     await walletService.adjustTradingBalanceCache(order.agentUserId)
   },
@@ -716,6 +717,18 @@ export const coinTradingService = {
               throw new AppError(409, 'Duplicate exchange (already processed)', 'IDEM_CONFLICT')
             }
           }
+
+          // Deterministic id-order locking (not point-then-coin) so this can
+          // never lock-order-invert against another code path that locks this
+          // user's wallets in the opposite order.
+          const pointWallet = await walletRepository.getOrCreate(
+            userId,
+            WalletCurrencyType.POINT,
+            tx,
+          )
+          const targetWallet = await walletRepository.getOrCreate(userId, targetWalletType, tx)
+          await lockWalletsInOrder(tx, [pointWallet, targetWallet])
+
           await pointWalletService.debit(userId, pointsToExchange, PointTxType.TRANSFER_OUT, tx, {
             idempotencyKey: `exchange-pts:${exchangeRefId}`,
             refId: exchangeRefId,
@@ -798,6 +811,17 @@ export const coinTradingService = {
             }
           }
           let recharge: { year: number; month: number } | null = null
+          const senderWallet = await walletRepository.getOrCreate(
+            senderAgentUserId,
+            WalletCurrencyType.TRADING_COIN,
+            tx,
+          )
+          const recipientWallet = await walletRepository.getOrCreate(
+            recipient.id,
+            recipientWalletType,
+            tx,
+          )
+          await lockWalletsInOrder(tx, [senderWallet, recipientWallet])
           const senderDebit = await coinWalletService.debit(
             senderAgentUserId,
             input.tradingCoins,
@@ -877,7 +901,23 @@ export const coinTradingService = {
     try {
       await prisma.$transaction(
         async (tx) => {
-          // Debit receiver first, then credit sender (required order for safe revert).
+          // Deterministic id-order locking (not receiver-then-sender) so this
+          // can never lock-order-invert against a concurrent live transfer on
+          // the same wallet pair, which locks via the same helper (see
+          // the forward-transfer path above).
+          const recipientWallet = await walletRepository.getOrCreate(
+            transfer.recipientUserId,
+            recipientWalletType,
+            tx,
+          )
+          const senderWallet = await walletRepository.getOrCreate(
+            transfer.senderAgentUserId,
+            WalletCurrencyType.TRADING_COIN,
+            tx,
+          )
+          await lockWalletsInOrder(tx, [recipientWallet, senderWallet])
+
+          // Debit receiver first, then credit sender (ledger/reversal record order).
           await coinWalletService.debit(
             transfer.recipientUserId,
             transfer.coinsCredited,
@@ -907,7 +947,7 @@ export const coinTradingService = {
             tx,
           )
         },
-        { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+        { timeout: TX_TIMEOUT_MS },
       )
     } catch (err) {
       if (err instanceof AppError && err.code === 'INSUFFICIENT_COINS') {

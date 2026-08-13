@@ -4,12 +4,22 @@ const adjustCoinBalanceCache = vi.fn();
 const adjustPointBalanceCache = vi.fn();
 const getCoinBalance = vi.fn();
 const refreshCache = vi.fn();
+const writeCoinBalanceCache = vi.fn();
+const writePointBalanceCache = vi.fn();
+const getCachedIdemResponse = vi.fn();
+const acquireIdemKey = vi.fn();
+const resolveIdemKey = vi.fn();
 
 vi.mock("../../src/services/wallet.service", () => ({
   walletService: {
     adjustCoinBalanceCache: (...a: unknown[]) => adjustCoinBalanceCache(...a),
     adjustPointBalanceCache: (...a: unknown[]) => adjustPointBalanceCache(...a),
     getCoinBalance: (...a: unknown[]) => getCoinBalance(...a),
+    writeCoinBalanceCache: (...a: unknown[]) => writeCoinBalanceCache(...a),
+    writePointBalanceCache: (...a: unknown[]) => writePointBalanceCache(...a),
+    getCachedIdemResponse: (...a: unknown[]) => getCachedIdemResponse(...a),
+    acquireIdemKey: (...a: unknown[]) => acquireIdemKey(...a),
+    resolveIdemKey: (...a: unknown[]) => resolveIdemKey(...a),
   },
 }));
 
@@ -43,7 +53,19 @@ vi.mock("../../src/utils/block-relationship", () => ({
 }));
 
 vi.mock("../../src/config/redis", () => ({
-  redisClient: { del: (...a: unknown[]) => redisDel(...a) },
+  redisClient: {
+    del: (...a: unknown[]) => redisDel(...a),
+    pipeline: () => {
+      const pipe = {
+        del: (...a: unknown[]) => {
+          redisDel(...a);
+          return pipe;
+        },
+        exec: vi.fn().mockResolvedValue([]),
+      };
+      return pipe;
+    },
+  },
   getRedisForRead: () => ({ get: vi.fn() }),
   RedisKeys: {
     walletCoinBalance: (u: string) => `wallet:coins:${u}`,
@@ -51,6 +73,7 @@ vi.mock("../../src/config/redis", () => ({
     fanRanking: (h: string, p: string, k: string) =>
       `fanrank:${h}:${p}:${k}`,
     vipmActive: (u: string) => `vipm:active:${u}`,
+    hostRevenueShares: () => `host-revenue-shares`,
   },
   GIFT_LIST_CACHE_TTL: 600,
   GALLERY_HOST_TTL: 300,
@@ -102,10 +125,25 @@ vi.mock("../../src/repositories/gift-transaction.repository", () => ({
 }));
 
 const $transaction = vi.fn();
+const prismaReadUserFindUnique = vi.fn().mockResolvedValue({
+  personalCoinsFrozen: false,
+  tradingCoinsFrozen: false,
+  pointsFrozen: false,
+});
+
+const fanSpendUpsert = vi.fn().mockResolvedValue({});
 
 vi.mock("../../src/config/database", () => ({
   prisma: {
     $transaction: (...a: unknown[]) => $transaction(...a),
+    fanSpend: {
+      upsert: (...a: unknown[]) => fanSpendUpsert(...a),
+    },
+  },
+  prismaRead: {
+    user: {
+      findUnique: (...a: unknown[]) => prismaReadUserFindUnique(...a),
+    },
   },
 }));
 
@@ -118,9 +156,18 @@ vi.mock("../../src/services/agencyCommission.service", () => ({
 }));
 
 import { giftTransactionService } from "../../src/services/gift-transaction.service";
+import { giftSendMetrics } from "../../src/services/giftSend.metrics";
+import { rootLogger } from "../../src/utils/rootLogger";
 
 function mockTx() {
   return {
+    user: {
+      findUnique: vi.fn().mockResolvedValue({
+        personalCoinsFrozen: false,
+        tradingCoinsFrozen: false,
+        pointsFrozen: false,
+      }),
+    },
     coinLedgerEntry: {
       findFirst: vi.fn().mockResolvedValue({ balanceAfter: 5000n }),
     },
@@ -135,6 +182,9 @@ function mockTx() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getCachedIdemResponse.mockResolvedValue(null);
+  acquireIdemKey.mockResolvedValue(true);
+  resolveIdemKey.mockResolvedValue(undefined);
   pointInsert.mockResolvedValue({
     id: "pt-entry-1",
     balanceAfter: 500n,
@@ -238,10 +288,113 @@ describe("giftTransactionService.sendGift", () => {
       giftId: "g1",
       senderId: "s1",
     });
-    expect(adjustCoinBalanceCache).toHaveBeenCalledWith("s1", 0n);
-    expect(adjustPointBalanceCache).toHaveBeenCalledWith("r1", 0n);
+    expect(writeCoinBalanceCache).toHaveBeenCalledWith("s1", 4500n);
+    expect(writePointBalanceCache).toHaveBeenCalledWith("r1", 300n);
     expect(refreshCache).toHaveBeenCalled();
     expect(redisDel).toHaveBeenCalled();
+  });
+
+  it("missing idempotencyKey: bumps the metric and logs a warning (Phase 3c step 1 — observability only, still no replay protection)", async () => {
+    findById.mockResolvedValue({
+      id: "g1",
+      name: "Rose",
+      coinCost: 500,
+      isActive: true,
+      tags: [],
+    });
+    const tx = mockTx();
+    $transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) => fn(tx));
+    const warnSpy = vi.spyOn(rootLogger, "warn").mockImplementation(() => rootLogger);
+    const before = giftSendMetrics.missingIdempotencyKeyCount;
+
+    await giftTransactionService.sendGift({
+      senderUserId: "s1",
+      receiverUserId: "r1",
+      giftId: "g1",
+      context: "direct",
+    });
+
+    expect(giftSendMetrics.missingIdempotencyKeyCount).toBe(before + 1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ senderUserId: "s1", giftId: "g1" }),
+      expect.stringContaining("missing idempotencyKey"),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("present idempotencyKey: does not bump the missing-key metric", async () => {
+    findById.mockResolvedValue({
+      id: "g1",
+      name: "Rose",
+      coinCost: 500,
+      isActive: true,
+      tags: [],
+    });
+    const tx = mockTx();
+    $transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) => fn(tx));
+    const before = giftSendMetrics.missingIdempotencyKeyCount;
+
+    await giftTransactionService.sendGift({
+      senderUserId: "s1",
+      receiverUserId: "r1",
+      giftId: "g1",
+      context: "direct",
+      idempotencyKey: "client-key-12345",
+    });
+
+    expect(giftSendMetrics.missingIdempotencyKeyCount).toBe(before);
+  });
+
+  it("idempotent retry with the same key returns the cached original result without re-executing (no second charge)", async () => {
+    const cached = { transactionId: "gt-1", coinCost: 500, pointsAwarded: 300 };
+    getCachedIdemResponse.mockResolvedValue(cached);
+
+    const result = await giftTransactionService.sendGift({
+      senderUserId: "s1",
+      receiverUserId: "r1",
+      giftId: "g1",
+      context: "direct",
+      idempotencyKey: "client-key-12345",
+    });
+
+    expect(result).toBe(cached);
+    expect($transaction).not.toHaveBeenCalled();
+    expect(coinInsert).not.toHaveBeenCalled();
+  });
+
+  it("concurrent double-submit with the same key: the loser gets IDEM_CONFLICT before ever charging", async () => {
+    findById.mockResolvedValue({
+      id: "g1",
+      name: "Rose",
+      coinCost: 500,
+      isActive: true,
+      tags: [],
+    });
+    const tx = mockTx();
+    $transaction.mockImplementation(async (fn: (t: unknown) => Promise<unknown>) => fn(tx));
+    // First caller wins the Redis NX lock; the concurrent second caller's
+    // acquireIdemKey sees it already held.
+    acquireIdemKey.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    const params = {
+      senderUserId: "s1",
+      receiverUserId: "r1",
+      giftId: "g1",
+      context: "direct" as const,
+      idempotencyKey: "client-key-12345",
+    };
+    const [winner, loser] = await Promise.allSettled([
+      giftTransactionService.sendGift(params),
+      giftTransactionService.sendGift(params),
+    ]);
+
+    expect(winner.status).toBe("fulfilled");
+    expect(loser.status).toBe("rejected");
+    if (loser.status === "rejected") {
+      expect(loser.reason).toMatchObject({ statusCode: 409, code: "IDEM_CONFLICT" });
+    }
+    // Exactly one charge — the loser never reached executeSendGift's ledger insert.
+    expect(coinInsert).toHaveBeenCalledTimes(1);
   });
 
   it("maps recordGiftProgress created=false to galleryUpdated false", async () => {

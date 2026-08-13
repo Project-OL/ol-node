@@ -5,8 +5,9 @@ import {
 } from '../repositories/message.repository'
 import { userRepository } from '../repositories/user.repository'
 import { cacheService } from './cache.service'
-import { RedisKeys, redisClient } from '../config/redis'
+import { RedisKeys, redisClient, MSG_HOT_CACHE_SIZE } from '../config/redis'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
+import { publishMessageOutboxRow } from './messaging-outbox.service'
 import type { PlatformMessageMetadata } from '../models/platform-message.schemas'
 import { messageTypeToPlatformConversationType } from '../lib/platform-conversations.constants'
 import { platformConversationsService } from './platformConversations.service'
@@ -15,7 +16,6 @@ import { rootLogger } from '../utils/rootLogger'
 const log = rootLogger.child({ module: 'platform-messaging' })
 
 const MSG_HOT_TTL = 86400
-const MSG_HOT_CACHE_SIZE = 200
 
 function serializeMessageForHotCache(msg: MessageWithDetails): string {
   return JSON.stringify({ ...msg, createdAt: msg.createdAt.toISOString() }, (_key, value) =>
@@ -39,7 +39,12 @@ async function applyPlatformMessageSideEffects(params: {
 }): Promise<void> {
   await pushMessageToHotCache(params.conversationId, params.msg)
   await redisClient.incr(RedisKeys.unreadCount(params.targetUserId, params.conversationId))
-  await enqueueMessageOutboxPublish(params.outboxId)
+  try {
+    await publishMessageOutboxRow(params.outboxId)
+  } catch (err) {
+    log.warn({ err, outboxId: params.outboxId.toString() }, 'inline platform outbox publish failed')
+    await enqueueMessageOutboxPublish(params.outboxId)
+  }
 }
 
 export const platformMessagingService = {

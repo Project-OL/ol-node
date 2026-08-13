@@ -1,6 +1,7 @@
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses'
 import { env } from '../../config/env'
 import type { EmailOtpParams, OtpProviderResult } from './provider.types'
+import { sesCircuitBreaker } from '../../utils/circuitBreaker'
 
 const sesClient = new SESClient({
   region: env.AWS_REGION,
@@ -40,6 +41,9 @@ function errorMessage(error: unknown): string {
 
 export const sesProvider = {
   async sendOtpEmail(params: EmailOtpParams): Promise<OtpProviderResult> {
+    if (sesCircuitBreaker.shouldSkip()) {
+      return { success: false, error: 'SES temporarily unavailable' }
+    }
     try {
       const body = buildEmailBody(params.otp)
       const response = await sesClient.send(
@@ -66,9 +70,11 @@ export const sesProvider = {
           },
         }),
       )
+      sesCircuitBreaker.recordSuccess()
 
       return { success: true, providerMessageId: response.MessageId }
     } catch (error) {
+      sesCircuitBreaker.recordFailure()
       return { success: false, error: errorMessage(error) }
     }
   },

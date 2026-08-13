@@ -75,6 +75,8 @@ vi.mock('../../src/config/redis', () => ({
     refreshLock: (id: string) => `refresh:${id}`,
     userTokenVersion: (id: string) => `utv:${id}`,
     deviceLinkedAccounts: (deviceId: string) => `device:${deviceId}:linked`,
+    userDevices: (userId: string) => `user:${userId}:devices`,
+    userSessions: (userId: string) => `user:${userId}:sessions`,
   },
 }))
 

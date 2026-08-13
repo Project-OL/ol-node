@@ -201,7 +201,7 @@ export const questionnaireService = {
           allCorrect: score.allCorrect,
           answers: score.perQuestion,
         }),
-      { isolationLevel: 'Serializable' },
+      { timeout: 15_000 },
     )
 
     const statusKey = RedisKeys.questionnaireUserStatus(userId, key)
@@ -268,7 +268,7 @@ export const questionnaireService = {
           actorId,
         })
       },
-      { isolationLevel: 'Serializable' },
+      { timeout: 15_000 },
     )
     await invalidateByKey(input.key)
     return toInternalDto(created)
@@ -289,7 +289,7 @@ export const questionnaireService = {
         })
         return questionnaireRepository.findById(id)
       },
-      { isolationLevel: 'Serializable' },
+      { timeout: 15_000 },
     )
     await invalidateByKey(updated!.key)
     return toInternalDto(updated!)
@@ -304,7 +304,7 @@ export const questionnaireService = {
         await questionnaireRepository.setActive(tx, id, true, actorId)
         return questionnaireRepository.findById(id)
       },
-      { isolationLevel: 'Serializable' },
+      { timeout: 15_000 },
     )
     await invalidateByKey(updated!.key)
     return toInternalDto(updated!)
@@ -318,7 +318,7 @@ export const questionnaireService = {
         await questionnaireRepository.setActive(tx, id, false, actorId)
         return questionnaireRepository.findById(id)
       },
-      { isolationLevel: 'Serializable' },
+      { timeout: 15_000 },
     )
     await invalidateByKey(updated!.key)
     return toInternalDto(updated!)

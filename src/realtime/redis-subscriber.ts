@@ -6,6 +6,7 @@ import { userInboxRooms } from './user-inbox-rooms'
 import { guardianRooms } from './guardian-rooms'
 import { supportTicketRooms } from './support-ticket-rooms'
 import WebSocket from 'ws'
+import { isSocketWritable } from './send-server-frame'
 
 /** Must match `RedisKeys.convChannel` prefix. */
 const CONV_CHANNEL_PREFIX = 'msg:conv:'
@@ -51,7 +52,7 @@ function supportTicketIdFromChannel(channel: string): string | null {
 function fanoutRaw(sockets: Array<{ ws: WebSocket }>, message: string) {
   for (const rs of sockets) {
     try {
-      if (rs.ws.readyState === WebSocket.OPEN) {
+      if (isSocketWritable(rs.ws)) {
         rs.ws.send(message)
       }
     } catch {
@@ -96,15 +97,18 @@ class RedisRealtimeSubscriber {
     this.client.on('message', (channel: string, message: string) => {
       const convId = conversationIdFromChannel(channel)
       if (convId) {
+        const maybeAutoReply = message.includes('"isAutoReply":true')
         let parsed: { t?: string; message?: { senderId?: string; isAutoReply?: boolean } } | null =
           null
-        try {
-          parsed = JSON.parse(message) as {
-            t?: string
-            message?: { senderId?: string; isAutoReply?: boolean }
+        if (maybeAutoReply) {
+          try {
+            parsed = JSON.parse(message) as {
+              t?: string
+              message?: { senderId?: string; isAutoReply?: boolean }
+            }
+          } catch {
+            parsed = null
           }
-        } catch {
-          parsed = null
         }
         const sockets = conversationRooms.getSockets(convId)
         for (const rs of sockets) {
@@ -116,7 +120,7 @@ class RedisRealtimeSubscriber {
             continue
           }
           try {
-            if (rs.ws.readyState === WebSocket.OPEN) {
+            if (isSocketWritable(rs.ws)) {
               rs.ws.send(message)
             }
           } catch {
@@ -128,29 +132,13 @@ class RedisRealtimeSubscriber {
       const inboxUserId = inboxTargetUserId(channel)
       if (inboxUserId) {
         const sockets = userInboxRooms.getSockets(inboxUserId)
-        for (const rs of sockets) {
-          try {
-            if (rs.ws.readyState === WebSocket.OPEN) {
-              rs.ws.send(message)
-            }
-          } catch {
-            /* ignore broken socket */
-          }
-        }
+        fanoutRaw(sockets, message)
         return
       }
       const presenceUserId = presenceTargetUserId(channel)
       if (presenceUserId) {
         const sockets = presenceRooms.getSockets(presenceUserId)
-        for (const rs of sockets) {
-          try {
-            if (rs.ws.readyState === WebSocket.OPEN) {
-              rs.ws.send(message)
-            }
-          } catch {
-            /* ignore broken socket */
-          }
-        }
+        fanoutRaw(sockets, message)
         return
       }
       const guardianUserId = guardianWatchTargetUserId(channel)

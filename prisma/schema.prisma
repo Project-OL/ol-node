@@ -184,6 +184,7 @@ model User {
   hostStreamBans               HostStreamBan[]               @relation("UserHostBans")
   liveStreams                  LiveStream[]
   userRestrictions             UserRestriction[]
+  restrictionTargetsAsTarget   UserRestrictionTarget[] @relation("RestrictionTargetUser")
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -1023,13 +1024,29 @@ model UserRestriction {
   createdAt        DateTime            @default(now()) @map("created_at")
   updatedAt        DateTime            @updatedAt @map("updated_at")
 
-  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  report MessageReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  user    User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  report  MessageReport?           @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  /// Empty = MESSAGING_DISABLE applies to every recipient (legacy global send ban).
+  targets UserRestrictionTarget[]
 
   @@index([userId, type, clearedAt])
   @@index([userId, restrictedUntil])
   @@index([reportId])
   @@map("user_restrictions")
+}
+
+/// Recipients a MESSAGING_DISABLE restriction applies to. No rows = all users.
+model UserRestrictionTarget {
+  id            String @id @default(uuid()) @db.Uuid
+  restrictionId String @map("restriction_id") @db.Uuid
+  targetUserId  String @map("target_user_id") @db.Uuid
+
+  restriction UserRestriction @relation(fields: [restrictionId], references: [id], onDelete: Cascade)
+  targetUser  User            @relation("RestrictionTargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@unique([restrictionId, targetUserId])
+  @@index([targetUserId])
+  @@map("user_restriction_targets")
 }
 
 model BroadcastReminder {

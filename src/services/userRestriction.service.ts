@@ -1,8 +1,11 @@
-import type { UserRestriction, UserRestrictionType } from '@prisma/client'
+import type { UserRestrictionType } from '@prisma/client'
 import { RedisKeys, redisClient } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { userRepository } from '../repositories/user.repository'
-import { userRestrictionRepository } from '../repositories/userRestriction.repository'
+import {
+  userRestrictionRepository,
+  type UserRestrictionWithTargets,
+} from '../repositories/userRestriction.repository'
 import { prismaRead } from '../config/database'
 import { auditService } from './audit.service'
 import { publishServerFrameToUser } from '../utils/ws-publisher'
@@ -29,11 +32,26 @@ const ERROR_BY_TYPE: Record<
   },
 }
 
+const MAX_MESSAGING_TARGETS = 100
+
+type RestrictionCachePayload = {
+  until: string
+  /** null = every recipient (global send ban). */
+  targetUserIds: string[] | null
+}
+
 function ttlSecondsUntil(until: Date): number {
   return Math.max(1, Math.ceil((until.getTime() - Date.now()) / 1000))
 }
 
-function toDto(row: UserRestriction) {
+/** Empty target rows = global (all recipients). */
+export function targetUserIdsFromRow(row: UserRestrictionWithTargets): string[] | null {
+  if (row.type !== 'MESSAGING_DISABLE') return null
+  if (!row.targets?.length) return null
+  return row.targets.map((t) => t.targetUserId)
+}
+
+function toDto(row: UserRestrictionWithTargets) {
   const now = new Date()
   const active = row.clearedAt == null && row.restrictedUntil > now
   return {
@@ -48,12 +66,46 @@ function toDto(row: UserRestriction) {
     clearedByAdminId: row.clearedByAdminId,
     createdAt: row.createdAt.toISOString(),
     active,
+    /** null = applies to every recipient (MESSAGING_DISABLE global, or non-messaging types). */
+    targetUserIds: targetUserIdsFromRow(row),
   }
 }
 
-async function cacheActive(userId: string, type: UserRestrictionType, until: Date): Promise<void> {
+function serializeCache(until: Date, targetUserIds: string[] | null): string {
+  const payload: RestrictionCachePayload = {
+    until: until.toISOString(),
+    targetUserIds,
+  }
+  return JSON.stringify(payload)
+}
+
+function parseCache(raw: string): { until: Date; targetUserIds: string[] | null } | null {
+  if (!raw.startsWith('{')) {
+    const until = new Date(raw)
+    if (Number.isNaN(until.getTime())) return null
+    return { until, targetUserIds: null }
+  }
+  try {
+    const parsed = JSON.parse(raw) as RestrictionCachePayload
+    const until = new Date(parsed.until)
+    if (Number.isNaN(until.getTime())) return null
+    return {
+      until,
+      targetUserIds: Array.isArray(parsed.targetUserIds) ? parsed.targetUserIds : null,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function cacheActive(
+  userId: string,
+  type: UserRestrictionType,
+  until: Date,
+  targetUserIds: string[] | null,
+): Promise<void> {
   const key = RedisKeys.userRestriction(userId, type)
-  await redisClient.set(key, until.toISOString(), 'EX', ttlSecondsUntil(until))
+  await redisClient.set(key, serializeCache(until, targetUserIds), 'EX', ttlSecondsUntil(until))
 }
 
 async function clearCache(userId: string, type: UserRestrictionType): Promise<void> {
@@ -63,7 +115,7 @@ async function clearCache(userId: string, type: UserRestrictionType): Promise<vo
 async function refreshCacheForType(userId: string, type: UserRestrictionType): Promise<void> {
   const active = await userRestrictionRepository.findActiveByUserAndType(userId, type)
   if (active) {
-    await cacheActive(userId, type, active.restrictedUntil)
+    await cacheActive(userId, type, active.restrictedUntil, targetUserIdsFromRow(active))
   } else {
     await clearCache(userId, type)
   }
@@ -78,6 +130,41 @@ async function notifyUserRestrictionChanged(
   } catch {
     /* best-effort realtime */
   }
+}
+
+function throwMessagingDisabled(until: Date, targetUserIds: string[] | null): never {
+  const err = ERROR_BY_TYPE.MESSAGING_DISABLE
+  throw new AppError(403, err.message, err.code, {
+    restrictedUntil: until.toISOString(),
+    type: 'MESSAGING_DISABLE',
+    targetUserIds,
+  })
+}
+
+async function validateMessagingTargets(params: {
+  userId: string
+  targetUserIds: string[]
+}): Promise<string[]> {
+  const unique = [...new Set(params.targetUserIds)]
+  if (unique.length > MAX_MESSAGING_TARGETS) {
+    throw new AppError(
+      400,
+      `targetUserIds cannot exceed ${MAX_MESSAGING_TARGETS}`,
+      'INVALID_REQUEST',
+    )
+  }
+  if (unique.includes(params.userId)) {
+    throw new AppError(400, 'Cannot target the restricted user themselves', 'INVALID_REQUEST')
+  }
+  const rows = await userRepository.findDisplayRowsByIds(unique)
+  if (rows.length !== unique.length) {
+    const found = new Set(rows.map((r) => r.id))
+    const missing = unique.filter((id) => !found.has(id))
+    throw new AppError(404, 'One or more target users were not found', 'USER_NOT_FOUND', {
+      missingUserIds: missing,
+    })
+  }
+  return unique
 }
 
 export const userRestrictionService = {
@@ -102,13 +189,15 @@ export const userRestrictionService = {
         type: r.type,
         restrictedUntil: r.restrictedUntil.toISOString(),
         reason: r.reason,
+        targetUserIds: targetUserIdsFromRow(r),
       })),
     }
   },
 
   /**
    * Apply one restriction type until `restrictedUntil`.
-   * Replaces any currently-active restriction of the same type (prior row is cleared).
+   * Replaces any currently-active restriction of the same type (prior row is cleared),
+   * unless `extend` is true for MESSAGING_DISABLE (union targets + later expiry).
    * Other types are untouched — restrictions are independent per type / report.
    */
   async apply(params: {
@@ -118,9 +207,23 @@ export const userRestrictionService = {
     reason?: string
     reportId?: string
     adminUserId: string
+    targetUserIds?: string[]
+    extend?: boolean
   }) {
     if (params.restrictedUntil <= new Date()) {
       throw new AppError(400, 'restrictedUntil must be in the future', 'INVALID_REQUEST')
+    }
+
+    const incomingTargets = params.targetUserIds?.length ? params.targetUserIds : undefined
+    if (incomingTargets && params.type !== 'MESSAGING_DISABLE') {
+      throw new AppError(
+        400,
+        'targetUserIds is only valid for MESSAGING_DISABLE',
+        'INVALID_REQUEST',
+      )
+    }
+    if (params.extend && params.type !== 'MESSAGING_DISABLE') {
+      throw new AppError(400, 'extend is only valid for MESSAGING_DISABLE', 'INVALID_REQUEST')
     }
 
     const user = await userRepository.findById(params.userId)
@@ -141,6 +244,52 @@ export const userRestrictionService = {
       }
     }
 
+    let targetUserIds: string[] | undefined
+    if (incomingTargets) {
+      targetUserIds = await validateMessagingTargets({
+        userId: params.userId,
+        targetUserIds: incomingTargets,
+      })
+    }
+
+    let restrictedUntil = params.restrictedUntil
+    let reason = params.reason ?? null
+    let reportId = params.reportId ?? null
+
+    if (params.extend && params.type === 'MESSAGING_DISABLE') {
+      const existing = await userRestrictionRepository.findActiveByUserAndType(
+        params.userId,
+        'MESSAGING_DISABLE',
+      )
+      if (existing) {
+        const existingTargets = targetUserIdsFromRow(existing)
+        if (existingTargets == null && targetUserIds) {
+          throw new AppError(
+            400,
+            'Cannot add specific target users to a global messaging ban; clear it first or omit targetUserIds to extend the expiry',
+            'CANNOT_NARROW_GLOBAL_MESSAGING_BAN',
+          )
+        }
+        if (existing.restrictedUntil > restrictedUntil) {
+          restrictedUntil = existing.restrictedUntil
+        }
+        if (existingTargets && targetUserIds) {
+          targetUserIds = [...new Set([...existingTargets, ...targetUserIds])]
+          if (targetUserIds.length > MAX_MESSAGING_TARGETS) {
+            throw new AppError(
+              400,
+              `targetUserIds cannot exceed ${MAX_MESSAGING_TARGETS}`,
+              'INVALID_REQUEST',
+            )
+          }
+        } else if (existingTargets && !targetUserIds) {
+          targetUserIds = existingTargets
+        }
+        if (reason == null) reason = existing.reason
+        if (reportId == null) reportId = existing.reportId
+      }
+    }
+
     await userRestrictionRepository.clearActiveOfType(
       params.userId,
       params.type,
@@ -150,13 +299,19 @@ export const userRestrictionService = {
     const row = await userRestrictionRepository.create({
       userId: params.userId,
       type: params.type,
-      restrictedUntil: params.restrictedUntil,
-      reason: params.reason ?? null,
-      reportId: params.reportId ?? null,
+      restrictedUntil,
+      reason,
+      reportId,
       createdByAdminId: params.adminUserId,
+      targetUserIds,
     })
 
-    await cacheActive(params.userId, params.type, params.restrictedUntil)
+    await cacheActive(
+      params.userId,
+      params.type,
+      restrictedUntil,
+      targetUserIdsFromRow(row),
+    )
 
     auditService.log({
       userId: params.adminUserId,
@@ -165,9 +320,11 @@ export const userRestrictionService = {
       actionDetails: {
         targetUserId: params.userId,
         type: params.type,
-        restrictedUntil: params.restrictedUntil.toISOString(),
+        restrictedUntil: restrictedUntil.toISOString(),
         reportId: params.reportId ?? null,
         restrictionId: row.id,
+        targetUserIds: targetUserIdsFromRow(row),
+        extend: params.extend === true,
       },
     })
 
@@ -249,32 +406,75 @@ export const userRestrictionService = {
 
   /**
    * Fast path for send/live checks. Prefers Redis; falls back to DB.
+   * For MESSAGING_DISABLE, only a global (no-target) ban throws — use
+   * `assertMessagingAllowed` when a recipient is known.
    */
   async assertNotRestricted(userId: string, type: UserRestrictionType): Promise<void> {
     const key = RedisKeys.userRestriction(userId, type)
     const cached = await redisClient.get(key)
     if (cached) {
-      const until = new Date(cached)
-      if (until > new Date()) {
+      const parsed = parseCache(cached)
+      if (parsed && parsed.until > new Date()) {
+        if (type === 'MESSAGING_DISABLE' && parsed.targetUserIds != null) {
+          return
+        }
         const err = ERROR_BY_TYPE[type]
         throw new AppError(403, err.message, err.code, {
-          restrictedUntil: until.toISOString(),
+          restrictedUntil: parsed.until.toISOString(),
           type,
+          ...(type === 'MESSAGING_DISABLE' ? { targetUserIds: parsed.targetUserIds } : {}),
         })
       }
       await redisClient.del(key)
-      return
+      if (parsed) return
     }
 
     const active = await userRestrictionRepository.findActiveByUserAndType(userId, type)
     if (!active) return
 
-    await cacheActive(userId, type, active.restrictedUntil)
+    const targets = targetUserIdsFromRow(active)
+    await cacheActive(userId, type, active.restrictedUntil, targets)
+    if (type === 'MESSAGING_DISABLE' && targets != null) {
+      return
+    }
     const err = ERROR_BY_TYPE[type]
     throw new AppError(403, err.message, err.code, {
       restrictedUntil: active.restrictedUntil.toISOString(),
       type,
+      ...(type === 'MESSAGING_DISABLE' ? { targetUserIds: targets } : {}),
     })
+  },
+
+  /**
+   * Send-side messaging gate. Global MESSAGING_DISABLE blocks every recipient;
+   * a targeted ban blocks only listed peers.
+   */
+  async assertMessagingAllowed(senderId: string, recipientId: string): Promise<void> {
+    const key = RedisKeys.userRestriction(senderId, 'MESSAGING_DISABLE')
+    const cached = await redisClient.get(key)
+    if (cached) {
+      const parsed = parseCache(cached)
+      if (parsed && parsed.until > new Date()) {
+        if (parsed.targetUserIds == null || parsed.targetUserIds.includes(recipientId)) {
+          throwMessagingDisabled(parsed.until, parsed.targetUserIds)
+        }
+        return
+      }
+      await redisClient.del(key)
+      if (parsed) return
+    }
+
+    const active = await userRestrictionRepository.findActiveByUserAndType(
+      senderId,
+      'MESSAGING_DISABLE',
+    )
+    if (!active) return
+
+    const targets = targetUserIdsFromRow(active)
+    await cacheActive(senderId, 'MESSAGING_DISABLE', active.restrictedUntil, targets)
+    if (targets == null || targets.includes(recipientId)) {
+      throwMessagingDisabled(active.restrictedUntil, targets)
+    }
   },
 
   async getActiveUntil(
@@ -284,14 +484,14 @@ export const userRestrictionService = {
     const key = RedisKeys.userRestriction(userId, type)
     const cached = await redisClient.get(key)
     if (cached) {
-      const until = new Date(cached)
-      if (until > new Date()) return until
+      const parsed = parseCache(cached)
+      if (parsed && parsed.until > new Date()) return parsed.until
       await redisClient.del(key)
       return null
     }
     const active = await userRestrictionRepository.findActiveByUserAndType(userId, type)
     if (!active) return null
-    await cacheActive(userId, type, active.restrictedUntil)
+    await cacheActive(userId, type, active.restrictedUntil, targetUserIdsFromRow(active))
     return active.restrictedUntil
   },
 }

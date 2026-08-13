@@ -516,6 +516,24 @@ export async function getConversationLastSeq(conversationId: string): Promise<bi
   return row?.lastSeq ?? null
 }
 
+/** Membership + lastSeq for many conversations in one query (WS RESUME). */
+export async function getResumeSyncStatesForUser(
+  userId: string,
+  conversationIds: string[],
+): Promise<Map<string, bigint>> {
+  const ids = [...new Set(conversationIds.filter((id) => id.length > 0))]
+  if (ids.length === 0) return new Map()
+  const rows = await prismaRead.conversationMember.findMany({
+    where: { userId, isDeleted: false, conversationId: { in: ids } },
+    select: { conversationId: true, conversation: { select: { lastSeq: true } } },
+  })
+  const out = new Map<string, bigint>()
+  for (const row of rows) {
+    out.set(row.conversationId, row.conversation.lastSeq)
+  }
+  return out
+}
+
 /** Active membership (not soft-deleted). */
 export async function isActiveConversationMember(
   conversationId: string,
@@ -626,6 +644,7 @@ export const conversationRepository = {
   markConversationDeleted,
   updateMuteStatus,
   getConversationLastSeq,
+  getResumeSyncStatesForUser,
   isActiveConversationMember,
   markAllConversationsRead,
   markAllConversationsDeleted,

@@ -1,24 +1,43 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const getAgencyWindowTotal = vi.fn();
+const sumAgencyDailyEarnings = vi.fn();
+const sumAgencyCommissionLedgerWindow = vi.fn().mockResolvedValue(0n);
 const getLevelConfig = vi.fn();
 
 vi.mock("../../src/repositories/agencyCommission.repository", () => ({
   agencyCommissionRepository: {
-    getAgencyWindowTotal: (...a: unknown[]) => getAgencyWindowTotal(...a),
+    sumAgencyDailyEarnings: (...a: unknown[]) => sumAgencyDailyEarnings(...a),
+    sumAgencyCommissionLedgerWindow: (...a: unknown[]) =>
+      sumAgencyCommissionLedgerWindow(...a),
+    getAgencyWindowTotal: vi.fn(),
     getLevelConfig: (...a: unknown[]) => getLevelConfig(...a),
     listAgenciesForRecompute: vi.fn(),
   },
 }));
 
+const resolveRollingWindowBounds = vi.fn();
+const resolveRollingWindowDays = vi.fn();
+
+vi.mock("../../src/services/agencyCommissionConfig.service", () => ({
+  agencyCommissionConfigService: {
+    resolveRollingWindowBounds: (...a: unknown[]) =>
+      resolveRollingWindowBounds(...a),
+    resolveRollingWindowDays: (...a: unknown[]) => resolveRollingWindowDays(...a),
+  },
+}));
+
 const agencyFindUnique = vi.fn();
-const agencyUpdate = vi.fn();
+const agencyUpdateMany = vi.fn();
 
 const $transaction = vi.fn();
 
 vi.mock("../../src/config/database", () => ({
   prisma: {
     $transaction: (...a: unknown[]) => $transaction(...a),
+    agency: {
+      findUnique: (...a: unknown[]) => agencyFindUnique(...a),
+      updateMany: (...a: unknown[]) => agencyUpdateMany(...a),
+    },
   },
   prismaRead: {
     agency: {
@@ -94,10 +113,16 @@ beforeEach(() => {
       sortOrder: 6,
     },
   ]);
-  $transaction.mockImplementation(async (fn: (t: unknown) => unknown) => {
-    const tx = { agency: { update: agencyUpdate } };
-    return fn(tx);
+  resolveRollingWindowBounds.mockResolvedValue({
+    from: new Date("2026-04-04T00:00:00.000Z"),
+    toExclusive: new Date("2026-05-04T00:00:00.000Z"),
+    totalMinutes: 30 * 24 * 60,
   });
+  resolveRollingWindowDays.mockResolvedValue({
+    fromDay: new Date("2026-04-04T00:00:00.000Z"),
+    toDay: new Date("2026-05-04T00:00:00.000Z"),
+  });
+  agencyUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("agencyCommissionService.recomputeAgencyLevel", () => {
@@ -109,25 +134,27 @@ describe("agencyCommissionService.recomputeAgencyLevel", () => {
     vi.setSystemTime(new Date("2026-05-04T15:00:00.000Z"));
     await agencyCommissionService.recomputeAgencyLevel("ag-1");
     vi.useRealTimers();
-    expect(getAgencyWindowTotal).not.toHaveBeenCalled();
-    expect($transaction).not.toHaveBeenCalled();
+    expect(sumAgencyDailyEarnings).not.toHaveBeenCalled();
+    expect(agencyUpdateMany).not.toHaveBeenCalled();
   });
 
   it("skipDailyDedupe forces recompute", async () => {
-    agencyFindUnique.mockResolvedValue({
-      lastLevelRecomputedAt: new Date("2026-05-04T10:00:00.000Z"),
+    const lastLevelRecomputedAt = new Date("2026-05-04T10:00:00.000Z");
+    agencyFindUnique.mockResolvedValue({ lastLevelRecomputedAt });
+    sumAgencyDailyEarnings.mockResolvedValue({
+      hostEarningsPoints: 2_000_000n,
+      hostCommissionPoints: 0n,
     });
-    getAgencyWindowTotal.mockResolvedValue(2_000_000n);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-04T15:00:00.000Z"));
     await agencyCommissionService.recomputeAgencyLevel("ag-1", {
       skipDailyDedupe: true,
     });
     vi.useRealTimers();
-    expect(getAgencyWindowTotal).toHaveBeenCalled();
-    expect(agencyUpdate).toHaveBeenCalledWith(
+    expect(sumAgencyDailyEarnings).toHaveBeenCalled();
+    expect(agencyUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { userId: "ag-1" },
+        where: { userId: "ag-1", lastLevelRecomputedAt },
         data: expect.objectContaining({
           currentLevel: "C",
           currentWindowTotalPoints: 2_000_000n,
@@ -138,12 +165,15 @@ describe("agencyCommissionService.recomputeAgencyLevel", () => {
 
   it("picks highest ladder tier whose min_window_points <= total", async () => {
     agencyFindUnique.mockResolvedValue({ lastLevelRecomputedAt: null });
-    getAgencyWindowTotal.mockResolvedValue(36_000_000n);
+    sumAgencyDailyEarnings.mockResolvedValue({
+      hostEarningsPoints: 36_000_000n,
+      hostCommissionPoints: 0n,
+    });
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-04T12:00:00.000Z"));
     await agencyCommissionService.recomputeAgencyLevel("ag-1");
     vi.useRealTimers();
-    expect(agencyUpdate).toHaveBeenCalledWith(
+    expect(agencyUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ currentLevel: "A" }),
       }),
@@ -152,12 +182,15 @@ describe("agencyCommissionService.recomputeAgencyLevel", () => {
 
   it("just below C stays D", async () => {
     agencyFindUnique.mockResolvedValue({ lastLevelRecomputedAt: null });
-    getAgencyWindowTotal.mockResolvedValue(1_499_999n);
+    sumAgencyDailyEarnings.mockResolvedValue({
+      hostEarningsPoints: 1_499_999n,
+      hostCommissionPoints: 0n,
+    });
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-04T12:00:00.000Z"));
     await agencyCommissionService.recomputeAgencyLevel("ag-1");
     vi.useRealTimers();
-    expect(agencyUpdate).toHaveBeenCalledWith(
+    expect(agencyUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ currentLevel: "D" }),
       }),

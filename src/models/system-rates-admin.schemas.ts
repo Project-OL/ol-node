@@ -103,3 +103,16 @@ export const ReplaceVideoCallPriceCapsSchema = z.object({
     )
     .min(1),
 })
+
+/** Replace Elite / Rich tier recharge thresholds (exactly tiers 1–10). */
+export const ReplaceRichTierConfigSchema = z.object({
+  tiers: z
+    .array(
+      z.object({
+        tier: z.number().int().min(1).max(10),
+        minRechargeCoins: z.string().regex(/^\d+$/),
+        displayName: z.string().trim().min(1).max(32),
+      }),
+    )
+    .length(10),
+})

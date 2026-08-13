@@ -6,6 +6,7 @@ import { pointLedgerRepository } from '../repositories/point-ledger.repository'
 import { WALLET_BALANCE_TTL, WALLET_IDEM_TTL, RedisKeys } from '../config/redis'
 import { WalletCurrencyType } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
+import { singleflight } from '../utils/singleflight'
 
 export function mapDbUnavailable(err: unknown): never {
   if (err instanceof PrismaClientInitializationError) {
@@ -18,11 +19,9 @@ export function mapDbUnavailable(err: unknown): never {
   throw err
 }
 
-// redisIncrByBalance removed — balance cache is now invalidated on every mutation
-// rather than incremented. Rationale: INCRBY is not safe when the cache can be
-// concurrently repopulated from the DB between a write and the cache adjustment,
-// leading to double-counting. Invalidation forces the next read to recompute the
-// correct balance from the ledger sum (single authoritative source of truth).
+// Balance cache: write-through the committed ledger `balanceAfter` when known.
+// INCRBY is unsafe (double-count if a reader repopulates from DB mid-flight).
+// DEL remains the fallback when the caller has no absolute snapshot.
 
 export const walletService = {
   async getCoinBalance(userId: string): Promise<bigint> {
@@ -34,24 +33,32 @@ export const walletService = {
       // Redis unavailable — fall through to Postgres
     }
 
-    let wallet
-    try {
-      wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
-    } catch (e) {
-      mapDbUnavailable(e)
-    }
-    let balance: bigint
-    try {
-      balance = await coinLedgerRepository.computeBalance(wallet.id)
-    } catch (e) {
-      mapDbUnavailable(e)
-    }
-    try {
-      await redisClient.set(key, balance.toString(), 'EX', WALLET_BALANCE_TTL)
-    } catch {
-      // ignore cache write failures
-    }
-    return balance
+    return singleflight(`wallet:coin:${userId}`, async () => {
+      try {
+        const again = await getRedisForRead().get(key)
+        if (again !== null) return BigInt(again)
+      } catch {
+        /* continue */
+      }
+      let wallet
+      try {
+        wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
+      } catch (e) {
+        mapDbUnavailable(e)
+      }
+      let balance: bigint
+      try {
+        balance = await coinLedgerRepository.computeBalance(wallet.id)
+      } catch (e) {
+        mapDbUnavailable(e)
+      }
+      try {
+        await redisClient.set(key, balance.toString(), 'EX', WALLET_BALANCE_TTL)
+      } catch {
+        // ignore cache write failures
+      }
+      return balance
+    })
   },
 
   async getPointBalance(userId: string): Promise<bigint> {
@@ -63,30 +70,78 @@ export const walletService = {
       // Redis unavailable — fall through to Postgres
     }
 
-    let wallet
-    try {
-      wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
-    } catch (e) {
-      mapDbUnavailable(e)
-    }
-    let balance: bigint
-    try {
-      balance = await pointLedgerRepository.computeBalance(wallet.id)
-    } catch (e) {
-      mapDbUnavailable(e)
-    }
-    try {
-      await redisClient.set(key, balance.toString(), 'EX', WALLET_BALANCE_TTL)
-    } catch {
-      // ignore cache write failures
-    }
-    return balance
+    return singleflight(`wallet:point:${userId}`, async () => {
+      try {
+        const again = await getRedisForRead().get(key)
+        if (again !== null) return BigInt(again)
+      } catch {
+        /* continue */
+      }
+      let wallet
+      try {
+        wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
+      } catch (e) {
+        mapDbUnavailable(e)
+      }
+      let balance: bigint
+      try {
+        balance = await pointLedgerRepository.computeBalance(wallet.id)
+      } catch (e) {
+        mapDbUnavailable(e)
+      }
+      try {
+        await redisClient.set(key, balance.toString(), 'EX', WALLET_BALANCE_TTL)
+      } catch {
+        // ignore cache write failures
+      }
+      return balance
+    })
   },
 
-  async adjustCoinBalanceCache(userId: string, _delta: bigint) {
-    // Invalidate rather than increment: the next getCoinBalance call will recompute
-    // the exact balance from the ledger, eliminating the stale-cache race where two
-    // concurrent credits could INCRBY on top of an already-refreshed cache value.
+  /**
+   * Write-through after a committed ledger row. Pass the absolute `balanceAfter`.
+   * Callers that only know a delta should omit `absolute` (falls back to DEL).
+   */
+  async writeCoinBalanceCache(userId: string, absolute: bigint) {
+    try {
+      await redisClient.set(
+        RedisKeys.walletCoinBalance(userId),
+        absolute.toString(),
+        'EX',
+        WALLET_BALANCE_TTL,
+      )
+    } catch {
+      try {
+        await redisClient.del(RedisKeys.walletCoinBalance(userId))
+      } catch {
+        /* ignore */
+      }
+    }
+  },
+
+  async writePointBalanceCache(userId: string, absolute: bigint) {
+    try {
+      await redisClient.set(
+        RedisKeys.walletPointBalance(userId),
+        absolute.toString(),
+        'EX',
+        WALLET_BALANCE_TTL,
+      )
+    } catch {
+      try {
+        await redisClient.del(RedisKeys.walletPointBalance(userId))
+      } catch {
+        /* ignore */
+      }
+    }
+  },
+
+  async adjustCoinBalanceCache(userId: string, _delta: bigint, absolute?: bigint) {
+    if (absolute !== undefined) {
+      await this.writeCoinBalanceCache(userId, absolute)
+      return
+    }
+    // No known post-commit snapshot: drop the key so the next read recomputes.
     try {
       await redisClient.del(RedisKeys.walletCoinBalance(userId))
     } catch {
@@ -94,7 +149,11 @@ export const walletService = {
     }
   },
 
-  async adjustPointBalanceCache(userId: string, _delta: bigint) {
+  async adjustPointBalanceCache(userId: string, _delta: bigint, absolute?: bigint) {
+    if (absolute !== undefined) {
+      await this.writePointBalanceCache(userId, absolute)
+      return
+    }
     try {
       await redisClient.del(RedisKeys.walletPointBalance(userId))
     } catch {

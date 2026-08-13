@@ -68,6 +68,7 @@ vi.mock('../../src/config/redis', () => {
       userMe: (userId: string) => `user:me:${userId}`,
       userProfile: (userId: string) => `user:profile:${userId}`,
       userUsernameLock: (userId: string) => `user:username_lock:${userId}`,
+      userSearchCard: (userId: string) => `user:search:card:${userId}`,
     },
   }
 })

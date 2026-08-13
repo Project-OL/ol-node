@@ -62,6 +62,7 @@ describe("privacyService getEffectiveFlags (read-gate)", () => {
       mysteryInLive: false,
       mysteryOnRank: false,
       invisibleOnline: false,
+      invisibleOnlineLastSeenAt: null,
     });
   });
 
@@ -82,6 +83,7 @@ describe("privacyService getEffectiveFlags (read-gate)", () => {
       mysteryInLive: false,
       mysteryOnRank: true,
       invisibleOnline: false,
+      invisibleOnlineLastSeenAt: null,
     });
   });
 
@@ -115,12 +117,14 @@ describe("privacyService getEffectiveFlags (read-gate)", () => {
       mysteryInLive: false,
       mysteryOnRank: false,
       invisibleOnline: false,
+      invisibleOnlineLastSeenAt: null,
     });
     expect(m.get("b")).toEqual({
       invisibleVisitor: false,
       mysteryInLive: false,
       mysteryOnRank: false,
       invisibleOnline: false,
+      invisibleOnlineLastSeenAt: null,
     });
   });
 });
@@ -131,10 +135,23 @@ describe("privacyService non-gate writes", () => {
     userUpdate.mockReset();
   });
 
-  it("toggle invisible visitor succeeds for non-VIP user (no write gate)", async () => {
+  it("toggle invisible visitor rejects enabling for non-VIP user (write gate)", async () => {
+    // privacy.service.ts's own module docstring: "Enabling requires active paid
+    // VIP" — assertVipForPrivacyEnable throws before any write when enabled=true
+    // and the user has no active VIP membership.
+    hasActive.mockResolvedValue(false);
+
+    await expect(privacyService.toggleInvisibleVisitor("u1", true)).rejects.toMatchObject({
+      statusCode: 403,
+      code: "VIP_MEMBERSHIP_REQUIRED",
+    });
+    expect(userUpdate).not.toHaveBeenCalled();
+  });
+
+  it("toggle invisible visitor off succeeds for non-VIP user (disabling is never gated)", async () => {
     userFindById.mockResolvedValue({
       id: "u1",
-      privacyInvisibleVisitor: false,
+      privacyInvisibleVisitor: true,
       privacyMysteryLive: false,
       privacyMysteryRank: false,
       privacyInvisibleOnline: false,
@@ -143,10 +160,10 @@ describe("privacyService non-gate writes", () => {
     });
     userUpdate.mockResolvedValue({} as never);
 
-    await privacyService.toggleInvisibleVisitor("u1", true);
+    await privacyService.toggleInvisibleVisitor("u1", false);
     expect(userUpdate).toHaveBeenCalledWith(
       "u1",
-      expect.objectContaining({ privacyInvisibleVisitor: true }),
+      expect.objectContaining({ privacyInvisibleVisitor: false }),
     );
   });
 });

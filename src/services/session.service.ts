@@ -59,6 +59,32 @@ export async function invalidateUserTokenVersionCache(userId: string): Promise<v
   await redisClient.del(RedisKeys.userTokenVersion(userId))
 }
 
+/**
+ * One Redis round-trip for the auth hot path (token version + session + device ban).
+ * Missing keys are null — callers fall through to existing DB hydrate.
+ */
+export async function loadAuthHotPath(params: {
+  userId: string
+  sessionId?: string
+  deviceId?: string
+}): Promise<{
+  tokenVersion: string | null
+  sessionRaw: string | null
+  deviceBanned: string | null
+}> {
+  const keys = [RedisKeys.userTokenVersion(params.userId)]
+  if (params.sessionId) keys.push(RedisKeys.session(params.sessionId))
+  if (params.deviceId?.trim()) keys.push(RedisKeys.deviceBanned(params.deviceId.trim()))
+  const t0 = Date.now()
+  const values = await redisClient.mget(...keys)
+  authSessionMetrics.recordAuthRedisMs(Date.now() - t0)
+  let i = 0
+  const tokenVersion = values[i++] ?? null
+  const sessionRaw = params.sessionId ? (values[i++] ?? null) : null
+  const deviceBanned = params.deviceId?.trim() ? (values[i++] ?? null) : null
+  return { tokenVersion, sessionRaw, deviceBanned }
+}
+
 export async function resolveUserTokenVersion(userId: string): Promise<number> {
   try {
     const t0 = Date.now()
@@ -356,8 +382,10 @@ export const sessionService = {
     sessionId: string,
     expectedSessionTokenVersion: number,
     userId: string,
+    prefetchedRaw?: string | null,
   ): Promise<void> {
-    const raw = await redisClient.get(RedisKeys.session(sessionId))
+    const raw =
+      prefetchedRaw !== undefined ? prefetchedRaw : await redisClient.get(RedisKeys.session(sessionId))
     if (raw) {
       let blob: SessionRedisBlob
       try {

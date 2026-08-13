@@ -2,8 +2,12 @@ import { prisma } from '../config/database'
 import { WalletCurrencyType, Prisma } from '@prisma/client'
 
 export const walletRepository = {
-  async getOrCreate(userId: string, currencyType: WalletCurrencyType) {
-    return prisma.wallet.upsert({
+  async getOrCreate(
+    userId: string,
+    currencyType: WalletCurrencyType,
+    db: Prisma.TransactionClient | typeof prisma = prisma,
+  ) {
+    return db.wallet.upsert({
       where: { userId_currencyType: { userId, currencyType } },
       create: { userId, currencyType },
       update: {},

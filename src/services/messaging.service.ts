@@ -27,12 +27,15 @@ import {
   RECORDING_THROTTLE_TTL_SEC,
   RECORDING_INDICATOR_TTL_SEC,
   READ_RECEIPT_DEBOUNCE_MS,
+  READ_RECEIPT_PENDING_TTL_SEC,
+  READ_RECEIPT_FLUSH_LOCK_TTL_SEC,
 } from '../config/redis'
 import { userRestrictionService } from './userRestriction.service'
 import { AppError } from '../middlewares/errorHandler'
 import { MediaProcessingStatus } from '@prisma/client'
 import { publishServerFrameToConversation, publishToConversation } from '../utils/ws-publisher'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
+import { publishMessageOutboxRow } from './messaging-outbox.service'
 import { enqueueMessageMediaAudioProcessing } from '../queues/message-media-audio.queue'
 import { enqueueAutoReply } from '../queues/agencyAutoReply.queue'
 import { prismaRead } from '../config/database'
@@ -81,6 +84,8 @@ export type PaginatedConversations = {
 
 type ReadDebounceEntry = {
   timer: ReturnType<typeof setTimeout>
+  userId: string
+  conversationId: string
   lastReadMessageId: string
 }
 
@@ -137,6 +142,34 @@ function readReceiptDebounceKey(userId: string, conversationId: string): string 
   return `${userId}:${conversationId}`
 }
 
+/**
+ * Crash-recovery sweep for read receipts whose in-process debounce timer was
+ * lost (WS pod crash/OOM — no graceful shutdown ran, so
+ * flushAllPendingReadReceipts never fired). Redundant with the normal
+ * debounce flush: flushReadReceipt is guarded by the readReceiptFlushLock NX
+ * lock, so re-flushing an already-settled receipt here is a cheap no-op.
+ * Mirrors sweepStaleMessageOutbox's cursor-scan pattern.
+ */
+export async function sweepStaleReadReceipts(): Promise<void> {
+  // Must match RedisKeys.readReceiptPending's `msg:read:pending:{userId}:{conversationId}` shape.
+  const prefix = 'msg:read:pending:'
+  let cursor = '0'
+  do {
+    const [nextCursor, keys] = await redisClient.scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 200)
+    cursor = nextCursor
+    for (const key of keys) {
+      const rest = key.slice(prefix.length)
+      const sep = rest.indexOf(':')
+      if (sep < 0) continue
+      const userId = rest.slice(0, sep)
+      const conversationId = rest.slice(sep + 1)
+      const lastReadMessageId = await redisClient.get(key)
+      if (!lastReadMessageId) continue
+      await messagingService.flushReadReceipt(userId, conversationId, lastReadMessageId)
+    }
+  } while (cursor !== '0')
+}
+
 function mediaItemsWithServerBucket(items: MediaItemInput[]): MediaItemInput[] {
   const bucket = s3Bucket?.trim()
   if (!bucket) {
@@ -187,16 +220,6 @@ async function warmMessageHotCache(
   await pipeline.exec()
 }
 
-async function pushMessageToHotCache(
-  conversationId: string,
-  msg: MessageWithDetails,
-): Promise<void> {
-  const msgKey = RedisKeys.convMessages(conversationId)
-  await redisClient.zadd(msgKey, Number(msg.seq), serializeMessageForHotCache(msg))
-  await redisClient.expire(msgKey, MSG_HOT_TTL)
-  await redisClient.zremrangebyrank(msgKey, 0, trimMessageHotCacheRankEnd())
-}
-
 function parseHotCacheMessages(raw: string[]): MessageWithDetails[] {
   const messages: MessageWithDetails[] = []
   for (let i = 0; i < raw.length; i += 2) {
@@ -216,17 +239,30 @@ async function applyNewMessageSideEffects(params: {
   otherMemberIds: string[]
   senderId: string
 }): Promise<void> {
-  await pushMessageToHotCache(params.conversationId, params.msg)
+  const msgKey = RedisKeys.convMessages(params.conversationId)
+  const pipe = redisClient.pipeline()
+  pipe.zadd(msgKey, Number(params.msg.seq), serializeMessageForHotCache(params.msg))
+  pipe.expire(msgKey, MSG_HOT_TTL)
+  pipe.zremrangebyrank(msgKey, 0, trimMessageHotCacheRankEnd())
   for (const uid of params.otherMemberIds) {
     if (uid === params.senderId) continue
-    await redisClient.incr(RedisKeys.unreadCount(uid, params.conversationId))
+    pipe.incr(RedisKeys.unreadCount(uid, params.conversationId))
   }
-  await enqueueMessageOutboxPublish(params.outboxId)
-  for (const mi of params.msg.mediaItems) {
-    if (mi.mediaType === 'AUDIO' && mi.processingStatus === MediaProcessingStatus.ENQUEUED) {
-      await enqueueMessageMediaAudioProcessing(mi.id)
-    }
+  await pipe.exec()
+
+  try {
+    await publishMessageOutboxRow(params.outboxId)
+  } catch (err) {
+    rootLogger.warn({ err, outboxId: params.outboxId.toString() }, 'inline outbox publish failed')
+    await enqueueMessageOutboxPublish(params.outboxId)
   }
+
+  const audioJobs = params.msg.mediaItems
+    .filter(
+      (mi) => mi.mediaType === 'AUDIO' && mi.processingStatus === MediaProcessingStatus.ENQUEUED,
+    )
+    .map((mi) => enqueueMessageMediaAudioProcessing(mi.id))
+  if (audioJobs.length > 0) await Promise.all(audioJobs)
 }
 
 async function clearUnreadAndConvListCache(userId: string, conversationId: string): Promise<void> {
@@ -269,8 +305,8 @@ export const messagingService = {
     recipientId: string,
     options?: CanUserMessageOptions,
   ): Promise<void> {
-    // Admin-timed messaging ban — independent of peer blocks / privacy.
-    await userRestrictionService.assertNotRestricted(senderId, 'MESSAGING_DISABLE')
+    // Admin-timed messaging ban — global or targeted to specific recipients.
+    await userRestrictionService.assertMessagingAllowed(senderId, recipientId)
 
     if (await blockRepository.isBlocked(recipientId, senderId)) {
       // Evict any cached permission — block state wins regardless of TTL
@@ -472,9 +508,11 @@ export const messagingService = {
       senderId,
       conversationId,
     })
-    for (const otherId of otherMemberIds) {
-      await this.canUserMessage(senderId, otherId, { bypassDmPrivacy })
-    }
+    await Promise.all(
+      otherMemberIds.map((otherId) =>
+        this.canUserMessage(senderId, otherId, { bypassDmPrivacy }),
+      ),
+    )
     if (input.replyToId) {
       const replyTo = await messageRepository.findMessageById(input.replyToId)
       if (!replyTo || replyTo.conversationId !== conversationId) {
@@ -777,13 +815,21 @@ export const messagingService = {
         unreadValues[i] ? parseInt(String(unreadValues[i]), 10) : null,
       ]),
     )
-    for (const conv of result.conversations) {
+    const missing = result.conversations.filter((conv) => {
       const cached = unreadCounts.get(conv.id)
-      if (cached === null || cached === undefined) {
-        const count = await messageRepository.getUnreadCount(conv.id, userId)
+      return cached === null || cached === undefined
+    })
+    if (missing.length > 0) {
+      const counts = await Promise.all(
+        missing.map((conv) => messageRepository.getUnreadCount(conv.id, userId)),
+      )
+      const backfill = redisClient.pipeline()
+      missing.forEach((conv, i) => {
+        const count = counts[i] ?? 0
         unreadCounts.set(conv.id, count)
-        await redisClient.set(RedisKeys.unreadCount(userId, conv.id), String(count), 'EX', 86400)
-      }
+        backfill.set(RedisKeys.unreadCount(userId, conv.id), String(count), 'EX', 86400)
+      })
+      await backfill.exec()
     }
     const withUnread = result.conversations.map((c: ConvPreview) => ({
       ...c,
@@ -1227,6 +1273,14 @@ export const messagingService = {
 
   scheduleReadReceipt(userId: string, conversationId: string, lastReadMessageId: string): void {
     const key = readReceiptDebounceKey(userId, conversationId)
+    void redisClient
+      .set(
+        RedisKeys.readReceiptPending(userId, conversationId),
+        lastReadMessageId,
+        'EX',
+        READ_RECEIPT_PENDING_TTL_SEC,
+      )
+      .catch(() => undefined)
     const existing = readReceiptDebounce.get(key)
     if (existing) {
       clearTimeout(existing.timer)
@@ -1237,7 +1291,31 @@ export const messagingService = {
       if (!pending) return
       void messagingService.flushReadReceipt(userId, conversationId, pending.lastReadMessageId)
     }, READ_RECEIPT_DEBOUNCE_MS)
-    readReceiptDebounce.set(key, { timer, lastReadMessageId })
+    readReceiptDebounce.set(key, { timer, userId, conversationId, lastReadMessageId })
+  },
+
+  /**
+   * Flush every pending read-receipt debounce timer immediately. Called on
+   * graceful process shutdown (ws-server.ts) — the debounce timer only lives
+   * in the WS process, so without this a rolling deploy mid-debounce silently
+   * drops the receipt for up to READ_RECEIPT_DEBOUNCE_MS. Safe to call
+   * redundantly with the sweep job (see sweepStaleReadReceipts): both funnel
+   * through flushReadReceipt, which is guarded by the readReceiptFlushLock NX
+   * lock.
+   */
+  async flushAllPendingReadReceipts(): Promise<void> {
+    const entries = Array.from(readReceiptDebounce.values())
+    readReceiptDebounce.clear()
+    await Promise.all(
+      entries.map((entry) => {
+        clearTimeout(entry.timer)
+        return messagingService.flushReadReceipt(
+          entry.userId,
+          entry.conversationId,
+          entry.lastReadMessageId,
+        )
+      }),
+    )
   },
 
   async flushReadReceipt(
@@ -1246,10 +1324,25 @@ export const messagingService = {
     lastReadMessageId: string,
   ): Promise<void> {
     try {
+      let cursor = lastReadMessageId
+      try {
+        const fromRedis = await redisClient.get(RedisKeys.readReceiptPending(userId, conversationId))
+        if (fromRedis) cursor = fromRedis
+        const acquired = await redisClient.set(
+          RedisKeys.readReceiptFlushLock(userId, conversationId),
+          '1',
+          'EX',
+          READ_RECEIPT_FLUSH_LOCK_TTL_SEC,
+          'NX',
+        )
+        if (!acquired) return
+      } catch {
+        // Redis down: flush locally so receipts are not dropped.
+      }
       const updated = await messageRepository.updateReadCursor(
         conversationId,
         userId,
-        lastReadMessageId,
+        cursor,
       )
       if (!updated) return
       await clearUnreadAndConvListCache(userId, conversationId)
@@ -1257,7 +1350,7 @@ export const messagingService = {
         t: 'READ',
         conversationId,
         userId,
-        lastReadMessageId,
+        lastReadMessageId: cursor,
       })
     } catch (e) {
       console.warn('[messaging] flushReadReceipt failed', e)
@@ -1269,15 +1362,14 @@ export const messagingService = {
     userId: string,
     items: { conversationId: string; afterSeq?: number }[],
   ): Promise<Array<{ conversationId: string; latestSeq: number; hasGap: boolean }>> {
+    const seqByConv = await conversationRepository.getResumeSyncStatesForUser(
+      userId,
+      items.map((it) => it.conversationId),
+    )
     const out: Array<{ conversationId: string; latestSeq: number; hasGap: boolean }> = []
     for (const it of items) {
-      const member = await conversationRepository.isActiveConversationMember(
-        it.conversationId,
-        userId,
-      )
-      if (!member) continue
-      const lastSeq = await conversationRepository.getConversationLastSeq(it.conversationId)
-      if (lastSeq === null) continue
+      const lastSeq = seqByConv.get(it.conversationId)
+      if (lastSeq === undefined) continue
       const latestSeq = Number(lastSeq)
       const hasGap =
         it.afterSeq !== undefined && Number.isFinite(it.afterSeq) && it.afterSeq < latestSeq

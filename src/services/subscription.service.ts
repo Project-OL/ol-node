@@ -1,4 +1,3 @@
-import crypto from 'crypto'
 import { CreatorSubscriptionStatus, LevelType, PointTxType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import {
@@ -9,6 +8,7 @@ import {
 } from '../config/redis'
 import { cacheRedisService } from './cacheRedis.service'
 import { decodeCursor, encodeCursor } from '../utils/cursor'
+import { decodeSubscriptionCursor, encodeSubscriptionCursor } from '../utils/subscriptionCursor'
 import { postRepository } from '../repositories/post.repository'
 import { assembleUnlockedPostResponse } from './post-response.builder'
 import type { PostResponse } from '../types/post.types'
@@ -39,6 +39,7 @@ import { pointWalletService } from './point-wallet.service'
 import { walletService } from './wallet.service'
 import { syncLevelCacheFromApplyResult, type LevelApplyResult } from './user-level.service'
 import { assertNotBlockedEitherWay, isBlockedEitherWay } from '../utils/block-relationship'
+import { isUniqueViolation } from '../utils/txRetry'
 
 async function bustAgentCommissionIfNeeded(agentUserId: string | null): Promise<void> {
   if (!agentUserId) return
@@ -312,97 +313,116 @@ export const subscriptionService = {
   },
 
   async createSubscription(subscriberId: string, creatorId: string) {
-    if (subscriberId === creatorId) {
-      throw new AppError(400, 'Cannot subscribe to yourself', 'INVALID_REQUEST')
-    }
+    // Whole flow (pre-check + transaction + post-commit side effects) is
+    // retried once on a unique-violation: two concurrent callers can both
+    // read `existing = null` in the pre-check race window below, derive the
+    // identical ledger idempotencyKey, and have the loser's ledger insert
+    // collide with the DB's real unique constraint on
+    // coin_ledger_entries.idempotency_key. Re-running lets the pre-check see
+    // the winner's now-committed row and return the correct 409
+    // SUBSCRIPTION_DUPLICATE instead of the raw P2002 escaping uncaught.
+    const run = async () => {
+      if (subscriberId === creatorId) {
+        throw new AppError(400, 'Cannot subscribe to yourself', 'INVALID_REQUEST')
+      }
 
-    await assertNotBlockedEitherWay(subscriberId, creatorId)
+      await assertNotBlockedEitherWay(subscriberId, creatorId)
 
-    const creator = await userRepository.findById(creatorId)
-    if (!creator) {
-      throw new AppError(404, 'Creator not found', 'NOT_FOUND')
-    }
+      const creator = await userRepository.findById(creatorId)
+      if (!creator) {
+        throw new AppError(404, 'Creator not found', 'NOT_FOUND')
+      }
 
-    const existing = await subscriptionRepository.findByPair(subscriberId, creatorId)
-    if (
-      existing &&
-      (existing.status === CreatorSubscriptionStatus.ACTIVE ||
-        existing.status === CreatorSubscriptionStatus.GRACE)
-    ) {
-      throw new AppError(409, 'Already subscribed to this creator', 'SUBSCRIPTION_DUPLICATE')
-    }
+      const existing = await subscriptionRepository.findByPair(subscriberId, creatorId)
+      if (
+        existing &&
+        (existing.status === CreatorSubscriptionStatus.ACTIVE ||
+          existing.status === CreatorSubscriptionStatus.GRACE)
+      ) {
+        throw new AppError(409, 'Already subscribed to this creator', 'SUBSCRIPTION_DUPLICATE')
+      }
 
-    const nextRenewalAt = new Date(Date.now() + SUBSCRIPTION_PERIOD_MS)
-    const idempotencyKey = `sub:create:${subscriberId}:${creatorId}:${crypto.randomUUID()}`
-    const shares = await hostRevenueShareConfigService.getShares()
+      const nextRenewalAt = new Date(Date.now() + SUBSCRIPTION_PERIOD_MS)
+      const idempotencyKey = `sub:create:${subscriberId}:${creatorId}:${existing?.id ?? 'none'}:${existing?.nextRenewalAt?.toISOString() ?? 'none'}`
+      const shares = await hostRevenueShareConfigService.getShares()
 
-    let bustAgentUserId: string | null = null
-    let subscriberWealthResult: LevelApplyResult | null = null
-    let creatorLivestreamResult: LevelApplyResult | null = null
-    const row = await prisma.$transaction(
-      async (tx) => {
-        subscriberWealthResult = await coinWalletService.debitForCreatorSubscription(
-          subscriberId,
-          SUBSCRIPTION_COIN_COST,
-          {
+      let bustAgentUserId: string | null = null
+      let subscriberWealthResult: LevelApplyResult | null = null
+      let creatorLivestreamResult: LevelApplyResult | null = null
+      const row = await prisma.$transaction(
+        async (tx) => {
+          subscriberWealthResult = await coinWalletService.debitForCreatorSubscription(
+            subscriberId,
+            SUBSCRIPTION_COIN_COST,
+            {
+              creatorId,
+              subscriptionId: `pending:${subscriberId}:${creatorId}`,
+              idempotencyKey,
+              description: 'Creator subscription (initial)',
+              applyWealthXp: true,
+            },
+            tx,
+          )
+
+          const created = await subscriptionRepository.upsertActiveInTx(tx, {
+            subscriberId,
             creatorId,
-            subscriptionId: `pending:${subscriberId}:${creatorId}`,
-            idempotencyKey,
-            description: 'Creator subscription (initial)',
-            applyWealthXp: true,
-          },
-          tx,
-        )
+            nextRenewalAt,
+          })
 
-        const created = await subscriptionRepository.upsertActiveInTx(tx, {
-          subscriberId,
-          creatorId,
-          nextRenewalAt,
-        })
+          await userSubscriberRepository.upsertPairInTx(tx, subscriberId, creatorId)
 
-        await userSubscriberRepository.upsertPairInTx(tx, subscriberId, creatorId)
+          const credited = await creditCreatorSubscriptionPoints(tx, {
+            creatorId,
+            subscriberId,
+            subscriptionId: created.id,
+            coinsPaid: SUBSCRIPTION_COIN_COST,
+            idempotencyKey: ledgerHostPointsKey(idempotencyKey),
+            description: 'Creator subscription revenue (75%)',
+            hostShareBp: shares.subscriptionBp,
+          })
+          bustAgentUserId = credited.bustAgentUserId
+          creatorLivestreamResult = credited.livestreamLevelResult
 
-        const credited = await creditCreatorSubscriptionPoints(tx, {
-          creatorId,
-          subscriberId,
-          subscriptionId: created.id,
-          coinsPaid: SUBSCRIPTION_COIN_COST,
-          idempotencyKey: ledgerHostPointsKey(idempotencyKey),
-          description: 'Creator subscription revenue (75%)',
-          hostShareBp: shares.subscriptionBp,
-        })
-        bustAgentUserId = credited.bustAgentUserId
-        creatorLivestreamResult = credited.livestreamLevelResult
+          return created
+        },
+        { timeout: 20_000 },
+      )
 
-        return created
-      },
-      { isolationLevel: 'Serializable' },
-    )
+      await walletService.adjustCoinBalanceCache(subscriberId, SUBSCRIPTION_COIN_COST)
+      await syncLevelCacheFromApplyResult(subscriberId, LevelType.WEALTH, subscriberWealthResult)
+      await syncLevelCacheFromApplyResult(creatorId, LevelType.LIVESTREAM, creatorLivestreamResult)
+      const creatorPoints = hostPointsFromSubscription(
+        SUBSCRIPTION_COIN_COST,
+        shares.subscriptionBp,
+      )
+      if (creatorPoints > 0n) {
+        await walletService.adjustPointBalanceCache(creatorId, creatorPoints)
+      }
+      await bustAgentCommissionIfNeeded(bustAgentUserId)
+      await setSubscriptionAccess(subscriberId, creatorId, row.nextRenewalAt)
+      await invalidateSubscriberCountCache(creatorId)
+      await invalidateTopCreatorsCachesForCreator(creatorId)
+      await enqueueSubscriptionRenewal(row.id, row.nextRenewalAt)
 
-    await walletService.adjustCoinBalanceCache(subscriberId, SUBSCRIPTION_COIN_COST)
-    await syncLevelCacheFromApplyResult(subscriberId, LevelType.WEALTH, subscriberWealthResult)
-    await syncLevelCacheFromApplyResult(creatorId, LevelType.LIVESTREAM, creatorLivestreamResult)
-    const creatorPoints = hostPointsFromSubscription(
-      SUBSCRIPTION_COIN_COST,
-      shares.subscriptionBp,
-    )
-    if (creatorPoints > 0n) {
-      await walletService.adjustPointBalanceCache(creatorId, creatorPoints)
+      console.info('[Subscription] created', {
+        subscriptionId: row.id,
+        subscriberId,
+        creatorId,
+        nextRenewalAt: row.nextRenewalAt.toISOString(),
+      })
+
+      return row
     }
-    await bustAgentCommissionIfNeeded(bustAgentUserId)
-    await setSubscriptionAccess(subscriberId, creatorId, row.nextRenewalAt)
-    await invalidateSubscriberCountCache(creatorId)
-    await invalidateTopCreatorsCachesForCreator(creatorId)
-    await enqueueSubscriptionRenewal(row.id, row.nextRenewalAt)
 
-    console.info('[Subscription] created', {
-      subscriptionId: row.id,
-      subscriberId,
-      creatorId,
-      nextRenewalAt: row.nextRenewalAt.toISOString(),
-    })
-
-    return row
+    try {
+      return await run()
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return await run()
+      }
+      throw err
+    }
   },
 
   async cancelSubscription(subscriberId: string, creatorId: string): Promise<void> {
@@ -438,22 +458,40 @@ export const subscriptionService = {
   },
 
   async checkAccess(subscriberId: string, creatorId: string): Promise<boolean> {
-    if (subscriberId === creatorId) {
-      return true
-    }
-    const key = RedisKeys.subscriptionAccess(subscriberId, creatorId)
-    const hit = await redisClient.get(key)
-    if (hit === '1') {
-      return true
-    }
+    const map = await this.checkAccessBulk(subscriberId, [creatorId])
+    return map.get(creatorId) === true
+  },
 
-    const row = await subscriptionRepository.findByPair(subscriberId, creatorId)
-    if (!row || row.status !== CreatorSubscriptionStatus.ACTIVE) {
-      return false
-    }
+  async checkAccessBulk(
+    subscriberId: string,
+    creatorIds: string[],
+  ): Promise<Map<string, boolean>> {
+    const out = new Map<string, boolean>()
+    const unique = [...new Set(creatorIds.filter(Boolean))]
+    if (unique.length === 0) return out
 
-    await setSubscriptionAccess(subscriberId, creatorId, row.nextRenewalAt)
-    return true
+    const needDb: string[] = []
+    const keys = unique.map((id) => RedisKeys.subscriptionAccess(subscriberId, id))
+    const hits = await redisClient.mget(...keys)
+    unique.forEach((id, i) => {
+      if (id === subscriberId || hits[i] === '1') {
+        out.set(id, true)
+      } else {
+        needDb.push(id)
+      }
+    })
+
+    if (needDb.length > 0) {
+      const rows = await subscriptionRepository.findActivePairs(subscriberId, needDb)
+      const active = new Set(rows.map((r) => r.creatorId))
+      await Promise.all(
+        rows.map((r) => setSubscriptionAccess(subscriberId, r.creatorId, r.nextRenewalAt)),
+      )
+      for (const id of needDb) {
+        out.set(id, active.has(id))
+      }
+    }
+    return out
   },
 
   getActiveSubscriberCountForCreator: readThroughActiveSubscriberCount,
@@ -463,8 +501,12 @@ export const subscriptionService = {
     return subscriptionRepository.isActivePair(subscriberId, creatorId)
   },
 
-  async listMySubscriptions(subscriberId: string): Promise<
-    Array<{
+  async listMySubscriptions(
+    subscriberId: string,
+    limit = 100,
+    rawCursor?: string,
+  ): Promise<{
+    items: Array<{
       userId: string
       publicId: string
       displayPublicId: string
@@ -474,9 +516,22 @@ export const subscriptionService = {
       avatarUrl: string | null
       country: string | null
     }>
-  > {
-    const rows = await subscriptionRepository.listActiveCreatorsForSubscriber(subscriberId)
-    return rows.map((r) => {
+    nextCursor: string | null
+  }> {
+    const cursor = rawCursor ? decodeSubscriptionCursor(rawCursor) : undefined
+    const rows = await subscriptionRepository.listActiveCreatorsForSubscriber(
+      subscriberId,
+      limit,
+      cursor,
+    )
+    let nextCursor: string | null = null
+    let page = rows
+    if (rows.length > limit) {
+      page = rows.slice(0, limit)
+      const last = page[page.length - 1]!
+      nextCursor = encodeSubscriptionCursor(last.updatedAt, last.id)
+    }
+    const items = page.map((r) => {
       const displayName = buildUserDisplayName(r.creator)
       return {
         userId: r.creator.id,
@@ -489,10 +544,15 @@ export const subscriptionService = {
         country: r.creator.country,
       }
     })
+    return { items, nextCursor }
   },
 
-  async listMySubscribers(creatorId: string): Promise<
-    Array<{
+  async listMySubscribers(
+    creatorId: string,
+    limit = 100,
+    rawCursor?: string,
+  ): Promise<{
+    items: Array<{
       userId: string
       publicId: string
       displayPublicId: string
@@ -502,9 +562,22 @@ export const subscriptionService = {
       avatarUrl: string | null
       country: string | null
     }>
-  > {
-    const rows = await subscriptionRepository.listActiveSubscribersForCreator(creatorId)
-    return rows.map((r) => {
+    nextCursor: string | null
+  }> {
+    const cursor = rawCursor ? decodeSubscriptionCursor(rawCursor) : undefined
+    const rows = await subscriptionRepository.listActiveSubscribersForCreator(
+      creatorId,
+      limit,
+      cursor,
+    )
+    let nextCursor: string | null = null
+    let page = rows
+    if (rows.length > limit) {
+      page = rows.slice(0, limit)
+      const last = page[page.length - 1]!
+      nextCursor = encodeSubscriptionCursor(last.updatedAt, last.id)
+    }
+    const items = page.map((r) => {
       const displayName = buildUserDisplayName(r.subscriber)
       return {
         userId: r.subscriber.id,
@@ -517,6 +590,7 @@ export const subscriptionService = {
         country: r.subscriber.country,
       }
     })
+    return { items, nextCursor }
   },
 
   async getActiveSubscriberCountByPublicId(publicId: number): Promise<number> {
@@ -572,7 +646,7 @@ export const subscriptionService = {
           bustAgentUserId = credited.bustAgentUserId
           creatorLivestreamResult = credited.livestreamLevelResult
         },
-        { isolationLevel: 'Serializable' },
+        { timeout: 20_000 },
       )
 
       await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)
@@ -678,7 +752,7 @@ export const subscriptionService = {
           bustAgentUserId = credited.bustAgentUserId
           creatorLivestreamResult = credited.livestreamLevelResult
         },
-        { isolationLevel: 'Serializable' },
+        { timeout: 20_000 },
       )
 
       await walletService.adjustCoinBalanceCache(sub.subscriberId, SUBSCRIPTION_COIN_COST)

@@ -16,6 +16,8 @@ import {
   SearchFacesByImageCommand,
 } from '@aws-sdk/client-rekognition'
 import { env } from '../config/env'
+import { AppError } from '../middlewares/errorHandler'
+import { rekognitionCircuitBreaker } from '../utils/circuitBreaker'
 
 const rekognitionClient = new RekognitionClient({
   region: env.AWS_REGION,
@@ -45,14 +47,40 @@ function resolveQualityFilter(value: string): QualityFilter {
   }
 }
 
+/** Expected business-shaped rejections (bad image, bad params) — not an infra
+ * failure, must not trip the circuit breaker. */
+function isRekognitionBusinessError(err: unknown): boolean {
+  if (isRekognitionInvalidImageFormatError(err)) return true
+  if (err && typeof err === 'object' && 'name' in err) {
+    if (String((err as { name?: unknown }).name ?? '') === 'InvalidParameterException') {
+      return true
+    }
+  }
+  return false
+}
+
 async function withTimeout<T>(
   timeoutMs: number,
   run: (abortSignal: AbortSignal) => Promise<T>,
 ): Promise<T> {
+  if (rekognitionCircuitBreaker.shouldSkip()) {
+    throw new AppError(
+      502,
+      'Face recognition service temporarily unavailable',
+      'REKOGNITION_CIRCUIT_OPEN',
+    )
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await run(controller.signal)
+    const result = await run(controller.signal)
+    rekognitionCircuitBreaker.recordSuccess()
+    return result
+  } catch (err) {
+    if (!isRekognitionBusinessError(err)) {
+      rekognitionCircuitBreaker.recordFailure()
+    }
+    throw err
   } finally {
     clearTimeout(timer)
   }

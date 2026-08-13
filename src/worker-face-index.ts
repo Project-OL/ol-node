@@ -10,7 +10,10 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import Redis from 'ioredis'
 import { Worker, type Job } from 'bullmq'
 import { env } from './config/env'
-import { prisma } from './config/database'
+import { prisma, prismaRead } from './config/database'
+import { redisReadClient } from './config/redis'
+import { registerCrashHandlers } from './utils/crashHandlers'
+import { withShutdownTimeout } from './utils/shutdownTimeout'
 import { ensureCollectionExists } from './lib/rekognition.client'
 import { runFaceIndexPollOnce } from './jobs/face-index-poll.job'
 import { processLivePhotoWorkerJob } from './jobs/live-photo-verify.job'
@@ -66,25 +69,31 @@ async function main() {
   let running = true
   let cleaned = false
 
-  const shutdown = async () => {
+  const shutdown = async (exitCode = 0) => {
     if (cleaned) return
     cleaned = true
     running = false
     try {
-      await livePhotoVerifyWorker.close()
-      await faceRegistrationWorker.close()
-      await livePhotoVerifyQueue.close()
-      await faceRegistrationQueue.close()
+      await withShutdownTimeout(async () => {
+        await livePhotoVerifyWorker.close()
+        await faceRegistrationWorker.close()
+        await livePhotoVerifyQueue.close()
+        await faceRegistrationQueue.close()
+        await prisma.$disconnect()
+        if (prismaRead !== prisma) await prismaRead.$disconnect()
+        await connection.quit()
+        await redisReadClient?.quit()
+      })
     } catch (e) {
       console.error('[face-rekognition-worker] worker/queue close error', e)
     }
-    await prisma.$disconnect()
-    await connection.quit()
-    process.exit(0)
+    process.exit(exitCode)
   }
 
-  process.on('SIGINT', () => void shutdown())
-  process.on('SIGTERM', () => void shutdown())
+  process.on('SIGINT', () => void shutdown(0))
+  process.on('SIGTERM', () => void shutdown(0))
+
+  registerCrashHandlers('face-rekognition-worker', shutdown)
 
   console.info(
     `[face-rekognition-worker] BullMQ: ${LIVE_PHOTO_VERIFY_QUEUE}, ${FACE_REGISTRATION_QUEUE}; Postgres poll every ${env.FACE_INDEX_POLL_MS}ms (batch ${env.FACE_INDEX_BATCH})`,

@@ -140,6 +140,7 @@ vi.mock('../../src/config/database', () => ({
   prismaRead: {
     creatorSubscription: { count: vi.fn() },
     user: { findUnique: vi.fn() },
+    blockList: { findUnique: vi.fn().mockResolvedValue(null) },
   },
 }))
 
@@ -163,6 +164,7 @@ vi.mock('../../src/config/redis', () => ({
     guardianActive: (targetUserId: string) => `guardian:active:${targetUserId}`,
     guardianMeList: (targetUserId: string) => `guardian:me:${targetUserId}`,
     guardianMyList: (guardianUserId: string) => `guardian:my:${guardianUserId}`,
+    hostRevenueShares: () => 'host:revenue-shares',
   },
   SUBSCRIPTION_COUNT_CACHE_TTL: 300,
   SUB_TOP_CREATORS_TTL: 300,
@@ -241,8 +243,15 @@ describe('subscription + guardian wallet flow', () => {
       if (userId === fanUserId) return { id: fanUserId, username: 'user-b' }
       return null
     })
-    // This scenario intentionally permits two successful subscribe actions.
-    findByPair.mockResolvedValue(null)
+    // This scenario intentionally permits two successful subscribe actions: the first
+    // findByPair lookup (pre-creation) sees nothing, and the second sees the
+    // already-created row but in a non-blocking (CANCELLED) status so the duplicate-
+    // subscription check doesn't fire while the idempotency key still varies per call.
+    findByPair.mockImplementation(async () => {
+      const row = subscriptionRows[0]
+      if (!row) return null
+      return { ...row, status: CreatorSubscriptionStatus.CANCELLED }
+    })
     upsertActiveInTx.mockImplementation(async (_tx, params) => {
       const row = {
         id: 'sub-fixed',

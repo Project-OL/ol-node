@@ -1,8 +1,9 @@
 import { buildApp } from './app'
 import { env } from './config/env'
-import { prisma, connectDatabases } from './config/database'
-import { redisClient } from './config/redis'
+import { prisma, prismaRead, connectDatabases } from './config/database'
+import { redisClient, redisReadClient } from './config/redis'
 import { ensureCollectionExists } from './lib/rekognition.client'
+import { withShutdownTimeout } from './utils/shutdownTimeout'
 
 async function start() {
   try {
@@ -15,8 +16,10 @@ async function start() {
   try {
     await ensureCollectionExists()
   } catch (error) {
-    console.error('Failed to ensure Rekognition collection exists', error)
-    process.exit(1)
+    console.error(
+      'Rekognition collection ensure failed (API continues; face worker owns indexing)',
+      error,
+    )
   }
 
   const app = await buildApp()
@@ -24,9 +27,13 @@ async function start() {
   const shutdown = async (signal: string, options: { exitCode: number }) => {
     try {
       app.log.info({ signal }, 'Shutting down gracefully...')
-      await app.close()
-      await prisma.$disconnect()
-      await redisClient.quit()
+      await withShutdownTimeout(async () => {
+        await app.close()
+        await prisma.$disconnect()
+        if (prismaRead !== prisma) await prismaRead.$disconnect()
+        await redisClient.quit()
+        await redisReadClient?.quit()
+      })
       app.log.info('All connections closed. Exiting.')
     } catch (err) {
       app.log.error({ err }, 'Error during shutdown')

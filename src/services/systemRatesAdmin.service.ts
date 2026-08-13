@@ -16,6 +16,7 @@ import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import { payrollAdminService } from './payrollAdmin.service'
 import { walletLevelService } from './user-level.service'
 import { videoCallPriceCapService } from './videoCallPriceCap.service'
+import { richTierService } from './rich-tier.service'
 
 export type RateTierInput = {
   minUsd: number
@@ -480,6 +481,7 @@ export const systemRatesAdminService = {
       coinPackages,
       walletLevelConfigs,
       videoCallPriceCaps,
+      richTierConfigs,
       topupRates,
       agentExchangeRates,
       tradingTopupPackages,
@@ -492,6 +494,7 @@ export const systemRatesAdminService = {
       this.getCoinPackages(),
       this.getWalletLevelConfigs(),
       videoCallPriceCapService.getCaps(),
+      richTierService.getTierConfig(),
       this.getTopupRates(),
       this.getAgentExchangeRates(),
       this.getTradingTopupPackages(),
@@ -506,6 +509,7 @@ export const systemRatesAdminService = {
       coinPackages,
       walletLevelConfigs,
       videoCallPriceCaps,
+      richTierConfigs: { tiers: richTierConfigs },
       tradingTopupRates: topupRates,
       agentExchangeRates,
       tradingTopupPackages,

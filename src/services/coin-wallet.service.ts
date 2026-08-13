@@ -19,7 +19,7 @@ import {
   syncLevelCacheFromApplyResult,
   type LevelApplyResult,
 } from './user-level.service'
-import { assertCoinDebitAllowed } from './wallet-freeze.service'
+import { assertCoinDebitAllowed, assertCoinDebitAllowedInTx } from './wallet-freeze.service'
 import { RECHARGE_TX_TYPES, richTierService } from './rich-tier.service'
 import { epayClient } from '../lib/epay.client'
 import { enqueuePlatformLedgerMessage } from '../queues/platform-message.queue'
@@ -163,7 +163,7 @@ export const coinWalletService = {
           richTierMonth: richMonth,
         }
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      { timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
 
     await walletService.adjustCoinBalanceCache(userId, BigInt(order.coins))
@@ -253,7 +253,7 @@ export const coinWalletService = {
           },
         })
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      { timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
 
     await walletService.adjustCoinBalanceCache(userId, USERNAME_CHANGE_COIN_COST)
@@ -329,7 +329,7 @@ export const coinWalletService = {
       async (inner) => {
         await run(inner)
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      { timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
     await walletService.adjustCoinBalanceCache(userId, amount)
     await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, wealthLevelResult)
@@ -401,7 +401,7 @@ export const coinWalletService = {
       async (inner) => {
         await run(inner)
       },
-      { isolationLevel: 'Serializable', timeout: INTERACTIVE_TX_TIMEOUT_MS },
+      { timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
     await walletService.adjustCoinBalanceCache(userId, amount)
     await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, wealthLevelResult)
@@ -469,7 +469,6 @@ export const coinWalletService = {
       return wealthLevelResult
     }
     await prisma.$transaction(async (inner) => run(inner), {
-      isolationLevel: 'Serializable',
       timeout: INTERACTIVE_TX_TIMEOUT_MS,
     })
     await walletService.adjustCoinBalanceCache(userId, amount)
@@ -538,7 +537,6 @@ export const coinWalletService = {
       return wealthLevelResult
     }
     await prisma.$transaction(async (inner) => run(inner), {
-      isolationLevel: 'Serializable',
       timeout: INTERACTIVE_TX_TIMEOUT_MS,
     })
     await walletService.adjustCoinBalanceCache(userId, amount)
@@ -584,7 +582,6 @@ export const coinWalletService = {
     }
 
     const currencyType = options.currencyType ?? WalletCurrencyType.COIN
-    await assertCoinDebitAllowed(userId, currencyType)
 
     const wallet = await tx.wallet.upsert({
       where: {
@@ -607,6 +604,7 @@ export const coinWalletService = {
       )
     }
     await walletRepository.lockForUpdate(tx, wallet.id)
+    await assertCoinDebitAllowedInTx(tx, userId, currencyType)
     const last = await tx.coinLedgerEntry.findFirst({
       where: { walletId: wallet.id },
       orderBy: { createdAt: 'desc' },

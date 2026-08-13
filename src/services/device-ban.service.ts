@@ -7,12 +7,15 @@ import { auditService } from './audit.service'
 
 const BAN_CACHE_TTL_SEC = 300
 
-export async function isDeviceBanned(deviceId: string): Promise<boolean> {
+export async function isDeviceBanned(
+  deviceId: string,
+  prefetched?: string | null,
+): Promise<boolean> {
   const normalized = deviceId.trim()
   if (!normalized) return false
 
   const cacheKey = RedisKeys.deviceBanned(normalized)
-  const cached = await redisClient.get(cacheKey)
+  const cached = prefetched !== undefined ? prefetched : await redisClient.get(cacheKey)
   if (cached === '1') return true
   if (cached === '0') return false
 
@@ -22,10 +25,13 @@ export async function isDeviceBanned(deviceId: string): Promise<boolean> {
   return banned
 }
 
-export async function assertDeviceNotBanned(deviceId: string | undefined | null): Promise<void> {
+export async function assertDeviceNotBanned(
+  deviceId: string | undefined | null,
+  prefetched?: string | null,
+): Promise<void> {
   const normalized = deviceId?.trim()
   if (!normalized) return
-  if (await isDeviceBanned(normalized)) {
+  if (await isDeviceBanned(normalized, prefetched)) {
     throw new AppError(403, 'This device has been banned from the platform', 'DEVICE_BANNED')
   }
 }

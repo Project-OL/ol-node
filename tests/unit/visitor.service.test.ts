@@ -3,6 +3,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const redisGet = vi.fn()
 const redisSet = vi.fn()
 
+const blockListFindUnique = vi.fn().mockResolvedValue(null)
+vi.mock('../../src/config/database', () => ({
+  prisma: {
+    blockList: {
+      findUnique: (...args: unknown[]) => blockListFindUnique(...args),
+    },
+  },
+  prismaRead: {
+    blockList: {
+      findUnique: (...args: unknown[]) => blockListFindUnique(...args),
+    },
+  },
+}))
+
 vi.mock('../../src/config/redis', () => ({
   RedisKeys: {
     visitorCooldown: (profileId: string, visitorId: string) =>

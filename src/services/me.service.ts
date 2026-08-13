@@ -18,6 +18,7 @@ import {
   splitDisplayName,
 } from '../utils/profileDisplay'
 import { formatUserName } from '../utils/user-display'
+import { composePublicAdminTags } from '../utils/adminTags'
 import { detectImageMimeFromBuffer, extensionForImageMime } from '../utils/imageMagic'
 import {
   freeUsernameChangeEligibility,
@@ -41,6 +42,7 @@ import { agencyService } from './agency.service'
 import { livePhotoService } from './livePhoto.service'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { videoCallSettingsService } from './video-call.service'
+import { singleflight } from '../utils/singleflight'
 
 const displayNameSchema = z
   .string()
@@ -122,6 +124,13 @@ function buildMeResponse(
   const usernameEligibility = freeUsernameChangeEligibility(profile.usernameUpdatedAt)
   return {
     ...profile,
+    adminTags: composePublicAdminTags({
+      stored: profile.adminTags,
+      isAgency: extras.agency.role === 'AGENT',
+      isFullGallery: galleryCompletion.isFullGallery,
+      vipMembership: extras.vipMembership,
+      richTier: extras.richTier,
+    }),
     ...walletData,
     galleryCompletion,
     isSuperHost: extras.isSuperHost,
@@ -174,12 +183,30 @@ export const meService = {
   async invalidateUserCaches(userId: string): Promise<void> {
     await cacheRedisService.del(
       RedisKeys.userMe(userId),
+      RedisKeys.userMeAssembled(userId),
       RedisKeys.userProfile(userId),
       RedisKeys.userUsernameLock(userId),
+      RedisKeys.userSearchCard(userId),
     )
   },
 
   async getMe(userId: string): Promise<{ data: MeResponseDto; cache: 'HIT' | 'MISS' }> {
+    const assembled = await cacheRedisService.get<MeResponseDto>(RedisKeys.userMeAssembled(userId))
+    if (assembled && typeof assembled === 'object' && 'userId' in assembled) {
+      meEndpointMetrics.cacheHits += 1
+      return { data: assembled, cache: 'HIT' }
+    }
+
+    return singleflight(`me:${userId}`, () => this.getMeUncached(userId))
+  },
+
+  async getMeUncached(userId: string): Promise<{ data: MeResponseDto; cache: 'HIT' | 'MISS' }> {
+    const assembled = await cacheRedisService.get<MeResponseDto>(RedisKeys.userMeAssembled(userId))
+    if (assembled && typeof assembled === 'object' && 'userId' in assembled) {
+      meEndpointMetrics.cacheHits += 1
+      return { data: assembled, cache: 'HIT' }
+    }
+
     const key = RedisKeys.userMe(userId)
     const cached = await cacheRedisService.get<MeProfileCache>(key)
     // Entries cached before `dateOfBirth` or `adminTags` were added omit keys; do not treat as authoritative.
@@ -274,6 +301,9 @@ export const meService = {
       // Prefer live equipped rare-ID marker over cached profile displayPublicId.
       data.displayPublicId = activeVipRaw
     }
+    void cacheRedisService
+      .set(RedisKeys.userMeAssembled(userId), data, env.REDIS_TTL_ME_ASSEMBLED)
+      .catch(() => undefined)
     return { data, cache: cacheResult }
   },
 
@@ -412,7 +442,11 @@ export const meService = {
       throw err
     }
 
-    await cacheRedisService.del(RedisKeys.userMe(userId), RedisKeys.userProfile(userId))
+    await cacheRedisService.del(
+      RedisKeys.userMe(userId),
+      RedisKeys.userProfile(userId),
+      RedisKeys.userMeAssembled(userId),
+    )
 
     const fresh = await userRepository.findForMe(userId)
     if (!fresh) {

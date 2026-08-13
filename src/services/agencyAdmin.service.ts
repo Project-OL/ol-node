@@ -665,7 +665,7 @@ export const agencyAdminService = {
       async (tx) => {
         await agencyHostService.handleAgentAccountDeletion(agencyUserId, tx)
       },
-      { isolationLevel: 'Serializable', timeout: 20_000 },
+      { timeout: 20_000 },
     )
 
     await agencyService.bustCachesForAgency(agencyUserId, agency.defaultPublicId)
@@ -732,7 +732,7 @@ export const agencyAdminService = {
           },
         })
       },
-      { isolationLevel: 'Serializable', timeout: 30_000 },
+      { timeout: 30_000 },
     )
 
     for (const a of openAssignments) {

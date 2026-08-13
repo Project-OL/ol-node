@@ -254,7 +254,7 @@ export const agencyHostService = {
           })
           await agencyRepository.incrementHostCount(agency.userId, 1, tx)
         },
-        { isolationLevel: 'Serializable', timeout: TX_MS },
+        { timeout: TX_MS },
       )
     } catch (e) {
       if (isUniqueViolation(e)) {
@@ -284,7 +284,7 @@ export const agencyHostService = {
       async (tx) => {
         await agencyApplicationRepository.deletePending(applicationId, hostUserId, tx)
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
     await agencyService.onAgencyMutation(app.agencyUserId)
     return { ok: true as const }
@@ -338,7 +338,7 @@ export const agencyHostService = {
         })
         await agencyRepository.incrementHostCount(agentUserId, 1, tx)
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
 
     const app = await agencyApplicationRepository.getApplicationById(applicationId)
@@ -368,7 +368,7 @@ export const agencyHostService = {
           tx,
         )
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
 
     const app = await agencyApplicationRepository.getApplicationById(applicationId)
@@ -414,7 +414,7 @@ export const agencyHostService = {
             },
           )
         },
-        { isolationLevel: 'Serializable', timeout: TX_MS },
+        { timeout: TX_MS },
       )
       await agencyService.onAgencyMutation(membership.agencyUserId)
       return { ok: true as const, immediate: true as const }
@@ -433,7 +433,7 @@ export const agencyHostService = {
           tx,
         )
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
 
     await enqueueLeaveAutoApprove(created.id, autoAt)
@@ -465,7 +465,7 @@ export const agencyHostService = {
         )
         return count
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
     if (updated.count === 0) {
       throw new AppError(409, 'Cannot cancel', 'INVALID_STATE')
@@ -498,7 +498,7 @@ export const agencyHostService = {
         )
         await finalizeAgencyHostExit(row.agencyUserId, row.hostUserId, 'LEAVE_APPROVED', tx)
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
     const row = await agencyLeaveApplicationRepository.getById(applicationId)
     if (row) await agencyService.onAgencyMutation(row.agencyUserId)
@@ -532,7 +532,7 @@ export const agencyHostService = {
           },
         })
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
     const row = await agencyLeaveApplicationRepository.getById(applicationId)
     if (row) await agencyService.onAgencyMutation(row.agencyUserId)
@@ -564,7 +564,7 @@ export const agencyHostService = {
         )
         await finalizeAgencyHostExit(row.agencyUserId, row.hostUserId, 'LEAVE_LATE_APPROVED', tx)
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
     await removeLeaveAutoApproveJob(applicationId)
     const row = await agencyLeaveApplicationRepository.getById(applicationId)
@@ -609,7 +609,7 @@ export const agencyHostService = {
       async (tx) => {
         await finalizeAgencyHostExit(agentUserId, hostUserId, reason!, tx)
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
     await agencyService.onAgencyMutation(agentUserId)
     return { ok: true as const }
@@ -635,7 +635,7 @@ export const agencyHostService = {
           },
         )
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
     await agencyService.onAgencyMutation(agencyUserId)
     return { ok: true as const, userId: hostUserId, agencyUserId }
@@ -687,7 +687,7 @@ export const agencyHostService = {
           csUserId: params.csUserId,
         })
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
 
     if (params.deductPoints != null && params.deductPoints > 0n) {
@@ -716,7 +716,7 @@ export const agencyHostService = {
         )
         await finalizeAgencyHostExit(row.agencyUserId, row.hostUserId, 'LEAVE_AUTO_APPROVED', tx)
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
     const row = await agencyLeaveApplicationRepository.getById(applicationId)
     if (row) await agencyService.onAgencyMutation(row.agencyUserId)
@@ -859,7 +859,7 @@ export const agencyHostService = {
           })
           await agencyRepository.incrementHostCount(agencyUserId, 1, tx)
         },
-        { isolationLevel: 'Serializable', timeout: TX_MS },
+        { timeout: TX_MS },
       )
     } catch (e) {
       if (isUniqueViolation(e)) {
@@ -925,7 +925,7 @@ export const agencyHostService = {
           transferred.push(hostUserId)
         }
       },
-      { isolationLevel: 'Serializable', timeout: TX_MS },
+      { timeout: TX_MS },
     )
 
     for (const hostUserId of transferred) {

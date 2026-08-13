@@ -6,6 +6,9 @@ const outboxFindMany = vi.fn();
 const memberFindMany = vi.fn();
 const publish = vi.fn();
 const enqueue = vi.fn();
+const conversationFindUnique = vi.fn();
+const userFindUnique = vi.fn();
+const sendToUser = vi.fn();
 
 vi.mock('../../src/config/database', () => ({
   prisma: {
@@ -17,12 +20,41 @@ vi.mock('../../src/config/database', () => ({
     conversationMember: {
       findMany: (...a: unknown[]) => memberFindMany(...a),
     },
+    conversation: {
+      findUnique: (...a: unknown[]) => conversationFindUnique(...a),
+    },
+    user: {
+      findUnique: (...a: unknown[]) => userFindUnique(...a),
+    },
+  },
+}));
+
+vi.mock('../../src/services/pushNotification.service', () => ({
+  pushNotificationService: {
+    sendToUser: (...a: unknown[]) => sendToUser(...a),
   },
 }));
 
 vi.mock('../../src/config/redis', () => ({
   redisClient: {
     publish: (...a: unknown[]) => publish(...a),
+    // Digest fan-out uses a pipeline; route each queued .publish() into the
+    // same tracked `publish` fn so existing assertions see both calls.
+    pipeline: () => {
+      const calls: unknown[][] = [];
+      const p = {
+        publish: (...a: unknown[]) => {
+          calls.push(a);
+          publish(...a);
+          return p;
+        },
+        get length() {
+          return calls.length;
+        },
+        exec: () => Promise.resolve([]),
+      };
+      return p;
+    },
   },
   RedisKeys: {
     convChannel: (id: string) => `msg:conv:${id}`,
@@ -47,8 +79,14 @@ describe('messaging-outbox.service', () => {
     memberFindMany.mockReset();
     publish.mockReset();
     enqueue.mockReset();
+    conversationFindUnique.mockReset();
+    userFindUnique.mockReset();
+    sendToUser.mockReset();
     publish.mockResolvedValue(1);
     update.mockResolvedValue({});
+    conversationFindUnique.mockResolvedValue({ type: 'DIRECT' });
+    userFindUnique.mockResolvedValue({ firstName: 'Sender', lastName: '', username: 'sender' });
+    sendToUser.mockResolvedValue(undefined);
   });
 
   it('publishMessageOutboxRow publishes JSON then marks publishedAt', async () => {
@@ -117,6 +155,7 @@ describe('messaging-outbox.service', () => {
         conversationId: 'conv-d',
         seq: 42,
         senderId: 'sender-1',
+        message: { content: null, isDeleted: false },
       }),
     )
     expect(publish.mock.calls.length).toBe(2)

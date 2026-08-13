@@ -130,6 +130,7 @@ describe("pointWalletService.getTransactionDetail", () => {
     expect(out.self).toEqual({
       userId: USER_ID,
       username: "host1",
+      name: "Host One",
       displayName: "Host One",
       publicId: "111",
       avatarUrl: "https://cdn/self.png",
@@ -137,6 +138,10 @@ describe("pointWalletService.getTransactionDetail", () => {
     expect(out.counterparty).toEqual({
       userId: OTHER_ID,
       username: 'fan1',
+      // formatUserName: trimmed firstName+lastName, no username fallback (2026-08-12) —
+      // this counterparty has no first/last name, so name is empty while displayName
+      // still falls back to username.
+      name: '',
       displayName: 'fan1',
       publicId: '222',
       avatarUrl: null,
@@ -144,7 +149,7 @@ describe("pointWalletService.getTransactionDetail", () => {
     expect(out.transactionName).toBe('Gift received');
     expect(out.counterpartyDetails).toMatchObject({
       userId: OTHER_ID,
-      name: 'fan1',
+      name: '',
     });
   });
 

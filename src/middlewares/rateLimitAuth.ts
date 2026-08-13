@@ -3,6 +3,17 @@ import { redisClient, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { AppError } from './errorHandler'
 
+/**
+ * INCR + first-hit EXPIRE in a single Redis round trip (pipelined). `EXPIRE ... NX`
+ * (Redis >= 7.0) sets the TTL only if the key has none yet, replacing the old
+ * `if (count === 1) await redisClient.expire(...)` sequential round trip — this
+ * preHandler runs on nearly every mutating endpoint.
+ */
+async function incrWithWindow(key: string, windowSec: number): Promise<number> {
+  const results = await redisClient.pipeline().incr(key).expire(key, windowSec, 'NX').exec()
+  return results?.[0]?.[1] as number
+}
+
 export interface UserRateLimitConfig {
   max: number
   windowMs: number
@@ -30,8 +41,7 @@ export function buildRateLimit(config: {
       throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     }
     const key = keyBuilder(userId)
-    const count = await redisClient.incr(key)
-    if (count === 1) await redisClient.expire(key, windowSec)
+    const count = await incrWithWindow(key, windowSec)
     if (count > max) {
       throw new AppError(
         429,
@@ -163,8 +173,7 @@ export function createAuthRateLimit(config: AuthRateLimitConfig) {
       request.ip ||
       '0.0.0.0'
     const key = RedisKeys.authRateLimit(endpoint, ip)
-    const count = await redisClient.incr(key)
-    if (count === 1) await redisClient.expire(key, windowSec)
+    const count = await incrWithWindow(key, windowSec)
     if (count > max) {
       throw new AppError(
         429,
@@ -196,8 +205,7 @@ export function createSecurityRateLimit(config: {
       throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     }
     const key = RedisKeys.securityPasswordRateLimit(endpoint, userId)
-    const count = await redisClient.incr(key)
-    if (count === 1) await redisClient.expire(key, windowSec)
+    const count = await incrWithWindow(key, windowSec)
     if (count > max) {
       throw new AppError(
         429,
@@ -322,8 +330,7 @@ export function createDeviceRateLimit(config: { endpoint: string; max: number; w
       throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     }
     const key = RedisKeys.deviceRateLimit(endpoint, userId)
-    const count = await redisClient.incr(key)
-    if (count === 1) await redisClient.expire(key, windowSec)
+    const count = await incrWithWindow(key, windowSec)
     if (count > max) {
       throw new AppError(
         429,
@@ -365,8 +372,7 @@ export async function deviceFlushSessionsRateLimit(
     }
   }
 
-  const count = await redisClient.incr(key)
-  if (count === 1) await redisClient.expire(key, windowSec)
+  const count = await incrWithWindow(key, windowSec)
   if (count > max) {
     throw new AppError(
       429,
@@ -421,8 +427,7 @@ export function createPrivacyRateLimit(config: {
       throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     }
     const key = RedisKeys.privacyRateLimit(endpoint, userId)
-    const count = await redisClient.incr(key)
-    if (count === 1) await redisClient.expire(key, windowSec)
+    const count = await incrWithWindow(key, windowSec)
     if (count > max) {
       throw new AppError(
         429,
@@ -467,8 +472,7 @@ export function createAccountDeletionRateLimit(config: {
       throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     }
     const key = RedisKeys.accountDeletionRateLimit(endpoint, userId)
-    const count = await redisClient.incr(key)
-    if (count === 1) await redisClient.expire(key, windowSec)
+    const count = await incrWithWindow(key, windowSec)
     if (count > max) {
       throw new AppError(
         429,
@@ -514,8 +518,7 @@ export function createSocialRateLimit(config: { endpoint: string; max: number; w
       throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     }
     const key = RedisKeys.socialRateLimit(endpoint, userId)
-    const count = await redisClient.incr(key)
-    if (count === 1) await redisClient.expire(key, windowSec)
+    const count = await incrWithWindow(key, windowSec)
     if (count > max) {
       throw new AppError(
         429,

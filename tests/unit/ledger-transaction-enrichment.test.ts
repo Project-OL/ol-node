@@ -94,7 +94,9 @@ describe('buildCounterpartyDetailsMap', () => {
     expect(map.get('entry-2')).toEqual({
       addedByAdmin: {
         adminUserId: 'admin-1',
-        name: 'admin',
+        // formatUserName: no first/last name on this admin fixture and no
+        // username fallback (2026-08-12) — name is empty.
+        name: '',
         publicId: '99',
       },
     })

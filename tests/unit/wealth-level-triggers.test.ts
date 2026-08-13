@@ -70,8 +70,24 @@ vi.mock('../../src/repositories/coin-ledger.repository', () => ({
 }))
 
 vi.mock('../../src/config/database', () => ({
-  prisma: {},
-  prismaRead: {},
+  prisma: {
+    user: {
+      findUnique: vi.fn().mockResolvedValue({
+        personalCoinsFrozen: false,
+        tradingCoinsFrozen: false,
+        pointsFrozen: false,
+      }),
+    },
+  },
+  prismaRead: {
+    user: {
+      findUnique: vi.fn().mockResolvedValue({
+        personalCoinsFrozen: false,
+        tradingCoinsFrozen: false,
+        pointsFrozen: false,
+      }),
+    },
+  },
 }))
 
 import { coinWalletService } from '../../src/services/coin-wallet.service'
@@ -92,6 +108,13 @@ function makeTx(startingBalance = 1_000_000n) {
     },
     coinLedgerEntry: {
       findFirst: vi.fn().mockResolvedValue({ balanceAfter: startingBalance }),
+    },
+    user: {
+      findUnique: vi.fn().mockResolvedValue({
+        personalCoinsFrozen: false,
+        tradingCoinsFrozen: false,
+        pointsFrozen: false,
+      }),
     },
   }
 }

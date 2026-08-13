@@ -143,6 +143,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/system-settings/wallet-level-configs',
     'GET /admin/system-settings/video-call-price-caps',
     'PUT /admin/system-settings/video-call-price-caps',
+    'GET /admin/system-settings/rich-tier',
+    'PUT /admin/system-settings/rich-tier',
     'GET /admin/agency/commission/config',
     'PUT /admin/agency/commission/config',
     'GET /admin/agency/commission/levels',

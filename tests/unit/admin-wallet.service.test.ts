@@ -28,6 +28,7 @@ vi.mock('../../src/services/wallet.service', () => ({
 vi.mock('../../src/services/audit.service', () => ({
   auditService: {
     log: vi.fn(),
+    logAdmin: vi.fn(),
   },
 }))
 

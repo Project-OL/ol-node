@@ -30,6 +30,7 @@ function txMock(hostEntry?: {
   counterpartyId?: string | null
 }) {
   return {
+    $executeRaw: vi.fn().mockResolvedValue(1),
     user: {
       findUnique: vi.fn(),
     },

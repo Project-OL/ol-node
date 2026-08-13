@@ -9,6 +9,7 @@ import { s3Client, s3Bucket } from '../config/s3'
 import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
 import { rootLogger } from '../utils/rootLogger'
+import { s3CircuitBreaker } from '../utils/circuitBreaker'
 
 function buildPublicUrl(key: string): string {
   if (!s3Bucket) {
@@ -45,6 +46,9 @@ export const storageService = {
     if (!s3Bucket) {
       throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
     }
+    if (s3CircuitBreaker.shouldSkip()) {
+      throw new AppError(502, 'File storage temporarily unavailable', 'S3_CIRCUIT_OPEN')
+    }
     try {
       await s3Client.send(
         new PutObjectCommand({
@@ -55,7 +59,9 @@ export const storageService = {
           CacheControl: params.cacheControl ?? 'max-age=31536000',
         }),
       )
+      s3CircuitBreaker.recordSuccess()
     } catch (err) {
+      s3CircuitBreaker.recordFailure()
       rootLogger.child({ module: 'storage' }).error({ err }, 'S3 PutObject failed')
       throw new AppError(502, 'File storage temporarily unavailable', 'S3_UPLOAD_FAILED')
     }
@@ -92,6 +98,9 @@ export const storageService = {
     if (!s3Bucket) {
       throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
     }
+    if (s3CircuitBreaker.shouldSkip()) {
+      throw new AppError(502, 'File storage temporarily unavailable', 'S3_CIRCUIT_OPEN')
+    }
     try {
       const r = await s3Client.send(
         new HeadObjectCommand({
@@ -99,6 +108,7 @@ export const storageService = {
           Key: key,
         }),
       )
+      s3CircuitBreaker.recordSuccess()
       return {
         contentLength: Number(r.ContentLength ?? 0),
         contentType: r.ContentType,
@@ -110,8 +120,10 @@ export const storageService = {
           ? String((err as { name?: string }).name)
           : ''
       if (name === 'NotFound' || name === 'NoSuchKey') {
+        // Object genuinely missing — not an infra failure, don't trip the breaker.
         throw new AppError(400, 'Uploaded object not found', 'INVALID_MEDIA_OBJECT')
       }
+      s3CircuitBreaker.recordFailure()
       if (err instanceof AppError) {
         throw err
       }
@@ -124,6 +136,9 @@ export const storageService = {
     if (!s3Bucket) {
       throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
     }
+    if (s3CircuitBreaker.shouldSkip()) {
+      throw new AppError(502, 'File storage temporarily unavailable', 'S3_CIRCUIT_OPEN')
+    }
     try {
       const response = await s3Client.send(
         new GetObjectCommand({
@@ -131,6 +146,7 @@ export const storageService = {
           Key: key,
         }),
       )
+      s3CircuitBreaker.recordSuccess()
       const body = response.Body
       if (!body) {
         throw new AppError(404, 'Object body is empty', 'S3_OBJECT_EMPTY')
@@ -145,6 +161,7 @@ export const storageService = {
       if (err instanceof AppError) {
         throw err
       }
+      s3CircuitBreaker.recordFailure()
       rootLogger.child({ module: 'storage' }).error({ err, key }, 'S3 GetObject failed')
       throw new AppError(502, 'File storage temporarily unavailable', 'S3_DOWNLOAD_FAILED')
     }
@@ -154,12 +171,21 @@ export const storageService = {
     if (!s3Bucket) {
       throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
     }
+    if (s3CircuitBreaker.shouldSkip()) {
+      throw new AppError(502, 'File storage temporarily unavailable', 'S3_CIRCUIT_OPEN')
+    }
 
     const command = new DeleteObjectCommand({
       Bucket: s3Bucket,
       Key: key,
     })
 
-    await s3Client.send(command)
+    try {
+      await s3Client.send(command)
+      s3CircuitBreaker.recordSuccess()
+    } catch (err) {
+      s3CircuitBreaker.recordFailure()
+      throw err
+    }
   },
 }

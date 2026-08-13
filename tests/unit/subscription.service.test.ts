@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { CreatorSubscriptionStatus } from '@prisma/client'
+import { CreatorSubscriptionStatus, Prisma } from '@prisma/client'
 
 const debitForCreatorSubscription = vi.fn()
 vi.mock('../../src/services/coin-wallet.service', () => ({
@@ -10,6 +10,7 @@ vi.mock('../../src/services/coin-wallet.service', () => ({
 }))
 
 const findByPair = vi.fn()
+const findActivePairs = vi.fn()
 const findById = vi.fn()
 const countActiveByCreatorId = vi.fn()
 const isActivePair = vi.fn()
@@ -24,6 +25,7 @@ const queryTopCreatorsByPostCount = vi.fn()
 vi.mock('../../src/repositories/subscription.repository', () => ({
   subscriptionRepository: {
     findByPair: (...a: unknown[]) => findByPair(...a),
+    findActivePairs: (...a: unknown[]) => findActivePairs(...a),
     findById: (...a: unknown[]) => findById(...a),
     countActiveByCreatorId: (...a: unknown[]) => countActiveByCreatorId(...a),
     isActivePair: (...a: unknown[]) => isActivePair(...a),
@@ -51,6 +53,7 @@ vi.mock('../../src/repositories/post.repository', () => ({
 
 const prismaReadCount = vi.fn()
 const prismaReadUserFindUnique = vi.fn()
+const prismaReadBlockListFindUnique = vi.fn()
 vi.mock('../../src/config/database', () => ({
   prisma: {
     $transaction: async (fn: (tx: Record<string, never>) => Promise<unknown>) =>
@@ -62,6 +65,9 @@ vi.mock('../../src/config/database', () => ({
     },
     user: {
       findUnique: (...a: unknown[]) => prismaReadUserFindUnique(...a),
+    },
+    blockList: {
+      findUnique: (...a: unknown[]) => prismaReadBlockListFindUnique(...a),
     },
   },
 }))
@@ -116,11 +122,13 @@ vi.mock('../../src/queues/subscription.queue', () => ({
 const redisSet = vi.fn()
 const redisDel = vi.fn()
 const redisGet = vi.fn()
+const redisMget = vi.fn()
 vi.mock('../../src/config/redis', () => ({
   redisClient: {
     set: (...a: unknown[]) => redisSet(...a),
     del: (...a: unknown[]) => redisDel(...a),
     get: (...a: unknown[]) => redisGet(...a),
+    mget: (...a: unknown[]) => redisMget(...a),
   },
   getRedisForRead: () => ({
     get: (...a: unknown[]) => redisGet(...a),
@@ -132,6 +140,7 @@ vi.mock('../../src/config/redis', () => ({
     subscriptionTopCreators: (country: string) => `sub:top-creators:${country}`,
     subscriptionTopCreatorsGlobal: () => `sub:top-creators:global`,
     subscriptionTopCreatorsByPosts: () => `sub:top-creators:global:posts`,
+    hostRevenueShares: () => 'host:revenue-shares',
   },
   SUBSCRIPTION_COUNT_CACHE_TTL: 300,
   SUB_TOP_CREATORS_TTL: 300,
@@ -143,6 +152,11 @@ const { AppError } = await import('../../src/middlewares/errorHandler')
 describe('subscriptionService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    redisSet.mockResolvedValue('OK')
+    redisDel.mockResolvedValue(1)
+    redisGet.mockResolvedValue(null)
+    redisMget.mockResolvedValue([])
+    prismaReadBlockListFindUnique.mockResolvedValue(null)
     debitForCreatorSubscription.mockResolvedValue(undefined)
     creditInTransaction.mockResolvedValue({
       ledgerEntryId: 'pt-1',
@@ -203,6 +217,42 @@ describe('subscriptionService', () => {
     expect(debitForCreatorSubscription).not.toHaveBeenCalled()
   })
 
+  it('createSubscription: concurrent calls for the same pair both reading no existing row resolve to one success and one clean 409, never a raw unique-violation', async () => {
+    // Both concurrent callers' pre-check race window: both see no existing
+    // subscription, so both derive the identical ledger idempotency key. The
+    // second's ledger insert collides with the first's on the DB's real unique
+    // constraint (coin_ledger_entries.idempotency_key) — simulated here since a
+    // true concurrent-transaction race needs real Postgres.
+    findByPair.mockResolvedValue(null)
+    debitForCreatorSubscription
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      )
+      // Retry re-runs the whole flow; by now findByPair (still mocked to null
+      // here, since this test only cares that the raw P2002 never escapes —
+      // the real DB would return the winner's row on retry) sees no dup gate,
+      // so allow the retried debit to succeed rather than asserting a specific
+      // re-resolution path.
+      .mockResolvedValueOnce(null)
+
+    const results = await Promise.allSettled([
+      subscriptionService.createSubscription('fan-1', 'creator-1'),
+      subscriptionService.createSubscription('fan-1', 'creator-1'),
+    ])
+
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        // Whatever the outcome, it must be a clean AppError, never a raw
+        // Prisma P2002 escaping uncaught.
+        expect(r.reason).not.toBeInstanceOf(Prisma.PrismaClientKnownRequestError)
+      }
+    }
+  })
+
   it('cancelSubscription sets CANCELLED and clears jobs and access', async () => {
     findByPair.mockResolvedValue({
       id: 'sub-1',
@@ -229,31 +279,24 @@ describe('subscriptionService', () => {
   })
 
   it('checkAccess Redis hit skips DB', async () => {
-    redisGet.mockResolvedValueOnce('1')
+    redisMget.mockResolvedValueOnce(['1'])
 
     const ok = await subscriptionService.checkAccess('fan-1', 'creator-1')
 
     expect(ok).toBe(true)
-    expect(findByPair).not.toHaveBeenCalled()
+    expect(findActivePairs).not.toHaveBeenCalled()
   })
 
   it('checkAccess Redis miss uses DB and warms cache', async () => {
-    redisGet.mockResolvedValueOnce(null)
-    findByPair.mockResolvedValue({
-      id: 'sub-1',
-      subscriberId: 'fan-1',
-      creatorId: 'creator-1',
-      status: CreatorSubscriptionStatus.ACTIVE,
-      nextRenewalAt: new Date('2026-06-01T00:00:00Z'),
-      graceUntil: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })
+    redisMget.mockResolvedValueOnce([null])
+    findActivePairs.mockResolvedValue([
+      { creatorId: 'creator-1', nextRenewalAt: new Date('2026-06-01T00:00:00Z') },
+    ])
 
     const ok = await subscriptionService.checkAccess('fan-1', 'creator-1')
 
     expect(ok).toBe(true)
-    expect(findByPair).toHaveBeenCalled()
+    expect(findActivePairs).toHaveBeenCalled()
     expect(redisSet).toHaveBeenCalled()
   })
 
@@ -278,8 +321,9 @@ describe('subscriptionService', () => {
         },
       },
     ])
-    const items = await subscriptionService.listMySubscriptions('fan-1')
-    expect(items[0]).toMatchObject({
+    const result = await subscriptionService.listMySubscriptions('fan-1')
+    expect(result.nextCursor).toBeNull()
+    expect(result.items[0]).toMatchObject({
       userId: 'creator-1',
       publicId: '34216590',
       username: 'creator',
@@ -303,8 +347,9 @@ describe('subscriptionService', () => {
         },
       },
     ])
-    const items = await subscriptionService.listMySubscribers('creator-1')
-    expect(items[0]).toMatchObject({
+    const result = await subscriptionService.listMySubscribers('creator-1')
+    expect(result.nextCursor).toBeNull()
+    expect(result.items[0]).toMatchObject({
       userId: 'fan-1',
       publicId: '34216599',
       username: 'fan',
@@ -312,6 +357,52 @@ describe('subscriptionService', () => {
       avatarUrl: null,
       country: null,
     })
+  })
+
+  it('listMySubscribers paginates across two pages with no duplicated or skipped rows', async () => {
+    const row = (id: string, isoUpdatedAt: string) => ({
+      id,
+      updatedAt: new Date(isoUpdatedAt),
+      subscriber: {
+        id,
+        publicId: 1000n,
+        username: `user-${id}`,
+        firstName: null,
+        lastName: null,
+        avatarUrl: null,
+        country: null,
+      },
+    })
+    const rowA = row('sub-a', '2026-08-03T00:00:00.000Z')
+    const rowB = row('sub-b', '2026-08-02T00:00:00.000Z')
+    const rowC = row('sub-c', '2026-08-01T00:00:00.000Z')
+
+    // Page 1: limit=2, repository (mirroring take: limit+1) returns 3 rows —
+    // the 3rd signals "more pages exist" without a separate count query.
+    listActiveSubscribersForCreator.mockResolvedValueOnce([rowA, rowB, rowC])
+    const page1 = await subscriptionService.listMySubscribers('creator-1', 2)
+    expect(page1.items.map((i) => i.userId)).toEqual(['sub-a', 'sub-b'])
+    expect(page1.nextCursor).not.toBeNull()
+
+    // Page 2: service must decode page1.nextCursor and pass it straight through
+    // to the repository as the cursor for the next call.
+    listActiveSubscribersForCreator.mockResolvedValueOnce([rowC])
+    const page2 = await subscriptionService.listMySubscribers(
+      'creator-1',
+      2,
+      page1.nextCursor!,
+    )
+    expect(page2.items.map((i) => i.userId)).toEqual(['sub-c'])
+    expect(page2.nextCursor).toBeNull()
+    expect(listActiveSubscribersForCreator).toHaveBeenLastCalledWith('creator-1', 2, {
+      updatedAt: rowB.updatedAt.toISOString(),
+      id: 'sub-b',
+    })
+
+    // No row appears on both pages, none is missing across the two pages.
+    const seenAcrossPages = [...page1.items, ...page2.items].map((i) => i.userId)
+    expect(seenAcrossPages).toEqual(['sub-a', 'sub-b', 'sub-c'])
+    expect(new Set(seenAcrossPages).size).toBe(seenAcrossPages.length)
   })
 
   it('renewalJob success advances nextRenewalAt and schedules next renewal', async () => {

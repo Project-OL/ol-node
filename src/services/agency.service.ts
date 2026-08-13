@@ -153,7 +153,7 @@ export const agencyService = {
         await seedCoinsellerWhatsappFromKyc(tx, userRow.id)
         return ag
       },
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
 
     await agencyService.bustCachesForAgency(agency.userId, agency.defaultPublicId)
@@ -298,7 +298,7 @@ export const agencyService = {
         await seedCoinsellerWhatsappFromKyc(tx, userRow.id)
         return ag
       },
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
 
     await agencyService.bustCachesForAgency(agency.userId, agency.defaultPublicId)
@@ -419,7 +419,6 @@ export const agencyService = {
     }
     if (tx) return run(tx)
     const updated = await prisma.$transaction(async (inner) => run(inner), {
-      isolationLevel: 'Serializable',
       timeout: TX_TIMEOUT_MS,
     })
     await cacheRedisService.del(RedisKeys.ctBalance(userId))
@@ -430,7 +429,7 @@ export const agencyService = {
   async unpauseAgency(userId: string, opts?: { unfreezeWallets?: boolean; adminUserId?: string }) {
     const updated = await prisma.$transaction(
       async (tx) => agencyRepository.setPause(userId, { pausedAt: null, pausedUntil: null }, tx),
-      { isolationLevel: 'Serializable', timeout: TX_TIMEOUT_MS },
+      { timeout: TX_TIMEOUT_MS },
     )
     if (opts?.unfreezeWallets !== false) {
       const { adminWalletService } = await import('./adminWallet.service')

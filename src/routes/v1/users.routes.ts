@@ -66,7 +66,7 @@ export default async function usersRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Users'],
         description:
-          'Active timed moderation restrictions for the caller (messaging ban, live chat/audio mute, live-start ban).',
+          'Active timed moderation restrictions for the caller (messaging ban — global or targeted, live chat/audio mute, live-start ban).',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -454,7 +454,7 @@ export default async function usersRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Users'],
         description:
-          'Search user by publicId. User card includes profile bio, levels, follow state, blockedByMe, userBlockedMe when applicable.',
+          'Search user by publicId. User card includes profile bio, levels, follow state, blockedByMe, userBlockedMe, and composed adminTags.',
         querystring: {
           type: 'object',
           required: ['publicId'],

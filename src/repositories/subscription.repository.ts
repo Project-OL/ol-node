@@ -3,6 +3,7 @@ import { CreatorSubscriptionStatus } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { USER_STATUSES } from '../models/types'
 import { countryEqualsFilter } from '../utils/agency-country'
+import type { SubscriptionCursor } from '../utils/subscriptionCursor'
 
 const BLOCKED_USER_STATUSES = [
   'suspended',
@@ -74,6 +75,21 @@ export const subscriptionRepository = {
     })
   },
 
+  async findActivePairs(
+    subscriberId: string,
+    creatorIds: string[],
+  ): Promise<Array<{ creatorId: string; nextRenewalAt: Date }>> {
+    if (creatorIds.length === 0) return []
+    return prismaRead.creatorSubscription.findMany({
+      where: {
+        subscriberId,
+        creatorId: { in: creatorIds },
+        status: CreatorSubscriptionStatus.ACTIVE,
+      },
+      select: { creatorId: true, nextRenewalAt: true },
+    })
+  },
+
   async isActivePair(subscriberId: string, creatorId: string): Promise<boolean> {
     const count = await prismaRead.creatorSubscription.count({
       where: {
@@ -85,26 +101,58 @@ export const subscriptionRepository = {
     return count > 0
   },
 
-  async listActiveCreatorsForSubscriber(subscriberId: string) {
+  async listActiveCreatorsForSubscriber(
+    subscriberId: string,
+    limit: number,
+    cursor?: SubscriptionCursor,
+  ) {
     return prismaRead.creatorSubscription.findMany({
       where: {
         subscriberId,
         status: CreatorSubscriptionStatus.ACTIVE,
+        ...(cursor
+          ? {
+              OR: [
+                { updatedAt: { lt: new Date(cursor.updatedAt) } },
+                {
+                  updatedAt: new Date(cursor.updatedAt),
+                  id: { lt: cursor.id },
+                },
+              ],
+            }
+          : {}),
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
       include: {
         creator: { select: userListSelect },
       },
     })
   },
 
-  async listActiveSubscribersForCreator(creatorId: string) {
+  async listActiveSubscribersForCreator(
+    creatorId: string,
+    limit: number,
+    cursor?: SubscriptionCursor,
+  ) {
     return prismaRead.creatorSubscription.findMany({
       where: {
         creatorId,
         status: CreatorSubscriptionStatus.ACTIVE,
+        ...(cursor
+          ? {
+              OR: [
+                { updatedAt: { lt: new Date(cursor.updatedAt) } },
+                {
+                  updatedAt: new Date(cursor.updatedAt),
+                  id: { lt: cursor.id },
+                },
+              ],
+            }
+          : {}),
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
       include: {
         subscriber: { select: userListSelect },
       },

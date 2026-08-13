@@ -75,6 +75,20 @@ vi.mock('../../src/repositories/post.repository', () => ({
   },
 }))
 
+const prismaReadUserFindUnique = vi.fn()
+vi.mock('../../src/config/database', () => ({
+  prisma: {
+    user: {
+      findUnique: (...args: unknown[]) => prismaReadUserFindUnique(...args),
+    },
+  },
+  prismaRead: {
+    user: {
+      findUnique: (...args: unknown[]) => prismaReadUserFindUnique(...args),
+    },
+  },
+}))
+
 const { postService } = await import('../../src/services/post.service')
 
 const userId = 'user-1'
@@ -83,6 +97,10 @@ const postId = 'post-1'
 describe('postService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    prismaReadUserFindUnique.mockResolvedValue({
+      postingBanned: false,
+      postingSuspendedUntil: null,
+    })
   })
 
   describe('generateUploadUrl', () => {
