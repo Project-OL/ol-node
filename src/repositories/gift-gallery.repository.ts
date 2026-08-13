@@ -1,32 +1,35 @@
 import { prisma, prismaRead } from '../config/database'
 import type { GiftGallery, Prisma } from '@prisma/client'
 
-const globalGalleryInclude = {
-  sections: {
-    where: {
-      isActive: true,
-      OR: [{ enabledAt: null }, { enabledAt: { lte: new Date() } }],
-    },
-    orderBy: { sortOrder: 'asc' as const },
-    include: {
-      gifts: {
-        orderBy: { sortOrder: 'asc' as const },
-        where: { gift: { isActive: true } },
-        include: { gift: true },
+function globalGalleryInclude(now = new Date()) {
+  return {
+    sections: {
+      where: {
+        isActive: true,
+        OR: [{ enabledAt: null }, { enabledAt: { lte: now } }],
+      },
+      orderBy: { sortOrder: 'asc' as const },
+      include: {
+        gifts: {
+          orderBy: { sortOrder: 'asc' as const },
+          where: { gift: { isActive: true } },
+          include: { gift: true },
+        },
       },
     },
-  },
-} satisfies Prisma.GiftGalleryInclude
+  } satisfies Prisma.GiftGalleryInclude
+}
 
 export type GlobalGalleryWithSections = Prisma.GiftGalleryGetPayload<{
-  include: typeof globalGalleryInclude
+  include: ReturnType<typeof globalGalleryInclude>
 }>
 
 export const giftGalleryRepository = {
   async findGlobalGallery(year: number, month: number): Promise<GlobalGalleryWithSections | null> {
-    return prismaRead.giftGallery.findUnique({
+    // Primary: admin template edits must not be re-cached from a lagging replica.
+    return prisma.giftGallery.findUnique({
       where: { year_month: { year, month } },
-      include: globalGalleryInclude,
+      include: globalGalleryInclude(),
     })
   },
 
@@ -66,12 +69,23 @@ export const giftGalleryRepository = {
     galleryId: string,
     hostUserId: string,
   ): Promise<{ totalItems: number; receivedItems: number; isFullGallery: boolean }> {
+    const now = new Date()
+    const visibleItem = {
+      section: {
+        galleryId,
+        isActive: true,
+        OR: [{ enabledAt: null }, { enabledAt: { lte: now } }],
+      },
+      gift: { isActive: true },
+    }
     const [totalItems, receivedItems] = await Promise.all([
-      prismaRead.giftGallerySectionItem.count({
-        where: { section: { galleryId } },
-      }),
-      prismaRead.giftGalleryProgress.count({
-        where: { galleryId, hostUserId },
+      prisma.giftGallerySectionItem.count({ where: visibleItem }),
+      prisma.giftGalleryProgress.count({
+        where: {
+          galleryId,
+          hostUserId,
+          sectionItem: visibleItem,
+        },
       }),
     ])
     const isFullGallery = totalItems > 0 && receivedItems >= totalItems

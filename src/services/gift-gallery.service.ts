@@ -86,6 +86,24 @@ function firstGifterDto(p: {
   }
 }
 
+/** Visible template slots only — not hidden sections, inactive gifts, or leftover progress. */
+export function tallyVisibleGalleryCompletion(
+  visibleItemIds: string[],
+  receivedItemIds: Iterable<string>,
+): { totalItems: number; receivedItems: number; isFullGallery: boolean } {
+  const received = new Set(receivedItemIds)
+  let receivedItems = 0
+  for (const id of visibleItemIds) {
+    if (received.has(id)) receivedItems += 1
+  }
+  const totalItems = visibleItemIds.length
+  return {
+    totalItems,
+    receivedItems,
+    isFullGallery: totalItems > 0 && receivedItems >= totalItems,
+  }
+}
+
 function buildMergedResponse(
   hostUserId: string,
   gallery: GlobalGalleryWithSections,
@@ -103,10 +121,10 @@ function buildMergedResponse(
     ]),
   )
 
-  let totalItems = 0
+  const visibleItemIds: string[] = []
   const sections = gallery.sections.map((s) => {
     const gifts = s.gifts.map((gi) => {
-      totalItems += 1
+      visibleItemIds.push(gi.id)
       const prog = progressByItemId.get(gi.id)
       return {
         itemId: gi.id,
@@ -130,8 +148,10 @@ function buildMergedResponse(
     }
   })
 
-  const receivedItems = progressRows.length
-  const isFullGallery = totalItems > 0 && receivedItems >= totalItems
+  const { totalItems, receivedItems, isFullGallery } = tallyVisibleGalleryCompletion(
+    visibleItemIds,
+    progressByItemId.keys(),
+  )
 
   return {
     galleryId: gallery.id,

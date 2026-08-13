@@ -1,4 +1,4 @@
-import { prismaRead } from '../config/database'
+import { prisma } from '../config/database'
 import { giftGalleryAdminRepository } from '../repositories/gift-gallery-admin.repository'
 import { giftRepository } from '../repositories/gift.repository'
 import { AppError } from '../middlewares/errorHandler'
@@ -13,7 +13,7 @@ function resolvePeriod(year?: number, month?: number) {
 }
 
 async function galleryPeriodForSection(section: { galleryId: string }) {
-  const gallery = await prismaRead.giftGallery.findUnique({
+  const gallery = await prisma.giftGallery.findUnique({
     where: { id: section.galleryId },
     select: { year: true, month: true },
   })
@@ -22,22 +22,24 @@ async function galleryPeriodForSection(section: { galleryId: string }) {
 }
 
 function mapSection(s: AdminGallerySection) {
+  const gifts = s.gifts.map((gi) => ({
+    itemId: gi.id,
+    giftId: gi.gift.id,
+    name: gi.gift.name,
+    code: gi.gift.code,
+    displayImageUrl: gi.gift.displayImageUrl,
+    coinCost: gi.gift.coinCost,
+    sortOrder: gi.sortOrder,
+    isActive: gi.gift.isActive,
+  }))
   return {
     id: s.id,
     name: s.title,
     displayOrder: s.sortOrder,
     status: s.isActive ? ('active' as const) : ('hidden' as const),
     enabledAt: s.enabledAt?.toISOString() ?? null,
-    giftCount: s._count.gifts,
-    gifts: s.gifts.map((gi) => ({
-      itemId: gi.id,
-      giftId: gi.gift.id,
-      name: gi.gift.name,
-      code: gi.gift.code,
-      displayImageUrl: gi.gift.displayImageUrl,
-      coinCost: gi.gift.coinCost,
-      sortOrder: gi.sortOrder,
-    })),
+    giftCount: gifts.length,
+    gifts,
   }
 }
 
@@ -49,11 +51,14 @@ export const giftGalleryAdminService = {
       period.month,
     )
     const sections = await giftGalleryAdminRepository.listSections(gallery.id)
+    const mapped = sections.map(mapSection)
     return {
       galleryId: gallery.id,
       year: period.year,
       month: period.month,
-      categories: sections.map(mapSection),
+      totalSections: mapped.length,
+      totalGifts: mapped.reduce((n, s) => n + s.giftCount, 0),
+      categories: mapped,
     }
   },
 

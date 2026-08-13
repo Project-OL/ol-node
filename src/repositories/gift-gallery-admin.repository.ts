@@ -1,4 +1,4 @@
-import { prisma, prismaRead } from '../config/database'
+import { prisma } from '../config/database'
 import type { Prisma } from '@prisma/client'
 
 const adminSectionInclude = {
@@ -23,7 +23,7 @@ export const giftGalleryAdminRepository = {
   },
 
   async listSections(galleryId: string): Promise<AdminGallerySection[]> {
-    return prismaRead.giftGallerySection.findMany({
+    return prisma.giftGallerySection.findMany({
       where: { galleryId },
       include: adminSectionInclude,
       orderBy: { sortOrder: 'asc' },
@@ -31,7 +31,7 @@ export const giftGalleryAdminRepository = {
   },
 
   async findSectionById(sectionId: string): Promise<AdminGallerySection | null> {
-    return prismaRead.giftGallerySection.findUnique({
+    return prisma.giftGallerySection.findUnique({
       where: { id: sectionId },
       include: adminSectionInclude,
     })
@@ -45,7 +45,7 @@ export const giftGalleryAdminRepository = {
   }) {
     let sortOrder = data.sortOrder
     if (sortOrder === undefined) {
-      const max = await prismaRead.giftGallerySection.findFirst({
+      const max = await prisma.giftGallerySection.findFirst({
         where: { galleryId: data.galleryId },
         orderBy: { sortOrder: 'desc' },
         select: { sortOrder: true },
@@ -80,7 +80,10 @@ export const giftGalleryAdminRepository = {
   },
 
   async deleteSection(sectionId: string) {
-    return prisma.giftGallerySection.delete({ where: { id: sectionId } })
+    return prisma.$transaction(async (tx) => {
+      await tx.giftGallerySectionItem.deleteMany({ where: { sectionId } })
+      return tx.giftGallerySection.delete({ where: { id: sectionId } })
+    })
   },
 
   async reorderSections(galleryId: string, orderedIds: string[]) {
