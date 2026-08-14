@@ -75,6 +75,7 @@ import adminCurrencyRoutes from './routes/v1/admin-currency.routes'
 import adminActivityRoutes from './routes/v1/admin-activity.routes'
 import adminUserModerationRoutes from './routes/v1/admin-user-moderation.routes'
 import adminUserRestrictionRoutes from './routes/v1/admin-user-restriction.routes'
+import adminLiveModerationRoutes from './routes/v1/admin-live-moderation.routes'
 import postAdminRoutes from './routes/v1/post-admin.routes'
 import faceVerificationAdminRoutes from './routes/v1/face-verification-admin.routes'
 import faceVerificationRoutes from './routes/v1/face-verification.routes'
@@ -266,6 +267,7 @@ export async function buildApp() {
       await adminApp.register(adminActivityRoutes)
       await adminApp.register(adminUserModerationRoutes)
       await adminApp.register(adminUserRestrictionRoutes)
+      await adminApp.register(adminLiveModerationRoutes)
       await adminApp.register(userAdminRoutes)
       await adminApp.register(platformMessageAdminRoutes)
       await adminApp.register(pushNotificationAdminRoutes)

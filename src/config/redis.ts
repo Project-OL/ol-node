@@ -401,12 +401,8 @@ export const RedisKeys = {
    * Types: LIVE_CHAT_MUTE | LIVE_AUDIO_MUTE | MESSAGING_DISABLE | LIVE_STREAM_START_BAN
    */
   userRestriction: (userId: string, type: string) => `user:restriction:${userId}:${type}`,
-  /**
-   * Admin requested force-stop of a live room. Livestream backend should poll/subscribe
-   * and honor this (TODO: coordinate kill path with livestream service).
-   * Value: JSON `{ requestedAt, adminUserId, reason?, hostUserId, source }`
-   */
-  liveForceStop: (roomId: string) => `live:force-stop:${roomId}`,
+  /** Live-server cache for users.suspended_until (nudity / host stream ban). */
+  liveUserSuspended: (userId: string) => `user:suspended:${userId}`,
   /** Short-lived flag set on admin logout; TTL matches ADMIN_JWT_ACCESS_EXPIRES_IN. */
   adminTokenRevoked: (adminId: string) => `admin:revoked:${adminId}`,
   /** Admin presence heartbeat — refreshed on every authenticated admin request (TTL ADMIN_ONLINE_TTL). */

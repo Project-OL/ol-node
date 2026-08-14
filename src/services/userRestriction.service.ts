@@ -86,8 +86,8 @@ function parseCache(raw: string): { until: Date; targetUserIds: string[] | null 
     return { until, targetUserIds: null }
   }
   try {
-    const parsed = JSON.parse(raw) as RestrictionCachePayload
-    const until = new Date(parsed.until)
+    const parsed = JSON.parse(raw) as RestrictionCachePayload & { restrictedUntil?: string }
+    const until = new Date(parsed.until ?? parsed.restrictedUntil ?? '')
     if (Number.isNaN(until.getTime())) return null
     return {
       until,
@@ -334,6 +334,20 @@ export const userRestrictionService = {
       event: 'restriction.applied',
       restriction: dto,
     })
+
+    if (params.type === 'LIVE_STREAM_START_BAN') {
+      void import('./adminLiveStream.service')
+        .then(({ adminLiveStreamService }) =>
+          adminLiveStreamService.stopAllActiveForUser({
+            userId: params.userId,
+            adminUserId: params.adminUserId,
+            reason: params.reason ?? 'LIVE_STREAM_START_BAN',
+          }),
+        )
+        .catch(() => {
+          /* best-effort room close */
+        })
+    }
 
     return dto
   },

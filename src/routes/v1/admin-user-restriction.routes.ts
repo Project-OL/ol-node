@@ -141,7 +141,7 @@ export default async function adminUserRestrictionRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users', 'Live'],
         description:
-          'Request stop of an ongoing live stream. Sets Redis live:force-stop:{roomId}; livestream backend must honor it (pending integration).',
+          'Stop an ongoing live stream: LiveKit deleteRoom (disconnect host and viewers), end live_streams + agency session, clear livestream Redis keys. No Live-server change required.',
       },
     },
     async (request, reply) => {

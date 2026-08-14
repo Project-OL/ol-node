@@ -1,8 +1,12 @@
-import { LIVE_ACTIVE_SESSION_TTL, RedisKeys, redisClient } from '../config/redis'
+import { EgressClient, RoomServiceClient } from 'livekit-server-sdk'
+import { RedisKeys, redisClient } from '../config/redis'
 import { prisma, prismaRead } from '../config/database'
+import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
 import { userRepository } from '../repositories/user.repository'
+import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
+import { liveSessionService } from './liveSession.service'
 
 export type AdminLiveStreamRow = {
   source: 'host_live_session' | 'live_stream'
@@ -15,13 +19,101 @@ export type AdminLiveStreamRow = {
   isLive: boolean
 }
 
+/** Redis keys owned by the livestream process (shared Redis). Cleared here so we do not need Live-server changes. */
+function liveRoomRedisKeys(roomId: string, dbId: string | null, hostUserId: string): string[] {
+  return [
+    `user:active_stream:${hostUserId}`,
+    `stream:info:${roomId}`,
+    ...(dbId ? [`stream:info:${dbId}`] : []),
+    `stream:camera_off_at:${roomId}`,
+    `stream:uncounted_seconds:${roomId}`,
+    `stream:active:${roomId}`,
+    `stream:history:${roomId}`,
+    `stream:chats:${roomId}`,
+    `stream:admins:${roomId}`,
+    `stream:kicked:${roomId}`,
+    `stream:password:${roomId}`,
+    `stream:sheet:${roomId}`,
+    `stream:mic_permission:${roomId}`,
+    `stream:chat_permission:${roomId}`,
+    `stream:chat_cleared:${roomId}`,
+  ]
+}
+
+async function delByPattern(pattern: string): Promise<void> {
+  let cursor = '0'
+  do {
+    const [next, keys] = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 80)
+    cursor = next
+    if (keys.length) await redisClient.del(...keys)
+  } while (cursor !== '0')
+}
+
+async function persistLiveChats(roomId: string): Promise<void> {
+  const raw = await redisClient.lrange(`stream:chats:${roomId}`, 0, -1)
+  if (!raw.length) return
+  const rows = []
+  for (const c of raw) {
+    try {
+      const parsed = JSON.parse(c) as {
+        id?: string
+        streamId?: string
+        senderId?: string
+        message?: string
+        createdAt?: string
+        replyToMessageId?: string | null
+        replyToUserId?: string | null
+        replyToUsername?: string | null
+        replyToText?: string | null
+      }
+      if (!parsed.id || !parsed.senderId || parsed.message == null) continue
+      rows.push({
+        id: parsed.id,
+        streamId: parsed.streamId ?? roomId,
+        senderId: parsed.senderId,
+        message: parsed.message,
+        createdAt: parsed.createdAt ? new Date(parsed.createdAt) : new Date(),
+        replyToMessageId: parsed.replyToMessageId ?? null,
+        replyToUserId: parsed.replyToUserId ?? null,
+        replyToUsername: parsed.replyToUsername ?? null,
+        replyToText: parsed.replyToText ?? null,
+      })
+    } catch {
+      /* skip malformed */
+    }
+  }
+  if (!rows.length) return
+  await prisma.liveMessage.createMany({ data: rows, skipDuplicates: true })
+}
+
+async function tryDeleteLivekitRoom(roomName: string): Promise<boolean> {
+  if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) return false
+  try {
+    const client = new RoomServiceClient(env.LIVEKIT_URL, env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET)
+    await client.deleteRoom(roomName)
+    return true
+  } catch (err) {
+    rootLogger.warn({ err, roomName }, 'admin live stop: LiveKit deleteRoom failed (room may already be gone)')
+    return false
+  }
+}
+
+async function tryStopEgress(playbackId: string | null | undefined): Promise<void> {
+  if (!playbackId || !env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) return
+  try {
+    const egress = new EgressClient(env.LIVEKIT_URL, env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET)
+    await egress.stopEgress(playbackId)
+  } catch (err) {
+    rootLogger.warn({ err, playbackId }, 'admin live stop: stopEgress failed')
+  }
+}
+
 /**
- * Admin live-stream listing + stop request.
+ * Admin live-stream listing + stop.
  *
- * TODO(livestream-backend): Coordinate the actual LiveKit/room kill with the
- * livestream service. This API currently records a Redis force-stop flag and
- * audits the request; the remote backend must honor `live:force-stop:{roomId}`
- * and then call POST /webhooks/live/session-end.
+ * Stop is fully handled in ol-node-rest (shared Postgres + Redis + LiveKit).
+ * Live-server does not need a subscriber: deleteRoom disconnects host/viewers,
+ * and livestream Redis keys are cleared so the host is not stuck "already live".
  */
 export const adminLiveStreamService = {
   async listActiveForUser(userId: string): Promise<{ userId: string; streams: AdminLiveStreamRow[] }> {
@@ -72,7 +164,6 @@ export const adminLiveStreamService = {
       })
     }
 
-    // Redis-only active pointer (webhook set) — include if not already listed
     if (redisActive) {
       try {
         const meta = JSON.parse(redisActive) as {
@@ -101,10 +192,6 @@ export const adminLiveStreamService = {
     return { userId, streams }
   },
 
-  /**
-   * Request stop of an ongoing stream.
-   * Does NOT yet force-disconnect LiveKit — see class TODO.
-   */
   async requestStop(params: {
     userId: string
     streamRef: string
@@ -123,7 +210,13 @@ export const adminLiveStreamService = {
     })
 
     const liveStream = hostSession
-      ? null
+      ? await prismaRead.liveStream.findFirst({
+          where: {
+            userId: params.userId,
+            OR: [{ streamId: hostSession.roomId }, { id: hostSession.roomId }],
+          },
+          orderBy: { startedAt: 'desc' },
+        })
       : await prismaRead.liveStream.findFirst({
           where: {
             userId: params.userId,
@@ -137,30 +230,60 @@ export const adminLiveStreamService = {
     }
 
     const roomId = hostSession?.roomId ?? liveStream!.streamId
-    const payload = {
-      requestedAt: new Date().toISOString(),
-      adminUserId: params.adminUserId,
-      reason: params.reason ?? null,
-      hostUserId: params.userId,
-      source: hostSession ? 'host_live_session' : 'live_stream',
-      sessionId: hostSession?.id ?? liveStream!.id,
-      pendingLiveBackend: true,
+    const dbId = liveStream?.id ?? null
+    const endedAt = new Date()
+    const startedAt = hostSession?.startedAt ?? liveStream?.startedAt ?? liveStream?.createdAt ?? endedAt
+
+    const uncountedRaw = await redisClient.get(`stream:uncounted_seconds:${roomId}`)
+    const cameraOffAt = await redisClient.get(`stream:camera_off_at:${roomId}`)
+    let uncountedSec = parseInt(uncountedRaw ?? '0', 10) || 0
+    if (cameraOffAt) {
+      const offSec = Math.floor((endedAt.getTime() - Number(cameraOffAt)) / 1000)
+      if (offSec > 60) uncountedSec += offSec - 60
+    }
+    const grossDurationSeconds = Math.max(0, Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000))
+    const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec)
+
+    try {
+      await persistLiveChats(roomId)
+    } catch (err) {
+      rootLogger.warn({ err, roomId }, 'admin live stop: chat persist failed')
     }
 
-    // TODO(livestream-backend): livestream service must consume this key and kill the room.
-    await redisClient.set(
-      RedisKeys.liveForceStop(roomId),
-      JSON.stringify(payload),
-      'EX',
-      LIVE_ACTIVE_SESSION_TTL,
-    )
-
-    // Soft-mark live_streams row so admin list clears; host_live_sessions wait for webhook end.
     if (liveStream) {
       await prisma.liveStream.update({
         where: { id: liveStream.id },
-        data: { isLive: false, endedAt: new Date() },
+        data: {
+          isLive: false,
+          endedAt,
+          effectiveDurationSeconds,
+        },
       })
+      await tryStopEgress(liveStream.playbackId)
+    }
+
+    try {
+      await liveSessionService.handleSessionEnd({
+        hostUserId: params.userId,
+        roomId,
+        durationSeconds: grossDurationSeconds,
+      })
+    } catch (err) {
+      rootLogger.warn({ err, roomId, userId: params.userId }, 'admin live stop: session-end failed')
+    }
+
+    const livekitRoomDeleted = await tryDeleteLivekitRoom(roomId)
+
+    try {
+      const keys = liveRoomRedisKeys(roomId, dbId, params.userId)
+      if (keys.length) await redisClient.del(...keys)
+      await Promise.all([
+        delByPattern(`stream:kicked:${roomId}:*`),
+        delByPattern(`stream:alias:${roomId}:*`),
+        delByPattern(`stream:viewers_sorted:${roomId}:*`),
+      ])
+    } catch (err) {
+      rootLogger.warn({ err, roomId }, 'admin live stop: Redis room cleanup failed')
     }
 
     auditService.log({
@@ -172,7 +295,7 @@ export const adminLiveStreamService = {
         roomId,
         streamRef: params.streamRef,
         reason: params.reason ?? null,
-        pendingLiveBackend: true,
+        livekitRoomDeleted,
       },
     })
 
@@ -180,9 +303,39 @@ export const adminLiveStreamService = {
       ok: true as const,
       status: 'STOP_REQUESTED' as const,
       roomId,
-      pendingLiveBackend: true,
-      message:
-        'Stop requested. Livestream backend must honor live:force-stop:{roomId} and call session-end webhook.',
+      pendingLiveBackend: false,
+      livekitRoomDeleted,
+      liveBackendNotified: false,
+      message: livekitRoomDeleted
+        ? 'Room closed. Host and viewers were disconnected; live Redis keys were cleared.'
+        : 'Stream marked ended and Redis cleared. Configure LIVEKIT_* on this API to also disconnect the LiveKit room.',
     }
+  },
+
+  async stopAllActiveForUser(params: {
+    userId: string
+    adminUserId: string
+    reason?: string
+  }): Promise<{ stopped: number }> {
+    const { streams } = await this.listActiveForUser(params.userId)
+    let stopped = 0
+    for (const stream of streams) {
+      try {
+        await this.requestStop({
+          userId: params.userId,
+          streamRef: stream.id,
+          adminUserId: params.adminUserId,
+          reason: params.reason,
+        })
+        stopped += 1
+      } catch (err) {
+        if (err instanceof AppError && err.code === 'LIVE_STREAM_NOT_FOUND') continue
+        rootLogger.warn(
+          { err, userId: params.userId, streamRef: stream.id },
+          'admin live stop-all: one stream failed',
+        )
+      }
+    }
+    return { stopped }
   },
 }

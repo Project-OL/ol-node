@@ -89,8 +89,6 @@ function mapRow(
   }
 }
 
-}
-
 export const adminUserSearchService = {
   /**
    * Push a user to the top of this admin's recent-search history (max 10, per admin).
