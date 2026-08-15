@@ -2,6 +2,7 @@ import { prisma } from '../config/database'
 import { redisClient } from '../config/redis'
 import { RedisKeys } from '../config/redis'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
+import { isPlatformConversationType } from '../lib/platform-conversations.constants'
 import { pushNotificationService } from './pushNotification.service'
 import { buildUserDisplayName } from '../utils/user-display'
 import { rootLogger } from '../utils/rootLogger'
@@ -89,10 +90,16 @@ async function publishOutboxPayload(params: {
         isDeleted: msg.isDeleted ?? false,
       },
     })
+    /** SYSTEM / NOTIFICATION / TRANSACTIONAL: also send the full NEW_MESSAGE on the
+     * auto-subscribed inbox channel so a connected user sees it without JOINing the thread. */
+    const fanoutFullNewMessage = isPlatformConversationType(params.conversationType)
     const digestPipe = redisClient.pipeline()
     for (const m of params.members) {
       if (m.userId === msg.senderId) continue
       digestPipe.publish(RedisKeys.userInboxChannel(m.userId), digestStr)
+      if (fanoutFullNewMessage) {
+        digestPipe.publish(RedisKeys.userInboxChannel(m.userId), params.payloadStr)
+      }
     }
     if (digestPipe.length > 0) await digestPipe.exec()
 

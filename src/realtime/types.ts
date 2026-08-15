@@ -6,6 +6,7 @@ export type MessageDTO = Record<string, unknown>
 
 export type ServerFrame =
   | {
+      /** Full message. JOIN room always; also on `msg:user:{userId}` for SYSTEM / NOTIFICATION / TRANSACTIONAL. Dedupe by `message.id`. */
       t: 'NEW_MESSAGE'
       conversationId: string
       message: MessageDTO
