@@ -14,7 +14,9 @@ import { parseJwtExpiresToSeconds } from '../utils/jwt'
 import { normalizeIp } from '../utils/ipAddress'
 import { passwordService } from './password.service'
 import { adminAuthConfigService } from './adminAuthConfig.service'
-import type { AdminRole } from '@prisma/client'
+import { auditService } from './audit.service'
+import { adminLoginFailureRepository } from '../repositories/adminLoginFailure.repository'
+import type { AdminLoginFailureReason, AdminRole } from '@prisma/client'
 
 const BCRYPT_ROUNDS = 12
 
@@ -64,6 +66,33 @@ function signRefreshToken(adminId: string, sessionId: string): string {
   )
 }
 
+async function persistFailedLogin(
+  admin: { id: string; email: string },
+  reason: AdminLoginFailureReason,
+  meta: { ipAddress?: string; userAgent?: string },
+) {
+  auditService.logAdmin({
+    adminUserId: admin.id,
+    actionType: 'ADMIN_LOGIN',
+    actionStatus: 'failed',
+    actionDetails: { reason, email: admin.email },
+    destination: 'Admin login',
+    ipAddress: meta.ipAddress,
+    userAgent: meta.userAgent,
+  })
+  try {
+    await adminLoginFailureRepository.create({
+      adminId: admin.id,
+      email: admin.email,
+      reason,
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent,
+    })
+  } catch (err) {
+    console.error('[admin-auth] failed-login log write failed', err)
+  }
+}
+
 export const systemAdminService = {
   async createAdmin(
     data: {
@@ -107,10 +136,16 @@ export const systemAdminService = {
     const admin = await systemAdminRepository.findByEmail(email)
     if (!admin || !admin.isActive) {
       await recordLoginFailure(failKey)
+      if (admin) {
+        await persistFailedLogin(admin, 'INVALID_CREDENTIALS', meta)
+        await systemAdminRepository.touchLastFailedLogin(admin.id).catch(() => null)
+      }
       throw new AppError(401, 'Invalid credentials', 'ADMIN_INVALID_CREDENTIALS')
     }
 
     if (admin.lockedUntil && admin.lockedUntil > new Date()) {
+      await persistFailedLogin(admin, 'ACCOUNT_LOCKED', meta)
+      await systemAdminRepository.touchLastFailedLogin(admin.id).catch(() => null)
       const retryAfter = Math.ceil((admin.lockedUntil.getTime() - Date.now()) / 1000)
       throw new AppError(423, 'Account temporarily locked', 'ADMIN_ACCOUNT_LOCKED', { retryAfter })
     }
@@ -118,6 +153,7 @@ export const systemAdminService = {
     const valid = await bcrypt.compare(password, admin.passwordHash)
     if (!valid) {
       await recordLoginFailure(failKey)
+      await persistFailedLogin(admin, 'INVALID_CREDENTIALS', meta)
       const updated = await systemAdminRepository.incrementFailedLogin(admin.id)
       const { failedLoginThreshold, lockoutMinutes } =
         await adminAuthConfigService.getLockoutSettings()
@@ -142,6 +178,8 @@ export const systemAdminService = {
         : false
       if (!allowed) {
         await recordLoginFailure(failKey)
+        await persistFailedLogin(admin, 'ADMIN_IP_FORBIDDEN', meta)
+        await systemAdminRepository.touchLastFailedLogin(admin.id).catch(() => null)
         console.warn('[admin-auth] login blocked by IP whitelist', {
           adminId: admin.id,
           role: admin.role,

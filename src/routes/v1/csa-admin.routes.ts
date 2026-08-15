@@ -13,6 +13,7 @@ import {
   ExportCsasQuerySchema,
   CsaIdParamsSchema,
   FailedLoginsQuerySchema,
+  FailedLoginAttemptsQuerySchema,
   CsaTicketsQuerySchema,
   AddCsaIpSchema,
   CsaIpWhitelistIdParamsSchema,
@@ -43,6 +44,12 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
   app.get('/csas/failed-logins', { preHandler: preAuth }, async (req, reply) => {
     const query = parseRequest(FailedLoginsQuerySchema, req.query)
     const result = await csaManagementService.listFailedLogins(query)
+    return reply.send(result)
+  })
+
+  app.get('/csas/failed-login-attempts', { preHandler: preAuth }, async (req, reply) => {
+    const query = parseRequest(FailedLoginAttemptsQuerySchema, req.query)
+    const result = await csaManagementService.listFailedLoginAttempts(query)
     return reply.send(result)
   })
 

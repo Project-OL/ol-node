@@ -117,6 +117,13 @@ export const systemAdminRepository = {
     })
   },
 
+  async touchLastFailedLogin(id: string) {
+    return prisma.systemAdmin.update({
+      where: { id },
+      data: { lastFailedLoginAt: new Date() },
+    })
+  },
+
   async resetFailedLogin(id: string) {
     return prisma.systemAdmin.update({
       where: { id },

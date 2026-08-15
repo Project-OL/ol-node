@@ -269,6 +269,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/support/csas/overview',
     'GET /admin/support/csas',
     'GET /admin/support/csas/failed-logins',
+    'GET /admin/support/csas/failed-login-attempts',
     'POST /admin/support/csas',
     'PATCH /admin/support/csas/:adminId',
     'PATCH /admin/support/csas/:adminId/status',

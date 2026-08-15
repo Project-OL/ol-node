@@ -88,6 +88,14 @@ export const FailedLoginsQuerySchema = z.object({
 })
 export type FailedLoginsQuery = z.infer<typeof FailedLoginsQuerySchema>
 
+export const FailedLoginAttemptsQuerySchema = z.object({
+  withinHours: z.coerce.number().int().min(1).max(168).default(24),
+  adminId: z.string().uuid().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+})
+export type FailedLoginAttemptsQuery = z.infer<typeof FailedLoginAttemptsQuerySchema>
+
 /** Per-CSA ticket list (SUPER_ADMIN) — all tickets or CLOSED+rated filter. */
 export const CsaTicketsQuerySchema = z.object({
   status: z

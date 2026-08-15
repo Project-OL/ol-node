@@ -2928,8 +2928,33 @@ model SystemAdmin {
   reviewedReports MessageReport[]       @relation("ReportReviewer")
   viewAssignments AdminViewAssignment[]
   ipWhitelist     AdminIpWhitelist[]
+  loginFailures   AdminLoginFailure[]
 
   @@map("system_admins")
+}
+
+/// Append-only failed admin login events. Consecutive lockout counters on
+/// system_admins still reset on success; these rows do not.
+enum AdminLoginFailureReason {
+  INVALID_CREDENTIALS
+  ACCOUNT_LOCKED
+  ADMIN_IP_FORBIDDEN
+}
+
+model AdminLoginFailure {
+  id         String                   @id @default(uuid())
+  adminId    String                   @map("admin_id")
+  email      String                   @db.VarChar(255)
+  reason     AdminLoginFailureReason
+  ipAddress  String?                  @map("ip_address") @db.VarChar(45)
+  userAgent  String?                  @map("user_agent") @db.VarChar(512)
+  createdAt  DateTime                 @default(now()) @map("created_at")
+
+  admin SystemAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("admin_login_failures")
 }
 
 /// Exact IPv4/IPv6 allow-list for admin login. CSAs always require a match

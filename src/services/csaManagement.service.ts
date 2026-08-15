@@ -10,9 +10,11 @@ import type {
   UpdateCsaInput,
   ListCsasQuery,
   FailedLoginsQuery,
+  FailedLoginAttemptsQuery,
   CsaTicketsQuery,
   AddCsaIpInput,
 } from '../models/csa-admin.schemas'
+import { adminLoginFailureRepository } from '../repositories/adminLoginFailure.repository'
 import type { AdminStatus, SupportTicketStatus, SystemAdmin } from '@prisma/client'
 import { enrichAdminTicket } from './supportAdmin.service'
 import { normalizeCountry, normalizeCountryOptional } from '../utils/agency-country'
@@ -25,6 +27,7 @@ type CsaRow = ReturnType<typeof toCsaDto> & {
   closedTicketCount: number
   avgRating: number | null
   ratingCount: number
+  failedAttemptCount24h: number
 }
 
 function toCsaDto(admin: SystemAdmin) {
@@ -121,11 +124,13 @@ export const csaManagementService = {
     })
 
     const ids = items.map((a) => a.id)
-    const [online, openLoads, closedLoads, ratingStats] = await Promise.all([
+    const since24h = new Date(Date.now() - 24 * 3600_000)
+    const [online, openLoads, closedLoads, ratingStats, attemptCounts] = await Promise.all([
       onlineFlags(ids),
       supportRepository.countOpenByAdminIds(ids),
       supportRepository.countClosedByAdminIds(ids),
       supportRepository.ratingStatsByAdminIds(ids),
+      adminLoginFailureRepository.countByAdminIdsSince(ids, since24h),
     ])
 
     const csas: CsaRow[] = items.map((a) => {
@@ -137,6 +142,7 @@ export const csaManagementService = {
         closedTicketCount: closedLoads.get(a.id) ?? 0,
         avgRating: ratings?.avgRating ?? null,
         ratingCount: ratings?.ratingCount ?? 0,
+        failedAttemptCount24h: attemptCounts.get(a.id) ?? 0,
       }
     })
 
@@ -274,9 +280,10 @@ export const csaManagementService = {
   },
 
   async getOverviewStats() {
-    const [byStatus, allCsas, failedLogins] = await Promise.all([
+    const [byStatus, allCsas, failedLoginAttempts24h, failedLogins] = await Promise.all([
       systemAdminRepository.countByRoleAndStatus('CUSTOMER_SUPPORT'),
       systemAdminRepository.findAllByRole('CUSTOMER_SUPPORT'),
+      adminLoginFailureRepository.countSince(new Date(Date.now() - 24 * 3600_000), 'CUSTOMER_SUPPORT'),
       systemAdminRepository.aggregateFailedLogins(
         'CUSTOMER_SUPPORT',
         new Date(Date.now() - 24 * 3600_000),
@@ -295,7 +302,7 @@ export const csaManagementService = {
       onlineNow,
       suspendedCsa: counts.SUSPENDED,
       disabledCsa: counts.DISABLED,
-      failedLoginAttempts24h: failedLogins.failedLoginAttempts,
+      failedLoginAttempts24h,
       lockedAccounts: failedLogins.lockedAccounts,
     }
   },
@@ -317,11 +324,45 @@ export const csaManagementService = {
       { since, includeLocked: query.includeLocked, skip, take: query.limit },
     )
     const online = await onlineFlags(items.map((a) => a.id))
+    const attemptCounts = await adminLoginFailureRepository.countByAdminIdsSince(
+      items.map((a) => a.id),
+      since,
+    )
     return {
       withinHours: query.withinHours,
       accounts: items.map((a) => ({
         ...toCsaDto(a),
         isOnline: online.get(a.id) ?? false,
+        failedAttemptCount: attemptCounts.get(a.id) ?? 0,
+      })),
+      page: query.page,
+      limit: query.limit,
+      total,
+      hasMore: skip + items.length < total,
+    }
+  },
+
+  async listFailedLoginAttempts(query: FailedLoginAttemptsQuery) {
+    if (query.adminId) await findCsaOrThrow(query.adminId)
+    const since = new Date(Date.now() - query.withinHours * 3600_000)
+    const skip = (query.page - 1) * query.limit
+    const { items, total } = await adminLoginFailureRepository.list({
+      since,
+      role: 'CUSTOMER_SUPPORT',
+      adminId: query.adminId,
+      skip,
+      take: query.limit,
+    })
+    return {
+      withinHours: query.withinHours,
+      attempts: items.map((row) => ({
+        id: row.id,
+        adminId: row.adminId,
+        email: row.admin.email,
+        name: row.admin.displayName,
+        reason: row.reason,
+        ipAddress: row.ipAddress,
+        createdAt: row.createdAt,
       })),
       page: query.page,
       limit: query.limit,
