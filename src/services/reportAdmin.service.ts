@@ -6,10 +6,13 @@ import { AppError } from '../middlewares/errorHandler'
 import type { ReportStatus } from '@prisma/client'
 import type { AdminReportListQuery } from '../models/support-admin.schemas'
 import { formatUserName } from '../utils/user-display'
+import type { AdminAuditRequestMeta } from '../utils/admin-audit'
+import { auditService } from './audit.service'
 
 interface AdminActor {
   id: string
   role: string
+  request?: AdminAuditRequestMeta
 }
 
 function withName<T extends { firstName?: string | null; lastName?: string | null } | null | undefined>(
@@ -93,6 +96,22 @@ export const reportAdminService = {
       reviewedByAdminId: actor.id,
       resolutionNote: input.resolutionNote,
     })
+
+    auditService.logAdmin({
+      adminUserId: actor.id,
+      targetUserId: report.reportedUserId,
+      actionType: 'ADMIN_SUPPORT_REPORT_REVIEW',
+      actionStatus: 'success',
+      actionDetails: {
+        reportId,
+        status: input.status,
+        reporterId: report.reporterId,
+        reportedUserId: report.reportedUserId,
+      },
+      destination: `User report ${reportId}`,
+      request: actor.request,
+    })
+
     return toJsonSafe(mapReportUsers(updated))
   },
 
@@ -141,6 +160,22 @@ export const reportAdminService = {
         err,
       })
     }
+
+    auditService.logAdmin({
+      adminUserId: actor.id,
+      targetUserId: report.reporterId,
+      actionType: 'ADMIN_SUPPORT_REPORT_ESCALATE',
+      actionStatus: 'success',
+      actionDetails: {
+        reportId,
+        ticketId: ticket.id.toString(),
+        ticketPublicId: String(ticket.publicId),
+        reporterId: report.reporterId,
+        reportedUserId: report.reportedUserId,
+      },
+      destination: `User report ${reportId} → ticket ${ticket.publicId}`,
+      request: actor.request,
+    })
 
     return toJsonSafe({
       report: mapReportUsers(updated),

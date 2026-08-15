@@ -51,6 +51,8 @@ export function resolveAdminActivityDestination(
   const withdrawalId = readStr(details, 'withdrawalId')
   const deviceId = readStr(details, 'deviceId')
   const ticketId = readStr(details, 'ticketId', 'supportTicketId')
+  const ticketPublicId = readStr(details, 'ticketPublicId')
+  const reportId = readStr(details, 'reportId')
   const streamId = readStr(details, 'streamId', 'liveStreamId', 'roomId')
   const agencyId = readStr(details, 'agencyId', 'agencyUserId')
 
@@ -143,9 +145,29 @@ export function resolveAdminActivityDestination(
   if (actionType === 'ADMIN_LOGIN' || actionType === 'ADMIN_LOGOUT') {
     return { label: 'Admin session', targetUserId: null, resourceType: 'admin_session', resourceId: null }
   }
-  if (ticketId) {
+  if (actionType.startsWith('ADMIN_SUPPORT_TICKET')) {
+    const display = ticketPublicId ?? ticketId
     return {
-      label: `Support ticket ${ticketId}`,
+      label: display ? `Support ticket ${display}` : 'Support ticket',
+      targetUserId,
+      resourceType: 'support_ticket',
+      resourceId: ticketId ?? ticketPublicId,
+    }
+  }
+  if (actionType.startsWith('ADMIN_SUPPORT_REPORT')) {
+    const ticketDisplay = ticketPublicId ?? ticketId
+    const reportLabel = reportId ? `User report ${reportId}` : 'User report'
+    return {
+      label: ticketDisplay ? `${reportLabel} → ticket ${ticketDisplay}` : reportLabel,
+      targetUserId,
+      resourceType: ticketDisplay ? 'support_ticket' : 'user_report',
+      resourceId: ticketId ?? ticketPublicId ?? reportId,
+    }
+  }
+  if (ticketId) {
+    const display = ticketPublicId ?? ticketId
+    return {
+      label: `Support ticket ${display}`,
       targetUserId,
       resourceType: 'support_ticket',
       resourceId: ticketId,
@@ -171,7 +193,19 @@ export function resolveAdminActivityDestination(
   return { label: actionType.replace(/_/g, ' ').toLowerCase(), targetUserId: null, resourceType: null, resourceId: null }
 }
 
-/** SQL filter: rows that represent admin-panel activity. */
+export const CSA_ACTIVITY_ACTION_TYPES = [
+  'ADMIN_SUPPORT_TICKET_REPLY',
+  'ADMIN_SUPPORT_TICKET_RESOLVE',
+  'ADMIN_SUPPORT_TICKET_REJECT',
+  'ADMIN_SUPPORT_TICKET_CLOSE',
+  'ADMIN_SUPPORT_TICKET_ASSIGN',
+  'ADMIN_SUPPORT_TICKET_CLAIM',
+  'ADMIN_SUPPORT_TICKET_PRIORITY',
+  'ADMIN_SUPPORT_TICKET_NOTE',
+  'ADMIN_SUPPORT_REPORT_REVIEW',
+  'ADMIN_SUPPORT_REPORT_ESCALATE',
+] as const
+
 export const ADMIN_ACTIVITY_ACTION_PREFIXES = ['ADMIN_', 'WITHDRAWAL_MANUAL_ASSIGN', 'face_profile_', 'face_duplicate_'] as const
 
 export function isAdminActivityActionType(actionType: string): boolean {

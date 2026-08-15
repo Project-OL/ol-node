@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { authenticateAdmin, requireAdminRole } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
+import { adminAuditMetaFromRequest } from '../../utils/admin-audit'
 import { parseRequest } from '../../utils/zod-request'
 import { supportAdminService } from '../../services/supportAdmin.service'
 import { csaNotificationService } from '../../services/csaNotification.service'
@@ -29,7 +30,7 @@ const reportAuth = [authenticateAdmin, requireAdminRole('CUSTOMER_SUPPORT', 'SUP
 
 function actorOf(req: FastifyRequest) {
   if (!req.adminUser) throw new AppError(401, 'Not authenticated as admin', 'ADMIN_TOKEN_MISSING')
-  return req.adminUser
+  return { ...req.adminUser, request: adminAuditMetaFromRequest(req) }
 }
 
 /** Prefix: /admin/support */

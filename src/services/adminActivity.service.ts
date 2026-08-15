@@ -3,7 +3,7 @@ import { adminTransactionsRepository } from '../repositories/admin-transactions.
 import { systemAdminRepository } from '../repositories/systemAdmin.repository'
 import type { AdminActivityListQuery } from '../models/admin-activity.schemas'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
-import { resolveAdminActivityDestination } from '../utils/admin-audit'
+import { resolveAdminActivityDestination, CSA_ACTIVITY_ACTION_TYPES } from '../utils/admin-audit'
 import { AppError } from '../middlewares/errorHandler'
 
 type AdminBrief = {
@@ -71,7 +71,7 @@ function resolveAdminIdFromRow(row: {
 export const adminActivityService = {
   async listActionTypes() {
     const types = await auditRepository.listDistinctAdminActionTypes()
-    return { actionTypes: types }
+    return { actionTypes: [...new Set([...types, ...CSA_ACTIVITY_ACTION_TYPES])].sort() }
   },
 
   async listAdmins() {

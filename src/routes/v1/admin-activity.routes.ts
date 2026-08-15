@@ -21,7 +21,8 @@ export default async function adminActivityRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Activity'],
-        description: 'Distinct admin action types present in audit_logs.',
+        description:
+          'Admin action types for the Activity filter. Distinct values from audit_logs plus CSA workbench types (ADMIN_SUPPORT_TICKET_* / ADMIN_SUPPORT_REPORT_*).',
       },
     },
     async (_request, reply) => {
@@ -36,7 +37,7 @@ export default async function adminActivityRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Activity'],
         description:
-          'Active system admins (email + role) for the activity-log actor filter. Includes SUPER_ADMIN and other panel roles.',
+          'Active system admins (email + role) for the activity-log actor filter, including CUSTOMER_SUPPORT.',
       },
     },
     async (_request, reply) => {

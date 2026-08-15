@@ -29,12 +29,34 @@ import {
   supportContestEndsAt,
 } from './supportConfig.service'
 import { formatUserName } from '../utils/user-display'
+import type { AdminAuditRequestMeta } from '../utils/admin-audit'
+import { auditService } from './audit.service'
 
 const PRESIGN_TTL_SEC = 600
 
 interface AdminActor {
   id: string
   role: string
+  request?: AdminAuditRequestMeta
+}
+
+function logTicketActivity(
+  actor: AdminActor,
+  ticket: { id: bigint; publicId: string; userId: string },
+  actionType: string,
+  extra?: Record<string, unknown>,
+) {
+  const ticketId = ticket.id.toString()
+  const ticketPublicId = String(ticket.publicId)
+  auditService.logAdmin({
+    adminUserId: actor.id,
+    targetUserId: ticket.userId,
+    actionType,
+    actionStatus: 'success',
+    actionDetails: { ticketId, ticketPublicId, ...extra },
+    destination: `Support ticket ${ticketPublicId}`,
+    request: actor.request,
+  })
 }
 
 /**
@@ -246,6 +268,10 @@ export const supportAdminService = {
       console.warn('[support-admin] realtime notify failed', { ticketId: ticketId.toString(), err })
     })
 
+    logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_REPLY', {
+      hasImage: Boolean(input.imageUrl),
+    })
+
     return toJsonSafe({
       ...message,
       sender: withName(message.sender),
@@ -328,6 +354,13 @@ export const supportAdminService = {
       })
     }
 
+    logTicketActivity(
+      actor,
+      ticket,
+      input.resolution === 'REJECTED' ? 'ADMIN_SUPPORT_TICKET_REJECT' : 'ADMIN_SUPPORT_TICKET_RESOLVE',
+      { resolution: input.resolution },
+    )
+
     return toJsonSafe(await ticketDto(updated))
   },
 
@@ -369,6 +402,8 @@ export const supportAdminService = {
     }).catch((err) => {
       console.warn('[support-admin] status-changed notify failed (forceClose)', { ticketId: ticketId.toString(), err })
     })
+
+    logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_CLOSE', { resolution })
 
     return toJsonSafe(await ticketDto(updated))
   },
@@ -415,6 +450,11 @@ export const supportAdminService = {
       { ticketId },
     )
 
+    logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_ASSIGN', {
+      assignedAdminId: target.id,
+      reassigned: !wasUnassigned,
+    })
+
     return toJsonSafe(await ticketDto(updated))
   },
 
@@ -430,6 +470,7 @@ export const supportAdminService = {
     const updated = await supportRepository.assignTicket(ticketId, actor.id, {
       setStatusAssigned: ticket.status === 'OPEN' || ticket.status === 'AWAITING_REPLY',
     })
+    logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_CLAIM', { assignedAdminId: actor.id })
     return toJsonSafe(await ticketDto(updated))
   },
 
@@ -441,12 +482,16 @@ export const supportAdminService = {
     assertCanAct(actor, ticket)
 
     const updated = await supportRepository.updateTicketStatus(ticketId, ticket.status, { priority })
+    logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_PRIORITY', { priority })
     return toJsonSafe(await ticketDto(updated))
   },
 
   async addNote(actor: AdminActor, ticketId: bigint, content: string) {
-    await findTicketOrThrow(ticketId)
+    const ticket = await findTicketOrThrow(ticketId)
     const note = await supportRepository.createNote({ ticketId, adminId: actor.id, content })
+    logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_NOTE', {
+      noteId: note.id.toString(),
+    })
     return toJsonSafe(note)
   },
 
