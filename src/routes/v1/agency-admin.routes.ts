@@ -122,13 +122,8 @@ const DisputeResolveSchema = z.object({
 
 const WithdrawalAssignSchema = z.object({
   agencyUserId: z.string().uuid().optional(),
-  /** Numeric agency public ID or owner public/display ID. */
-  agencyPublicId: z
-    .string()
-    .trim()
-    .transform((v) => v.replace(/^#/, ''))
-    .regex(/^\d+$/)
-    .optional(),
+  /** Numeric agency public ID or owner public/display ID. Leading `#` is stripped in the service. */
+  agencyPublicId: z.string().trim().regex(/^\d+$/).optional(),
 })
 
 const HostTagSchema = z.object({
