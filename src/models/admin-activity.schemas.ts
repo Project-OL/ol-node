@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 export const adminActivityListQuerySchema = z.object({
   adminUserId: z.string().uuid().optional(),
+  /** System admin email; resolved to adminUserId. If both are sent, adminUserId wins. */
+  adminEmail: z.string().trim().email().optional(),
   targetUserId: z.string().uuid().optional(),
   actionType: z.string().min(1).max(100).optional(),
   ipAddress: z.string().min(1).max(45).optional(),

@@ -14,6 +14,14 @@ export const systemAdminRepository = {
     return prismaRead.systemAdmin.findUnique({ where: { email } })
   },
 
+  async findByEmailInsensitive(email: string) {
+    const trimmed = email.trim()
+    if (!trimmed) return null
+    return prismaRead.systemAdmin.findFirst({
+      where: { email: { equals: trimmed, mode: 'insensitive' } },
+    })
+  },
+
   async findById(id: string) {
     return prismaRead.systemAdmin.findUnique({ where: { id } })
   },
@@ -59,6 +67,15 @@ export const systemAdminRepository = {
     return prismaRead.systemAdmin.findMany({
       where: { role, ...(status ? { status } : {}) },
       orderBy: { createdAt: 'asc' },
+    })
+  },
+
+  /** Active system admins for activity-log email filter (SUPER_ADMIN and other panel roles). */
+  async listActivityActors() {
+    return prismaRead.systemAdmin.findMany({
+      where: { isActive: true },
+      select: { id: true, email: true, displayName: true, role: true },
+      orderBy: [{ role: 'asc' }, { email: 'asc' }],
     })
   },
 

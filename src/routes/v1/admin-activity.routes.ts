@@ -30,6 +30,21 @@ export default async function adminActivityRoutes(app: FastifyInstance) {
   )
 
   app.get(
+    '/activity-logs/admins',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Activity'],
+        description:
+          'Active system admins (email + role) for the activity-log actor filter. Includes SUPER_ADMIN and other panel roles.',
+      },
+    },
+    async (_request, reply) => {
+      return reply.send(await adminActivityService.listAdmins())
+    },
+  )
+
+  app.get(
     '/activity-logs',
     {
       preHandler: preAuth,

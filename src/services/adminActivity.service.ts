@@ -4,6 +4,7 @@ import { systemAdminRepository } from '../repositories/systemAdmin.repository'
 import type { AdminActivityListQuery } from '../models/admin-activity.schemas'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { resolveAdminActivityDestination } from '../utils/admin-audit'
+import { AppError } from '../middlewares/errorHandler'
 
 type AdminBrief = {
   adminUserId: string
@@ -73,9 +74,20 @@ export const adminActivityService = {
     return { actionTypes: types }
   },
 
+  async listAdmins() {
+    const rows = await systemAdminRepository.listActivityActors()
+    return { admins: rows.map(mapAdminBrief) }
+  },
+
   async list(query: AdminActivityListQuery) {
+    let adminUserId = query.adminUserId
+    if (!adminUserId && query.adminEmail) {
+      const admin = await systemAdminRepository.findByEmailInsensitive(query.adminEmail)
+      if (!admin) throw new AppError(404, 'Admin not found', 'ADMIN_NOT_FOUND')
+      adminUserId = admin.id
+    }
     const { rows, nextCursor, hasMore } = await auditRepository.listAdminActivity({
-      adminUserId: query.adminUserId,
+      adminUserId,
       targetUserId: query.targetUserId,
       actionType: query.actionType,
       ipAddress: query.ipAddress,
