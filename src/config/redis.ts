@@ -380,6 +380,8 @@ export const RedisKeys = {
   /** Support ticket PENDING_REVIEW contest window (admin system settings). */
   supportConfig: () => 'support:config',
   faceLivenessConfig: () => 'face-liveness:config',
+  /** Admin/CSA login lockout threshold + duration (admin system settings). */
+  adminAuthConfig: () => 'admin-auth:config',
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
   ratelimitWithdrawalCreate: (userId: string) => `ratelimit:withdrawal:create:${userId}`,
   ratelimitWithdrawalDispute: (userId: string) => `ratelimit:withdrawal:dispute:${userId}`,
@@ -530,10 +532,10 @@ export const ADMIN_VIEW_ACCESS_TTL = 120
 export const ADMIN_LOGIN_FAIL_TTL = 900
 /** Failures within the throttle window before pre-DB 429s. */
 export const ADMIN_LOGIN_FAIL_LIMIT = 10
-/** Consecutive DB failed-login count that locks the account. */
+/** Fallback consecutive failed-login count that locks the account (DB `admin_auth_config` wins). */
 export const ADMIN_LOCKOUT_THRESHOLD = 5
-/** Account lock duration in minutes once the threshold is reached. */
-export const ADMIN_LOCKOUT_MINUTES = 15
+/** Fallback lock duration in minutes once the threshold is reached (DB `admin_auth_config` wins; 1440 = 24h). */
+export const ADMIN_LOCKOUT_MINUTES = 1440
 /** Per-admin user search/view history list TTL (90 days). */
 export const ADMIN_USER_SEARCH_HISTORY_TTL = 60 * 60 * 24 * 90
 /** Max recent users kept in admin search history. */
@@ -560,6 +562,8 @@ export const MESSAGING_CONFIG_TTL = 300
 export const SUPPORT_CONFIG_TTL = 300
 /** Face Liveness admin gates singleton. */
 export const FACE_LIVENESS_CONFIG_TTL = 300
+/** Admin/CSA login lockout config singleton. */
+export const ADMIN_AUTH_CONFIG_TTL = 300
 /** Agent payroll dashboard summary (tab counts + toggle). */
 export const PAYROLL_SUMMARY_TTL = 30
 /** GET rich-tier read endpoints: 60 requests / 60s per user. */

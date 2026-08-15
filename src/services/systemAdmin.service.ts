@@ -7,14 +7,13 @@ import {
   RedisKeys,
   ADMIN_LOGIN_FAIL_TTL,
   ADMIN_LOGIN_FAIL_LIMIT,
-  ADMIN_LOCKOUT_THRESHOLD,
-  ADMIN_LOCKOUT_MINUTES,
 } from '../config/redis'
 import { systemAdminRepository, type AdminProfileData } from '../repositories/systemAdmin.repository'
 import { AppError } from '../middlewares/errorHandler'
 import { parseJwtExpiresToSeconds } from '../utils/jwt'
 import { normalizeIp } from '../utils/ipAddress'
 import { passwordService } from './password.service'
+import { adminAuthConfigService } from './adminAuthConfig.service'
 import type { AdminRole } from '@prisma/client'
 
 const BCRYPT_ROUNDS = 12
@@ -120,12 +119,16 @@ export const systemAdminService = {
     if (!valid) {
       await recordLoginFailure(failKey)
       const updated = await systemAdminRepository.incrementFailedLogin(admin.id)
-      if (updated.failedLoginCount >= ADMIN_LOCKOUT_THRESHOLD) {
-        const until = new Date(Date.now() + ADMIN_LOCKOUT_MINUTES * 60_000)
+      const { failedLoginThreshold, lockoutMinutes } =
+        await adminAuthConfigService.getLockoutSettings()
+      if (updated.failedLoginCount >= failedLoginThreshold) {
+        const until = new Date(Date.now() + lockoutMinutes * 60_000)
         await systemAdminRepository.setLockedUntil(admin.id, until)
         console.warn('[admin-auth] account locked after repeated failures', {
           adminId: admin.id,
           lockedUntil: until.toISOString(),
+          lockoutMinutes,
+          failedLoginThreshold,
         })
       }
       throw new AppError(401, 'Invalid credentials', 'ADMIN_INVALID_CREDENTIALS')

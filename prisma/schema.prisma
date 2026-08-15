@@ -1709,6 +1709,20 @@ model FaceLivenessConfig {
   @@map("face_liveness_config")
 }
 
+/// Singleton: admin/CSA login lockout after consecutive wrong passwords.
+/// Admin `GET|PUT /admin/system-settings/admin-auth`. Default 5 failures → 24h lock.
+model AdminAuthConfig {
+  id                    Int      @id @default(1)
+  /// Consecutive wrong passwords that set `system_admins.locked_until`.
+  failedLoginThreshold  Int      @default(5) @map("failed_login_threshold")
+  /// Lock duration once the threshold is reached (minutes). Default 1440 = 24 hours.
+  lockoutMinutes        Int      @default(1440) @map("lockout_minutes")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("admin_auth_config")
+}
+
 /// Append-only GPS samples; `users.last_*` holds the current fix.
 model UserLocationSample {
   id        String   @id @default(uuid()) @db.Uuid

@@ -170,6 +170,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/system-settings/support',
     'GET /admin/system-settings/face-liveness',
     'PUT /admin/system-settings/face-liveness',
+    'GET /admin/system-settings/admin-auth',
+    'PUT /admin/system-settings/admin-auth',
   ],
   PlatformMessagesView: [
     'GET /admin/users/search',
