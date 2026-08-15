@@ -3,6 +3,7 @@ import { AppError } from '../../middlewares/errorHandler'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import {
   adminApplyRestrictionBodySchema,
+  adminListGlobalRestrictionsQuerySchema,
   adminListRestrictionsQuerySchema,
   adminStopLiveStreamBodySchema,
   userRestrictionTypeSchema,
@@ -13,6 +14,29 @@ import { adminLiveStreamService } from '../../services/adminLiveStream.service'
 const preAuth = [authenticateAdmin]
 
 export default async function adminUserRestrictionRoutes(app: FastifyInstance) {
+  app.get(
+    '/restrictions',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Moderation'],
+        description:
+          'Global list of timed restrictions (chat mute, audio mute, messaging disable, live-start ban).',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = adminListGlobalRestrictionsQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(await userRestrictionService.listGlobalForAdmin(parsed.data))
+    },
+  )
+
   app.get<{ Params: { userId: string } }>(
     '/users/:userId/restrictions',
     {

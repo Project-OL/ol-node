@@ -7,6 +7,31 @@ import { userRepository } from '../repositories/user.repository'
 import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
 import { liveSessionService } from './liveSession.service'
+import { formatUserName } from '../utils/user-display'
+
+const hostBriefSelect = {
+  id: true,
+  publicId: true,
+  username: true,
+  firstName: true,
+  lastName: true,
+  avatarUrl: true,
+} as const
+
+function mapHostBrief(u: {
+  id: string
+  publicId: bigint
+  username: string | null
+  firstName: string | null
+  lastName: string | null
+  avatarUrl: string | null
+}) {
+  return {
+    ...u,
+    name: formatUserName(u),
+    publicId: u.publicId?.toString(),
+  }
+}
 
 export type AdminLiveStreamRow = {
   source: 'host_live_session' | 'live_stream'
@@ -190,6 +215,110 @@ export const adminLiveStreamService = {
     }
 
     return { userId, streams }
+  },
+
+  async listActiveGlobal(query: { page: number; limit: number; hostUserId?: string }) {
+    const skip = (query.page - 1) * query.limit
+    const take = query.limit
+    const liveWhere = {
+      isLive: true,
+      ...(query.hostUserId ? { userId: query.hostUserId } : {}),
+    }
+    const sessionWhere = {
+      status: 'ACTIVE' as const,
+      ...(query.hostUserId ? { hostUserId: query.hostUserId } : {}),
+    }
+
+    const [liveStreams, liveTotal, hostSessions] = await Promise.all([
+      prismaRead.liveStream.findMany({
+        where: liveWhere,
+        include: { user: { select: hostBriefSelect } },
+        orderBy: { startedAt: 'desc' },
+        skip,
+        take,
+      }),
+      prismaRead.liveStream.count({ where: liveWhere }),
+      prismaRead.hostLiveSession.findMany({
+        where: sessionWhere,
+        include: { host: { select: hostBriefSelect } },
+        orderBy: { startedAt: 'desc' },
+        take: 100,
+      }),
+    ])
+
+    const seenRoomIds = new Set(liveStreams.map((s) => s.streamId))
+    const items: Array<
+      AdminLiveStreamRow & {
+        hostUserId: string
+        host: ReturnType<typeof mapHostBrief>
+      }
+    > = liveStreams.map((s) => ({
+      source: 'live_stream' as const,
+      id: s.id,
+      roomId: s.streamId,
+      streamId: s.streamId,
+      title: s.title,
+      status: 'LIVE',
+      startedAt: s.startedAt?.toISOString() ?? null,
+      isLive: true,
+      hostUserId: s.userId,
+      host: mapHostBrief(s.user),
+    }))
+
+    if (query.page === 1) {
+      for (const s of hostSessions) {
+        if (seenRoomIds.has(s.roomId)) continue
+        seenRoomIds.add(s.roomId)
+        items.push({
+          source: 'host_live_session',
+          id: s.id,
+          roomId: s.roomId,
+          streamId: s.roomId,
+          title: null,
+          status: s.status,
+          startedAt: s.startedAt.toISOString(),
+          isLive: true,
+          hostUserId: s.hostUserId,
+          host: mapHostBrief(s.host),
+        })
+      }
+    }
+
+    return {
+      items,
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total: liveTotal,
+        hasMore: skip + liveStreams.length < liveTotal,
+      },
+    }
+  },
+
+  async requestStopByRef(params: { streamRef: string; adminUserId: string; reason?: string }) {
+    const hostSession = await prismaRead.hostLiveSession.findFirst({
+      where: {
+        status: 'ACTIVE',
+        OR: [{ id: params.streamRef }, { roomId: params.streamRef }],
+      },
+    })
+    const liveStream = await prismaRead.liveStream.findFirst({
+      where: {
+        isLive: true,
+        OR: [{ id: params.streamRef }, { streamId: params.streamRef }],
+      },
+      orderBy: { startedAt: 'desc' },
+    })
+    const userId = hostSession?.hostUserId ?? liveStream?.userId
+    if (!userId) {
+      throw new AppError(404, 'No active live stream found for this reference', 'LIVE_STREAM_NOT_FOUND')
+    }
+    return this.requestStop({
+      userId,
+      streamRef: params.streamRef,
+      adminUserId: params.adminUserId,
+      reason: params.reason,
+    })
   },
 
   async requestStop(params: {

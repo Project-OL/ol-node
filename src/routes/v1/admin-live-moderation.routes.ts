@@ -5,7 +5,12 @@ import {
   adminLiveModerationListQuerySchema,
   adminUserLiveModerationQuerySchema,
 } from '../../models/admin-live-moderation.schemas'
+import {
+  adminListActiveLiveStreamsQuerySchema,
+  adminStopLiveStreamBodySchema,
+} from '../../models/admin-user-restriction.schemas'
 import { adminLiveModerationService } from '../../services/adminLiveModeration.service'
+import { adminLiveStreamService } from '../../services/adminLiveStream.service'
 
 const preAuth = [authenticateAdmin]
 
@@ -73,6 +78,57 @@ export default async function adminLiveModerationRoutes(app: FastifyInstance) {
         await adminLiveModerationService.clearHostStreamSuspension({
           userId: request.params.userId,
           adminUserId: request.adminUser!.id,
+        }),
+      )
+    },
+  )
+
+  app.get(
+    '/live-streams/active',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Live', 'Moderation'],
+        description: 'List all currently open live streams (optional hostUserId filter).',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = adminListActiveLiveStreamsQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(await adminLiveStreamService.listActiveGlobal(parsed.data))
+    },
+  )
+
+  app.post<{ Params: { streamRef: string } }>(
+    '/live-streams/:streamRef/stop',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Live', 'Moderation'],
+        description:
+          'Stop any open live stream by room id or DB id. Resolves the host, then LiveKit deleteRoom + Redis cleanup.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminStopLiveStreamBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await adminLiveStreamService.requestStopByRef({
+          streamRef: request.params.streamRef,
+          adminUserId: request.adminUser!.id,
+          reason: parsed.data.reason,
         }),
       )
     },

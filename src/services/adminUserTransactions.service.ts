@@ -111,7 +111,7 @@ async function attachPointRevertFlags<T extends HistoryRow & { txType?: string; 
     withdrawalIds.length > 0
       ? await prismaRead.withdrawal.findMany({
           where: { id: { in: withdrawalIds } },
-          select: { id: true, status: true, requestedAt: true },
+          select: { id: true, status: true, processedAt: true },
         })
       : []
   const withdrawalMap = new Map(withdrawals.map((w) => [w.id, w]))
@@ -127,7 +127,7 @@ async function attachPointRevertFlags<T extends HistoryRow & { txType?: string; 
       withdrawal &&
       isAdminWithdrawalRevertable({
         status: withdrawal.status,
-        requestedAt: withdrawal.requestedAt,
+        processedAt: withdrawal.processedAt,
       })
     ) {
       return {

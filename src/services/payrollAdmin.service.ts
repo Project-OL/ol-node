@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client'
-import { prisma } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { withdrawalService } from './withdrawal.service'
 import { auditService } from './audit.service'
 import { withdrawalRepository } from '../repositories/withdrawal.repository'
 import { payrollAssignmentRepository } from '../repositories/payrollAssignment.repository'
+import { agencyRepository } from '../repositories/agency.repository'
 import { storageService } from './storage.service'
 import { mapPaymentMethodMaskedForAgent } from '../utils/payment-method-mask'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
@@ -34,6 +35,58 @@ function mapUserCard(u: AdminUserCard) {
     avatarUrl: u.avatarUrl,
     country: u.country,
   }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function normalizePublicId(raw: string): string {
+  return raw.trim().replace(/^#/, '')
+}
+
+async function resolveAgencyUserId(opts: {
+  agencyUserId?: string
+  agencyPublicId?: string
+}): Promise<string | undefined> {
+  if (opts.agencyUserId) {
+    if (!UUID_RE.test(opts.agencyUserId)) {
+      throw new AppError(400, 'Invalid agencyUserId (UUID expected)', 'INVALID_REQUEST')
+    }
+    return opts.agencyUserId
+  }
+  if (!opts.agencyPublicId) return undefined
+  const digits = normalizePublicId(opts.agencyPublicId)
+  if (!/^\d+$/.test(digits)) {
+    throw new AppError(400, 'agencyPublicId must be numeric', 'INVALID_REQUEST')
+  }
+  const agency = await agencyRepository.getAgencyByPublicId(BigInt(digits))
+  if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
+  return agency.userId
+}
+
+async function resolveHostUserId(opts: {
+  hostUserId?: string
+  hostPublicId?: string
+}): Promise<string | undefined> {
+  if (opts.hostUserId) {
+    if (!UUID_RE.test(opts.hostUserId)) {
+      throw new AppError(400, 'Invalid hostUserId (UUID expected)', 'INVALID_REQUEST')
+    }
+    return opts.hostUserId
+  }
+  if (!opts.hostPublicId) return undefined
+  const digits = normalizePublicId(opts.hostPublicId)
+  if (!/^\d+$/.test(digits)) {
+    throw new AppError(400, 'hostPublicId must be numeric', 'INVALID_REQUEST')
+  }
+  const pid = BigInt(digits)
+  const host = await prismaRead.user.findFirst({
+    where: {
+      OR: [{ publicId: pid }, { defaultPublicId: pid }, { currentVipPublicId: pid }],
+    },
+    select: { id: true },
+  })
+  if (!host) throw new AppError(404, 'Host not found', 'USER_NOT_FOUND')
+  return host.id
 }
 
 function mapAdminAssignment(
@@ -80,10 +133,10 @@ function mapAdminAssignment(
       /** Processing reward credited to the agency agent. */
       agentRewardPoints: (w.agentRewardPoints ?? 0n).toString(),
       notes: w.notes ?? null,
-      /** True when admin may POST `/admin/agency/withdrawal/:id/reverse` (≤4 days + status). */
+      /** True when admin may POST `/admin/agency/withdrawal/:id/reverse` (≤4 days from paid + status). */
       canRevert: isAdminWithdrawalRevertable({
         status: w.status,
-        requestedAt: w.requestedAt,
+        processedAt: w.processedAt,
       }),
     },
     paymentMethod: w.paymentMethod ? mapPaymentMethodMaskedForAgent(w.paymentMethod) : null,
@@ -161,17 +214,31 @@ export const payrollAdminService = {
     }
   },
 
-  async manuallyAssignWithdrawal(adminUserId: string, withdrawalId: string, agencyUserId?: string) {
+  async manuallyAssignWithdrawal(
+    adminUserId: string,
+    withdrawalId: string,
+    opts?: { agencyUserId?: string; agencyPublicId?: string },
+  ) {
+    const agencyUserId = await resolveAgencyUserId({
+      agencyUserId: opts?.agencyUserId,
+      agencyPublicId: opts?.agencyPublicId,
+    })
     await withdrawalService.assignToAgency(withdrawalId, {
       overrideAgencyUserId: agencyUserId,
       allowBeyondAssignmentCap: true,
       rejectOnIneligibleOverride: !!agencyUserId,
+      ignoreCountryMatch: !!agencyUserId,
     })
     auditService.log({
       userId: adminUserId,
       actionType: 'WITHDRAWAL_MANUAL_ASSIGN',
       actionStatus: 'success',
-      actionDetails: { withdrawalId, agencyUserId: agencyUserId ?? null },
+      actionDetails: {
+        withdrawalId,
+        agencyUserId: agencyUserId ?? null,
+        agencyPublicId: opts?.agencyPublicId ?? null,
+        ignoreCountryMatch: !!agencyUserId,
+      },
     })
   },
 
@@ -182,7 +249,9 @@ export const payrollAdminService = {
   async listAssignments(query: {
     status?: string
     agencyUserId?: string
+    agencyPublicId?: string
     hostUserId?: string
+    hostPublicId?: string
     withdrawalId?: string
     from?: string
     to?: string
@@ -198,10 +267,21 @@ export const payrollAdminService = {
       throw new AppError(400, 'Invalid to', 'INVALID_REQUEST')
     }
 
+    const [agencyUserId, hostUserId] = await Promise.all([
+      resolveAgencyUserId({
+        agencyUserId: query.agencyUserId,
+        agencyPublicId: query.agencyPublicId,
+      }),
+      resolveHostUserId({
+        hostUserId: query.hostUserId,
+        hostPublicId: query.hostPublicId,
+      }),
+    ])
+
     const rows = await payrollAssignmentRepository.listForAdmin({
       status: query.status,
-      agencyUserId: query.agencyUserId,
-      hostUserId: query.hostUserId,
+      agencyUserId,
+      hostUserId,
       withdrawalId: query.withdrawalId,
       from,
       to,

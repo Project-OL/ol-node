@@ -63,6 +63,8 @@ async function findManyForAdmin(filter: {
   context?: ReportContext
   reason?: ReportReason
   reportedUserId?: string
+  hostUserId?: string
+  reporterId?: string
   skip: number
   take: number
 }) {
@@ -71,6 +73,8 @@ async function findManyForAdmin(filter: {
     ...(filter.context ? { context: filter.context } : {}),
     ...(filter.reason ? { reason: filter.reason } : {}),
     ...(filter.reportedUserId ? { reportedUserId: filter.reportedUserId } : {}),
+    ...(filter.hostUserId ? { hostUserId: filter.hostUserId } : {}),
+    ...(filter.reporterId ? { reporterId: filter.reporterId } : {}),
   }
   const [reports, total] = await Promise.all([
     prismaRead.messageReport.findMany({
@@ -81,6 +85,7 @@ async function findManyForAdmin(filter: {
       include: {
         reporter: { select: reportUserSelect },
         reportedUser: { select: reportUserSelect },
+        hostUser: { select: reportUserSelect },
       },
     }),
     prismaRead.messageReport.count({ where }),

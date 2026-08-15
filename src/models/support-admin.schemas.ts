@@ -78,13 +78,27 @@ export const MarkNotificationsReadSchema = z.object({
   ids: z.array(z.string().min(1)).max(200).optional(),
 })
 
+export const AdminReportReasonEnum = z.enum([
+  'SPAM',
+  'HARASSMENT',
+  'INAPPROPRIATE_CONTENT',
+  'FAKE_ACCOUNT',
+  'VIOLENCE',
+  'OTHER',
+  'GIFT_FRAUD',
+  'MULTIPLE_ACCOUNT',
+  'TOP_UP_FRAUD',
+  'LIVE_BROADCAST_VIOLATION',
+  'CHILD_SAFETY_VIOLATION',
+])
+
 export const AdminReportListQuerySchema = z.object({
   status: z.enum(['PENDING', 'REVIEWED', 'RESOLVED', 'DISMISSED']).optional(),
   context: z.enum(['CHAT', 'LIVE']).optional(),
-  reason: z
-    .enum(['SPAM', 'HARASSMENT', 'INAPPROPRIATE_CONTENT', 'FAKE_ACCOUNT', 'VIOLENCE', 'OTHER'])
-    .optional(),
+  reason: AdminReportReasonEnum.optional(),
   reportedUserId: z.string().uuid().optional(),
+  hostUserId: z.string().uuid().optional(),
+  reporterId: z.string().uuid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })

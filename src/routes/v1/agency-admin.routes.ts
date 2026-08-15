@@ -122,6 +122,13 @@ const DisputeResolveSchema = z.object({
 
 const WithdrawalAssignSchema = z.object({
   agencyUserId: z.string().uuid().optional(),
+  /** Numeric agency public ID or owner public/display ID. */
+  agencyPublicId: z
+    .string()
+    .trim()
+    .transform((v) => v.replace(/^#/, ''))
+    .regex(/^\d+$/)
+    .optional(),
 })
 
 const HostTagSchema = z.object({
@@ -751,7 +758,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     const result = await payrollAdminService.listAssignments({
       status,
       agencyUserId: q.agencyUserId?.trim() || undefined,
+      agencyPublicId: q.agencyPublicId?.trim() || undefined,
       hostUserId: q.hostUserId?.trim() || undefined,
+      hostPublicId: q.hostPublicId?.trim() || undefined,
       withdrawalId: q.withdrawalId?.trim() || undefined,
       from: q.from?.trim() || undefined,
       to: q.to?.trim() || undefined,
@@ -806,11 +815,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = WithdrawalAssignSchema.parse(request.body ?? {})
-      await payrollAdminService.manuallyAssignWithdrawal(
-        adminUserId,
-        request.params.id,
-        body.agencyUserId,
-      )
+      await payrollAdminService.manuallyAssignWithdrawal(adminUserId, request.params.id, {
+        agencyUserId: body.agencyUserId,
+        agencyPublicId: body.agencyPublicId,
+      })
       return reply.send({ ok: true })
     },
   )

@@ -31,6 +31,7 @@ function mapReportUsers<
     evidenceS3Keys: string[]
     reporter?: { firstName?: string | null; lastName?: string | null } | null
     reportedUser?: { firstName?: string | null; lastName?: string | null } | null
+    hostUser?: { firstName?: string | null; lastName?: string | null } | null
   },
 >(report: T) {
   const withUrls = withEvidenceUrls(report)
@@ -38,6 +39,7 @@ function mapReportUsers<
     ...withUrls,
     reporter: withName(report.reporter),
     reportedUser: withName(report.reportedUser),
+    hostUser: withName(report.hostUser),
   }
 }
 
@@ -57,6 +59,8 @@ export const reportAdminService = {
       context: query.context,
       reason: query.reason,
       reportedUserId: query.reportedUserId,
+      hostUserId: query.hostUserId,
+      reporterId: query.reporterId,
       skip,
       take: query.limit,
     })

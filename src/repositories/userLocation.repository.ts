@@ -11,6 +11,17 @@ export type CreateLocationSampleInput = {
 }
 
 export const userLocationRepository = {
+  /** Resolve UUID by base public ID, default public ID, or equipped VIP display ID. */
+  async resolveUserIdByPublicId(publicId: bigint): Promise<string | null> {
+    const user = await prismaRead.user.findFirst({
+      where: {
+        OR: [{ publicId }, { defaultPublicId: publicId }, { currentVipPublicId: publicId }],
+      },
+      select: { id: true },
+    })
+    return user?.id ?? null
+  },
+
   async upsertCurrentAndAppendSample(input: CreateLocationSampleInput) {
     const lat = new Prisma.Decimal(input.latitude.toFixed(6))
     const lng = new Prisma.Decimal(input.longitude.toFixed(6))

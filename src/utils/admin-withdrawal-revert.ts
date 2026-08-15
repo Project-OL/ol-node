@@ -1,7 +1,7 @@
 import type { PointTxType, WithdrawalStatus } from '@prisma/client'
 import { PointTxType as PointTx } from '@prisma/client'
 
-/** Admin may reverse a withdrawal within this age from `requestedAt`. */
+/** Admin may reverse a paid withdrawal within this age from `processedAt`. */
 export const ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000
 
 /** Statuses eligible for `POST /admin/agency/withdrawal/:id/reverse` (when within age window). */
@@ -15,12 +15,14 @@ export const ADMIN_REVERSIBLE_WITHDRAWAL_STATUSES: ReadonlySet<WithdrawalStatus>
 
 export function isAdminWithdrawalRevertable(params: {
   status: WithdrawalStatus
-  requestedAt: Date
+  processedAt: Date | null
   now?: Date
 }): boolean {
   if (!ADMIN_REVERSIBLE_WITHDRAWAL_STATUSES.has(params.status)) return false
+  // Not yet paid — revert clock starts at `processedAt`.
+  if (!params.processedAt) return true
   const now = params.now ?? new Date()
-  return now.getTime() - params.requestedAt.getTime() <= ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS
+  return now.getTime() - params.processedAt.getTime() <= ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS
 }
 
 /** Host debit / escrow ledger types that link to a withdrawal via `refId`. */

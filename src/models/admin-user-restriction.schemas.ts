@@ -60,4 +60,21 @@ export const adminStopLiveStreamBodySchema = z.object({
   reason: z.string().max(2000).optional(),
 })
 
+export const adminListGlobalRestrictionsQuerySchema = z.object({
+  type: userRestrictionTypeSchema.optional(),
+  userId: z.string().uuid().optional(),
+  active: z
+    .union([z.literal('true'), z.literal('false'), z.boolean()])
+    .optional()
+    .transform((v) => v !== false && v !== 'false'),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+
+export const adminListActiveLiveStreamsQuerySchema = z.object({
+  hostUserId: z.string().uuid().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+
 export type AdminApplyRestrictionBody = z.infer<typeof adminApplyRestrictionBodySchema>

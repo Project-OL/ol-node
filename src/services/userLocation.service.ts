@@ -2,7 +2,7 @@ import { AppError } from '../middlewares/errorHandler'
 import { userLocationRepository } from '../repositories/userLocation.repository'
 import { userRepository } from '../repositories/user.repository'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
-import type { ReportLocationBody } from '../models/user-location.schemas'
+import type { AdminLocationsQuery, ReportLocationBody } from '../models/user-location.schemas'
 
 function decimalToNumber(v: { toString(): string } | null | undefined): number | null {
   if (v == null) return null
@@ -107,13 +107,14 @@ export const userLocationService = {
     return { userId, current, history }
   },
 
-  async listForAdmin(query: {
-    userId?: string
-    from?: string
-    to?: string
-    limit: number
-    cursor?: string
-  }) {
+  async listForAdmin(query: AdminLocationsQuery) {
+    let userId = query.userId
+    if (query.publicId != null && !userId) {
+      const resolved = await userLocationRepository.resolveUserIdByPublicId(query.publicId)
+      if (!resolved) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+      userId = resolved
+    }
+
     const from = query.from ? new Date(query.from) : undefined
     const to = query.to ? new Date(query.to) : undefined
     if (from && Number.isNaN(from.getTime())) {
@@ -124,7 +125,7 @@ export const userLocationService = {
     }
 
     const rows = await userLocationRepository.listRecentForAdmin({
-      userId: query.userId,
+      userId,
       from,
       to,
       cursor: query.cursor,

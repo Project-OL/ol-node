@@ -86,6 +86,45 @@ export const userRestrictionRepository = {
     })
   },
 
+  async findManyForAdmin(filter: {
+    type?: UserRestrictionType
+    userId?: string
+    activeOnly: boolean
+    skip: number
+    take: number
+  }): Promise<{ rows: Array<UserRestrictionWithTargets & { user: { id: string; publicId: bigint; username: string | null; firstName: string | null; lastName: string | null; avatarUrl: string | null } }>; total: number }> {
+    const now = new Date()
+    const where = {
+      ...(filter.type ? { type: filter.type } : {}),
+      ...(filter.userId ? { userId: filter.userId } : {}),
+      ...(filter.activeOnly
+        ? { clearedAt: null, restrictedUntil: { gt: now } }
+        : {}),
+    }
+    const userSelect = {
+      id: true,
+      publicId: true,
+      username: true,
+      firstName: true,
+      lastName: true,
+      avatarUrl: true,
+    } as const
+    const [rows, total] = await Promise.all([
+      prismaRead.userRestriction.findMany({
+        where,
+        include: {
+          ...targetsInclude,
+          user: { select: userSelect },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: filter.skip,
+        take: filter.take,
+      }),
+      prismaRead.userRestriction.count({ where }),
+    ])
+    return { rows, total }
+  },
+
   async findById(id: string): Promise<UserRestrictionWithTargets | null> {
     return prismaRead.userRestriction.findUnique({
       where: { id },

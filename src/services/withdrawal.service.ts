@@ -16,7 +16,7 @@ import {
   utcDateString,
 } from '../utils/datetime'
 import { AppError } from '../middlewares/errorHandler'
-import { countryEqualsFilter } from '../utils/agency-country'
+import { countriesMatch } from '../utils/agency-country'
 import { withSerializationRetry } from '../utils/txRetry'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { assertPointsDebitAllowed } from './wallet-freeze.service'
@@ -542,12 +542,16 @@ export const withdrawalService = {
       allowBeyondAssignmentCap?: boolean
       /** When override agency is ineligible (wrong country / payroll off), throw instead of PENDING_PLATFORM. */
       rejectOnIneligibleOverride?: boolean
+      /** Admin may assign a specific agency even when host and agent countries differ. */
+      ignoreCountryMatch?: boolean
     },
   ) {
     let assignmentIdOut: string | null = null
     let expiresAtOut: Date | null = null
     let countryMismatch = false
     let selfAssignBlocked = false
+    let overrideNotFound = false
+    let overrideIneligible = false
 
     await prisma.$transaction(
       async (tx) => {
@@ -586,9 +590,7 @@ export const withdrawalService = {
         }
 
         let agencyUserId: string | null = null
-        if (!hostCountry) {
-          agencyUserId = null
-        } else if (opts?.overrideAgencyUserId) {
+        if (opts?.overrideAgencyUserId) {
           if (
             opts.overrideAgencyUserId === withdrawerUserId ||
             opts.overrideAgencyUserId === excludeAgencyUserId
@@ -599,23 +601,32 @@ export const withdrawalService = {
             }
             agencyUserId = null
           } else {
-            const ag = await tx.agency.findFirst({
-              where: {
-                userId: opts.overrideAgencyUserId,
-                payrollEnabled: true,
-                payrollPrivilegeGranted: true,
-                OR: [{ pausedAt: null }, { pausedUntil: { lte: new Date() } }],
-                user: { country: countryEqualsFilter(hostCountry) },
-              },
+            const ag = await tx.agency.findUnique({
+              where: { userId: opts.overrideAgencyUserId },
+              include: { user: { select: { country: true } } },
             })
-            if (ag) {
+            const now = new Date()
+            const paused =
+              !!ag?.pausedAt &&
+              !(ag.pausedUntil != null && ag.pausedUntil.getTime() <= now.getTime())
+            const payrollOk =
+              !!ag?.payrollEnabled && !!ag?.payrollPrivilegeGranted && !paused
+            const countryOk =
+              !!opts.ignoreCountryMatch ||
+              (!!hostCountry && countriesMatch(ag?.user.country, hostCountry))
+
+            if (ag && payrollOk && countryOk) {
               agencyUserId = ag.userId
               await withdrawalRepository.touchAgencyPayrollTimestamp(agencyUserId, tx)
             } else if (opts.rejectOnIneligibleOverride) {
-              countryMismatch = true
+              if (!ag) overrideNotFound = true
+              else if (!payrollOk) overrideIneligible = true
+              else countryMismatch = true
               return
             }
           }
+        } else if (!hostCountry) {
+          agencyUserId = null
         } else {
           agencyUserId = await withdrawalRepository.getNextEligibleAgency(tx, hostCountry, {
             withdrawerUserId,
@@ -667,6 +678,18 @@ export const withdrawalService = {
         400,
         'Payroll cannot be assigned to the withdrawer or their own agency',
         'PAYROLL_SELF_ASSIGN_FORBIDDEN',
+      )
+    }
+
+    if (overrideNotFound) {
+      throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
+    }
+
+    if (overrideIneligible) {
+      throw new AppError(
+        400,
+        'Agency is not eligible for payroll (privilege, accept-toggle, or pause)',
+        'PAYROLL_AGENCY_INELIGIBLE',
       )
     }
 
@@ -1494,14 +1517,14 @@ export const withdrawalService = {
     }
 
     if (!opts?.bypassAgeLimit) {
-      if (!isAdminWithdrawalRevertable({ status: w.status, requestedAt: w.requestedAt })) {
-        const ageMs = Date.now() - w.requestedAt.getTime()
+      if (!isAdminWithdrawalRevertable({ status: w.status, processedAt: w.processedAt })) {
+        const ageMs = w.processedAt ? Date.now() - w.processedAt.getTime() : 0
         throw new AppError(
           400,
-          `Withdrawal can only be reversed within ${ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS / (24 * 60 * 60 * 1000)} days of request`,
+          `Withdrawal can only be reversed within ${ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS / (24 * 60 * 60 * 1000)} days of payment`,
           'WITHDRAWAL_REVERT_WINDOW_EXPIRED',
           {
-            requestedAt: w.requestedAt.toISOString(),
+            processedAt: w.processedAt?.toISOString() ?? null,
             maxAgeMs: ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS,
             ageMs,
           },
@@ -1821,8 +1844,8 @@ export const withdrawalService = {
       disputeTicketId: w.disputeTicketId,
       paymentMethodId: w.paymentMethodId,
       failReason: w.failReason ?? null,
-      /** Admin reverse eligibility (≤4 days from requestedAt + reversible status). */
-      canRevert: isAdminWithdrawalRevertable({ status: w.status, requestedAt: w.requestedAt }),
+      /** Admin reverse eligibility (≤4 days from processedAt + reversible status). */
+      canRevert: isAdminWithdrawalRevertable({ status: w.status, processedAt: w.processedAt }),
     }
   },
 

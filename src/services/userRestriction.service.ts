@@ -9,6 +9,7 @@ import {
 import { prismaRead } from '../config/database'
 import { auditService } from './audit.service'
 import { publishServerFrameToUser } from '../utils/ws-publisher'
+import { formatUserName } from '../utils/user-display'
 
 const ERROR_BY_TYPE: Record<
   UserRestrictionType,
@@ -72,8 +73,11 @@ function toDto(row: UserRestrictionWithTargets) {
 }
 
 function serializeCache(until: Date, targetUserIds: string[] | null): string {
-  const payload: RestrictionCachePayload = {
-    until: until.toISOString(),
+  const iso = until.toISOString()
+  const payload: RestrictionCachePayload & { restrictedUntil: string } = {
+    until: iso,
+    /** Live-server `isUserRestrictedFast` reads this field. */
+    restrictedUntil: iso,
     targetUserIds,
   }
   return JSON.stringify(payload)
@@ -179,6 +183,39 @@ export const userRestrictionService = {
       userId,
       active: active.map(toDto),
       history: includeCleared ? rows.map(toDto) : active.map(toDto),
+    }
+  },
+
+  async listGlobalForAdmin(query: {
+    type?: UserRestrictionType
+    userId?: string
+    active?: boolean
+    page: number
+    limit: number
+  }) {
+    const skip = (query.page - 1) * query.limit
+    const { rows, total } = await userRestrictionRepository.findManyForAdmin({
+      type: query.type,
+      userId: query.userId,
+      activeOnly: query.active !== false,
+      skip,
+      take: query.limit,
+    })
+    return {
+      items: rows.map((row) => ({
+        ...toDto(row),
+        user: {
+          ...row.user,
+          name: formatUserName(row.user),
+          publicId: row.user.publicId?.toString(),
+        },
+      })),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        hasMore: skip + rows.length < total,
+      },
     }
   },
 

@@ -218,6 +218,19 @@ export const adminLiveModerationService = {
       select: { id: true },
     })
     const hostedStreamIds = hostedStreams.map((s) => s.id)
+    const liveLogWhere: Prisma.LiveStreamModerationLogWhereInput = {
+      streamId: { in: hostedStreamIds },
+      ...(query.action ? { action: query.action } : {}),
+    }
+    const videoLogWhere: Prisma.VideoCallModerationLogWhereInput = {
+      session: { OR: [{ callerId: userId }, { creatorId: userId }] },
+      ...(query.action ? { action: query.action } : {}),
+    }
+    const reportWhere: Prisma.MessageReportWhereInput = {
+      OR: [{ reportedUserId: userId }, { hostUserId: userId }],
+      ...(query.reason ? { reason: query.reason } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    }
 
     const [
       liveLogs,
@@ -232,14 +245,14 @@ export const adminLiveModerationService = {
     ] = await Promise.all([
       hostedStreamIds.length
         ? prismaRead.liveStreamModerationLog.findMany({
-            where: { streamId: { in: hostedStreamIds } },
+            where: liveLogWhere,
             orderBy: { checkedAt: 'desc' },
             skip,
             take,
           })
         : Promise.resolve([]),
       hostedStreamIds.length
-        ? prismaRead.liveStreamModerationLog.count({ where: { streamId: { in: hostedStreamIds } } })
+        ? prismaRead.liveStreamModerationLog.count({ where: liveLogWhere })
         : Promise.resolve(0),
       prismaRead.hostStreamBan.findMany({
         where: { userId },
@@ -249,9 +262,7 @@ export const adminLiveModerationService = {
       }),
       prismaRead.hostStreamBan.count({ where: { userId } }),
       prismaRead.videoCallModerationLog.findMany({
-        where: {
-          session: { OR: [{ callerId: userId }, { creatorId: userId }] },
-        },
+        where: videoLogWhere,
         include: {
           session: {
             select: {
@@ -272,10 +283,10 @@ export const adminLiveModerationService = {
         take,
       }),
       prismaRead.videoCallModerationLog.count({
-        where: { session: { OR: [{ callerId: userId }, { creatorId: userId }] } },
+        where: videoLogWhere,
       }),
       prismaRead.messageReport.findMany({
-        where: { OR: [{ reportedUserId: userId }, { hostUserId: userId }] },
+        where: reportWhere,
         include: {
           reporter: { select: userBriefSelect },
           reportedUser: { select: userBriefSelect },
@@ -286,7 +297,7 @@ export const adminLiveModerationService = {
         take,
       }),
       prismaRead.messageReport.count({
-        where: { OR: [{ reportedUserId: userId }, { hostUserId: userId }] },
+        where: reportWhere,
       }),
       prismaRead.messageReport.groupBy({
         by: ['reason', 'context'],
@@ -364,9 +375,13 @@ export const adminLiveModerationService = {
     const userId = query.userId
 
     if (kind === 'nudity') {
-      const streamFilter: Prisma.LiveStreamModerationLogWhereInput = userId
-        ? { streamId: { in: (await prismaRead.liveStream.findMany({ where: { userId }, select: { id: true } })).map((s) => s.id) } }
-        : {}
+      const hostedIds = userId
+        ? (await prismaRead.liveStream.findMany({ where: { userId }, select: { id: true } })).map((s) => s.id)
+        : null
+      const streamFilter: Prisma.LiveStreamModerationLogWhereInput = {
+        ...(hostedIds ? { streamId: { in: hostedIds } } : {}),
+        ...(query.action ? { action: query.action } : {}),
+      }
       const [rows, total] = await Promise.all([
         prismaRead.liveStreamModerationLog.findMany({
           where: streamFilter,
@@ -384,9 +399,10 @@ export const adminLiveModerationService = {
     }
 
     if (kind === 'video_call') {
-      const where: Prisma.VideoCallModerationLogWhereInput = userId
-        ? { session: { OR: [{ callerId: userId }, { creatorId: userId }] } }
-        : {}
+      const where: Prisma.VideoCallModerationLogWhereInput = {
+        ...(userId ? { session: { OR: [{ callerId: userId }, { creatorId: userId }] } } : {}),
+        ...(query.action ? { action: query.action } : {}),
+      }
       const [rows, total] = await Promise.all([
         prismaRead.videoCallModerationLog.findMany({
           where,
@@ -443,6 +459,8 @@ export const adminLiveModerationService = {
     const where: Prisma.MessageReportWhereInput = {
       AND: [
         userId ? { OR: [{ reportedUserId: userId }, { hostUserId: userId }] } : {},
+        query.reason ? { reason: query.reason } : {},
+        query.status ? { status: query.status } : {},
         {
           OR: [
             { context: 'LIVE' },

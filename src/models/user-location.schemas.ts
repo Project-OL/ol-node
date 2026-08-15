@@ -17,8 +17,17 @@ export const locationHistoryQuerySchema = z.object({
 
 export const adminLocationsQuerySchema = z.object({
   userId: z.string().uuid().optional(),
+  /** Numeric public / display ID (`publicId`, `defaultPublicId`, or `currentVipPublicId`). */
+  publicId: z
+    .string()
+    .trim()
+    .regex(/^\d+$/)
+    .optional()
+    .transform((v) => (v ? BigInt(v) : undefined)),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z.string().min(1).optional(),
 })
+
+export type AdminLocationsQuery = z.infer<typeof adminLocationsQuerySchema>

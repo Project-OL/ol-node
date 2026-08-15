@@ -1181,7 +1181,7 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
           select: {
             id: true,
             status: true,
-            requestedAt: true,
+            processedAt: true,
             platformFeePoints: true,
             agentRewardPoints: true,
           },
@@ -1216,7 +1216,7 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
     const withdrawalCanRevert = withdrawal
       ? isAdminWithdrawalRevertable({
           status: withdrawal.status,
-          requestedAt: withdrawal.requestedAt,
+          processedAt: withdrawal.processedAt,
         })
       : false
 

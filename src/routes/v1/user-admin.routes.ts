@@ -238,7 +238,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users', 'Location'],
         description:
-          'Global GPS location sample feed (newest first). Filter by userId / from / to.',
+          'Global GPS location sample feed (newest first). Filter by userId (UUID), publicId (public or display ID), from / to.',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
