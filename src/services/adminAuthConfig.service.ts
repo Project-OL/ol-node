@@ -59,14 +59,6 @@ function serialize(row: {
   }
 }
 
-function fallbackDto(): AdminAuthConfigDto {
-  return serialize({
-    failedLoginThreshold: DEFAULT_ADMIN_LOCKOUT_THRESHOLD,
-    lockoutMinutes: DEFAULT_ADMIN_LOCKOUT_MINUTES,
-    updatedAt: new Date(0),
-  })
-}
-
 export const adminAuthConfigService = {
   async getConfig(): Promise<AdminAuthConfigDto> {
     const key = RedisKeys.adminAuthConfig()
