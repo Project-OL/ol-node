@@ -98,6 +98,14 @@ export function resolveAdminActivityDestination(
       resourceId: postId ?? targetUserId,
     }
   }
+  if (actionType === 'ADMIN_LIVE_PHOTO_REMOVED') {
+    return {
+      label: 'Live photo taken down',
+      targetUserId,
+      resourceType: 'live_photo',
+      resourceId: targetUserId,
+    }
+  }
   if (actionType === 'ADMIN_LIVE_STREAM_STOP_REQUESTED') {
     return {
       label: streamId ? `Live stream ${streamId}` : 'Live stream',

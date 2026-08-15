@@ -4,7 +4,9 @@ import { AppError } from '../middlewares/errorHandler'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { deviceRepository } from '../repositories/device.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
+import { livePhotoRepository } from '../repositories/livePhoto.repository'
 import { userRepository } from '../repositories/user.repository'
+import { livePhotoService } from './livePhoto.service'
 import { bannedDeviceRepository } from '../repositories/bannedDevice.repository'
 import { passwordService } from './password.service'
 import { sessionService } from './session.service'
@@ -16,12 +18,26 @@ import { deviceBanService } from './device-ban.service'
 import { storageService } from './storage.service'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { explainFaceProfileStatus } from '../utils/face-profile-status'
+import {
+  describeLivePhotoFailureReason,
+  explainLivePhotoStatus,
+} from '../utils/live-photo-status'
+import { adminAuditMetaFromRequest } from '../utils/admin-audit'
+import type { FastifyRequest } from 'fastify'
 
 function generateTemporaryPassword(): string {
   const suffix = randomBytes(9)
     .toString('base64url')
     .replace(/[^a-zA-Z0-9]/g, 'a')
   return `Aa1!${suffix}9`
+}
+
+function safePublicUrl(key: string): string | null {
+  try {
+    return storageService.getCdnOrS3PublicUrl(key)
+  } catch {
+    return null
+  }
 }
 
 export const adminUserModerationService = {
@@ -166,6 +182,123 @@ export const adminUserModerationService = {
           }
         : null,
     }
+  },
+
+  async getLivePhotoStatus(userId: string) {
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const row = await livePhotoRepository.findByUserId(userId)
+    const latestAttempt = row ? await livePhotoRepository.findLatestAttempt(row.id) : null
+
+    const primaryKey = row?.s3Key?.trim() || ''
+    const pendingKey = row?.pendingS3Key?.trim() || ''
+    const hasUploadedImage = Boolean(primaryKey || pendingKey || row?.imageUrl?.trim())
+    const hasVerifiedPhotoFields =
+      row != null &&
+      row.verifiedAt != null &&
+      (Boolean(row.imageUrl?.trim()) || Boolean(primaryKey))
+    const replaceInProgress = Boolean(
+      pendingKey ||
+        row?.verificationState === 'PENDING_VERIFICATION' ||
+        (row?.verificationState === 'PROCESSING' && hasVerifiedPhotoFields),
+    )
+    const isVerified =
+      row?.verificationState === 'VERIFIED' ||
+      (hasVerifiedPhotoFields &&
+        (row?.verificationState === 'PENDING_VERIFICATION' ||
+          row?.verificationState === 'PROCESSING'))
+
+    const imageUrl =
+      row?.imageUrl?.trim() || (primaryKey ? safePublicUrl(primaryKey) : null)
+    const pendingImageUrl = pendingKey ? safePublicUrl(pendingKey) : null
+
+    const failureReason =
+      row?.failedReason?.trim() ||
+      (row?.verificationState === 'FAILED' || row?.verificationState === 'REJECTED'
+        ? latestAttempt?.failureReason?.trim() || null
+        : null) ||
+      null
+    const replaceFailedReason = row?.replaceFailedReason?.trim() || null
+
+    const explanation = explainLivePhotoStatus({
+      verificationState: row?.verificationState,
+      failedReason: failureReason,
+      replaceFailedReason,
+      hasUploadedImage,
+      isVerified,
+      replaceInProgress,
+      similarityScore: row?.similarityScore,
+    })
+
+    return {
+      userId,
+      hasLivePhoto: hasUploadedImage,
+      isVerified,
+      verificationState: row?.verificationState ?? 'NOT_UPLOADED',
+      statusLabel: explanation.statusLabel,
+      statusDetail: explanation.statusDetail,
+      verdictReason: explanation.verdictReason,
+      failureReason,
+      failureReasonDetail: describeLivePhotoFailureReason(failureReason),
+      replaceFailedReason,
+      replaceFailedReasonDetail: describeLivePhotoFailureReason(replaceFailedReason),
+      replaceInProgress,
+      similarityScore: row?.similarityScore ?? null,
+      verifiedAt: row?.verifiedAt?.toISOString() ?? null,
+      imageUrl,
+      pendingImageUrl,
+      latestAttempt: latestAttempt
+        ? {
+            matched: latestAttempt.matched,
+            failureReason: latestAttempt.failureReason,
+            failureReasonDetail: describeLivePhotoFailureReason(latestAttempt.failureReason),
+            similarityScore: latestAttempt.similarityScore,
+            createdAt: latestAttempt.createdAt.toISOString(),
+          }
+        : null,
+    }
+  },
+
+  async removeLivePhoto(params: {
+    targetUserId: string
+    adminUserId: string
+    reason?: string
+    request?: FastifyRequest
+  }) {
+    const user = await userRepository.findById(params.targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const row = await livePhotoRepository.findByUserId(params.targetUserId)
+    const hasPhoto = Boolean(
+      row &&
+        (row.s3Key.trim() ||
+          row.pendingS3Key?.trim() ||
+          row.imageUrl?.trim() ||
+          (row.verificationState !== 'NOT_UPLOADED' && row.verificationState !== 'PENDING_UPLOAD')),
+    )
+    if (!row || !hasPhoto) {
+      throw new AppError(404, 'Live photo not found', 'LIVE_PHOTO_NOT_FOUND')
+    }
+
+    const previousState = row.verificationState
+    await livePhotoService.remove(params.targetUserId)
+
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
+      actionType: 'ADMIN_LIVE_PHOTO_REMOVED',
+      actionStatus: 'success',
+      actionDetails: {
+        reason: params.reason ?? null,
+        previousState,
+        wasVerified: previousState === 'VERIFIED' || row.verifiedAt != null,
+      },
+      destination: `Live photo ${params.targetUserId}`,
+      request: params.request ? adminAuditMetaFromRequest(params.request) : undefined,
+    })
+
+    return { ok: true as const, userId: params.targetUserId }
   },
 
   async revokeFaceVerification(params: {

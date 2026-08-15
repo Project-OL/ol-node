@@ -10,6 +10,13 @@ export const livePhotoRepository = {
     return prismaRead.userLivePhoto.findUnique({ where: { userId } })
   },
 
+  findLatestAttempt(livePhotoId: string) {
+    return prismaRead.livePhotoVerificationAttempt.findFirst({
+      where: { livePhotoId },
+      orderBy: { createdAt: 'desc' },
+    })
+  },
+
   /** First upload / retry after fail — clears verified fields and any prior pending replace. */
   async upsertPendingUpload(
     userId: string,

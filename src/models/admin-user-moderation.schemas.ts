@@ -10,6 +10,10 @@ export const adminFaceRevokeBodySchema = z.object({
   revokeRelated: z.boolean().optional(),
 })
 
+export const adminLivePhotoRemoveBodySchema = z.object({
+  reason: z.string().max(500).optional(),
+})
+
 export const adminDeviceBanBodySchema = z.object({
   deviceId: z.string().min(1).max(255).optional(),
   reason: z.string().max(500).optional(),

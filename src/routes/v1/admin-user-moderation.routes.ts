@@ -4,6 +4,7 @@ import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import {
   adminDeviceBanBodySchema,
   adminFaceRevokeBodySchema,
+  adminLivePhotoRemoveBodySchema,
   adminPasswordResetBodySchema,
 } from '../../models/admin-user-moderation.schemas'
 import { adminUserModerationService } from '../../services/adminUserModeration.service'
@@ -53,6 +54,51 @@ export default async function adminUserModerationRoutes(app: FastifyInstance) {
     async (request, reply) => {
       return reply.send(
         await adminUserModerationService.getFaceVerificationStatus(request.params.userId),
+      )
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
+    '/users/:userId/live-photo',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Live photo'],
+        description:
+          'Live photo for a user: uploaded image URL, verification state, and verdict reason when not verified.',
+      },
+    },
+    async (request, reply) => {
+      return reply.send(await adminUserModerationService.getLivePhotoStatus(request.params.userId))
+    },
+  )
+
+  app.delete<{ Params: { userId: string } }>(
+    '/users/:userId/live-photo',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Live photo'],
+        description:
+          'Take down a user’s live photo: soft-reset verification state, bust caches, and purge S3 objects.',
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const parsed = adminLivePhotoRemoveBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await adminUserModerationService.removeLivePhoto({
+          targetUserId: request.params.userId,
+          adminUserId: request.adminUser!.id,
+          reason: parsed.data.reason,
+          request,
+        }),
       )
     },
   )

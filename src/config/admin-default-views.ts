@@ -26,6 +26,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/users/:id/devices',
     'GET /admin/users/:id/face-verification',
     'DELETE /admin/users/:id/face-verification',
+    'GET /admin/users/:id/live-photo',
+    'DELETE /admin/users/:id/live-photo',
     'GET /admin/users/transactions/filter-types',
     'GET /admin/users/:id/transactions/coins',
     'GET /admin/users/:id/transactions/points',
