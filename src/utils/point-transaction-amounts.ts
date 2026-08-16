@@ -45,8 +45,8 @@ function formatPointsDisplay(points: bigint): string {
   return points.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-function usdToLocal(amountUsd: number, inrPerUsd: number): string {
-  return (amountUsd * inrPerUsd).toFixed(2)
+function usdToLocal(amountUsd: number, rate: number): string {
+  return (amountUsd * rate).toFixed(2)
 }
 
 /**
@@ -70,7 +70,7 @@ export function resolvePointLedgerRefId(
 
 export function buildPointAmountBreakdown(
   ctx: PointLedgerAmountContext,
-  inrPerUsd: number,
+  fx: { code: string; rate: number },
 ): PointAmountBreakdown {
   const points = ctx.amount
   const baseUsd = formatPointsAsUsd(points)
@@ -109,8 +109,8 @@ export function buildPointAmountBreakdown(
     pointsPerUsd: Number(POINTS_PER_USD),
     conversionLabel,
     localCurrency: {
-      code: 'INR',
-      amount: usdToLocal(localUsdBasis, inrPerUsd),
+      code: fx.code,
+      amount: usdToLocal(localUsdBasis, fx.rate),
       usdBasis: localUsdBasis.toFixed(2),
     },
     actualAmountReceivedUsd: actualUsd,

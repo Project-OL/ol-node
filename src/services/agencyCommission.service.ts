@@ -29,6 +29,9 @@ import {
 } from '../utils/datetime'
 import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from '../queues/agency-commission.queue'
 import { walletService } from './wallet.service'
+import { withdrawalService } from './withdrawal.service'
+import { formatLocalAmount, resolveLocalFx } from '../utils/local-currency'
+import { formatPointsAsUsd } from '../utils/points-currency'
 import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
 import { env } from '../config/env'
 import {
@@ -1050,7 +1053,13 @@ export const agencyCommissionService = {
     recipientAgentUserId: string
     points: bigint
     idempotencyKey: string
-  }): Promise<{ transferId: string }> {
+  }): Promise<{
+    transferId: string
+    points: string
+    usdAmount: string
+    localCurrencyAmount: string
+    localCurrencyCode: string
+  }> {
     const { senderUserId, recipientAgentUserId, points, idempotencyKey } = params
 
     if (senderUserId === recipientAgentUserId) {
@@ -1077,11 +1086,23 @@ export const agencyCommissionService = {
       throw new AppError(400, 'Recipient is not an agent', 'INVALID_RECIPIENT')
     }
 
-    const existingBefore = await prismaRead.agentPointTransfer.findUnique({
-      where: { idempotencyKey },
-    })
+    const [existingBefore, sender, payrollConfig] = await Promise.all([
+      prismaRead.agentPointTransfer.findUnique({
+        where: { idempotencyKey },
+      }),
+      prismaRead.user.findUnique({ where: { id: senderUserId }, select: { country: true } }),
+      withdrawalService.getPayrollConfig(),
+    ])
+    const usdAmount = formatPointsAsUsd(points)
+    const local = formatLocalAmount(Number(usdAmount), resolveLocalFx(sender?.country, payrollConfig))
+    const fxFields = {
+      points: points.toString(),
+      usdAmount,
+      localCurrencyAmount: local.localCurrencyAmount,
+      localCurrencyCode: local.localCurrencyCode,
+    }
     if (existingBefore) {
-      return { transferId: existingBefore.id }
+      return { transferId: existingBefore.id, ...fxFields }
     }
 
     const transferId = randomUUID()
@@ -1163,6 +1184,6 @@ export const agencyCommissionService = {
       walletService.adjustPointBalanceCache(recipientAgentUserId, points),
     ])
 
-    return { transferId: settledTransferId }
+    return { transferId: settledTransferId, ...fxFields }
   },
 }

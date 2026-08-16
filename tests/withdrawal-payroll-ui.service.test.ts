@@ -34,7 +34,12 @@ vi.mock("../src/config/database", () => ({
     payrollConfig: { findUnique: vi.fn() },
     agency: { findUnique: vi.fn() },
     pointLedgerEntry: { aggregate: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-    user: { findMany: vi.fn().mockResolvedValue([]) },
+    user: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue({ country: 'India' }),
+    },
+    payrollFeeTier: { findMany: vi.fn().mockResolvedValue([]) },
+    payrollCountryFxRate: { findMany: vi.fn().mockResolvedValue([]) },
   },
   prisma: {
     withdrawal: { update: vi.fn() },
@@ -85,17 +90,18 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
   it("matches spec at min withdrawal 100k pts", () => {
     const gross = 100_000n;
     const r = calculateWithdrawalAmounts(gross, defaultConfig);
-    expect(r.platformFeePoints).toBe(5000n);
-    expect(r.agentRewardPoints).toBe(3000n);
-    expect(r.hostPayoutPoints).toBe(95000n);
-    expect(r.hostPayoutUsd.toString()).toBe("9.5");
+    expect(r.serviceFeePoints).toBe(10_000n);
+    expect(r.platformFeePoints).toBe(4_500n);
+    expect(r.agentRewardPoints).toBe(2_700n);
+    expect(r.hostPayoutPoints).toBe(85_500n);
+    expect(r.hostPayoutUsd.toString()).toBe("8.55");
     expect(r.serviceFeeUsd).toBe(1);
-    expect(r.hostNetUsd).toBeCloseTo(8.5, 5);
+    expect(r.hostNetUsd).toBeCloseTo(8.55, 5);
   });
 
   it("aliases calculateAmounts export", () => {
     expect(calculateAmounts(100_000n, defaultConfig).hostPayoutPoints).toBe(
-      95000n,
+      85_500n,
     );
   });
 
@@ -121,8 +127,9 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
   it("truncates bp math for odd gross at 10L+ tier (2%)", () => {
     const cfg = { ...defaultConfig, agentRewardRateBp: 6000 };
     const r = calculateWithdrawalAmounts(1_000_001n, cfg);
-    const platformFee = (1_000_001n * 200n) / 10000n;
-    expect(platformFee).toBe(20000n);
+    const feeBase = 1_000_001n - 10_000n;
+    const platformFee = (feeBase * 200n) / 10000n;
+    expect(platformFee).toBe(19_800n);
     expect(r.agentRewardPoints).toBe((platformFee * 6000n) / 10000n);
   });
 });
@@ -150,9 +157,13 @@ describe("withdrawalService.getWithdrawalDetail", () => {
       slaHours: 2,
       maxAssignmentAttempts: 5,
       inrPerUsd: { toString: () => "88" },
+      nprPerUsd: { toString: () => "150" },
       updatedAt: new Date(),
       updatedByUserId: null,
     } as never);
+    vi.mocked(prismaRead.user.findUnique).mockResolvedValue({ country: "India" } as never);
+    vi.mocked(prismaRead.payrollFeeTier.findMany).mockResolvedValue([]);
+    vi.mocked(prismaRead.payrollCountryFxRate.findMany).mockResolvedValue([]);
   });
 
   it("returns timeTakenSeconds when status is PAID", async () => {
@@ -225,6 +236,30 @@ describe("withdrawalService.getWithdrawalDetail", () => {
     expect(detail.localCurrencyAmount).toBe("827.20");
     expect(detail.localCurrencyCode).toBe("INR");
     expect(detail.notes).toBe("urgent");
+  });
+
+  it("computes localCurrencyAmount using nprPerUsd for Nepal hosts", async () => {
+    vi.mocked(prismaRead.user.findUnique).mockResolvedValue({ country: "Nepal" } as never);
+    vi.mocked(withdrawalRepository.findWithdrawalDetailForHost).mockResolvedValue({
+      id: "w1",
+      status: "PAID",
+      amountPoints: 100000n,
+      platformFeePoints: 6000n,
+      agentRewardPoints: 3000n,
+      hostPayoutUsd: { toString: () => "9.40" },
+      notes: null,
+      requestedAt: new Date(),
+      processedAt: new Date(),
+      disputeTicketId: null,
+      assignmentCount: 1,
+      payoutRef: null,
+      paymentMethod: null,
+      payrollAssignments: [],
+    } as never);
+
+    const detail = await withdrawalService.getWithdrawalDetail("w1", "u1");
+    expect(detail.localCurrencyAmount).toBe("1410.00");
+    expect(detail.localCurrencyCode).toBe("NPR");
   });
 
   it("throws NOT_FOUND when withdrawal does not belong to user", async () => {

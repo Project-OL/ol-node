@@ -27,17 +27,18 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
   it("matches spec at min withdrawal 100k pts", () => {
     const gross = 100_000n;
     const r = calculateWithdrawalAmounts(gross, defaultConfig);
-    expect(r.platformFeePoints).toBe(5000n);
-    expect(r.agentRewardPoints).toBe(3000n);
-    expect(r.hostPayoutPoints).toBe(95000n);
-    expect(r.hostPayoutUsd.toString()).toBe("9.5");
+    expect(r.serviceFeePoints).toBe(10_000n);
+    expect(r.platformFeePoints).toBe(4_500n);
+    expect(r.agentRewardPoints).toBe(2_700n);
+    expect(r.hostPayoutPoints).toBe(85_500n);
+    expect(r.hostPayoutUsd.toString()).toBe("8.55");
     expect(r.serviceFeeUsd).toBe(1);
-    expect(r.hostNetUsd).toBeCloseTo(8.5, 5);
+    expect(r.hostNetUsd).toBeCloseTo(8.55, 5);
   });
 
   it("aliases calculateAmounts export", () => {
     expect(calculateAmounts(100_000n, defaultConfig).hostPayoutPoints).toBe(
-      95000n,
+      85_500n,
     );
   });
 
@@ -63,8 +64,9 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
   it("truncates bp math for odd gross at 10L+ tier (2%)", () => {
     const cfg = { ...defaultConfig, agentRewardRateBp: 6000 };
     const r = calculateWithdrawalAmounts(1_000_001n, cfg);
-    const platformFee = (1_000_001n * 200n) / 10000n;
-    expect(platformFee).toBe(20000n);
+    const feeBase = 1_000_001n - 10_000n;
+    const platformFee = (feeBase * 200n) / 10000n;
+    expect(platformFee).toBe(19_800n);
     expect(r.agentRewardPoints).toBe((platformFee * 6000n) / 10000n);
   });
 
@@ -94,13 +96,13 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
     };
     const low = calculateWithdrawalAmounts(100_000n, cfg);
     expect(low.platformFeeRateBp).toBe(400);
-    expect(low.platformFeePoints).toBe(4000n);
-    expect(low.agentRewardPoints).toBe(2000n);
+    expect(low.platformFeePoints).toBe(3_600n);
+    expect(low.agentRewardPoints).toBe(1_800n);
 
     const high = calculateWithdrawalAmounts(200_000n, cfg);
     expect(high.platformFeeRateBp).toBe(250);
-    expect(high.platformFeePoints).toBe(5000n);
-    expect(high.agentRewardPoints).toBe(3500n);
+    expect(high.platformFeePoints).toBe(4_750n);
+    expect(high.agentRewardPoints).toBe(3_325n);
   });
 });
 

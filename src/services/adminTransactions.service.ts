@@ -1184,6 +1184,7 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
             processedAt: true,
             platformFeePoints: true,
             agentRewardPoints: true,
+            serviceFeePoints: true,
           },
         })
       : []
@@ -1254,6 +1255,7 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
           ? platformProfitService.profitForWithdrawalRow({
               platformFeePoints: withdrawal.platformFeePoints,
               agentRewardPoints: withdrawal.agentRewardPoints,
+              serviceFeePoints: withdrawal.serviceFeePoints,
             })
           : ZERO_PLATFORM_PROFIT,
       canRevert: withdrawalCanRevert

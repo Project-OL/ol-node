@@ -6,6 +6,10 @@ import { rateLimitAgencyPointTransfer } from '../../middlewares/rateLimitAuth'
 import { agencyCommissionService } from '../../services/agencyCommission.service'
 import { agencyRepository } from '../../repositories/agency.repository'
 import { securityPasswordService } from '../../services/security-password.service'
+import { withdrawalService } from '../../services/withdrawal.service'
+import { formatLocalAmount, resolveLocalFx } from '../../utils/local-currency'
+import { formatPointsAsUsd } from '../../utils/points-currency'
+import { prismaRead } from '../../config/database'
 
 const preAuth = [authenticate]
 
@@ -181,21 +185,33 @@ export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
       const offset = Math.max(0, Number(q.cursor ?? '0') || 0)
       const { agencyPointTransferRepository } =
         await import('../../repositories/agencyPointTransfer.repository')
-      const rows = await agencyPointTransferRepository.listForUser(userId, {
-        role,
-        limit,
-        offset,
-      })
+      const [rows, payrollConfig, viewer] = await Promise.all([
+        agencyPointTransferRepository.listForUser(userId, {
+          role,
+          limit,
+          offset,
+        }),
+        withdrawalService.getPayrollConfig(),
+        prismaRead.user.findUnique({ where: { id: userId }, select: { country: true } }),
+      ])
+      const fx = resolveLocalFx(viewer?.country, payrollConfig)
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
       return reply.send({
-        items: page.map((r) => ({
-          id: r.id,
-          senderAgentUserId: r.senderAgentUserId,
-          recipientAgentUserId: r.recipientAgentUserId,
-          points: r.points.toString(),
-          createdAt: r.createdAt.toISOString(),
-        })),
+        items: page.map((r) => {
+          const usdAmount = formatPointsAsUsd(r.points)
+          const local = formatLocalAmount(Number(usdAmount), fx)
+          return {
+            id: r.id,
+            senderAgentUserId: r.senderAgentUserId,
+            recipientAgentUserId: r.recipientAgentUserId,
+            points: r.points.toString(),
+            usdAmount,
+            localCurrencyAmount: local.localCurrencyAmount,
+            localCurrencyCode: local.localCurrencyCode,
+            createdAt: r.createdAt.toISOString(),
+          }
+        }),
         nextCursor: hasMore ? String(offset + limit) : null,
       })
     },

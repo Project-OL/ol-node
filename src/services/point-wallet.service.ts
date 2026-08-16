@@ -36,6 +36,7 @@ import {
   sumCreditsByCategory,
 } from '../config/point-earnings-categories'
 import { withdrawalService } from './withdrawal.service'
+import { resolveLocalFx } from '../utils/local-currency'
 import { supportService } from './support.service'
 import { getTransactionName } from '../config/transaction-display-names'
 import {
@@ -95,13 +96,11 @@ async function buildPointTransactionDetail(
   const orderNumber = formatPointTransactionOrderNumber(entry.id, entry.createdAt)
   const transactionKind = resolvePointTransactionKind(entry.txType)
 
-  const payrollConfig = await prismaRead.payrollConfig.findUnique({
-    where: { id: 1 },
-    select: { inrPerUsd: true },
-  })
-  const inrPerUsd = payrollConfig
-    ? new Prisma.Decimal(payrollConfig.inrPerUsd.toString()).toNumber()
-    : 86
+  const [payrollConfig, viewer] = await Promise.all([
+    withdrawalService.getPayrollConfig(),
+    prismaRead.user.findUnique({ where: { id: selfRow.id }, select: { country: true } }),
+  ])
+  const localFx = resolveLocalFx(viewer?.country, payrollConfig)
 
   const withdrawalAmount = refId ? await loadWithdrawalAmountContext(refId, entry.txType) : null
   const withdrawalRow =
@@ -117,7 +116,7 @@ async function buildPointTransactionDetail(
       metadata: entry.metadata,
       withdrawal: withdrawalAmount,
     },
-    inrPerUsd,
+    localFx,
   )
 
   const counterpartyDetailsMap = await buildCounterpartyDetailsMap(

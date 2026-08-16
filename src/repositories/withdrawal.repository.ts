@@ -36,6 +36,7 @@ export const withdrawalRepository = {
       hostPayoutUsd: Prisma.Decimal
       platformFeePoints: bigint
       agentRewardPoints: bigint
+      serviceFeePoints?: bigint | null
       idempotencyKey: string
       notes?: string | null
       withdrawalVersion?: number
@@ -55,6 +56,7 @@ export const withdrawalRepository = {
         hostPayoutUsd: data.hostPayoutUsd,
         platformFeePoints: data.platformFeePoints,
         agentRewardPoints: data.agentRewardPoints,
+        serviceFeePoints: data.serviceFeePoints ?? null,
         idempotencyKey: data.idempotencyKey,
         notes: data.notes ?? null,
         withdrawalVersion: data.withdrawalVersion ?? 2,

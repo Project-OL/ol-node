@@ -1572,6 +1572,8 @@ model Withdrawal {
   hostPayoutUsd     Decimal? @map("host_payout_usd") @db.Decimal(12, 2)
   platformFeePoints BigInt?  @map("platform_fee_points")
   agentRewardPoints BigInt?  @map("agent_reward_points")
+  /// Flat service fee taken from gross before platform/agent shares. Null on pre-cutover rows.
+  serviceFeePoints  BigInt?  @map("service_fee_points")
   assignmentCount   Int      @default(0) @map("assignment_count")
   disputeTicketId   String?  @map("dispute_ticket_id") @db.VarChar(255)
   // 1 = legacy. 2 = hard debit at create (WITHDRAWAL); older v2 may still be soft escrow.
@@ -1674,6 +1676,23 @@ model PayrollFeeTier {
 
   @@index([isActive, sortOrder])
   @@map("payroll_fee_tiers")
+}
+
+/// Admin-managed local FX: country → currency + units per 1 USD.
+/// Used for withdrawal and agency point-transfer display amounts.
+model PayrollCountryFxRate {
+  id           String   @id @default(uuid()) @db.Uuid
+  country      String   @db.VarChar(80)
+  countryCode  String?  @map("country_code") @db.VarChar(8)
+  currencyCode String   @map("currency_code") @db.VarChar(8)
+  ratePerUsd   Decimal  @map("rate_per_usd") @db.Decimal(12, 4)
+  sortOrder    Int      @map("sort_order")
+  isActive     Boolean  @default(true) @map("is_active")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([country])
+  @@index([isActive, sortOrder])
+  @@map("payroll_country_fx_rates")
 }
 
 model WithdrawalPayoutRailConfig {

@@ -106,6 +106,13 @@ const PayrollFeeTierInputSchema = z
     message: 'Each fee tier requires minUsd or minPoints',
   })
 
+const PayrollCountryFxInputSchema = z.object({
+  country: z.string().trim().min(2).max(80),
+  countryCode: z.string().trim().min(2).max(3).nullable().optional(),
+  currencyCode: z.string().trim().min(3).max(8),
+  ratePerUsd: z.number().positive(),
+})
+
 const PayrollConfigUpdateSchema = z.object({
   platformFeeRateBp: z.number().int().min(0).optional(),
   agentRewardRateBp: z.number().int().min(0).optional(),
@@ -117,6 +124,8 @@ const PayrollConfigUpdateSchema = z.object({
   waitingHours: z.number().int().positive().optional(),
   maxAssignmentAttempts: z.number().int().positive().optional(),
   inrPerUsd: z.number().optional(),
+  nprPerUsd: z.number().optional(),
+  countryRates: z.array(PayrollCountryFxInputSchema).min(1).optional(),
 })
 
 const AgencyCommissionWindowConfigUpdateSchema = z

@@ -57,14 +57,16 @@ export function profitFromFullCoinSink(coinsSpent: bigint): PlatformProfitBucket
 
 /**
  * Withdrawal net platform fee (points).
- * platformFeePoints − agentRewardPoints.
+ * serviceFeePoints + platformFeePoints − agentRewardPoints.
  */
 export function profitFromWithdrawalFee(params: {
   platformFeePoints: bigint
   agentRewardPoints?: bigint
+  serviceFeePoints?: bigint
 }): { buckets: PlatformProfitBuckets; rawPoints: bigint } {
   const agent = params.agentRewardPoints ?? 0n
-  const rawPoints = params.platformFeePoints - agent
+  const service = params.serviceFeePoints ?? 0n
+  const rawPoints = service + params.platformFeePoints - agent
   return {
     rawPoints,
     buckets: {

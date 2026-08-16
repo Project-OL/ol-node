@@ -49,9 +49,19 @@ import {
   defaultPayrollFeeTierDtos,
   formatPayrollFeeTierDto,
   resolvePayrollFeeRates,
+  serviceFeeUsdToPoints,
+  withdrawalHostPayoutPoints,
   type PayrollFeeTierDto,
 } from '../utils/payroll-fee'
+import {
+  defaultCountryRates,
+  formatCountryFxDto,
+  formatLocalAmount,
+  resolveLocalFx,
+  type PayrollCountryFxDto,
+} from '../utils/local-currency'
 import { payrollFeeTierRepository } from '../repositories/payrollFeeTier.repository'
+import { payrollCountryFxRepository } from '../repositories/payrollCountryFx.repository'
 import {
   ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS,
   isAdminWithdrawalRevertable,
@@ -133,18 +143,25 @@ export type PayrollConfigSnapshot = {
   waitingHours: number
   maxAssignmentAttempts: number
   inrPerUsd: number
+  nprPerUsd?: number
+  countryRates?: PayrollCountryFxDto[]
 }
 
 function decNum(d: Prisma.Decimal): number {
   return new Prisma.Decimal(d.toString()).toNumber()
 }
 
-/** Agency PAYROLL_HOST_PAYOUT amount (= host gross − platform fee). */
+/** Agency PAYROLL_HOST_PAYOUT amount (= gross − service fee − platform fee). */
 function agencyCreditPoints(
   amountPoints: bigint,
   platformFeePoints: bigint | null | undefined,
+  serviceFeePoints?: bigint | null,
 ): string {
-  return (amountPoints - (platformFeePoints ?? 0n)).toString()
+  return withdrawalHostPayoutPoints({
+    amountPoints,
+    platformFeePoints,
+    serviceFeePoints,
+  }).toString()
 }
 
 function secondsUntil(target: Date | null | undefined, now = Date.now()): number {
@@ -165,6 +182,7 @@ export function calculateWithdrawalAmounts(
   hostPayoutPoints: bigint
   hostPayoutUsd: Prisma.Decimal
   serviceFeeUsd: number
+  serviceFeePoints: bigint
   hostNetUsd: number
 } {
   if (grossPoints <= 0n) {
@@ -180,21 +198,33 @@ export function calculateWithdrawalAmounts(
     throw new AppError(400, 'Above maximum withdrawal amount', 'ABOVE_MAX_WITHDRAWAL')
   }
 
+  const serviceFeeUsd = config.serviceFeeUsd
+  const serviceFeePoints = serviceFeeUsdToPoints(serviceFeeUsd)
+  if (serviceFeePoints >= grossPoints) {
+    throw new AppError(
+      400,
+      'Service fee exceeds or equals the requested withdrawal amount',
+      'SERVICE_FEE_EXCEEDS_AMOUNT',
+    )
+  }
+
+  // Tier is matched on requested (gross) amount; % applies to remaining points after service fee.
+  const feeBase = grossPoints - serviceFeePoints
   const { platformFeeRateBp, agentRewardRateBp } = resolvePayrollFeeRates(grossPoints, {
     feeTiers: config.feeTiers,
     fallbackAgentRewardRateBp: config.agentRewardRateBp,
   })
-  const platformFeePoints = (grossPoints * BigInt(platformFeeRateBp)) / 10000n
+  const platformFeePoints = (feeBase * BigInt(platformFeeRateBp)) / 10000n
   // agentRewardRateBp = share of platform fee (6000 bp = 60% of platformFeePoints)
   const agentRewardPoints = (platformFeePoints * BigInt(agentRewardRateBp)) / 10000n
-  const hostPayoutPoints = grossPoints - platformFeePoints
+  const hostPayoutPoints = feeBase - platformFeePoints
 
   const hostPayoutUsd = new Prisma.Decimal(hostPayoutPoints.toString()).div(
     new Prisma.Decimal(10000),
   )
 
-  const serviceFeeUsd = config.serviceFeeUsd
-  const hostNetUsd = hostPayoutUsd.toNumber() - serviceFeeUsd
+  // Service fee already left the fee base; do not subtract it again from host payout.
+  const hostNetUsd = hostPayoutUsd.toNumber()
 
   return {
     platformFeeRateBp,
@@ -203,6 +233,7 @@ export function calculateWithdrawalAmounts(
     hostPayoutPoints,
     hostPayoutUsd,
     serviceFeeUsd,
+    serviceFeePoints,
     hostNetUsd,
   }
 }
@@ -218,13 +249,53 @@ async function loadFeeTiers(): Promise<PayrollFeeTierDto[]> {
   return rows.map((row) => formatPayrollFeeTierDto(row))
 }
 
+function deriveLegacyFx(
+  countryRates: PayrollCountryFxDto[],
+  fallbackInr: number,
+  fallbackNpr: number,
+): { inrPerUsd: number; nprPerUsd: number } {
+  const inr = countryRates.find(
+    (r) =>
+      r.currencyCode.toUpperCase() === 'INR' ||
+      r.country.trim().toLowerCase() === 'india' ||
+      r.countryCode?.toUpperCase() === 'IN',
+  )
+  const npr = countryRates.find(
+    (r) =>
+      r.currencyCode.toUpperCase() === 'NPR' ||
+      r.country.trim().toLowerCase() === 'nepal' ||
+      r.countryCode?.toUpperCase() === 'NP',
+  )
+  return {
+    inrPerUsd: inr && inr.ratePerUsd > 0 ? inr.ratePerUsd : fallbackInr,
+    nprPerUsd: npr && npr.ratePerUsd > 0 ? npr.ratePerUsd : fallbackNpr,
+  }
+}
+
+async function loadCountryRates(
+  fallbackInr: number,
+  fallbackNpr: number,
+): Promise<PayrollCountryFxDto[]> {
+  const rows = await payrollCountryFxRepository.findActive()
+  if (!rows.length) {
+    return defaultCountryRates({ inrPerUsd: fallbackInr, nprPerUsd: fallbackNpr })
+  }
+  return rows.map((row) => formatCountryFxDto(row))
+}
+
 async function loadPayrollConfigRow(): Promise<PayrollConfigSnapshot> {
   const row = await prismaRead.payrollConfig.findUnique({ where: { id: 1 } })
   if (!row) {
     throw new AppError(500, 'Payroll config missing', 'CONFIG_ERROR')
   }
-  const feeTiers = await loadFeeTiers()
+  const fallbackInr = decNum(row.inrPerUsd)
+  const fallbackNpr = decNum(row.nprPerUsd)
+  const [feeTiers, countryRates] = await Promise.all([
+    loadFeeTiers(),
+    loadCountryRates(fallbackInr, fallbackNpr),
+  ])
   const first = feeTiers[0]
+  const legacyFx = deriveLegacyFx(countryRates, fallbackInr, fallbackNpr)
   return {
     id: row.id,
     platformFeeRateBp: first?.platformFeeRateBp ?? row.platformFeeRateBp,
@@ -236,7 +307,9 @@ async function loadPayrollConfigRow(): Promise<PayrollConfigSnapshot> {
     slaHours: row.slaHours,
     waitingHours: row.waitingHours,
     maxAssignmentAttempts: row.maxAssignmentAttempts,
-    inrPerUsd: decNum(row.inrPerUsd),
+    inrPerUsd: legacyFx.inrPerUsd,
+    nprPerUsd: legacyFx.nprPerUsd,
+    countryRates,
   }
 }
 
@@ -247,6 +320,15 @@ export const withdrawalService = {
     if (hit) {
       const parsed = JSON.parse(hit) as PayrollConfigSnapshot
       if (Array.isArray(parsed.feeTiers) && parsed.feeTiers.length > 0) {
+        if (parsed.nprPerUsd == null || !Number.isFinite(parsed.nprPerUsd)) {
+          parsed.nprPerUsd = 150
+        }
+        if (!Array.isArray(parsed.countryRates) || parsed.countryRates.length === 0) {
+          parsed.countryRates = defaultCountryRates({
+            inrPerUsd: parsed.inrPerUsd,
+            nprPerUsd: parsed.nprPerUsd,
+          })
+        }
         return parsed
       }
     }
@@ -451,8 +533,12 @@ export const withdrawalService = {
     // host's AVAILABLE points (totalPoints − unconfirmedPoints), enforced under
     // the wallet lock inside the transaction below.
 
-    const config = await withdrawalService.getPayrollConfig()
+    const [config, host] = await Promise.all([
+      withdrawalService.getPayrollConfig(),
+      prismaRead.user.findUnique({ where: { id: userId }, select: { country: true } }),
+    ])
     const amounts = calculateWithdrawalAmounts(params.grossPoints, config)
+    const localFx = resolveLocalFx(host?.country, config)
 
     const withdrawalId = randomUUID()
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
@@ -513,6 +599,7 @@ export const withdrawalService = {
               hostPayoutUsd: amounts.hostPayoutUsd,
               platformFeePoints: amounts.platformFeePoints,
               agentRewardPoints: amounts.agentRewardPoints,
+              serviceFeePoints: amounts.serviceFeePoints,
               idempotencyKey: `withdrawal:${userId}:${withdrawalId}`,
               notes: params.notes ?? null,
               withdrawalVersion: 2,
@@ -536,11 +623,23 @@ export const withdrawalService = {
       where: { id: withdrawalId },
     })
 
+    const hostPayoutUsdNum = Number(refreshed.hostPayoutUsd ?? 0)
+    const local = formatLocalAmount(hostPayoutUsdNum, localFx)
     const response = {
       withdrawalId: refreshed.id,
       status: refreshed.status,
       grossPoints: refreshed.amountPoints.toString(),
       hostPayoutUsd: refreshed.hostPayoutUsd?.toString() ?? null,
+      hostPayoutPoints: withdrawalHostPayoutPoints({
+        amountPoints: refreshed.amountPoints,
+        platformFeePoints: refreshed.platformFeePoints,
+        serviceFeePoints: refreshed.serviceFeePoints,
+      }).toString(),
+      platformFeePoints: refreshed.platformFeePoints?.toString() ?? null,
+      agentRewardPoints: refreshed.agentRewardPoints?.toString() ?? null,
+      serviceFeePoints: refreshed.serviceFeePoints?.toString() ?? null,
+      localCurrencyAmount: local.localCurrencyAmount,
+      localCurrencyCode: local.localCurrencyCode,
     }
     await walletService.resolveIdemKey(idem, response)
 
@@ -922,9 +1021,11 @@ export const withdrawalService = {
           throw new AppError(400, 'SLA expired', 'SLA_EXPIRED')
         }
 
-        const grossPoints = a.withdrawal.amountPoints
-        const platformFeePoints = a.withdrawal.platformFeePoints ?? 0n
-        const hostPayoutPoints = grossPoints - platformFeePoints
+        const hostPayoutPoints = withdrawalHostPayoutPoints({
+          amountPoints: a.withdrawal.amountPoints,
+          platformFeePoints: a.withdrawal.platformFeePoints,
+          serviceFeePoints: a.withdrawal.serviceFeePoints,
+        })
         const reward = a.withdrawal.agentRewardPoints ?? 0n
         const hostUserId = a.withdrawal.userId
         notifyWithdrawalId = a.withdrawalId
@@ -989,9 +1090,11 @@ export const withdrawalService = {
     const hostUserId = pre.withdrawal.userId
     const agentUserId = pre.agencyUserId
     const withdrawalId = pre.withdrawalId
-    const grossPoints = pre.withdrawal.amountPoints
-    const platformFeePoints = pre.withdrawal.platformFeePoints ?? 0n
-    const hostPayoutPoints = grossPoints - platformFeePoints
+    const hostPayoutPoints = withdrawalHostPayoutPoints({
+      amountPoints: pre.withdrawal.amountPoints,
+      platformFeePoints: pre.withdrawal.platformFeePoints,
+      serviceFeePoints: pre.withdrawal.serviceFeePoints,
+    })
     const reward = pre.withdrawal.agentRewardPoints ?? 0n
     const proofKey = pre.proofS3Key
     const now = new Date()
@@ -1252,9 +1355,11 @@ export const withdrawalService = {
 
     const hostUserId = pre.userId
     const agentUserId = assignment.agencyUserId
-    const grossPoints = pre.amountPoints
-    const platformFeePoints = pre.platformFeePoints ?? 0n
-    const hostPayoutPoints = grossPoints - platformFeePoints
+    const hostPayoutPoints = withdrawalHostPayoutPoints({
+      amountPoints: pre.amountPoints,
+      platformFeePoints: pre.platformFeePoints,
+      serviceFeePoints: pre.serviceFeePoints,
+    })
     const reward = pre.agentRewardPoints ?? 0n
     const proofKey = assignment.proofS3Key
     const ticketPublicId = pre.disputeTicketId
@@ -1412,7 +1517,11 @@ export const withdrawalService = {
     }
 
     const agentUserId = assignment.agencyUserId
-    const hostPayoutPoints = pre.amountPoints - (pre.platformFeePoints ?? 0n)
+    const hostPayoutPoints = withdrawalHostPayoutPoints({
+      amountPoints: pre.amountPoints,
+      platformFeePoints: pre.platformFeePoints,
+      serviceFeePoints: pre.serviceFeePoints,
+    })
     const agentReward = pre.agentRewardPoints ?? 0n
     const ticketPublicId = pre.disputeTicketId
     const now = new Date()
@@ -1567,7 +1676,11 @@ export const withdrawalService = {
       await payrollAssignmentRepository.findWaitingByWithdrawalId(withdrawalId)
     const creditAssignment = waitingAssignment ?? completed
     const agencyUserId = creditAssignment?.agencyUserId ?? null
-    const hostPayoutPoints = w.amountPoints - (w.platformFeePoints ?? 0n)
+    const hostPayoutPoints = withdrawalHostPayoutPoints({
+      amountPoints: w.amountPoints,
+      platformFeePoints: w.platformFeePoints,
+      serviceFeePoints: w.serviceFeePoints,
+    })
     const agentReward = w.agentRewardPoints ?? 0n
 
     const openAssignment = await prismaRead.withdrawalPayrollAssignment.findFirst({
@@ -1744,13 +1857,23 @@ export const withdrawalService = {
     const hasMore = rows.length > opts.limit
     const page = hasMore ? rows.slice(0, opts.limit) : rows
     const nextCursor = hasMore ? page[page.length - 1]?.id : undefined
+    const [config, host] = await Promise.all([
+      withdrawalService.getPayrollConfig(),
+      prismaRead.user.findUnique({ where: { id: userId }, select: { country: true } }),
+    ])
+    const fx = resolveLocalFx(host?.country, config)
     return {
-      items: page.map((row) =>
-        withdrawalService.serializeWithdrawal({
+      items: page.map((row) => {
+        const serialized = withdrawalService.serializeWithdrawal({
           ...row,
           latestAssignmentStatus: row.payrollAssignments[0]?.status ?? null,
-        }),
-      ),
+        })
+        const usd = Number(row.hostPayoutUsd ?? 0)
+        return {
+          ...serialized,
+          ...formatLocalAmount(usd, fx),
+        }
+      }),
       nextCursor,
       hasMore,
     }
@@ -1776,8 +1899,14 @@ export const withdrawalService = {
         ? Math.round((row.processedAt.getTime() - row.requestedAt.getTime()) / 1000)
         : null
 
-    const localCurrencyAmount =
-      row.hostPayoutUsd !== null ? Number(row.hostPayoutUsd) * Number(config.inrPerUsd) : null
+    const hostCountry = await prismaRead.user.findUnique({
+      where: { id: userId },
+      select: { country: true },
+    })
+    const local =
+      row.hostPayoutUsd !== null
+        ? formatLocalAmount(Number(row.hostPayoutUsd), resolveLocalFx(hostCountry?.country, config))
+        : null
 
     const maskedMethod = row.paymentMethod ? mapPaymentMethodMaskedForHost(row.paymentMethod) : null
 
@@ -1801,15 +1930,20 @@ export const withdrawalService = {
       status: hostStatus,
       grossPoints: row.amountPoints.toString(),
       grossUsd: (Number(row.amountPoints) / 10_000).toFixed(2),
-      hostPayoutPoints: (Number(row.amountPoints) - Number(row.platformFeePoints ?? 0)).toString(),
+      hostPayoutPoints: withdrawalHostPayoutPoints({
+        amountPoints: row.amountPoints,
+        platformFeePoints: row.platformFeePoints,
+        serviceFeePoints: row.serviceFeePoints,
+      }).toString(),
       hostPayoutUsd: row.hostPayoutUsd?.toString() ?? null,
       platformFeePoints: row.platformFeePoints?.toString() ?? null,
       agentRewardPoints: row.agentRewardPoints?.toString() ?? null,
+      serviceFeePoints: row.serviceFeePoints?.toString() ?? null,
       notes: row.notes ?? null,
       timeTakenSeconds,
       timeTakenFormatted: timeTakenSeconds != null ? formatDuration(timeTakenSeconds) : null,
-      localCurrencyAmount: localCurrencyAmount?.toFixed(2) ?? null,
-      localCurrencyCode: 'INR',
+      localCurrencyAmount: local?.localCurrencyAmount ?? null,
+      localCurrencyCode: local?.localCurrencyCode ?? resolveLocalFx(hostCountry?.country, config).code,
       paymentMethod: maskedMethod,
       requestedAt: row.requestedAt.toISOString(),
       processedAt: row.processedAt?.toISOString() ?? null,
@@ -1845,6 +1979,7 @@ export const withdrawalService = {
     hostPayoutUsd: Prisma.Decimal | null
     platformFeePoints: bigint | null
     agentRewardPoints: bigint | null
+    serviceFeePoints?: bigint | null
     assignmentCount: number
     disputeTicketId: string | null
     paymentMethodId: string | null
@@ -1865,6 +2000,7 @@ export const withdrawalService = {
       hostPayoutUsd: w.hostPayoutUsd?.toString() ?? null,
       platformFeePoints: w.platformFeePoints?.toString() ?? null,
       agentRewardPoints: w.agentRewardPoints?.toString() ?? null,
+      serviceFeePoints: w.serviceFeePoints?.toString() ?? null,
       assignmentCount: w.assignmentCount,
       disputeTicketId: w.disputeTicketId,
       paymentMethodId: w.paymentMethodId,
@@ -1948,11 +2084,15 @@ export const withdrawalService = {
       withdrawalId: a.withdrawalId,
       expiresAt: a.expiresAt.toISOString(),
       slaRemainingSeconds: secondsUntil(a.expiresAt),
-      grossPoints: agencyCreditPoints(a.withdrawal.amountPoints, a.withdrawal.platformFeePoints),
+      grossPoints: agencyCreditPoints(
+        a.withdrawal.amountPoints,
+        a.withdrawal.platformFeePoints,
+        a.withdrawal.serviceFeePoints,
+      ),
       hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
-      localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
-      localCurrencyCode: 'INR' as const,
+      ...formatLocalAmount(hostPayoutUsd, resolveLocalFx(a.withdrawal.user.country, config)),
       agentRewardPoints: a.withdrawal.agentRewardPoints?.toString() ?? '0',
+      serviceFeePoints: a.withdrawal.serviceFeePoints?.toString() ?? null,
       paymentMethod: mapPaymentMethodForAgent(a.withdrawal.paymentMethod, a.status, a.expiresAt),
     }
   },
@@ -1972,11 +2112,15 @@ export const withdrawalService = {
       slaRemainingSeconds: waitingSecondsRemaining ?? 0,
       waitingSecondsRemaining,
       isDisputed,
-      grossPoints: agencyCreditPoints(a.withdrawal.amountPoints, a.withdrawal.platformFeePoints),
+      grossPoints: agencyCreditPoints(
+        a.withdrawal.amountPoints,
+        a.withdrawal.platformFeePoints,
+        a.withdrawal.serviceFeePoints,
+      ),
       hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
-      localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
-      localCurrencyCode: 'INR' as const,
+      ...formatLocalAmount(hostPayoutUsd, resolveLocalFx(a.withdrawal.user.country, config)),
       agentRewardPoints: a.withdrawal.agentRewardPoints?.toString() ?? '0',
+      serviceFeePoints: a.withdrawal.serviceFeePoints?.toString() ?? null,
       paymentMethod: a.withdrawal.paymentMethod
         ? mapPaymentMethodMaskedForAgent(a.withdrawal.paymentMethod)
         : null,
@@ -1990,11 +2134,15 @@ export const withdrawalService = {
       status: a.status as 'COMPLETED' | 'REJECTED',
       withdrawalId: a.withdrawalId,
       slaRemainingSeconds: 0,
-      grossPoints: agencyCreditPoints(a.withdrawal.amountPoints, a.withdrawal.platformFeePoints),
+      grossPoints: agencyCreditPoints(
+        a.withdrawal.amountPoints,
+        a.withdrawal.platformFeePoints,
+        a.withdrawal.serviceFeePoints,
+      ),
       hostPayoutUsd: a.withdrawal.hostPayoutUsd?.toString() ?? null,
-      localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
-      localCurrencyCode: 'INR' as const,
+      ...formatLocalAmount(hostPayoutUsd, resolveLocalFx(a.withdrawal.user.country, config)),
       agentRewardPoints: a.withdrawal.agentRewardPoints?.toString() ?? '0',
+      serviceFeePoints: a.withdrawal.serviceFeePoints?.toString() ?? null,
       rejectionReason: a.rejectionReason ?? null,
       proofS3Key: a.proofS3Key ?? null,
       completedAt: a.completedAt?.toISOString() ?? null,
@@ -2112,6 +2260,7 @@ export const withdrawalService = {
         firstName: true,
         lastName: true,
         publicId: true,
+        country: true,
       },
     })
     const hostById = new Map(hostUsers.map((u) => [u.id, u]))
@@ -2128,8 +2277,7 @@ export const withdrawalService = {
           hostPublicId: host?.publicId.toString() ?? '',
           grossPoints: w.amountPoints.toString(),
           hostPayoutUsd: w.hostPayoutUsd?.toString() ?? null,
-          localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
-          localCurrencyCode: 'INR' as const,
+          ...formatLocalAmount(hostPayoutUsd, resolveLocalFx(host?.country, config)),
           disputeTicketId: w.disputeTicketId,
           requestedAt: w.requestedAt.toISOString(),
           assignment: {

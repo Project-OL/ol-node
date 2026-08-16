@@ -36,6 +36,25 @@ export function usdToPoints(usd: number): bigint {
   return BigInt(Math.round(usd * Number(POINTS_PER_USD)))
 }
 
+/** Flat service fee in points. Non-positive / non-finite → 0. */
+export function serviceFeeUsdToPoints(serviceFeeUsd: number): bigint {
+  if (!Number.isFinite(serviceFeeUsd) || serviceFeeUsd <= 0) return 0n
+  return usdToPoints(serviceFeeUsd)
+}
+
+/** Host cash-out points = gross − service fee − platform fee. Null fees treated as 0 (legacy rows). */
+export function withdrawalHostPayoutPoints(params: {
+  amountPoints: bigint
+  platformFeePoints?: bigint | null
+  serviceFeePoints?: bigint | null
+}): bigint {
+  return (
+    params.amountPoints -
+    (params.platformFeePoints ?? 0n) -
+    (params.serviceFeePoints ?? 0n)
+  )
+}
+
 export function formatPayrollFeeTierDto(
   row: PayrollFeeTierRates & { sortOrder: number },
 ): PayrollFeeTierDto {

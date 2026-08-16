@@ -27,7 +27,7 @@ describe("buildPointAmountBreakdown", () => {
         metadata: null,
         withdrawal: null,
       },
-      86,
+      { code: "INR", rate: 86 },
     );
     expect(out.points).toBe("100000");
     expect(out.usdAmount).toBe("10.00");
@@ -54,10 +54,28 @@ describe("buildPointAmountBreakdown", () => {
           platformFeePoints: 6_000n,
         },
       },
-      86,
+      { code: "INR", rate: 86 },
     );
     expect(out.usdAmount).toBe("9.40");
     expect(out.actualAmountReceivedUsd).toBe("9.40");
     expect(out.localCurrency?.amount).toBe("808.40");
+  });
+
+  it("uses NPR when the viewer FX is Nepal", () => {
+    const out = buildPointAmountBreakdown(
+      {
+        txType: PointTxType.GIFT_RECEIVE,
+        amount: 100_000n,
+        refId: null,
+        metadata: null,
+        withdrawal: null,
+      },
+      { code: "NPR", rate: 150 },
+    );
+    expect(out.localCurrency).toEqual({
+      code: "NPR",
+      amount: "1500.00",
+      usdBasis: "10.00",
+    });
   });
 });

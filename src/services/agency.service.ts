@@ -23,6 +23,8 @@ import { agencyCommissionService } from './agencyCommission.service'
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyKycService } from './agencyKyc.service'
 import { agencyCoinsellerService } from './agencyCoinseller.service'
+import { formatLocalAmount, resolveLocalFx } from '../utils/local-currency'
+import { withdrawalHostPayoutPoints } from '../utils/payroll-fee'
 
 const log = rootLogger.child({ module: 'agency.service' })
 
@@ -571,9 +573,11 @@ export const agencyService = {
     const isDisputed = assignment.withdrawal.status === 'DISPUTED'
 
     const hostPayoutUsd = Number(assignment.withdrawal.hostPayoutUsd ?? 0)
-    const hostPayoutPoints = (
-      assignment.withdrawal.amountPoints - (assignment.withdrawal.platformFeePoints ?? 0n)
-    ).toString()
+    const hostPayoutPoints = withdrawalHostPayoutPoints({
+      amountPoints: assignment.withdrawal.amountPoints,
+      platformFeePoints: assignment.withdrawal.platformFeePoints,
+      serviceFeePoints: assignment.withdrawal.serviceFeePoints,
+    }).toString()
     const waitingSecondsRemaining =
       isWaiting && assignment.waitingExpiresAt && !isDisputed
         ? Math.max(0, Math.round((assignment.waitingExpiresAt.getTime() - now.getTime()) / 1000))
@@ -597,9 +601,12 @@ export const agencyService = {
       grossPoints: hostPayoutPoints,
       hostPayoutPoints,
       agentRewardPoints: assignment.withdrawal.agentRewardPoints?.toString() ?? '0',
+      serviceFeePoints: assignment.withdrawal.serviceFeePoints?.toString() ?? null,
       hostPayoutUsd: assignment.withdrawal.hostPayoutUsd?.toString() ?? null,
-      localCurrencyAmount: (hostPayoutUsd * Number(config.inrPerUsd)).toFixed(2),
-      localCurrencyCode: 'INR',
+      ...formatLocalAmount(
+        hostPayoutUsd,
+        resolveLocalFx(assignment.withdrawal.user.country, config),
+      ),
       paymentMethod: assignment.withdrawal.paymentMethod
         ? isPendingAndActive
           ? mapPaymentMethodFull(assignment.withdrawal.paymentMethod)

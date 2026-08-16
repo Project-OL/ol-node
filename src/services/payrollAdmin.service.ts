@@ -11,7 +11,14 @@ import { mapPaymentMethodMaskedForAgent } from '../utils/payment-method-mask'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { isAdminWithdrawalRevertable } from '../utils/admin-withdrawal-revert'
 import { payrollFeeTierRepository } from '../repositories/payrollFeeTier.repository'
-import { usdToPoints } from '../utils/payroll-fee'
+import { usdToPoints, withdrawalHostPayoutPoints } from '../utils/payroll-fee'
+import {
+  formatLocalAmount,
+  resolveLocalFx,
+  type PayrollCountryFxDto,
+} from '../utils/local-currency'
+import { payrollCountryFxRepository } from '../repositories/payrollCountryFx.repository'
+import { normalizeCountry } from '../utils/agency-country'
 
 type AdminUserCard = {
   id: string
@@ -93,13 +100,18 @@ async function resolveHostUserId(opts: {
 
 function mapAdminAssignment(
   row: NonNullable<Awaited<ReturnType<typeof payrollAssignmentRepository.getByIdForAdmin>>>,
-  config: { inrPerUsd: number },
+  config: { inrPerUsd: number; nprPerUsd?: number; countryRates?: PayrollCountryFxDto[] },
 ) {
   const w = row.withdrawal
   const hostPayoutUsd = Number(w.hostPayoutUsd ?? 0)
   const platformFeePoints = w.platformFeePoints ?? 0n
-  const hostPayoutPoints = w.amountPoints - platformFeePoints
+  const hostPayoutPoints = withdrawalHostPayoutPoints({
+    amountPoints: w.amountPoints,
+    platformFeePoints: w.platformFeePoints,
+    serviceFeePoints: w.serviceFeePoints,
+  })
   const proofKey = row.proofS3Key?.trim() || null
+  const local = formatLocalAmount(hostPayoutUsd, resolveLocalFx(w.user.country, config))
 
   return {
     assignmentId: row.id,
@@ -125,15 +137,16 @@ function mapAdminAssignment(
       assignmentCount: w.assignmentCount,
       /** Gross points withdrawn (escrowed from host). */
       grossPoints: w.amountPoints.toString(),
-      /** Platform fee taken from gross. */
+      /** Platform fee taken from remaining points after the service fee. */
       platformFeePoints: platformFeePoints.toString(),
-      /** Points owed / paid to host (= gross − platform fee). */
+      /** Points owed / paid to host (= gross − service fee − platform fee). */
       hostPayoutPoints: hostPayoutPoints.toString(),
       hostPayoutUsd: w.hostPayoutUsd?.toString() ?? null,
-      localCurrencyAmount: (hostPayoutUsd * config.inrPerUsd).toFixed(2),
-      localCurrencyCode: 'INR' as const,
+      localCurrencyAmount: local.localCurrencyAmount,
+      localCurrencyCode: local.localCurrencyCode,
       /** Processing reward credited to the agency agent. */
       agentRewardPoints: (w.agentRewardPoints ?? 0n).toString(),
+      serviceFeePoints: (w.serviceFeePoints ?? 0n).toString(),
       notes: w.notes ?? null,
       /** True when admin may POST `/admin/agency/withdrawal/:id/reverse` (≤4 days from paid + status). */
       canRevert: isAdminWithdrawalRevertable({
@@ -252,6 +265,81 @@ function normalizeAndValidateFeeTiers(
   return tiers
 }
 
+function normalizeAndValidateCountryRates(
+  input: Array<{
+    country: string
+    countryCode?: string | null
+    currencyCode: string
+    ratePerUsd: number
+  }>,
+): Array<{
+  country: string
+  countryCode: string | null
+  currencyCode: string
+  ratePerUsd: Prisma.Decimal
+}> {
+  if (input.length === 0) {
+    throw new AppError(400, 'At least one country rate is required', 'VALIDATION_ERROR')
+  }
+
+  const seen = new Set<string>()
+  return input.map((row, i) => {
+    const country = normalizeCountry(row.country ?? '')
+    if (!country) {
+      throw new AppError(400, `countryRates[${i}].country is required`, 'VALIDATION_ERROR')
+    }
+    const countryKey = country.toLowerCase()
+    if (seen.has(countryKey)) {
+      throw new AppError(400, `Duplicate country "${country}"`, 'VALIDATION_ERROR')
+    }
+    seen.add(countryKey)
+
+    const currencyCode = (row.currencyCode ?? '').trim().toUpperCase()
+    if (!/^[A-Z]{3,8}$/.test(currencyCode)) {
+      throw new AppError(
+        400,
+        `countryRates[${i}].currencyCode must be 3–8 letters`,
+        'VALIDATION_ERROR',
+      )
+    }
+    if (!Number.isFinite(row.ratePerUsd) || row.ratePerUsd <= 0) {
+      throw new AppError(
+        400,
+        `countryRates[${i}].ratePerUsd must be a positive number`,
+        'VALIDATION_ERROR',
+      )
+    }
+    const rawCode = row.countryCode?.trim() ?? ''
+    const countryCode = rawCode ? rawCode.toUpperCase() : null
+    if (countryCode && !/^[A-Z]{2,3}$/.test(countryCode)) {
+      throw new AppError(
+        400,
+        `countryRates[${i}].countryCode must be a 2–3 letter ISO code`,
+        'VALIDATION_ERROR',
+      )
+    }
+    return {
+      country,
+      countryCode,
+      currencyCode,
+      ratePerUsd: new Prisma.Decimal(row.ratePerUsd),
+    }
+  })
+}
+
+function pickLegacyRate(
+  rows: Array<{ country: string; countryCode: string | null; currencyCode: string; ratePerUsd: Prisma.Decimal }>,
+  match: { countries: string[]; codes: string[]; currency: string },
+): Prisma.Decimal | undefined {
+  const hit = rows.find(
+    (r) =>
+      r.currencyCode === match.currency ||
+      match.countries.includes(r.country.toLowerCase()) ||
+      (r.countryCode != null && match.codes.includes(r.countryCode)),
+  )
+  return hit?.ratePerUsd
+}
+
 export const payrollAdminService = {
   getConfig() {
     return withdrawalService.getPayrollConfig()
@@ -277,6 +365,13 @@ export const payrollAdminService = {
       waitingHours?: number
       maxAssignmentAttempts?: number
       inrPerUsd?: number
+      nprPerUsd?: number
+      countryRates?: Array<{
+        country: string
+        countryCode?: string | null
+        currencyCode: string
+        ratePerUsd: number
+      }>
     },
   ) {
     const current = await prisma.payrollConfig.findUnique({ where: { id: 1 } })
@@ -286,6 +381,9 @@ export const payrollAdminService = {
 
     const normalizedTiers = updates.feeTiers?.length
       ? normalizeAndValidateFeeTiers(updates.feeTiers)
+      : null
+    const normalizedCountryRates = updates.countryRates
+      ? normalizeAndValidateCountryRates(updates.countryRates)
       : null
 
     const newAr =
@@ -318,7 +416,25 @@ export const payrollAdminService = {
     if (updates.waitingHours != null) data.waitingHours = updates.waitingHours
     if (updates.maxAssignmentAttempts != null)
       data.maxAssignmentAttempts = updates.maxAssignmentAttempts
-    if (updates.inrPerUsd != null) data.inrPerUsd = new Prisma.Decimal(updates.inrPerUsd)
+    if (normalizedCountryRates) {
+      const inr = pickLegacyRate(normalizedCountryRates, {
+        countries: ['india'],
+        codes: ['IN', 'IND'],
+        currency: 'INR',
+      })
+      const npr = pickLegacyRate(normalizedCountryRates, {
+        countries: ['nepal'],
+        codes: ['NP', 'NPL'],
+        currency: 'NPR',
+      })
+      if (inr) data.inrPerUsd = inr
+      else if (updates.inrPerUsd != null) data.inrPerUsd = new Prisma.Decimal(updates.inrPerUsd)
+      if (npr) data.nprPerUsd = npr
+      else if (updates.nprPerUsd != null) data.nprPerUsd = new Prisma.Decimal(updates.nprPerUsd)
+    } else {
+      if (updates.inrPerUsd != null) data.inrPerUsd = new Prisma.Decimal(updates.inrPerUsd)
+      if (updates.nprPerUsd != null) data.nprPerUsd = new Prisma.Decimal(updates.nprPerUsd)
+    }
     data.updatedByUserId = adminUserId
 
     await prisma.payrollConfig.update({
@@ -330,6 +446,35 @@ export const payrollAdminService = {
       await payrollFeeTierRepository.softReplace(normalizedTiers)
     } else if (updates.agentRewardRateBp != null) {
       await payrollFeeTierRepository.updateAgentRewardOnActive(updates.agentRewardRateBp)
+    }
+
+    if (normalizedCountryRates) {
+      await payrollCountryFxRepository.upsertActive(normalizedCountryRates)
+    } else if (updates.inrPerUsd != null || updates.nprPerUsd != null) {
+      const active = await payrollCountryFxRepository.findActive()
+      if (active.length) {
+        await payrollCountryFxRepository.upsertActive(
+          active.map((row) => {
+            const isInr =
+              row.currencyCode.toUpperCase() === 'INR' ||
+              row.country.toLowerCase() === 'india' ||
+              row.countryCode?.toUpperCase() === 'IN'
+            const isNpr =
+              row.currencyCode.toUpperCase() === 'NPR' ||
+              row.country.toLowerCase() === 'nepal' ||
+              row.countryCode?.toUpperCase() === 'NP'
+            let rate = row.ratePerUsd
+            if (isInr && updates.inrPerUsd != null) rate = new Prisma.Decimal(updates.inrPerUsd)
+            if (isNpr && updates.nprPerUsd != null) rate = new Prisma.Decimal(updates.nprPerUsd)
+            return {
+              country: row.country,
+              countryCode: row.countryCode,
+              currencyCode: row.currencyCode,
+              ratePerUsd: rate,
+            }
+          }),
+        )
+      }
     }
 
     await withdrawalService.bustPayrollConfigCache()

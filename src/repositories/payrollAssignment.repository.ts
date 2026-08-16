@@ -53,7 +53,7 @@ export type WithdrawalWithMethodRow = {
 export type InboxAssignmentRow = Prisma.WithdrawalPayrollAssignmentGetPayload<{
   include: {
     withdrawal: {
-      include: { paymentMethod: true }
+      include: { paymentMethod: true, user: { select: { country: true } } }
     }
   }
 }>
@@ -96,7 +96,7 @@ export const payrollAssignmentRepository = {
       where: { id, agencyUserId },
       include: {
         withdrawal: {
-          include: { paymentMethod: true },
+          include: { paymentMethod: true, user: { select: { country: true } } },
         },
       },
     })
@@ -179,7 +179,7 @@ export const payrollAssignmentRepository = {
       where: { agencyUserId, status },
       include: {
         withdrawal: {
-          include: { paymentMethod: true },
+          include: { paymentMethod: true, user: { select: { country: true } } },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -198,7 +198,7 @@ export const payrollAssignmentRepository = {
       where: { agencyUserId, status: { in: statuses } },
       include: {
         withdrawal: {
-          include: { paymentMethod: true },
+          include: { paymentMethod: true, user: { select: { country: true } } },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -232,7 +232,7 @@ export const payrollAssignmentRepository = {
       where,
       include: {
         withdrawal: {
-          include: { paymentMethod: true },
+          include: { paymentMethod: true, user: { select: { country: true } } },
         },
       },
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
@@ -288,7 +288,7 @@ export const payrollAssignmentRepository = {
         : {}),
       include: {
         withdrawal: {
-          include: { paymentMethod: true },
+          include: { paymentMethod: true, user: { select: { country: true } } },
         },
       },
     })

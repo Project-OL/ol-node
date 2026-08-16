@@ -118,17 +118,21 @@ export function profitForFullCoinSpend(amount: bigint): PlatformProfitBuckets {
 export function profitForWithdrawalRow(params: {
   platformFeePoints: bigint | null | undefined
   agentRewardPoints: bigint | null | undefined
+  serviceFeePoints?: bigint | null | undefined
 }): PlatformProfitBuckets {
   const fee = params.platformFeePoints ?? 0n
   const agent = params.agentRewardPoints ?? 0n
+  const service = params.serviceFeePoints ?? 0n
   const { buckets, rawPoints } = profitFromWithdrawalFee({
     platformFeePoints: fee,
     agentRewardPoints: agent,
+    serviceFeePoints: service,
   })
   warnIfNegative(rawPoints, {
     kind: 'withdrawal',
     fee: fee.toString(),
     agent: agent.toString(),
+    service: service.toString(),
   })
   return buckets
 }
@@ -306,13 +310,14 @@ export async function summarizePlatformProfit(params: {
           }
         : {}),
     },
-    select: { platformFeePoints: true, agentRewardPoints: true },
+    select: { platformFeePoints: true, agentRewardPoints: true, serviceFeePoints: true },
   })
   let wPoints = 0n
   for (const w of withdrawals) {
     const { buckets, rawPoints } = profitFromWithdrawalFee({
       platformFeePoints: w.platformFeePoints ?? 0n,
       agentRewardPoints: w.agentRewardPoints ?? 0n,
+      serviceFeePoints: w.serviceFeePoints ?? 0n,
     })
     warnIfNegative(rawPoints, { kind: 'summary_withdrawal' })
     wPoints += BigInt(buckets.points)
