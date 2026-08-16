@@ -31,13 +31,16 @@ export const sendAgencyMessageBodySchema = z.object({
   message: z.string().min(1).max(4000),
 })
 
+/** User UUID or numeric public / display ID (`publicId`, `defaultPublicId`, `currentVipPublicId`). */
+const hostIdentifierSchema = z.string().trim().min(1).max(64)
+
 export const addHostBodySchema = z.object({
-  hostUserId: z.string().uuid(),
+  hostUserId: hostIdentifierSchema,
 })
 
 export const transferHostsBodySchema = z.object({
   targetAgencyIdentifier: z.string().min(1).max(64),
-  hostUserIds: z.array(z.string().uuid()).min(1).max(100),
+  hostUserIds: z.array(hostIdentifierSchema).min(1).max(100),
 })
 
 export const suspendAgencyBodySchema = z

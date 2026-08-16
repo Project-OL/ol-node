@@ -504,11 +504,11 @@ export const adminLiveModerationService = {
     await userRepository.update(params.userId, { suspendedUntil: null })
     await redisClient.del(RedisKeys.liveUserSuspended(params.userId))
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.userId,
       actionType: 'ADMIN_HOST_STREAM_SUSPENSION_CLEARED',
       actionStatus: 'success',
-      actionDetails: { targetUserId: params.userId },
     })
 
     return {

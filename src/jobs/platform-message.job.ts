@@ -111,8 +111,8 @@ export async function processPlatformNotificationBroadcastJob(
   }
 
   if (batches.length === 0) {
-    auditService.log({
-      userId: job.data.adminUserId,
+    auditService.logAdmin({
+      adminUserId: job.data.adminUserId,
       actionType: 'ADMIN_NOTIFICATION_BROADCAST',
       actionStatus: 'success',
       actionDetails: { campaignId, recipientCount: 0, sent: 0 },
@@ -201,8 +201,8 @@ export async function processPlatformNotificationBroadcastBatchJob(
     const [totalStr, sentStr] = await redisClient.hmget(stateKey, 'total', 'sent')
     const total = Number(totalStr ?? 0)
     const totalSent = Number(sentStr ?? 0)
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
       actionType: 'ADMIN_NOTIFICATION_BROADCAST',
       actionStatus: 'success',
       actionDetails: { campaignId, recipientCount: total, sent: totalSent },

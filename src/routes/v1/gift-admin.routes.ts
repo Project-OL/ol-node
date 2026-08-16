@@ -28,6 +28,8 @@ import {
 import { giftGalleryAdminService } from '../../services/gift-gallery-admin.service'
 import { adminCatalogAssetUploadService } from '../../services/admin-catalog-asset-upload.service'
 import { AdminCatalogAssetUploadUrlBodySchema } from '../../models/admin-catalog-asset-upload.schemas'
+import { auditService } from '../../services/audit.service'
+import { catalogActiveToggleActionType } from '../../utils/admin-audit'
 
 type FilePart = { buffer: Buffer; filename: string }
 
@@ -194,6 +196,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
           displayOrder: f.displayOrder,
           vipOnly: f.vipOnly,
         })
+        auditService.logAdminFromRequest(request, {
+          actionType: 'ADMIN_GIFT_CREATED',
+          actionDetails: { giftId: created.id, name: created.name, code: created.code },
+        })
         return reply.status(201).send(created)
       }
 
@@ -206,6 +212,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         )
       }
       const created = await giftAdminService.createGift(parsed.data)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_CREATED',
+        actionDetails: { giftId: created.id, name: created.name, code: created.code },
+      })
       return reply.status(201).send(created)
     },
   )
@@ -269,6 +279,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         }
 
         const updated = await giftAdminService.patchGift(request.params.giftId, patch)
+        auditService.logAdminFromRequest(request, {
+          actionType: catalogActiveToggleActionType('ADMIN_GIFT', patch),
+          actionDetails: { giftId: request.params.giftId, fields: Object.keys(patch) },
+        })
         return reply.send(updated)
       }
 
@@ -281,6 +295,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         )
       }
       const updated = await giftAdminService.patchGift(request.params.giftId, parsed.data)
+      auditService.logAdminFromRequest(request, {
+        actionType: catalogActiveToggleActionType('ADMIN_GIFT', parsed.data),
+        actionDetails: { giftId: request.params.giftId, fields: Object.keys(parsed.data) },
+      })
       return reply.send(updated)
     },
   )
@@ -290,6 +308,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
     { preHandler: preAuth },
     async (request: FastifyRequest<{ Params: { giftId: string } }>, reply: FastifyReply) => {
       await giftAdminService.deleteGift(request.params.giftId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_DELETED',
+        actionDetails: { giftId: request.params.giftId },
+      })
       return reply.status(204).send()
     },
   )
@@ -309,6 +331,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = CreateGiftCategoryBodySchema.parse(request.body ?? {})
       const created = await giftCategoryService.create(body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_CATEGORY_CREATED',
+        actionDetails: { categoryId: created.id, name: created.name },
+      })
       return reply.status(201).send(created)
     },
   )
@@ -319,6 +345,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
     async (request: FastifyRequest<{ Params: { categoryId: string } }>, reply: FastifyReply) => {
       const body = UpdateGiftCategoryBodySchema.parse(request.body ?? {})
       const updated = await giftCategoryService.update(request.params.categoryId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_CATEGORY_UPDATED',
+        actionDetails: { categoryId: request.params.categoryId },
+      })
       return reply.send(updated)
     },
   )
@@ -329,6 +359,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = ReorderGiftCategoriesBodySchema.parse(request.body ?? {})
       const categories = await giftCategoryService.reorder(body.orderedIds)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_CATEGORY_REORDERED',
+        actionDetails: { orderedIds: body.orderedIds },
+      })
       return reply.send({ categories })
     },
   )
@@ -338,6 +372,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
     { preHandler: preAuth },
     async (request: FastifyRequest<{ Params: { categoryId: string } }>, reply: FastifyReply) => {
       await giftCategoryService.delete(request.params.categoryId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_CATEGORY_DELETED',
+        actionDetails: { categoryId: request.params.categoryId },
+      })
       return reply.status(204).send()
     },
   )
@@ -358,6 +396,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = CreateGalleryCategoryBodySchema.parse(request.body ?? {})
       const created = await giftGalleryAdminService.createCategory(body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_GALLERY_CREATED',
+        actionDetails: { sectionId: created.id, categoryId: created.id },
+      })
       return reply.status(201).send(created)
     },
   )
@@ -371,6 +413,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         request.params.sectionId,
         body,
       )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_GALLERY_UPDATED',
+        actionDetails: { sectionId: request.params.sectionId, categoryId: request.params.sectionId },
+      })
       return reply.send(updated)
     },
   )
@@ -385,6 +431,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         body.year,
         body.month,
       )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_GALLERY_REORDERED',
+        actionDetails: { orderedIds: body.orderedIds, year: body.year, month: body.month },
+      })
       return reply.send(result)
     },
   )
@@ -394,6 +444,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
     { preHandler: preAuth },
     async (request: FastifyRequest<{ Params: { sectionId: string } }>, reply: FastifyReply) => {
       await giftGalleryAdminService.deleteCategory(request.params.sectionId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_GALLERY_DELETED',
+        actionDetails: { sectionId: request.params.sectionId, categoryId: request.params.sectionId },
+      })
       return reply.status(204).send()
     },
   )
@@ -407,6 +461,14 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         request.params.sectionId,
         body.giftIds,
       )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_GALLERY_GIFTS_ADDED',
+        actionDetails: {
+          sectionId: request.params.sectionId,
+          categoryId: request.params.sectionId,
+          giftIds: body.giftIds,
+        },
+      })
       return reply.status(201).send(result)
     },
   )
@@ -420,6 +482,14 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         request.params.sectionId,
         body.giftIds,
       )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_GIFT_GALLERY_GIFTS_REMOVED',
+        actionDetails: {
+          sectionId: request.params.sectionId,
+          categoryId: request.params.sectionId,
+          giftIds: body.giftIds,
+        },
+      })
       return reply.send(result)
     },
   )

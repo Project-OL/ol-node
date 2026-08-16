@@ -1,5 +1,6 @@
+import type { FastifyRequest } from 'fastify'
 import { auditRepository } from '../repositories/audit.repository'
-import type { AdminAuditRequestMeta } from '../utils/admin-audit'
+import { adminAuditMetaFromRequest, type AdminAuditRequestMeta } from '../utils/admin-audit'
 
 function getIp(request: {
   ip?: string
@@ -90,6 +91,33 @@ export const auditService = {
       ipAddress: params.ipAddress,
       userAgent: params.userAgent,
       deviceId: params.deviceId,
+    })
+  },
+
+  /**
+   * Route-layer helper: attribute a successful admin mutation to `request.adminUser`.
+   * No-ops when the request has no admin actor (should not happen on authenticated admin routes).
+   */
+  logAdminFromRequest(
+    request: FastifyRequest,
+    params: {
+      actionType: string
+      targetUserId?: string | null
+      actionDetails?: Record<string, unknown>
+      destination?: string
+      actionStatus?: 'success' | 'failed'
+    },
+  ) {
+    const adminUserId = request.adminUser?.id
+    if (!adminUserId) return
+    this.logAdmin({
+      adminUserId,
+      targetUserId: params.targetUserId,
+      actionType: params.actionType,
+      actionStatus: params.actionStatus ?? 'success',
+      actionDetails: params.actionDetails,
+      destination: params.destination,
+      request: adminAuditMetaFromRequest(request),
     })
   },
 }

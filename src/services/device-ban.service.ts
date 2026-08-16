@@ -77,13 +77,13 @@ export const deviceBanService = {
       await redisClient.del(RedisKeys.userTokenVersion(userId))
     }
 
-    auditService.log({
-      userId: params.relatedUserId ?? params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.relatedUserId ?? userIds[0] ?? null,
       actionType: 'ADMIN_DEVICE_BANNED',
       actionStatus: 'success',
       actionDetails: {
         deviceId,
-        adminUserId: params.adminUserId,
         reason: params.reason ?? null,
         sessionsRevoked: sessionIds.length,
         affectedUserIds: userIds,
@@ -105,8 +105,8 @@ export const deviceBanService = {
     const deleted = await bannedDeviceRepository.unban(normalized)
     await redisClient.del(RedisKeys.deviceBanned(normalized))
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
       actionType: 'ADMIN_DEVICE_UNBANNED',
       actionStatus: 'success',
       actionDetails: { deviceId: normalized, removed: deleted.count },

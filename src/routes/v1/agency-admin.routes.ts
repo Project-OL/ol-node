@@ -39,6 +39,7 @@ import {
   ReplaceTradingTopupPackagesSchema,
 } from '../../models/system-rates-admin.schemas'
 import { addUtcDays, utcNow } from '../../utils/datetime'
+import { auditService } from '../../services/audit.service'
 
 const DEFAULT_AGENT_APP_LIST_STATUSES: AgencyAgentApplicationStatus[] = [
   'PENDING',
@@ -207,6 +208,11 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         request.params.agencyIdentifier,
       )
       const result = await agencyService.setCommissionTier(agency.userId, body.commissionTier)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_COMMISSION_TIER_SET',
+        targetUserId: agency.userId,
+        actionDetails: { agencyUserId: agency.userId, commissionTier: body.commissionTier },
+      })
       return reply.send(result)
     },
   )
@@ -240,11 +246,17 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       const agency = await agencyAdminService.resolveAgencyByIdentifier(
         request.params.agencyIdentifier,
       )
-      const result = await agencyHostService.adminAddHost(
-        agency.userId,
-        body.hostUserId,
-        adminUserId,
-      )
+      const hostUserId = await agencyAdminService.resolveUserIdByIdentifier(body.hostUserId)
+      const result = await agencyHostService.adminAddHost(agency.userId, hostUserId, adminUserId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_HOST_ADDED',
+        targetUserId: hostUserId,
+        actionDetails: {
+          agencyUserId: agency.userId,
+          hostUserId,
+          hostIdentifier: body.hostUserId,
+        },
+      })
       return reply.send(result)
     },
   )
@@ -260,11 +272,25 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         request.params.agencyIdentifier,
       )
       const target = await agencyAdminService.resolveAgencyByIdentifier(body.targetAgencyIdentifier)
+      const hostUserIds = await Promise.all(
+        body.hostUserIds.map((id) => agencyAdminService.resolveUserIdByIdentifier(id)),
+      )
       const result = await agencyHostService.adminTransferHosts({
         sourceAgencyUserId: source.userId,
         targetAgencyUserId: target.userId,
-        hostUserIds: body.hostUserIds,
+        hostUserIds,
         adminUserId,
+      })
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_HOSTS_TRANSFERRED',
+        targetUserId: target.userId,
+        actionDetails: {
+          sourceAgencyUserId: source.userId,
+          agencyUserId: target.userId,
+          hostUserIds,
+          hostIdentifiers: body.hostUserIds,
+          transferredCount: result.transferredCount,
+        },
       })
       return reply.send(result)
     },
@@ -284,6 +310,11 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       const result = await agencyService.suspendAgencyUntil(agency.userId, pausedUntil, {
         adminUserId: request.adminUser?.id,
       })
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_SUSPENDED',
+        targetUserId: agency.userId,
+        actionDetails: { agencyUserId: agency.userId, pausedUntil: result.pausedUntil },
+      })
       return reply.send(result)
     },
   )
@@ -300,6 +331,14 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         agency.userId,
         body.payrollEnabled,
       )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_PAYROLL_PRIVILEGE_SET',
+        targetUserId: agency.userId,
+        actionDetails: {
+          agencyUserId: agency.userId,
+          payrollPrivilegeGranted: updated.payrollPrivilegeGranted,
+        },
+      })
       return reply.send({
         ok: true as const,
         agencyUserId: updated.userId,
@@ -326,6 +365,11 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         adminUserId,
         body.reason,
       )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_BANNED',
+        targetUserId: agency.userId,
+        actionDetails: { agencyUserId: agency.userId, reason: body.reason ?? null },
+      })
       return reply.send(result)
     },
   )
@@ -337,6 +381,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const result = await agencyAdminService.unbarUser(request.params.userId, adminUserId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_UNBARRED',
+        targetUserId: request.params.userId,
+      })
       return reply.send(result)
     },
   )
@@ -354,6 +402,13 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         adminNote: body.adminNote,
         userNote: body.userNote,
       })
+      if (!result.alreadyRejected) {
+        auditService.logAdminFromRequest(request, {
+          actionType: 'ADMIN_AGENCY_REJECTED',
+          targetUserId: request.params.userId,
+          actionDetails: { adminNote: body.adminNote ?? null },
+        })
+      }
       return reply.send(result)
     },
   )
@@ -435,6 +490,17 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         applicationId: parsed.data.applicationId,
         commissionTier: parsed.data.commissionTier,
       })
+      if (result.created) {
+        auditService.logAdminFromRequest(request, {
+          actionType: 'ADMIN_AGENCY_APPROVED',
+          targetUserId: request.params.userId,
+          actionDetails: {
+            agencyUserId: result.agency.userId,
+            applicationId: parsed.data.applicationId,
+            commissionTier: parsed.data.commissionTier ?? null,
+          },
+        })
+      }
       return reply.status(result.created ? 201 : 200).send({
         ok: true,
         created: result.created,
@@ -449,6 +515,11 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
       await agencyService.unpauseAgency(request.params.userId, {
         adminUserId: request.adminUser?.id,
+      })
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_UNPAUSED',
+        targetUserId: request.params.userId,
+        actionDetails: { agencyUserId: request.params.userId },
       })
       return reply.send({ ok: true })
     },
@@ -653,6 +724,11 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       await agencyService.unpauseAgency(request.params.userId, {
         adminUserId: request.adminUser?.id,
       })
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_UNPAUSED',
+        targetUserId: request.params.userId,
+        actionDetails: { agencyUserId: request.params.userId, source: 'coin-trading-unlock' },
+      })
       return reply.send({ ok: true })
     },
   )
@@ -670,7 +746,12 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceRatesSchema.parse(request.body ?? {})
-      return reply.send(await systemRatesAdminService.replaceTopupRates(body.tiers))
+      const result = await systemRatesAdminService.replaceTopupRates(body.tiers)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'coin-trading-topup-rates' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -687,7 +768,12 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceRatesSchema.parse(request.body ?? {})
-      return reply.send(await systemRatesAdminService.replaceAgentExchangeRates(body.tiers))
+      const result = await systemRatesAdminService.replaceAgentExchangeRates(body.tiers)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'coin-trading-exchange-rates' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -704,7 +790,12 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceTradingTopupPackagesSchema.parse(request.body ?? {})
-      return reply.send(await systemRatesAdminService.replaceTradingTopupPackages(body.packages))
+      const result = await systemRatesAdminService.replaceTradingTopupPackages(body.packages)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'coin-trading-topup-packages' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -718,6 +809,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     const body = PayrollConfigUpdateSchema.parse(request.body ?? {})
     const cfg = await payrollAdminService.updateConfig(adminUserId, body)
+    auditService.logAdminFromRequest(request, {
+      actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+      actionDetails: { settingKey: 'payroll-config' },
+    })
     return reply.send(cfg)
   })
 
@@ -732,6 +827,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     const body = AgencyCommissionWindowConfigUpdateSchema.parse(request.body ?? {})
     const cfg = await agencyCommissionConfigService.updateConfig(adminUserId, body)
     await agencyCommissionService.enqueueDailyRecomputeMaster({ force: true })
+    auditService.logAdminFromRequest(request, {
+      actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+      actionDetails: { settingKey: 'commission-config' },
+    })
     return reply.send({ ...cfg, recomputeEnqueued: true })
   })
 
@@ -741,7 +840,12 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
 
   app.put('/commission/levels', { preHandler: [authenticateAdmin] }, async (request, reply) => {
     const body = CommissionLevelsReplaceSchema.parse(request.body ?? {})
-    return reply.send(await systemRatesAdminService.replaceCommissionLevels(body.levels))
+    const result = await systemRatesAdminService.replaceCommissionLevels(body.levels)
+    auditService.logAdminFromRequest(request, {
+      actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+      actionDetails: { settingKey: 'commission-levels' },
+    })
+    return reply.send(result)
   })
 
   app.get(
@@ -761,6 +865,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = PayoutRailConfigUpdateSchema.parse(request.body ?? {})
       const config = await withdrawalPayoutRailConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'withdrawal-payout-rails' },
+      })
       return reply.send(config)
     },
   )
@@ -944,6 +1052,11 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         request.params.agencyIdentifier,
       )
       const result = await agencyAdminService.deleteAgencyByAdmin(agency.userId, adminUserId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_DELETED',
+        targetUserId: agency.userId,
+        actionDetails: { agencyUserId: agency.userId },
+      })
       return reply.send(result)
     },
   )

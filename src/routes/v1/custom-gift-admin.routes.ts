@@ -8,6 +8,7 @@ import {
   UpdateCustomGiftConfigBodySchema,
 } from '../../models/custom-gift.schemas'
 import { customGiftAdminService } from '../../services/customGiftAdmin.service'
+import { auditService } from '../../services/audit.service'
 
 const preAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 
@@ -85,6 +86,10 @@ export default async function customGiftAdminRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = parseRequest(UpdateCustomGiftConfigBodySchema, request.body ?? {})
       const config = await customGiftAdminService.updateConfig(body, request.adminUser!.id)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_CUSTOM_GIFT_CONFIG_UPDATED',
+        actionDetails: { settingKey: 'custom-gifts', fields: Object.keys(body) },
+      })
       return reply.send(config)
     },
   )
@@ -166,6 +171,11 @@ export default async function customGiftAdminRoutes(app: FastifyInstance) {
         body,
         request.adminUser!.id,
       )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_CUSTOM_GIFT_COMPLETED',
+        targetUserId: data.user.id,
+        actionDetails: { requestId, giftId: body.giftId ?? null },
+      })
       return reply.send({ request: data })
     },
   )
@@ -198,6 +208,11 @@ export default async function customGiftAdminRoutes(app: FastifyInstance) {
       const { requestId } = request.params as { requestId: string }
       const body = parseRequest(FailCustomGiftRequestBodySchema, request.body ?? {})
       const data = await customGiftAdminService.failRequest(requestId, body, request.adminUser!.id)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_CUSTOM_GIFT_FAILED',
+        targetUserId: data.user.id,
+        actionDetails: { requestId, refund: body.refund, reason: body.reason },
+      })
       return reply.send({ request: data })
     },
   )

@@ -22,7 +22,7 @@ export default async function adminActivityRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Activity'],
         description:
-          'Admin action types for the Activity filter. Distinct values from audit_logs plus CSA workbench types (ADMIN_SUPPORT_TICKET_* / ADMIN_SUPPORT_REPORT_*).',
+          'Admin action types for the Activity filter. Distinct values from audit_logs plus seeded admin/CSA types (users, agency, payroll, catalog, settings, live, messaging).',
       },
     },
     async (_request, reply) => {

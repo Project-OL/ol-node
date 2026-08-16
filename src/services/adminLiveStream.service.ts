@@ -415,13 +415,14 @@ export const adminLiveStreamService = {
       rootLogger.warn({ err, roomId }, 'admin live stop: Redis room cleanup failed')
     }
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.userId,
       actionType: 'ADMIN_LIVE_STREAM_STOP_REQUESTED',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.userId,
         roomId,
+        streamId: roomId,
         streamRef: params.streamRef,
         reason: params.reason ?? null,
         livekitRoomDeleted,

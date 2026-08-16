@@ -23,6 +23,7 @@ import { agencyHostConfigService } from '../../services/agencyHostConfig.service
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { videoCallPriceCapService } from '../../services/videoCallPriceCap.service'
 import { richTierService } from '../../services/rich-tier.service'
+import { auditService } from '../../services/audit.service'
 
 /**
  * Platform-wide coin / point rate configs (System Settings).
@@ -64,7 +65,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = HostRevenueSharesUpdateSchema.parse(request.body ?? {})
-      return reply.send(await hostRevenueShareConfigService.updateConfig(adminUserId, body))
+      const result = await hostRevenueShareConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'host-revenue-shares' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -81,7 +87,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceRatesSchema.parse(request.body ?? {})
-      return reply.send(await systemRatesAdminService.replacePersonalExchangeRates(body.tiers))
+      const result = await systemRatesAdminService.replacePersonalExchangeRates(body.tiers)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'personal-exchange-rates' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -98,7 +109,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceCoinPackagesSchema.parse(request.body ?? {})
-      return reply.send(await systemRatesAdminService.replaceCoinPackages(body.packages))
+      const result = await systemRatesAdminService.replaceCoinPackages(body.packages)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'coin-packages' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -115,7 +131,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = WalletLevelConfigsReplaceSchema.parse(request.body ?? {})
-      return reply.send(await systemRatesAdminService.replaceWalletLevelConfigs(body))
+      const result = await systemRatesAdminService.replaceWalletLevelConfigs(body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'wallet-level-configs' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -132,7 +153,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceVideoCallPriceCapsSchema.parse(request.body ?? {})
-      return reply.send(await videoCallPriceCapService.replaceCaps(body.tiers))
+      const result = await videoCallPriceCapService.replaceCaps(body.tiers)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'video-call-price-caps' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -149,7 +175,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = ReplaceRichTierConfigSchema.parse(request.body ?? {})
-      return reply.send({ tiers: await richTierService.replaceTierConfig(body.tiers) })
+      const tiers = await richTierService.replaceTierConfig(body.tiers)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'rich-tier' },
+      })
+      return reply.send({ tiers })
     },
   )
 
@@ -168,7 +199,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = MessagingConfigUpdateSchema.parse(request.body ?? {})
-      return reply.send(await messagingConfigService.updateConfig(adminUserId, body))
+      const result = await messagingConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'messaging' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -187,7 +223,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = SupportConfigUpdateSchema.parse(request.body ?? {})
-      return reply.send(await supportConfigService.updateConfig(adminUserId, body))
+      const result = await supportConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'support' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -206,7 +247,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = FaceLivenessConfigUpdateSchema.parse(request.body ?? {})
-      return reply.send(await faceLivenessConfigService.updateConfig(adminUserId, body))
+      const result = await faceLivenessConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'face-liveness' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -225,7 +271,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = AdminAuthConfigUpdateSchema.parse(request.body ?? {})
-      return reply.send(await adminAuthConfigService.updateConfig(adminUserId, body))
+      const result = await adminAuthConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'admin-auth' },
+      })
+      return reply.send(result)
     },
   )
 
@@ -244,7 +295,12 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = AgencyHostConfigUpdateSchema.parse(request.body ?? {})
-      return reply.send(await agencyHostConfigService.updateConfig(adminUserId, body))
+      const result = await agencyHostConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'agency-host' },
+      })
+      return reply.send(result)
     },
   )
 }

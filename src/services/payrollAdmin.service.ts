@@ -514,8 +514,9 @@ export const payrollAdminService = {
       rejectOnIneligibleOverride: !!agencyUserId,
       ignoreCountryMatch: !!agencyUserId,
     })
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: agencyUserId ?? null,
       actionType: 'WITHDRAWAL_MANUAL_ASSIGN',
       actionStatus: 'success',
       actionDetails: {

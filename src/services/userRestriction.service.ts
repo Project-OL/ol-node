@@ -350,12 +350,13 @@ export const userRestrictionService = {
       targetUserIdsFromRow(row),
     )
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.userId,
       actionType: 'ADMIN_USER_RESTRICTION_APPLIED',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.userId,
+        restrictionType: params.type,
         type: params.type,
         restrictedUntil: restrictedUntil.toISOString(),
         reportId: params.reportId ?? null,
@@ -399,12 +400,13 @@ export const userRestrictionService = {
     const cleared = await userRestrictionRepository.clear(row.id, params.adminUserId)
     await refreshCacheForType(row.userId, row.type)
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: row.userId,
       actionType: 'ADMIN_USER_RESTRICTION_CLEARED',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: row.userId,
+        restrictionType: row.type,
         type: row.type,
         restrictionId: row.id,
       },
@@ -434,12 +436,13 @@ export const userRestrictionService = {
     )
     await clearCache(params.userId, params.type)
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.userId,
       actionType: 'ADMIN_USER_RESTRICTION_CLEARED',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.userId,
+        restrictionType: params.type,
         type: params.type,
         clearedCount,
       },

@@ -9,6 +9,7 @@ import {
 } from '../../models/banner.schemas'
 import { bannerAdminService } from '../../services/banner.service'
 import { adminCatalogAssetUploadService } from '../../services/admin-catalog-asset-upload.service'
+import { auditService } from '../../services/audit.service'
 
 const preAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 
@@ -29,6 +30,10 @@ export default async function bannerAdminRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = parseRequest(CreateBannerBodySchema, request.body ?? {})
       const banner = await bannerAdminService.create(body, request.adminUser!.id)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_BANNER_CREATED',
+        actionDetails: { bannerId: banner.id, title: banner.title, position: banner.position },
+      })
       return reply.status(201).send({ banner })
     },
   )
@@ -60,6 +65,11 @@ export default async function bannerAdminRoutes(app: FastifyInstance) {
       const { bannerId } = request.params as { bannerId: string }
       const body = parseRequest(PatchBannerBodySchema, request.body ?? {})
       const banner = await bannerAdminService.patch(bannerId, body)
+      const stopped = body.enabled === false
+      auditService.logAdminFromRequest(request, {
+        actionType: stopped ? 'ADMIN_BANNER_STOPPED' : 'ADMIN_BANNER_UPDATED',
+        actionDetails: { bannerId, fields: Object.keys(body) },
+      })
       return reply.send({ banner })
     },
   )
@@ -70,6 +80,10 @@ export default async function bannerAdminRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { bannerId } = request.params as { bannerId: string }
       await bannerAdminService.delete(bannerId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_BANNER_DELETED',
+        actionDetails: { bannerId },
+      })
       return reply.send({ ok: true })
     },
   )

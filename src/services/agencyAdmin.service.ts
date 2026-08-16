@@ -139,8 +139,38 @@ async function resolveAgencyByIdentifier(identifier: string) {
   return agency
 }
 
+/** Resolve a user UUID from a UUID or numeric public / display ID. */
+async function resolveUserIdByIdentifier(identifier: string): Promise<string> {
+  const trimmed = identifier.trim().replace(/^#/, '')
+  if (UUID_RE.test(trimmed)) {
+    const user = await prismaRead.user.findUnique({
+      where: { id: trimmed },
+      select: { id: true },
+    })
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    return user.id
+  }
+  if (!/^\d+$/.test(trimmed)) {
+    throw new AppError(
+      400,
+      'hostUserId must be a UUID or numeric public ID',
+      'INVALID_REQUEST',
+    )
+  }
+  const pid = BigInt(trimmed)
+  const user = await prismaRead.user.findFirst({
+    where: {
+      OR: [{ publicId: pid }, { defaultPublicId: pid }, { currentVipPublicId: pid }],
+    },
+    select: { id: true },
+  })
+  if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+  return user.id
+}
+
 export const agencyAdminService = {
   resolveAgencyByIdentifier,
+  resolveUserIdByIdentifier,
 
   async getOverviewStats() {
     const now = utcNow()

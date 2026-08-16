@@ -55,8 +55,9 @@ export const adminPostService = {
     await cacheService.delete(`post:${postId}`)
     await cacheService.delete(`user:posts:${ownerId}`)
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: ownerId,
       actionType: 'ADMIN_POST_DELETED',
       actionStatus: 'success',
       actionDetails: { postId, ownerUserId: ownerId },
@@ -96,11 +97,12 @@ export const adminPostService = {
       postingBanned: false,
     })
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: userId,
       actionType: 'ADMIN_POSTING_SUSPENDED',
       actionStatus: 'success',
-      actionDetails: { targetUserId: userId, suspendedUntil: suspendedUntil.toISOString() },
+      actionDetails: { suspendedUntil: suspendedUntil.toISOString() },
     })
 
     return {
@@ -120,11 +122,11 @@ export const adminPostService = {
       postingSuspendedUntil: null,
     })
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: userId,
       actionType: 'ADMIN_POSTING_BANNED',
       actionStatus: 'success',
-      actionDetails: { targetUserId: userId },
     })
 
     return { ok: true as const, userId, postingBanned: true, postingSuspendedUntil: null }
@@ -139,11 +141,11 @@ export const adminPostService = {
       postingSuspendedUntil: null,
     })
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: userId,
       actionType: 'ADMIN_POSTING_RESTORED',
       actionStatus: 'success',
-      actionDetails: { targetUserId: userId },
     })
 
     return { ok: true as const, userId, postingBanned: false, postingSuspendedUntil: null }

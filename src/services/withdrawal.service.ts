@@ -1206,8 +1206,9 @@ export const withdrawalService = {
 
     await enqueuePlatformWaiting(withdrawalId, waitingExpiresAt)
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: hostUserId,
       actionType: 'WITHDRAWAL_PLATFORM_PAID_PROOF',
       actionStatus: 'success',
       actionDetails: { withdrawalId, proofS3Key: params.proofS3Key },
@@ -1557,8 +1558,9 @@ export const withdrawalService = {
     )
     await removePlatformWaiting(withdrawalId)
     await closeDisputeTicketByPublicId(pre.disputeTicketId, adminUserId)
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: pre.userId,
       actionType: 'WITHDRAWAL_DISPUTE_RESOLVED_AGENT',
       actionStatus: 'success',
       actionDetails: { withdrawalId, reason, payoutHandler: 'PLATFORM' },
@@ -1618,8 +1620,9 @@ export const withdrawalService = {
     await removePlatformWaiting(withdrawalId)
     await walletService.adjustPointBalanceCache(pre.userId, 0n)
     await closeDisputeTicketByPublicId(pre.disputeTicketId, adminUserId)
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: pre.userId,
       actionType: 'WITHDRAWAL_DISPUTE_RESOLVED_HOST',
       actionStatus: 'success',
       actionDetails: { withdrawalId, reason, payoutHandler: 'PLATFORM', refunded: true },
@@ -1784,11 +1787,12 @@ export const withdrawalService = {
     await bustPayrollSummaryCache(agentUserId)
     await closeDisputeTicketByPublicId(ticketPublicId, adminUserId)
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: hostUserId,
       actionType: 'WITHDRAWAL_DISPUTE_RESOLVED_AGENT',
       actionStatus: 'success',
-      actionDetails: { withdrawalId, reason },
+      actionDetails: { withdrawalId, reason, agencyUserId: agentUserId },
     })
 
     void enqueuePlatformWithdrawalMessage({
@@ -1916,8 +1920,9 @@ export const withdrawalService = {
       allowBeyondAssignmentCap: true,
     })
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: pre.userId,
       actionType: 'WITHDRAWAL_DISPUTE_RESOLVED_HOST',
       actionStatus: 'success',
       actionDetails: {
@@ -2116,11 +2121,12 @@ export const withdrawalService = {
       await bustPayrollSummaryCache(agencyUserId)
     }
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: w.userId,
       actionType: 'WITHDRAWAL_REVERSED',
       actionStatus: 'success',
-      actionDetails: { withdrawalId, reason, adminUserId },
+      actionDetails: { withdrawalId, reason },
     })
 
     void enqueuePlatformWithdrawalMessage({

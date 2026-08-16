@@ -102,8 +102,8 @@ export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): P
   }
 
   if (batches.length === 0) {
-    auditService.log({
-      userId: job.data.adminUserId,
+    auditService.logAdmin({
+      adminUserId: job.data.adminUserId,
       actionType: 'ADMIN_PUSH_BROADCAST',
       actionStatus: 'success',
       actionDetails: { campaignId, recipientCount: 0, sent: 0 },
@@ -207,12 +207,14 @@ export async function processPushBroadcastBatchJob(
     const total = Number(totalStr ?? 0)
     const totalSent = Number(sentStr ?? 0)
     const auditAdminId = resolvedAdminId ?? ''
-    auditService.log({
-      userId: auditAdminId,
-      actionType: 'ADMIN_PUSH_BROADCAST',
-      actionStatus: 'success',
-      actionDetails: { campaignId, recipientCount: total, sent: totalSent },
-    })
+    if (auditAdminId) {
+      auditService.logAdmin({
+        adminUserId: auditAdminId,
+        actionType: 'ADMIN_PUSH_BROADCAST',
+        actionStatus: 'success',
+        actionDetails: { campaignId, recipientCount: total, sent: totalSent },
+      })
+    }
     await redisClient
       .multi()
       .del(stateKey)

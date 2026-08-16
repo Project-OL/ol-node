@@ -61,12 +61,12 @@ export const adminMessagingService = {
       clientMessageId,
     })
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
       actionType: params.auditActionType ?? 'ADMIN_SYSTEM_MESSAGE',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.targetUserId,
         conversationId: result.conversationId,
         messageId: result.messageId,
         ...params.auditDetails,
@@ -108,12 +108,12 @@ export const adminMessagingService = {
       clientMessageId: `notify:${campaignId}:${params.targetUserId}`,
     })
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
       actionType: 'ADMIN_NOTIFICATION_MESSAGE',
       actionStatus: 'success',
       actionDetails: {
-        targetUserId: params.targetUserId,
         campaignId,
         conversationId: result.conversationId,
         messageId: result.messageId,

@@ -45,6 +45,9 @@ export const auditRepository = {
         { adminUserId: { not: null } },
         { actionType: { startsWith: 'ADMIN_' } },
         { actionType: 'WITHDRAWAL_MANUAL_ASSIGN' },
+        { actionType: 'WITHDRAWAL_REVERSED' },
+        { actionType: { startsWith: 'WITHDRAWAL_PLATFORM_' } },
+        { actionType: { startsWith: 'WITHDRAWAL_DISPUTE_' } },
         { actionType: { startsWith: 'face_profile_' } },
         { actionType: { startsWith: 'face_duplicate_' } },
         {

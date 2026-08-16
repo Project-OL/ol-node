@@ -67,11 +67,12 @@ export const adminUserModerationService = {
     // revokeAllSessions already bumps users.token_version + busts the Redis TV cache.
     await sessionService.revokeAllSessions(params.targetUserId)
 
-    auditService.log({
-      userId: params.adminUserId,
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
       actionType: 'ADMIN_PASSWORD_RESET',
       actionStatus: 'success',
-      actionDetails: { targetUserId: params.targetUserId, sessionsRevoked: true },
+      actionDetails: { sessionsRevoked: true },
     })
 
     return {
@@ -322,11 +323,11 @@ export const adminUserModerationService = {
     await userRepository.updateProfile(userId, { avatarUrl: null })
     await meService.invalidateUserCaches(userId)
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: userId,
       actionType: 'ADMIN_AVATAR_REMOVED',
       actionStatus: 'success',
-      actionDetails: { targetUserId: userId },
     })
 
     return { ok: true as const, userId, avatarUrl: null }
@@ -339,11 +340,11 @@ export const adminUserModerationService = {
     await userRepository.updateProfile(userId, { bio: null })
     await meService.invalidateUserCaches(userId)
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: userId,
       actionType: 'ADMIN_BIO_REMOVED',
       actionStatus: 'success',
-      actionDetails: { targetUserId: userId },
     })
 
     return { ok: true as const, userId, bio: null }
@@ -362,11 +363,12 @@ export const adminUserModerationService = {
     })
     await meService.invalidateUserCaches(userId)
 
-    auditService.log({
-      userId: adminUserId,
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: userId,
       actionType: 'ADMIN_IDENTITY_RESET',
       actionStatus: 'success',
-      actionDetails: { targetUserId: userId, username },
+      actionDetails: { username },
     })
 
     return {

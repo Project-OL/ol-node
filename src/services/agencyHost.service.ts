@@ -16,6 +16,7 @@ import { userRepository } from '../repositories/user.repository'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { agencyHostConfigService } from './agencyHostConfig.service'
+import { auditService } from './audit.service'
 
 type HostEarningsAgg = {
   hostEarnings: bigint
@@ -638,6 +639,13 @@ export const agencyHostService = {
       { timeout: TX_MS },
     )
     await agencyService.onAgencyMutation(agencyUserId)
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: hostUserId,
+      actionType: 'ADMIN_AGENCY_HOST_REMOVED',
+      actionStatus: 'success',
+      actionDetails: { agencyUserId, hostUserId },
+    })
     return { ok: true as const, userId: hostUserId, agencyUserId }
   },
 

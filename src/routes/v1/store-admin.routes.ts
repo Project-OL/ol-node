@@ -17,6 +17,8 @@ import {
   PatchStoreAdminBodySchema,
   PatchStoreAdminMultipartFieldsSchema,
 } from '../../models/store-admin.schemas'
+import { auditService } from '../../services/audit.service'
+import { catalogActiveToggleActionType } from '../../utils/admin-audit'
 
 const preAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 
@@ -184,6 +186,10 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
           sortOrder: f.sortOrder,
           isActive: f.isActive,
         })
+        auditService.logAdminFromRequest(request, {
+          actionType: 'ADMIN_STORE_ITEM_CREATED',
+          actionDetails: { storeItemId: created.id, name: created.name },
+        })
         return reply.status(201).send(storeAdminService.mapStoreItemRow(created, 0))
       }
 
@@ -196,6 +202,10 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
         )
       }
       const created = await storeService.createStoreItem(parsed.data)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_STORE_ITEM_CREATED',
+        actionDetails: { storeItemId: created.id, name: created.name },
+      })
       return reply.status(201).send(storeAdminService.mapStoreItemRow(created, 0))
     },
   )
@@ -267,6 +277,10 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
         const [purchaseCount] = await Promise.all([
           storeAdminRepository.getPurchaseCounts([updated.id]).then((m) => m.get(updated.id) ?? 0),
         ])
+        auditService.logAdminFromRequest(request, {
+          actionType: catalogActiveToggleActionType('ADMIN_STORE_ITEM', patch),
+          actionDetails: { storeItemId: request.params.id, fields: Object.keys(patch) },
+        })
         return reply.send(storeAdminService.mapStoreItemRow(updated, purchaseCount))
       }
 
@@ -282,6 +296,10 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
       const purchaseCount = await storeAdminRepository
         .getPurchaseCounts([updated.id])
         .then((m) => m.get(updated.id) ?? 0)
+      auditService.logAdminFromRequest(request, {
+        actionType: catalogActiveToggleActionType('ADMIN_STORE_ITEM', parsed.data),
+        actionDetails: { storeItemId: request.params.id, fields: Object.keys(parsed.data) },
+      })
       return reply.send(storeAdminService.mapStoreItemRow(updated, purchaseCount))
     },
   )
@@ -291,6 +309,10 @@ export default async function storeAdminRoutes(app: FastifyInstance) {
     { preHandler: preAuth },
     async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       await storeService.softDeleteStoreItem(request.params.id)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_STORE_ITEM_DELETED',
+        actionDetails: { storeItemId: request.params.id },
+      })
       return reply.status(204).send()
     },
   )

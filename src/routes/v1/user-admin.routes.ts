@@ -15,6 +15,7 @@ import {
   adminLocationsQuerySchema,
   locationHistoryQuerySchema,
 } from '../../models/user-location.schemas'
+import { auditService } from '../../services/audit.service'
 
 const preAuth = [authenticateAdmin]
 
@@ -311,6 +312,21 @@ export default async function userAdminRoutes(app: FastifyInstance) {
         )
       }
       const result = await adminUserDetailService.updateUser(request.params.userId, parsed.data)
+      const changedFields = Object.keys(parsed.data).filter((k) => k !== 'status')
+      if (changedFields.length > 0) {
+        auditService.logAdminFromRequest(request, {
+          actionType: 'ADMIN_USER_UPDATED',
+          targetUserId: request.params.userId,
+          actionDetails: { fields: changedFields },
+        })
+      }
+      if (parsed.data.status) {
+        auditService.logAdminFromRequest(request, {
+          actionType: 'ADMIN_USER_STATUS_CHANGED',
+          targetUserId: request.params.userId,
+          actionDetails: { status: parsed.data.status },
+        })
+      }
       return reply.send(result)
     },
   )
@@ -352,6 +368,11 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       }
 
       const result = await adminUserTagsService.setTags(request.params.userId, parsed.data.tags)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_USER_TAGS_UPDATED',
+        targetUserId: request.params.userId,
+        actionDetails: { tags: parsed.data.tags },
+      })
       return reply.send(result)
     },
   )
