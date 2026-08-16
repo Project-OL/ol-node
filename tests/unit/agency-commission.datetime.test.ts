@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   agencyCommissionRollingWindowDays,
+  resolveAgencyCommissionRollingWindowBounds,
   resolveCommissionPeriod,
   utcDayFromTimestamp,
   utcRollingPeriodDays,
@@ -8,6 +9,18 @@ import {
 import { AppError } from "../../src/middlewares/errorHandler";
 
 describe("agency commission UTC helpers", () => {
+  it("5-minute config is an exact timestamp window, not a calendar day", () => {
+    const now = new Date("2026-05-04T15:30:00.000Z");
+    const { from, toExclusive, totalMinutes } =
+      resolveAgencyCommissionRollingWindowBounds(
+        { days: 0, hours: 0, minutes: 5 },
+        now,
+      );
+    expect(totalMinutes).toBe(5);
+    expect(toExclusive.toISOString()).toBe("2026-05-04T15:30:00.000Z");
+    expect(from.toISOString()).toBe("2026-05-04T15:25:00.000Z");
+  });
+
   it("rolling window uses today as the latest day", () => {
     // Commission query periods include today (2026-08-07) — the rolling window
     // ends on today UTC, not yesterday.

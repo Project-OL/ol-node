@@ -147,7 +147,7 @@ export const agencyCommissionConfigService = {
     )
   },
 
-  /** Inclusive UTC calendar days overlapping the precise rolling window (day-bucket reports). */
+  /** Inclusive UTC calendar days overlapping the precise rolling window (day-bucket reports only). */
   async resolveRollingWindowDays(now: Date = utcNow()): Promise<{ fromDay: Date; toDay: Date }> {
     const cfg = await this.getConfig()
     return resolveAgencyCommissionRollingWindowDays(

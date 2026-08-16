@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const sumAgencyDailyEarnings = vi.fn();
+const sumHostEarningsLedgerWindow = vi.fn();
 const sumAgencyCommissionLedgerWindow = vi.fn().mockResolvedValue(0n);
 const getLevelConfig = vi.fn();
 
 vi.mock("../../src/repositories/agencyCommission.repository", () => ({
   agencyCommissionRepository: {
-    sumAgencyDailyEarnings: (...a: unknown[]) => sumAgencyDailyEarnings(...a),
+    sumHostEarningsLedgerWindow: (...a: unknown[]) =>
+      sumHostEarningsLedgerWindow(...a),
     sumAgencyCommissionLedgerWindow: (...a: unknown[]) =>
       sumAgencyCommissionLedgerWindow(...a),
     getAgencyWindowTotal: vi.fn(),
@@ -134,24 +135,21 @@ describe("agencyCommissionService.recomputeAgencyLevel", () => {
     vi.setSystemTime(new Date("2026-05-04T15:00:00.000Z"));
     await agencyCommissionService.recomputeAgencyLevel("ag-1");
     vi.useRealTimers();
-    expect(sumAgencyDailyEarnings).not.toHaveBeenCalled();
+    expect(sumHostEarningsLedgerWindow).not.toHaveBeenCalled();
     expect(agencyUpdateMany).not.toHaveBeenCalled();
   });
 
   it("skipDailyDedupe forces recompute", async () => {
     const lastLevelRecomputedAt = new Date("2026-05-04T10:00:00.000Z");
     agencyFindUnique.mockResolvedValue({ lastLevelRecomputedAt });
-    sumAgencyDailyEarnings.mockResolvedValue({
-      hostEarningsPoints: 2_000_000n,
-      hostCommissionPoints: 0n,
-    });
+    sumHostEarningsLedgerWindow.mockResolvedValue(2_000_000n);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-04T15:00:00.000Z"));
     await agencyCommissionService.recomputeAgencyLevel("ag-1", {
       skipDailyDedupe: true,
     });
     vi.useRealTimers();
-    expect(sumAgencyDailyEarnings).toHaveBeenCalled();
+    expect(sumHostEarningsLedgerWindow).toHaveBeenCalled();
     expect(agencyUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: "ag-1", lastLevelRecomputedAt },
@@ -165,10 +163,7 @@ describe("agencyCommissionService.recomputeAgencyLevel", () => {
 
   it("picks highest ladder tier whose min_window_points <= total", async () => {
     agencyFindUnique.mockResolvedValue({ lastLevelRecomputedAt: null });
-    sumAgencyDailyEarnings.mockResolvedValue({
-      hostEarningsPoints: 36_000_000n,
-      hostCommissionPoints: 0n,
-    });
+    sumHostEarningsLedgerWindow.mockResolvedValue(36_000_000n);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-04T12:00:00.000Z"));
     await agencyCommissionService.recomputeAgencyLevel("ag-1");
@@ -182,10 +177,7 @@ describe("agencyCommissionService.recomputeAgencyLevel", () => {
 
   it("just below C stays D", async () => {
     agencyFindUnique.mockResolvedValue({ lastLevelRecomputedAt: null });
-    sumAgencyDailyEarnings.mockResolvedValue({
-      hostEarningsPoints: 1_499_999n,
-      hostCommissionPoints: 0n,
-    });
+    sumHostEarningsLedgerWindow.mockResolvedValue(1_499_999n);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-04T12:00:00.000Z"));
     await agencyCommissionService.recomputeAgencyLevel("ag-1");

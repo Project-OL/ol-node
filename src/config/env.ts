@@ -316,10 +316,9 @@ const envSchema = z
       .transform((s) => s === 'true'),
 
     /**
-     * When not the string `false`, agency tier window total includes
-     * `SUM(agency_daily_earnings.host_earnings_points)` over calendar days overlapping
-     * the rolling window (includes agency owner when they earn as a host on gift/video-call
-     * commission paths). Default **on**.
+     * When not the string `false`, agency tier window total includes unreversed
+     * gift/video-call host POINT credits in the precise `[now − duration, now)`
+     * window (includes agency owner when they earn as a host). Default **on**.
      */
     AGENCY_TIER_INCLUDE_HOST_EARNINGS: z
       .string()

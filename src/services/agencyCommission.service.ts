@@ -157,7 +157,7 @@ export function agencyTierWindowMetricNote(metric: {
   const parts: string[] = []
   if (metric.includeHostEarnings) {
     parts.push(
-      'host earnings = SUM(agency_daily_earnings.host_earnings_points) on overlapping UTC calendar days [from, to]',
+      'host earnings = unreversed gift/video-call host POINT credits in half-open [fromAt, toExclusiveAt)',
     )
   }
   if (metric.includeAgencyCommission) {
@@ -573,7 +573,8 @@ export const agencyCommissionService = {
   /**
    * Rolling-window total for agency tier matching / progress.
    * Sources gated by env (same for live recompute, nightly job, admin force):
-   * - `AGENCY_TIER_INCLUDE_HOST_EARNINGS` (default on): day-bucket host earnings
+   * - `AGENCY_TIER_INCLUDE_HOST_EARNINGS` (default on): host gift/video-call
+   *   POINT credits in the precise `[now − duration, now)` window
    * - `AGENCY_TIER_INCLUDE_AGENCY_COMMISSION` (default off): ledger AGENT_COMMISSION
    */
   async resolveTierWindowTotal(
@@ -589,13 +590,12 @@ export const agencyCommissionService = {
 
     let total = 0n
     if (includeHostEarnings) {
-      const daily = await agencyCommissionRepository.sumAgencyDailyEarnings(
+      total += await agencyCommissionRepository.sumHostEarningsLedgerWindow(
         agencyUserId,
-        fromDay,
-        toDay,
+        from,
+        toExclusive,
         { preferPrimary: opts?.preferPrimary },
       )
-      total += daily.hostEarningsPoints
     }
     if (includeAgencyCommission) {
       total += await agencyCommissionRepository.sumAgencyCommissionLedgerWindow(

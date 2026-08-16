@@ -28,7 +28,7 @@ async function handleMaster(job: Job<{ utcDate?: string; force?: boolean }>): Pr
     return
   }
 
-  // Page all agencies so window totals can shrink as timestamps age out of the rolling duration.
+  // Page all agencies so window totals can shrink as ledger timestamps age out of the rolling duration.
   let cursor: string | null = null
   for (;;) {
     const batch = await agencyCommissionRepository.listAllAgencyUserIds({

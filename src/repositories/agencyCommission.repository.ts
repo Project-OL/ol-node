@@ -165,6 +165,89 @@ export const agencyCommissionRepository = {
   },
 
   /**
+   * Unreversed gift/video-call host POINT credits in `[from, toExclusive)` that
+   * `applyCommission` processed for this agency (owner self-host included).
+   * Used when `AGENCY_TIER_INCLUDE_HOST_EARNINGS=true` for tier matching.
+   * Admin commission reverse deletes `agency_commission_processed`, so those
+   * host credits drop out of the window. Attribution is membership at credit
+   * time (`agency_hosts` / `agency_host_history`), not calendar-day buckets.
+   */
+  async sumHostEarningsLedgerWindow(
+    agencyUserId: string,
+    from: Date,
+    toExclusive: Date,
+    opts?: { preferPrimary?: boolean },
+  ): Promise<bigint> {
+    const client = opts?.preferPrimary ? prisma : prismaRead
+    const rows = await client.$queryRaw<{ s: bigint }[]>`
+      WITH host_ids AS (
+        SELECT ${agencyUserId}::uuid AS host_user_id
+        UNION
+        SELECT ah.host_user_id
+        FROM agency_hosts ah
+        WHERE ah.agency_user_id = ${agencyUserId}::uuid
+        UNION
+        SELECT h.host_user_id
+        FROM agency_host_history h
+        WHERE h.agency_user_id = ${agencyUserId}::uuid
+          AND h.joined_at < ${toExclusive}
+          AND h.exited_at > ${from}
+      )
+      SELECT COALESCE(SUM(ple.amount), 0)::bigint AS s
+      FROM host_ids hid
+      INNER JOIN wallets w
+        ON w.user_id = hid.host_user_id
+       AND w.currency_type = 'POINT'
+      INNER JOIN users u ON u.id = w.user_id
+      INNER JOIN point_ledger_entries ple
+        ON ple.wallet_id = w.id
+      INNER JOIN agency_commission_processed acp
+        ON acp.host_ledger_entry_id = ple.id
+      WHERE ple.direction = 'CREDIT'
+        AND ple.tx_type IN ('GIFT_RECEIVE', 'LIVESTREAM_GIFT', 'VIDEO_CALL')
+        AND ple.created_at >= ${from}
+        AND ple.created_at < ${toExclusive}
+        AND u.status NOT IN ('suspended', 'deleted')
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM agency_hosts ah
+            WHERE ah.agency_user_id = ${agencyUserId}::uuid
+              AND ah.host_user_id = w.user_id
+              AND ah.joined_at <= ple.created_at
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM agency_host_history h
+            WHERE h.agency_user_id = ${agencyUserId}::uuid
+              AND h.host_user_id = w.user_id
+              AND h.joined_at <= ple.created_at
+              AND h.exited_at > ple.created_at
+          )
+          OR (
+            w.user_id = ${agencyUserId}::uuid
+            AND NOT EXISTS (
+              SELECT 1
+              FROM agency_hosts ah2
+              WHERE ah2.host_user_id = w.user_id
+                AND ah2.agency_user_id <> ${agencyUserId}::uuid
+                AND ah2.joined_at <= ple.created_at
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM agency_host_history h2
+              WHERE h2.host_user_id = w.user_id
+                AND h2.agency_user_id <> ${agencyUserId}::uuid
+                AND h2.joined_at <= ple.created_at
+                AND h2.exited_at > ple.created_at
+            )
+          )
+        )
+    `
+    return rows[0]?.s ?? 0n
+  },
+
+  /**
    * Unreversed AGENT_COMMISSION ledger credits in `[from, toExclusive)`.
    * Used when `AGENCY_TIER_INCLUDE_AGENCY_COMMISSION=true` for tier matching.
    * Credits reversed via admin clawback (`agency-commission-reverse:*`) are omitted.
