@@ -149,6 +149,15 @@ const WithdrawalAssignSchema = z.object({
   agencyPublicId: z.string().trim().regex(/^\d+$/).optional(),
 })
 
+const AdminProofUploadUrlSchema = z.object({
+  mimeType: z.string().min(1).max(100),
+})
+
+const AdminCompletePlatformSchema = z.object({
+  proofS3Key: z.string().min(1).max(500),
+  proofS3Bucket: z.string().min(1).max(255),
+})
+
 const HostTagSchema = z.object({
   isTagged: z.boolean(),
 })
@@ -810,6 +819,14 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     },
   )
 
+  app.get<{ Params: { id: string } }>(
+    '/withdrawal/:id',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      return reply.send(await payrollAdminService.getWithdrawalDetail(request.params.id))
+    },
+  )
+
   app.post<{ Params: { id: string } }>(
     '/withdrawal/:id/reverse',
     { preHandler: [authenticateAdmin] },
@@ -838,6 +855,37 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         agencyPublicId: body.agencyPublicId,
       })
       return reply.send({ ok: true })
+    },
+  )
+
+  app.post<{ Params: { id: string } }>(
+    '/withdrawal/:id/proof-upload-url',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AdminProofUploadUrlSchema.parse(request.body ?? {})
+      const result = await withdrawalService.getAdminPresignedProofUrl(
+        request.params.id,
+        body.mimeType,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { id: string } }>(
+    '/withdrawal/:id/complete',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AdminCompletePlatformSchema.parse(request.body ?? {})
+      const result = await withdrawalService.adminCompletePlatformPayout(
+        adminUserId,
+        request.params.id,
+        body,
+      )
+      return reply.send({ ok: true, ...result })
     },
   )
 

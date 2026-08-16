@@ -54,11 +54,13 @@ import {
   PAYROLL_SLA_QUEUE,
   PAYROLL_SAFETY_NET_JOB,
   PAYROLL_WAITING_JOB,
+  PAYROLL_PLATFORM_WAITING_JOB,
 } from '../queues/payroll.constants'
 import { payrollSlaQueue } from '../queues/payroll.queue'
 import {
   processPayrollSlaJob,
   processWaitingAutoComplete,
+  processPlatformWaitingAutoComplete,
   runPayrollSlaSafetyNet,
 } from '../jobs/payroll-sla.job'
 import { LIVE_SESSION_JOBS, LIVE_SESSION_QUEUE } from '../queues/live-session.constants'
@@ -290,13 +292,16 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
 
   const payrollSlaWorker = new Worker(
     PAYROLL_SLA_QUEUE,
-    async (job: Job<{ assignmentId?: string }>) => {
+    async (job: Job<{ assignmentId?: string; withdrawalId?: string }>) => {
       if (job.name === PAYROLL_SLA_JOB) {
         const id = job.data?.assignmentId
         if (id) await processPayrollSlaJob({ assignmentId: id })
       } else if (job.name === PAYROLL_WAITING_JOB) {
         const id = job.data?.assignmentId
         if (id) await processWaitingAutoComplete(id)
+      } else if (job.name === PAYROLL_PLATFORM_WAITING_JOB) {
+        const id = job.data?.withdrawalId
+        if (id) await processPlatformWaitingAutoComplete(id)
       } else if (job.name === PAYROLL_SAFETY_NET_JOB) {
         await runPayrollSlaSafetyNet()
       }

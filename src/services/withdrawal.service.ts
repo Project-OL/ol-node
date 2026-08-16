@@ -35,8 +35,10 @@ import { enqueuePlatformWithdrawalMessage } from '../queues/platform-message.que
 import {
   enqueuePayrollSla,
   enqueuePayrollWaiting,
+  enqueuePlatformWaiting,
   removePayrollSla,
   removePayrollWaiting,
+  removePlatformWaiting,
 } from '../queues/payroll.queue'
 import { mapPaymentMethodMaskedForAgent } from '../utils/payment-method-mask'
 import { s3Bucket } from '../config/s3'
@@ -169,12 +171,31 @@ function secondsUntil(target: Date | null | undefined, now = Date.now()): number
   return Math.max(0, Math.round((target.getTime() - now) / 1000))
 }
 
+export type WithdrawalMethodType = 'EPAY' | 'BANK'
+export type WithdrawalPayoutHandler = 'PLATFORM' | 'AGENCY'
+
+export function payoutHandlerForMethod(methodType: WithdrawalMethodType): WithdrawalPayoutHandler {
+  return methodType === 'EPAY' ? 'PLATFORM' : 'AGENCY'
+}
+
+export function isPlatformHandledWithdrawal(w: {
+  payoutHandler?: string | null
+  methodType?: string | null
+}): boolean {
+  if (w.payoutHandler === 'PLATFORM' || w.methodType === 'EPAY') return true
+  return false
+}
+
 /**
  * Pure fee math for Vitest + runtime. Uses BigInt for point splits; USD outputs use Decimal→number at boundaries only.
+ *
+ * EPAY: flat `serviceFeeUsd` only — no fee tiers, no agency share.
+ * BANK: no service fee; platform/agent % on full gross via `payroll_fee_tiers`.
  */
 export function calculateWithdrawalAmounts(
   grossPoints: bigint,
   config: PayrollConfigSnapshot,
+  methodType: WithdrawalMethodType = 'BANK',
 ): {
   platformFeeRateBp: number
   platformFeePoints: bigint
@@ -198,33 +219,42 @@ export function calculateWithdrawalAmounts(
     throw new AppError(400, 'Above maximum withdrawal amount', 'ABOVE_MAX_WITHDRAWAL')
   }
 
-  const serviceFeeUsd = config.serviceFeeUsd
-  const serviceFeePoints = serviceFeeUsdToPoints(serviceFeeUsd)
-  if (serviceFeePoints >= grossPoints) {
-    throw new AppError(
-      400,
-      'Service fee exceeds or equals the requested withdrawal amount',
-      'SERVICE_FEE_EXCEEDS_AMOUNT',
+  if (methodType === 'EPAY') {
+    const serviceFeeUsd = config.serviceFeeUsd
+    const serviceFeePoints = serviceFeeUsdToPoints(serviceFeeUsd)
+    if (serviceFeePoints >= grossPoints) {
+      throw new AppError(
+        400,
+        'Service fee exceeds or equals the requested withdrawal amount',
+        'SERVICE_FEE_EXCEEDS_AMOUNT',
+      )
+    }
+    const hostPayoutPoints = grossPoints - serviceFeePoints
+    const hostPayoutUsd = new Prisma.Decimal(hostPayoutPoints.toString()).div(
+      new Prisma.Decimal(10000),
     )
+    return {
+      platformFeeRateBp: 0,
+      platformFeePoints: 0n,
+      agentRewardPoints: 0n,
+      hostPayoutPoints,
+      hostPayoutUsd,
+      serviceFeeUsd,
+      serviceFeePoints,
+      hostNetUsd: hostPayoutUsd.toNumber(),
+    }
   }
 
-  // Tier is matched on requested (gross) amount; % applies to remaining points after service fee.
-  const feeBase = grossPoints - serviceFeePoints
   const { platformFeeRateBp, agentRewardRateBp } = resolvePayrollFeeRates(grossPoints, {
     feeTiers: config.feeTiers,
     fallbackAgentRewardRateBp: config.agentRewardRateBp,
   })
-  const platformFeePoints = (feeBase * BigInt(platformFeeRateBp)) / 10000n
-  // agentRewardRateBp = share of platform fee (6000 bp = 60% of platformFeePoints)
+  const platformFeePoints = (grossPoints * BigInt(platformFeeRateBp)) / 10000n
   const agentRewardPoints = (platformFeePoints * BigInt(agentRewardRateBp)) / 10000n
-  const hostPayoutPoints = feeBase - platformFeePoints
-
+  const hostPayoutPoints = grossPoints - platformFeePoints
   const hostPayoutUsd = new Prisma.Decimal(hostPayoutPoints.toString()).div(
     new Prisma.Decimal(10000),
   )
-
-  // Service fee already left the fee base; do not subtract it again from host payout.
-  const hostNetUsd = hostPayoutUsd.toNumber()
 
   return {
     platformFeeRateBp,
@@ -232,9 +262,9 @@ export function calculateWithdrawalAmounts(
     agentRewardPoints,
     hostPayoutPoints,
     hostPayoutUsd,
-    serviceFeeUsd,
-    serviceFeePoints,
-    hostNetUsd,
+    serviceFeeUsd: 0,
+    serviceFeePoints: 0n,
+    hostNetUsd: hostPayoutUsd.toNumber(),
   }
 }
 
@@ -341,8 +371,12 @@ export const withdrawalService = {
     await redisClient.del(RedisKeys.payrollConfig())
   },
 
-  calculateAmounts(grossPoints: bigint, config: PayrollConfigSnapshot) {
-    return calculateWithdrawalAmounts(grossPoints, config)
+  calculateAmounts(
+    grossPoints: bigint,
+    config: PayrollConfigSnapshot,
+    methodType: WithdrawalMethodType = 'BANK',
+  ) {
+    return calculateWithdrawalAmounts(grossPoints, config, methodType)
   },
 
   /**
@@ -537,7 +571,8 @@ export const withdrawalService = {
       withdrawalService.getPayrollConfig(),
       prismaRead.user.findUnique({ where: { id: userId }, select: { country: true } }),
     ])
-    const amounts = calculateWithdrawalAmounts(params.grossPoints, config)
+    const amounts = calculateWithdrawalAmounts(params.grossPoints, config, methodType)
+    const payoutHandler = payoutHandlerForMethod(methodType)
     const localFx = resolveLocalFx(host?.country, config)
 
     const withdrawalId = randomUUID()
@@ -594,12 +629,14 @@ export const withdrawalService = {
               walletId: wallet.id,
               userId,
               amountPoints: params.grossPoints,
-              status: 'PENDING',
+              status: methodType === 'EPAY' ? 'PENDING_PLATFORM' : 'PENDING',
               paymentMethodId: method.id,
               hostPayoutUsd: amounts.hostPayoutUsd,
               platformFeePoints: amounts.platformFeePoints,
               agentRewardPoints: amounts.agentRewardPoints,
               serviceFeePoints: amounts.serviceFeePoints,
+              methodType,
+              payoutHandler,
               idempotencyKey: `withdrawal:${userId}:${withdrawalId}`,
               notes: params.notes ?? null,
               withdrawalVersion: 2,
@@ -617,7 +654,9 @@ export const withdrawalService = {
     await walletService.adjustPointBalanceCache(userId, -params.grossPoints)
     await walletService.bustUnconfirmedCache(userId)
 
-    await withdrawalService.assignToAgency(withdrawalId)
+    if (methodType === 'BANK') {
+      await withdrawalService.assignToAgency(withdrawalId)
+    }
 
     const refreshed = await prismaRead.withdrawal.findUniqueOrThrow({
       where: { id: withdrawalId },
@@ -638,6 +677,8 @@ export const withdrawalService = {
       platformFeePoints: refreshed.platformFeePoints?.toString() ?? null,
       agentRewardPoints: refreshed.agentRewardPoints?.toString() ?? null,
       serviceFeePoints: refreshed.serviceFeePoints?.toString() ?? null,
+      methodType: refreshed.methodType ?? methodType,
+      payoutHandler: refreshed.payoutHandler ?? payoutHandler,
       localCurrencyAmount: local.localCurrencyAmount,
       localCurrencyCode: local.localCurrencyCode,
     }
@@ -681,6 +722,13 @@ export const withdrawalService = {
       async (tx) => {
         const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
         if (!w) return
+        if (isPlatformHandledWithdrawal(w)) {
+          throw new AppError(
+            400,
+            'EPAY withdrawals are paid by the platform and cannot be assigned to an agency',
+            'EPAY_PLATFORM_PAYOUT',
+          )
+        }
         if (w.status !== 'PENDING' && w.status !== 'PENDING_PLATFORM') return
 
         const host = await tx.user.findUnique({
@@ -1079,6 +1127,103 @@ export const withdrawalService = {
     return { agentRewardPoints: rewardOut, hostPayoutPoints: hostPayoutOut }
   },
 
+  async getAdminPresignedProofUrl(withdrawalId: string, mimeType: string) {
+    const w = await prismaRead.withdrawal.findUnique({ where: { id: withdrawalId } })
+    if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+    if (!isPlatformHandledWithdrawal(w)) {
+      throw new AppError(
+        400,
+        'Proof upload is only for platform-handled EPAY withdrawals',
+        'EPAY_PLATFORM_PAYOUT',
+      )
+    }
+    if (w.status !== 'PENDING_PLATFORM') {
+      throw new AppError(400, 'Proof upload not allowed', 'INVALID_STATE')
+    }
+
+    const key = `payroll/proofs/platform/${withdrawalId}/${randomUUID()}`
+    const uploadUrl = await storageService.getPresignedPutUrl(key, mimeType, 600)
+    return {
+      uploadUrl,
+      s3Key: key,
+      s3Bucket: s3Bucket ?? '',
+    }
+  },
+
+  async adminCompletePlatformPayout(
+    adminUserId: string,
+    withdrawalId: string,
+    params: { proofS3Key: string; proofS3Bucket: string },
+  ): Promise<{ hostPayoutPoints: string; waitingExpiresAt: string }> {
+    const prefix = `payroll/proofs/platform/${withdrawalId}/`
+    if (!params.proofS3Key.startsWith(prefix)) {
+      throw new AppError(400, 'Invalid proof key', 'INVALID_PROOF_KEY')
+    }
+
+    const config = await withdrawalService.getPayrollConfig()
+    const waitingExpiresAt = new Date(Date.now() + config.waitingHours * 60 * 60 * 1000)
+
+    let hostPayoutOut = '0'
+    let hostUserId: string | null = null
+
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+        if (!isPlatformHandledWithdrawal(w)) {
+          throw new AppError(
+            400,
+            'Complete is only for platform-handled EPAY withdrawals',
+            'EPAY_PLATFORM_PAYOUT',
+          )
+        }
+        if (w.status !== 'PENDING_PLATFORM') {
+          throw new AppError(400, 'Withdrawal is not awaiting platform payout', 'INVALID_STATE')
+        }
+
+        const hostPayoutPoints = withdrawalHostPayoutPoints({
+          amountPoints: w.amountPoints,
+          platformFeePoints: w.platformFeePoints,
+          serviceFeePoints: w.serviceFeePoints,
+        })
+        hostPayoutOut = hostPayoutPoints.toString()
+        hostUserId = w.userId
+
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: 'WAITING',
+            proofS3Key: params.proofS3Key,
+            proofS3Bucket: params.proofS3Bucket,
+            waitingExpiresAt,
+            payoutRef: params.proofS3Key,
+          },
+          tx,
+        )
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+
+    await enqueuePlatformWaiting(withdrawalId, waitingExpiresAt)
+
+    auditService.log({
+      userId: adminUserId,
+      actionType: 'WITHDRAWAL_PLATFORM_PAID_PROOF',
+      actionStatus: 'success',
+      actionDetails: { withdrawalId, proofS3Key: params.proofS3Key },
+    })
+
+    if (hostUserId) {
+      void enqueuePlatformWithdrawalMessage({
+        withdrawalId,
+        event: 'waiting',
+        hostUserId,
+      }).catch(() => {})
+    }
+
+    return { hostPayoutPoints: hostPayoutOut, waitingExpiresAt: waitingExpiresAt.toISOString() }
+  },
+
   /** WAITING → COMPLETED + withdrawal PAID; credits agency host-payout + reward. */
   async autoCompleteWaiting(assignmentId: string): Promise<void> {
     const pre = await prismaRead.withdrawalPayrollAssignment.findUnique({
@@ -1213,6 +1358,44 @@ export const withdrawalService = {
     }).catch(() => {})
   },
 
+  /** Platform (EPAY) WAITING → PAID. Host already hard-debited; no agency credits. */
+  async autoCompletePlatformWaiting(withdrawalId: string): Promise<void> {
+    const pre = await prismaRead.withdrawal.findUnique({ where: { id: withdrawalId } })
+    if (!pre) return
+    if (pre.status !== 'WAITING') return
+    if (!isPlatformHandledWithdrawal(pre)) return
+    if (pre.waitingExpiresAt && pre.waitingExpiresAt > new Date()) return
+
+    const now = new Date()
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w || w.status !== 'WAITING') return
+        if (!isPlatformHandledWithdrawal(w)) return
+        if (w.waitingExpiresAt && w.waitingExpiresAt > now) return
+
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: 'PAID',
+            payoutRef: w.proofS3Key ?? w.payoutRef ?? undefined,
+            processedAt: now,
+          },
+          tx,
+        )
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+
+    await removePlatformWaiting(withdrawalId)
+
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'paid',
+      hostUserId: pre.userId,
+    }).catch(() => {})
+  },
+
   async createDisputeEvidenceUploadUrl(
     withdrawalId: string,
     userId: string,
@@ -1220,13 +1403,14 @@ export const withdrawalService = {
   ): Promise<{ uploadUrl: string; s3Key: string; expiresInSec: number }> {
     const row = await prismaRead.withdrawal.findFirst({
       where: { id: withdrawalId, userId },
-      select: { status: true },
+      select: { status: true, payoutHandler: true, methodType: true },
     })
     if (!row) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
     const waitingAssignment =
       await payrollAssignmentRepository.findWaitingByWithdrawalId(withdrawalId)
     const allowWaitingEvidence =
-      (row.status === 'PENDING' || row.status === 'WAITING') && !!waitingAssignment
+      (row.status === 'PENDING' || row.status === 'WAITING') &&
+      (!!waitingAssignment || isPlatformHandledWithdrawal(row))
     if (row.status !== 'PAID' && row.status !== 'DISPUTED' && !allowWaitingEvidence) {
       throw new AppError(
         400,
@@ -1265,8 +1449,11 @@ export const withdrawalService = {
     }
 
     const waitingAssignment = w.payrollAssignments[0] ?? null
+    const isPlatformWaiting =
+      w.status === 'WAITING' && isPlatformHandledWithdrawal(w)
     const isWaitingPeriod =
-      (w.status === 'PENDING' || w.status === 'WAITING') && waitingAssignment != null
+      ((w.status === 'PENDING' || w.status === 'WAITING') && waitingAssignment != null) ||
+      isPlatformWaiting
 
     if (w.status !== 'PAID' && !isWaitingPeriod) {
       throw new AppError(400, 'Withdrawal cannot be disputed in its current state', 'INVALID_STATE')
@@ -1313,6 +1500,13 @@ export const withdrawalService = {
       }
       await bustPayrollSummaryCache(waitingAssignment.agencyUserId)
     }
+    if (isPlatformWaiting) {
+      try {
+        await removePlatformWaiting(withdrawalId)
+      } catch {
+        /* non-fatal */
+      }
+    }
 
     auditService.log({
       userId: hostUserId,
@@ -1329,6 +1523,113 @@ export const withdrawalService = {
     })
 
     return { ticketId: ticket.publicId }
+  },
+
+  /** EPAY / platform: mark paid, no agency credits. */
+  async adminResolvePlatformDisputePaid(
+    adminUserId: string,
+    withdrawalId: string,
+    reason: string,
+  ): Promise<void> {
+    const pre = await prismaRead.withdrawal.findUnique({ where: { id: withdrawalId } })
+    if (!pre) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+    if (pre.status !== 'DISPUTED' || !isPlatformHandledWithdrawal(pre)) {
+      throw new AppError(400, 'Withdrawal is not a platform dispute', 'INVALID_STATE')
+    }
+    const now = new Date()
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w || w.status !== 'DISPUTED') return
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: 'PAID',
+            payoutRef: w.proofS3Key ?? w.payoutRef ?? undefined,
+            processedAt: now,
+            disputeTicketId: null,
+            failReason: null,
+          },
+          tx,
+        )
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+    await removePlatformWaiting(withdrawalId)
+    await closeDisputeTicketByPublicId(pre.disputeTicketId, adminUserId)
+    auditService.log({
+      userId: adminUserId,
+      actionType: 'WITHDRAWAL_DISPUTE_RESOLVED_AGENT',
+      actionStatus: 'success',
+      actionDetails: { withdrawalId, reason, payoutHandler: 'PLATFORM' },
+    })
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'paid',
+      hostUserId: pre.userId,
+    }).catch(() => {})
+  },
+
+  /** EPAY / platform: refund full gross; do not assign to an agency. */
+  async adminResolvePlatformDisputeRefund(
+    adminUserId: string,
+    withdrawalId: string,
+    reason: string,
+  ): Promise<void> {
+    const pre = await prismaRead.withdrawal.findUnique({ where: { id: withdrawalId } })
+    if (!pre) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+    if (pre.status !== 'DISPUTED' || !isPlatformHandledWithdrawal(pre)) {
+      throw new AppError(400, 'Withdrawal is not a platform dispute', 'INVALID_STATE')
+    }
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w || w.status !== 'DISPUTED') return
+        const hardDebitAtCreate = await pointLedgerRepository.findByIdempotencyKey(
+          tx,
+          `withdrawal-debit:${withdrawalId}`,
+        )
+        if (hardDebitAtCreate) {
+          await pointWalletService.creditInTransaction(
+            w.userId,
+            w.amountPoints,
+            PointTxType.WITHDRAWAL_REFUND,
+            tx,
+            {
+              idempotencyKey: `withdrawal-refund:${withdrawalId}`,
+              refId: withdrawalId,
+              description: `Withdrawal dispute refund: ${reason}`,
+              applyLivestreamLevel: false,
+            },
+          )
+        }
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: 'FAILED',
+            failReason: reason,
+            disputeTicketId: null,
+          },
+          tx,
+        )
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+    await removePlatformWaiting(withdrawalId)
+    await walletService.adjustPointBalanceCache(pre.userId, 0n)
+    await closeDisputeTicketByPublicId(pre.disputeTicketId, adminUserId)
+    auditService.log({
+      userId: adminUserId,
+      actionType: 'WITHDRAWAL_DISPUTE_RESOLVED_HOST',
+      actionStatus: 'success',
+      actionDetails: { withdrawalId, reason, payoutHandler: 'PLATFORM', refunded: true },
+    })
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'failed',
+      hostUserId: pre.userId,
+      reason,
+    }).catch(() => {})
   },
 
   async adminResolveDisputeFavourAgent(
@@ -1348,6 +1649,10 @@ export const withdrawalService = {
     if (!pre) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
     if (pre.status !== 'DISPUTED') {
       throw new AppError(400, 'Withdrawal is not disputed', 'INVALID_STATE')
+    }
+    if (isPlatformHandledWithdrawal(pre)) {
+      await withdrawalService.adminResolvePlatformDisputePaid(adminUserId, withdrawalId, reason)
+      return
     }
     const assignment = pre.payrollAssignments[0]
     if (!assignment) {
@@ -1512,6 +1817,10 @@ export const withdrawalService = {
     if (!pre) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
     if (pre.status !== 'DISPUTED') {
       throw new AppError(400, 'Withdrawal is not disputed', 'INVALID_STATE')
+    }
+    if (isPlatformHandledWithdrawal(pre)) {
+      await withdrawalService.adminResolvePlatformDisputeRefund(adminUserId, withdrawalId, reason)
+      return
     }
     const assignment = pre.payrollAssignments[0]
     if (!assignment) {
@@ -1796,6 +2105,9 @@ export const withdrawalService = {
       }
       await bustPayrollSummaryCache(openAssignment.agencyUserId)
     }
+    if (isPlatformHandledWithdrawal(w)) {
+      await removePlatformWaiting(withdrawalId)
+    }
 
     await walletService.adjustPointBalanceCache(w.userId, 0n)
     await walletService.bustUnconfirmedCache(w.userId)
@@ -1941,6 +2253,9 @@ export const withdrawalService = {
       platformFeePoints: row.platformFeePoints?.toString() ?? null,
       agentRewardPoints: row.agentRewardPoints?.toString() ?? null,
       serviceFeePoints: row.serviceFeePoints?.toString() ?? null,
+      methodType: row.methodType ?? null,
+      payoutHandler: row.payoutHandler ?? null,
+      waitingExpiresAt: row.waitingExpiresAt?.toISOString() ?? null,
       notes: row.notes ?? null,
       timeTakenSeconds,
       timeTakenFormatted: timeTakenSeconds != null ? formatDuration(timeTakenSeconds) : null,
@@ -1982,6 +2297,10 @@ export const withdrawalService = {
     platformFeePoints: bigint | null
     agentRewardPoints: bigint | null
     serviceFeePoints?: bigint | null
+    methodType?: string | null
+    payoutHandler?: string | null
+    proofS3Key?: string | null
+    waitingExpiresAt?: Date | null
     assignmentCount: number
     disputeTicketId: string | null
     paymentMethodId: string | null
@@ -1993,6 +2312,7 @@ export const withdrawalService = {
       w.latestAssignmentStatus !== undefined
         ? withdrawalService.resolveHostFacingStatus(w.status, w.latestAssignmentStatus)
         : w.status
+    const proofKey = w.proofS3Key?.trim() || null
     return {
       id: w.id,
       grossPoints: w.amountPoints.toString(),
@@ -2003,6 +2323,11 @@ export const withdrawalService = {
       platformFeePoints: w.platformFeePoints?.toString() ?? null,
       agentRewardPoints: w.agentRewardPoints?.toString() ?? null,
       serviceFeePoints: w.serviceFeePoints?.toString() ?? null,
+      methodType: w.methodType ?? null,
+      payoutHandler: w.payoutHandler ?? null,
+      waitingExpiresAt: w.waitingExpiresAt?.toISOString() ?? null,
+      proofS3Key: proofKey,
+      proofImageUrl: proofKey ? storageService.getCdnOrS3PublicUrl(proofKey) : null,
       assignmentCount: w.assignmentCount,
       disputeTicketId: w.disputeTicketId,
       paymentMethodId: w.paymentMethodId,
@@ -2228,7 +2553,11 @@ export const withdrawalService = {
     const rows = await prismaRead.withdrawal.findMany({
       where: {
         status: 'DISPUTED',
-        payrollAssignments: { some: { status: 'WAITING' } },
+        OR: [
+          { payrollAssignments: { some: { status: 'WAITING' } } },
+          { payoutHandler: 'PLATFORM' },
+          { methodType: 'EPAY' },
+        ],
         ...(opts.cursor ? { id: { lt: opts.cursor } } : {}),
       },
       orderBy: { requestedAt: 'desc' },
@@ -2269,9 +2598,10 @@ export const withdrawalService = {
     const config = await withdrawalService.getPayrollConfig()
     return {
       items: page.map((w) => {
-        const a = w.payrollAssignments[0]!
+        const a = w.payrollAssignments[0]
         const host = hostById.get(w.userId)
         const hostPayoutUsd = Number(w.hostPayoutUsd ?? 0)
+        const platformProof = w.proofS3Key?.trim() || null
         return {
           withdrawalId: w.id,
           hostUserId: w.userId,
@@ -2279,17 +2609,26 @@ export const withdrawalService = {
           hostPublicId: host?.publicId.toString() ?? '',
           grossPoints: w.amountPoints.toString(),
           hostPayoutUsd: w.hostPayoutUsd?.toString() ?? null,
+          serviceFeePoints: w.serviceFeePoints?.toString() ?? null,
+          methodType: w.methodType ?? null,
+          payoutHandler: w.payoutHandler ?? null,
           ...formatLocalAmount(hostPayoutUsd, resolveLocalFx(host?.country, config)),
           disputeTicketId: w.disputeTicketId,
           requestedAt: w.requestedAt.toISOString(),
-          assignment: {
-            id: a.id,
-            agentUserId: a.agencyUserId,
-            agentDisplayName: userDisplayName(a.agencyUser),
-            agentPublicId: a.agencyUser.publicId.toString(),
-            proofS3Key: a.proofS3Key,
-            waitingExpiresAt: a.waitingExpiresAt?.toISOString() ?? null,
-          },
+          assignment: a
+            ? {
+                id: a.id,
+                agentUserId: a.agencyUserId,
+                agentDisplayName: userDisplayName(a.agencyUser),
+                agentPublicId: a.agencyUser.publicId.toString(),
+                proofS3Key: a.proofS3Key,
+                waitingExpiresAt: a.waitingExpiresAt?.toISOString() ?? null,
+              }
+            : null,
+          proofS3Key: a?.proofS3Key ?? platformProof,
+          proofImageUrl: (a?.proofS3Key ?? platformProof)
+            ? storageService.getCdnOrS3PublicUrl((a?.proofS3Key ?? platformProof) as string)
+            : null,
           paymentMethod: w.paymentMethod ? mapPaymentMethodMaskedForAgent(w.paymentMethod) : null,
         }
       }),

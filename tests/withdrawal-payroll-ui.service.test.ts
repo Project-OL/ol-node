@@ -24,6 +24,7 @@ const defaultConfig: PayrollConfigSnapshot = {
   minWithdrawalUsd: 10,
   maxWithdrawalUsd: 10_000_000,
   slaHours: 2,
+  waitingHours: 2,
   maxAssignmentAttempts: 5,
   inrPerUsd: 88,
 };
@@ -87,49 +88,55 @@ import { payrollAssignmentRepository } from "../src/repositories/payrollAssignme
 import { storageService } from "../src/services/storage.service";
 
 describe("calculateWithdrawalAmounts / calculateAmounts", () => {
-  it("matches spec at min withdrawal 100k pts", () => {
-    const gross = 100_000n;
-    const r = calculateWithdrawalAmounts(gross, defaultConfig);
+  it("EPAY $10: $1 service fee, host $9, no tiers", () => {
+    const r = calculateWithdrawalAmounts(100_000n, defaultConfig, "EPAY");
     expect(r.serviceFeePoints).toBe(10_000n);
-    expect(r.platformFeePoints).toBe(4_500n);
-    expect(r.agentRewardPoints).toBe(2_700n);
-    expect(r.hostPayoutPoints).toBe(85_500n);
-    expect(r.hostPayoutUsd.toString()).toBe("8.55");
+    expect(r.platformFeePoints).toBe(0n);
+    expect(r.agentRewardPoints).toBe(0n);
+    expect(r.hostPayoutPoints).toBe(90_000n);
+    expect(r.hostPayoutUsd.toString()).toBe("9");
     expect(r.serviceFeeUsd).toBe(1);
-    expect(r.hostNetUsd).toBeCloseTo(8.55, 5);
+    expect(r.hostNetUsd).toBeCloseTo(9, 5);
   });
 
-  it("aliases calculateAmounts export", () => {
+  it("BANK $10: no service fee, 5% of full gross", () => {
+    const r = calculateWithdrawalAmounts(100_000n, defaultConfig, "BANK");
+    expect(r.serviceFeePoints).toBe(0n);
+    expect(r.platformFeePoints).toBe(5_000n);
+    expect(r.agentRewardPoints).toBe(3_000n);
+    expect(r.hostPayoutPoints).toBe(95_000n);
+  });
+
+  it("aliases calculateAmounts export (BANK default)", () => {
     expect(calculateAmounts(100_000n, defaultConfig).hostPayoutPoints).toBe(
-      85_500n,
+      95_000n,
     );
   });
 
   it("rejects below min", () => {
     expect(() =>
-      calculateWithdrawalAmounts(99_999n, defaultConfig),
+      calculateWithdrawalAmounts(99_999n, defaultConfig, "BANK"),
     ).toThrowError(AppError);
   });
 
   it("rejects above max usd", () => {
     const gross = BigInt(10_000_000) * 10000n + 1n;
-    expect(() => calculateWithdrawalAmounts(gross, defaultConfig)).toThrowError(
-      AppError,
-    );
+    expect(() =>
+      calculateWithdrawalAmounts(gross, defaultConfig, "BANK"),
+    ).toThrowError(AppError);
   });
 
   it("accepts exactly max usd gross", () => {
     const gross = BigInt(10_000_000) * 10000n;
-    const r = calculateWithdrawalAmounts(gross, defaultConfig);
+    const r = calculateWithdrawalAmounts(gross, defaultConfig, "BANK");
     expect(r.hostPayoutPoints).toBeGreaterThan(0n);
   });
 
-  it("truncates bp math for odd gross at 10L+ tier (2%)", () => {
+  it("BANK truncates bp math for odd gross at 10L+ tier (2%)", () => {
     const cfg = { ...defaultConfig, agentRewardRateBp: 6000 };
-    const r = calculateWithdrawalAmounts(1_000_001n, cfg);
-    const feeBase = 1_000_001n - 10_000n;
-    const platformFee = (feeBase * 200n) / 10000n;
-    expect(platformFee).toBe(19_800n);
+    const r = calculateWithdrawalAmounts(1_000_001n, cfg, "BANK");
+    const platformFee = (1_000_001n * 200n) / 10000n;
+    expect(platformFee).toBe(20_000n);
     expect(r.agentRewardPoints).toBe((platformFee * 6000n) / 10000n);
   });
 });

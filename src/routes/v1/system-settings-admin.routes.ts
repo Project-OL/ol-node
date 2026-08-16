@@ -13,11 +13,13 @@ import { SupportConfigUpdateSchema } from '../../models/supportConfig.schemas'
 import { MessagingConfigUpdateSchema } from '../../models/messagingConfig.schemas'
 import { FaceLivenessConfigUpdateSchema } from '../../models/faceLivenessConfig.schemas'
 import { AdminAuthConfigUpdateSchema } from '../../models/adminAuthConfig.schemas'
+import { AgencyHostConfigUpdateSchema } from '../../models/agencyHostConfig.schemas'
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
 import { messagingConfigService } from '../../services/messagingConfig.service'
 import { supportConfigService } from '../../services/supportConfig.service'
 import { faceLivenessConfigService } from '../../services/faceLivenessConfig.service'
 import { adminAuthConfigService } from '../../services/adminAuthConfig.service'
+import { agencyHostConfigService } from '../../services/agencyHostConfig.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { videoCallPriceCapService } from '../../services/videoCallPriceCap.service'
 import { richTierService } from '../../services/rich-tier.service'
@@ -36,6 +38,7 @@ import { richTierService } from '../../services/rich-tier.service'
  * GET|PUT /v1/admin/system-settings/support
  * GET|PUT /v1/admin/system-settings/face-liveness
  * GET|PUT /v1/admin/system-settings/admin-auth
+ * GET|PUT /v1/admin/system-settings/agency-host
  */
 export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
   app.get(
@@ -223,6 +226,25 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = AdminAuthConfigUpdateSchema.parse(request.body ?? {})
       return reply.send(await adminAuthConfigService.updateConfig(adminUserId, body))
+    },
+  )
+
+  app.get(
+    '/system-settings/agency-host',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await agencyHostConfigService.getConfig())
+    },
+  )
+
+  app.put(
+    '/system-settings/agency-host',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AgencyHostConfigUpdateSchema.parse(request.body ?? {})
+      return reply.send(await agencyHostConfigService.updateConfig(adminUserId, body))
     },
   )
 }

@@ -37,6 +37,8 @@ export const withdrawalRepository = {
       platformFeePoints: bigint
       agentRewardPoints: bigint
       serviceFeePoints?: bigint | null
+      methodType?: string | null
+      payoutHandler?: string | null
       idempotencyKey: string
       notes?: string | null
       withdrawalVersion?: number
@@ -57,6 +59,8 @@ export const withdrawalRepository = {
         platformFeePoints: data.platformFeePoints,
         agentRewardPoints: data.agentRewardPoints,
         serviceFeePoints: data.serviceFeePoints ?? null,
+        methodType: data.methodType ?? null,
+        payoutHandler: data.payoutHandler ?? null,
         idempotencyKey: data.idempotencyKey,
         notes: data.notes ?? null,
         withdrawalVersion: data.withdrawalVersion ?? 2,
@@ -135,6 +139,9 @@ export const withdrawalRepository = {
       processedAt?: Date | null
       failReason?: string | null
       disputeTicketId?: string | null
+      proofS3Key?: string | null
+      proofS3Bucket?: string | null
+      waitingExpiresAt?: Date | null
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -146,6 +153,9 @@ export const withdrawalRepository = {
         ...(data.processedAt !== undefined ? { processedAt: data.processedAt } : {}),
         ...(data.failReason !== undefined ? { failReason: data.failReason } : {}),
         ...(data.disputeTicketId !== undefined ? { disputeTicketId: data.disputeTicketId } : {}),
+        ...(data.proofS3Key !== undefined ? { proofS3Key: data.proofS3Key } : {}),
+        ...(data.proofS3Bucket !== undefined ? { proofS3Bucket: data.proofS3Bucket } : {}),
+        ...(data.waitingExpiresAt !== undefined ? { waitingExpiresAt: data.waitingExpiresAt } : {}),
       },
     })
   },
@@ -272,6 +282,18 @@ export const withdrawalRepository = {
             skip: 1,
           }
         : {}),
+    })
+  },
+
+  listOverduePlatformWaiting(now: Date, limit: number) {
+    return prismaRead.withdrawal.findMany({
+      where: {
+        status: 'WAITING',
+        payoutHandler: 'PLATFORM',
+        waitingExpiresAt: { lt: now },
+      },
+      take: limit,
+      orderBy: { waitingExpiresAt: 'asc' },
     })
   },
 }

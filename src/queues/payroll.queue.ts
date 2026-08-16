@@ -1,6 +1,8 @@
 import { Queue } from 'bullmq'
 import { redisClient } from '../config/redis'
 import {
+  PAYROLL_PLATFORM_WAITING_JOB,
+  PAYROLL_PLATFORM_WAITING_JOB_ID,
   PAYROLL_SLA_JOB,
   PAYROLL_SLA_JOB_ID,
   PAYROLL_SLA_QUEUE,
@@ -62,6 +64,34 @@ export async function enqueuePayrollWaiting(
 export async function removePayrollWaiting(assignmentId: string): Promise<void> {
   try {
     const job = await payrollSlaQueue.getJob(PAYROLL_WAITING_JOB_ID(assignmentId))
+    if (job) await job.remove()
+  } catch {
+    /* job may already be consumed */
+  }
+}
+
+export async function enqueuePlatformWaiting(
+  withdrawalId: string,
+  waitingExpiresAt: Date,
+): Promise<void> {
+  const delay = msUntil(waitingExpiresAt)
+  await payrollSlaQueue.add(
+    PAYROLL_PLATFORM_WAITING_JOB,
+    { withdrawalId, jobType: 'platform-waiting-auto-complete' },
+    {
+      jobId: PAYROLL_PLATFORM_WAITING_JOB_ID(withdrawalId),
+      delay,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      removeOnComplete: true,
+      removeOnFail: false,
+    },
+  )
+}
+
+export async function removePlatformWaiting(withdrawalId: string): Promise<void> {
+  try {
+    const job = await payrollSlaQueue.getJob(PAYROLL_PLATFORM_WAITING_JOB_ID(withdrawalId))
     if (job) await job.remove()
   } catch {
     /* job may already be consumed */

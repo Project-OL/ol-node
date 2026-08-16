@@ -382,6 +382,8 @@ export const RedisKeys = {
   faceLivenessConfig: () => 'face-liveness:config',
   /** Admin/CSA login lockout threshold + duration (admin system settings). */
   adminAuthConfig: () => 'admin-auth:config',
+  /** Host rejoin cooldown after exit / rejected join (admin system settings). */
+  agencyHostConfig: () => 'agency-host:config',
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
   ratelimitWithdrawalCreate: (userId: string) => `ratelimit:withdrawal:create:${userId}`,
   ratelimitWithdrawalDispute: (userId: string) => `ratelimit:withdrawal:dispute:${userId}`,
@@ -564,6 +566,8 @@ export const SUPPORT_CONFIG_TTL = 300
 export const FACE_LIVENESS_CONFIG_TTL = 300
 /** Admin/CSA login lockout config singleton. */
 export const ADMIN_AUTH_CONFIG_TTL = 300
+/** Host rejoin cooldown singleton. */
+export const AGENCY_HOST_CONFIG_TTL = 300
 /** Agent payroll dashboard summary (tab counts + toggle). */
 export const PAYROLL_SUMMARY_TTL = 30
 /** GET rich-tier read endpoints: 60 requests / 60s per user. */

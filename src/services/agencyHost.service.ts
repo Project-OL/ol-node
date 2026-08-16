@@ -15,6 +15,7 @@ import { walletLevelService } from './user-level.service'
 import { userRepository } from '../repositories/user.repository'
 import { bigIntToStr, formatDuration } from '../utils/bigint'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import { agencyHostConfigService } from './agencyHostConfig.service'
 
 type HostEarningsAgg = {
   hostEarnings: bigint
@@ -24,8 +25,6 @@ type HostEarningsAgg = {
 
 const TX_MS = 20_000
 const DAY_MS = 24 * 60 * 60 * 1000
-/** Wait after host exit / rejected join before joining another agency. */
-const JOIN_COOLDOWN_MS = DAY_MS
 /** Wait after a resolved leave application before filing another leave. */
 const LEAVE_COOLDOWN_MS = 30 * DAY_MS
 const REMOVAL_TENURE_MS = 7 * DAY_MS
@@ -179,17 +178,18 @@ async function isHostFaceVerified(hostUserId: string): Promise<boolean> {
 }
 
 async function assertJoinCooldown(hostUserId: string): Promise<void> {
+  const cooldownMs = await agencyHostConfigService.getRejoinCooldownMs()
   const recentExit = await agencyHostRepository.getRecentExitForHost(hostUserId)
-  if (recentExit && Date.now() - recentExit.exitedAt.getTime() < JOIN_COOLDOWN_MS) {
+  if (recentExit && Date.now() - recentExit.exitedAt.getTime() < cooldownMs) {
     throw new AppError(429, 'Agency application cooldown', 'AGENCY_APPLICATION_COOLDOWN', {
-      nextAllowedAt: nextAllowedFrom(recentExit.exitedAt, JOIN_COOLDOWN_MS).toISOString(),
+      nextAllowedAt: nextAllowedFrom(recentExit.exitedAt, cooldownMs).toISOString(),
     })
   }
 
   const recentReject = await agencyHostRepository.findLatestRejectedApplication(hostUserId)
-  if (recentReject?.resolvedAt && Date.now() - recentReject.resolvedAt.getTime() < JOIN_COOLDOWN_MS) {
+  if (recentReject?.resolvedAt && Date.now() - recentReject.resolvedAt.getTime() < cooldownMs) {
     throw new AppError(429, 'Agency application cooldown', 'AGENCY_APPLICATION_COOLDOWN', {
-      nextAllowedAt: nextAllowedFrom(recentReject.resolvedAt, JOIN_COOLDOWN_MS).toISOString(),
+      nextAllowedAt: nextAllowedFrom(recentReject.resolvedAt, cooldownMs).toISOString(),
     })
   }
 }

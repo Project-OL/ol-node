@@ -1574,6 +1574,14 @@ model Withdrawal {
   agentRewardPoints BigInt?  @map("agent_reward_points")
   /// Flat service fee taken from gross before platform/agent shares. Null on pre-cutover rows.
   serviceFeePoints  BigInt?  @map("service_fee_points")
+  /// Snapshot of the payment rail at create (`EPAY` | `BANK`).
+  methodType        String?  @map("method_type") @db.VarChar(10)
+  /// Who pays fiat: `PLATFORM` (EPAY) or `AGENCY` (BANK).
+  payoutHandler     String?  @map("payout_handler") @db.VarChar(16)
+  /// Super-admin proof for platform-handled (EPAY) payouts.
+  proofS3Key        String?  @map("proof_s3_key") @db.VarChar(500)
+  proofS3Bucket     String?  @map("proof_s3_bucket") @db.VarChar(255)
+  waitingExpiresAt  DateTime? @map("waiting_expires_at")
   assignmentCount   Int      @default(0) @map("assignment_count")
   disputeTicketId   String?  @map("dispute_ticket_id") @db.VarChar(255)
   // 1 = legacy. 2 = hard debit at create (WITHDRAWAL); older v2 may still be soft escrow.
@@ -1586,6 +1594,8 @@ model Withdrawal {
 
   @@index([userId, status])
   @@index([walletId, requestedAt(sort: Desc)])
+  @@index([payoutHandler, status])
+  @@index([status, waitingExpiresAt])
   @@map("withdrawals")
 }
 
@@ -2401,6 +2411,17 @@ model AgencyCommissionConfig {
   updatedByAdminId String?  @map("updated_by_admin_id")
 
   @@map("agency_commission_config")
+}
+
+/// Singleton: wait after host exit or rejected join before applying again.
+/// Admin `GET|PUT /admin/system-settings/agency-host`. Default 24 hours.
+model AgencyHostConfig {
+  id                   Int      @id @default(1)
+  rejoinCooldownHours  Int      @default(24) @map("rejoin_cooldown_hours")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  updatedByAdminId     String?  @map("updated_by_admin_id")
+
+  @@map("agency_host_config")
 }
 
 model AgencyDailyEarning {

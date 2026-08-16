@@ -147,6 +147,8 @@ function mapAdminAssignment(
       /** Processing reward credited to the agency agent. */
       agentRewardPoints: (w.agentRewardPoints ?? 0n).toString(),
       serviceFeePoints: (w.serviceFeePoints ?? 0n).toString(),
+      methodType: w.methodType ?? null,
+      payoutHandler: w.payoutHandler ?? null,
       notes: w.notes ?? null,
       /** True when admin may POST `/admin/agency/withdrawal/:id/reverse` (≤4 days from paid + status). */
       canRevert: isAdminWithdrawalRevertable({
@@ -582,5 +584,53 @@ export const payrollAdminService = {
     if (!row) throw new AppError(404, 'Assignment not found', 'NOT_FOUND')
     const config = await withdrawalService.getPayrollConfig()
     return mapAdminAssignment(row, config)
+  },
+
+  async getWithdrawalDetail(withdrawalId: string) {
+    const row = await prismaRead.withdrawal.findUnique({
+      where: { id: withdrawalId },
+      include: {
+        paymentMethod: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            avatarUrl: true,
+            country: true,
+          },
+        },
+      },
+    })
+    if (!row) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+    const config = await withdrawalService.getPayrollConfig()
+    const serialized = withdrawalService.serializeWithdrawal(row)
+    const hostPayoutUsd = Number(row.hostPayoutUsd ?? 0)
+    const local = formatLocalAmount(hostPayoutUsd, resolveLocalFx(row.user.country, config))
+    const waitingExpiresAt = row.waitingExpiresAt
+    const waitingSecondsRemaining = waitingExpiresAt
+      ? Math.max(0, Math.round((waitingExpiresAt.getTime() - Date.now()) / 1000))
+      : 0
+    return {
+      ...serialized,
+      withdrawalId: row.id,
+      hostPayoutPoints: withdrawalHostPayoutPoints({
+        amountPoints: row.amountPoints,
+        platformFeePoints: row.platformFeePoints,
+        serviceFeePoints: row.serviceFeePoints,
+      }).toString(),
+      localCurrencyAmount: local.localCurrencyAmount,
+      localCurrencyCode: local.localCurrencyCode,
+      waitingSecondsRemaining,
+      canPay:
+        (row.payoutHandler === 'PLATFORM' || row.methodType === 'EPAY') &&
+        row.status === 'PENDING_PLATFORM',
+      host: mapUserCard(row.user),
+      paymentMethod: row.paymentMethod ? mapPaymentMethodMaskedForAgent(row.paymentMethod) : null,
+    }
   },
 }

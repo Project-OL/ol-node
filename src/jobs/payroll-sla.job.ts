@@ -1,6 +1,6 @@
 import { withdrawalRepository } from '../repositories/withdrawal.repository'
 import { payrollAssignmentRepository } from '../repositories/payrollAssignment.repository'
-import { enqueuePayrollSla } from '../queues/payroll.queue'
+import { enqueuePayrollSla, enqueuePlatformWaiting } from '../queues/payroll.queue'
 import { withdrawalService } from '../services/withdrawal.service'
 
 export async function processPayrollSlaJob(data: { assignmentId: string }) {
@@ -17,11 +17,24 @@ export async function processWaitingAutoComplete(assignmentId: string): Promise<
   await withdrawalService.autoCompleteWaiting(assignmentId)
 }
 
-/** Re-enqueue delayed SLA jobs if Redis/BullMQ dropped them (worker restart, etc.). */
+export async function processPlatformWaitingAutoComplete(withdrawalId: string): Promise<void> {
+  const row = await withdrawalRepository.getById(withdrawalId)
+  if (!row) return
+  if (row.status !== 'WAITING') return
+  if (row.payoutHandler !== 'PLATFORM' && row.methodType !== 'EPAY') return
+  if (row.waitingExpiresAt && row.waitingExpiresAt > new Date()) return
+  await withdrawalService.autoCompletePlatformWaiting(withdrawalId)
+}
+
+/** Re-enqueue delayed SLA / platform-waiting jobs if Redis/BullMQ dropped them. */
 export async function runPayrollSlaSafetyNet(): Promise<void> {
   const now = new Date()
   const overdue = await withdrawalRepository.listOverdueSlaAssignments(now, 200)
   for (const a of overdue) {
     await enqueuePayrollSla(a.id, a.expiresAt)
+  }
+  const overduePlatform = await withdrawalRepository.listOverduePlatformWaiting(now, 200)
+  for (const w of overduePlatform) {
+    await enqueuePlatformWaiting(w.id, w.waitingExpiresAt ?? now)
   }
 }
