@@ -809,11 +809,14 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     '/payroll/pending-platform',
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
-      const q = request.query as { limit?: string; cursor?: string }
+      const q = request.query as { limit?: string; cursor?: string; handler?: string }
       const limit = Math.min(50, Math.max(1, Number(q.limit ?? '20') || 20))
+      const handler =
+        q.handler === 'PLATFORM' || q.handler === 'AGENCY' ? q.handler : undefined
       const result = await payrollAdminService.listPendingPlatformWithdrawals({
         limit,
         cursor: q.cursor,
+        payoutHandler: handler,
       })
       return reply.send(result)
     },

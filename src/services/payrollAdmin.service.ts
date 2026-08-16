@@ -483,7 +483,11 @@ export const payrollAdminService = {
     return withdrawalService.getPayrollConfig()
   },
 
-  async listPendingPlatformWithdrawals(opts: { limit: number; cursor?: string }) {
+  async listPendingPlatformWithdrawals(opts: {
+    limit: number
+    cursor?: string
+    payoutHandler?: 'PLATFORM' | 'AGENCY'
+  }) {
     const rows = await withdrawalRepository.listPendingPlatform(opts)
     const hasMore = rows.length > opts.limit
     const page = hasMore ? rows.slice(0, opts.limit) : rows

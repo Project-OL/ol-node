@@ -270,10 +270,24 @@ export const withdrawalRepository = {
     })
   },
 
-  listPendingPlatform(opts: { limit: number; cursor?: string }) {
+  listPendingPlatform(opts: {
+    limit: number
+    cursor?: string
+    /** PLATFORM = admin-pay EPAY inbox; AGENCY = leftover BANK assign queue. */
+    payoutHandler?: 'PLATFORM' | 'AGENCY'
+  }) {
     const take = opts.limit + 1
+    const platformHandled = {
+      OR: [{ payoutHandler: 'PLATFORM' }, { methodType: 'EPAY' }],
+    }
+    const handlerWhere =
+      opts.payoutHandler === 'PLATFORM'
+        ? platformHandled
+        : opts.payoutHandler === 'AGENCY'
+          ? { NOT: platformHandled }
+          : {}
     return prismaRead.withdrawal.findMany({
-      where: { status: 'PENDING_PLATFORM' },
+      where: { status: 'PENDING_PLATFORM', ...handlerWhere },
       orderBy: { requestedAt: 'asc' },
       take,
       ...(opts.cursor
