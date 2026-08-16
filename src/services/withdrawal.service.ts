@@ -1090,6 +1090,7 @@ export const withdrawalService = {
     const hostUserId = pre.withdrawal.userId
     const agentUserId = pre.agencyUserId
     const withdrawalId = pre.withdrawalId
+    const grossPoints = pre.withdrawal.amountPoints
     const hostPayoutPoints = withdrawalHostPayoutPoints({
       amountPoints: pre.withdrawal.amountPoints,
       platformFeePoints: pre.withdrawal.platformFeePoints,
@@ -1355,6 +1356,7 @@ export const withdrawalService = {
 
     const hostUserId = pre.userId
     const agentUserId = assignment.agencyUserId
+    const grossPoints = pre.amountPoints
     const hostPayoutPoints = withdrawalHostPayoutPoints({
       amountPoints: pre.amountPoints,
       platformFeePoints: pre.platformFeePoints,
