@@ -93,9 +93,23 @@ const ReverseSchema = z.object({
   reason: z.string().min(3),
 })
 
+const PayrollFeeTierInputSchema = z
+  .object({
+    minUsd: z.number().nonnegative().optional(),
+    maxUsd: z.number().nonnegative().nullable().optional(),
+    minPoints: z.string().regex(/^\d+$/).optional(),
+    maxPoints: z.string().regex(/^\d+$/).nullable().optional(),
+    platformFeeRateBp: z.number().int().min(0).max(10_000),
+    agentRewardRateBp: z.number().int().min(0).max(10_000),
+  })
+  .refine((t) => t.minUsd != null || t.minPoints != null, {
+    message: 'Each fee tier requires minUsd or minPoints',
+  })
+
 const PayrollConfigUpdateSchema = z.object({
   platformFeeRateBp: z.number().int().min(0).optional(),
   agentRewardRateBp: z.number().int().min(0).optional(),
+  feeTiers: z.array(PayrollFeeTierInputSchema).min(1).optional(),
   serviceFeeUsd: z.number().optional(),
   minWithdrawalUsd: z.number().optional(),
   maxWithdrawalUsd: z.number().optional(),

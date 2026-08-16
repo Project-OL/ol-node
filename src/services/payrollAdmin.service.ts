@@ -10,6 +10,8 @@ import { storageService } from './storage.service'
 import { mapPaymentMethodMaskedForAgent } from '../utils/payment-method-mask'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { isAdminWithdrawalRevertable } from '../utils/admin-withdrawal-revert'
+import { payrollFeeTierRepository } from '../repositories/payrollFeeTier.repository'
+import { usdToPoints } from '../utils/payroll-fee'
 
 type AdminUserCard = {
   id: string
@@ -143,6 +145,113 @@ function mapAdminAssignment(
   }
 }
 
+function parsePointsBound(
+  points: string | undefined,
+  usd: number | undefined,
+  label: string,
+): bigint {
+  if (points != null && points !== '') {
+    if (!/^\d+$/.test(points)) {
+      throw new AppError(400, `${label} must be a non-negative integer string`, 'VALIDATION_ERROR')
+    }
+    return BigInt(points)
+  }
+  if (usd == null || !Number.isFinite(usd) || usd < 0) {
+    throw new AppError(400, `${label} requires minUsd/maxUsd or minPoints/maxPoints`, 'VALIDATION_ERROR')
+  }
+  return usdToPoints(usd)
+}
+
+function normalizeAndValidateFeeTiers(
+  input: Array<{
+    minUsd?: number
+    maxUsd?: number | null
+    minPoints?: string
+    maxPoints?: string | null
+    platformFeeRateBp: number
+    agentRewardRateBp: number
+  }>,
+): Array<{
+  minPoints: bigint
+  maxPoints: bigint | null
+  platformFeeRateBp: number
+  agentRewardRateBp: number
+}> {
+  if (input.length === 0) {
+    throw new AppError(400, 'At least one fee tier is required', 'VALIDATION_ERROR')
+  }
+
+  const tiers = input.map((row, i) => {
+    if (
+      !Number.isInteger(row.platformFeeRateBp) ||
+      row.platformFeeRateBp < 0 ||
+      row.platformFeeRateBp > 10000
+    ) {
+      throw new AppError(
+        422,
+        `feeTiers[${i}].platformFeeRateBp must be 0–10000`,
+        'INVALID_FEE_CONFIG',
+      )
+    }
+    if (
+      !Number.isInteger(row.agentRewardRateBp) ||
+      row.agentRewardRateBp < 0 ||
+      row.agentRewardRateBp > 10000
+    ) {
+      throw new AppError(
+        422,
+        `feeTiers[${i}].agentRewardRateBp must be 0–10000`,
+        'INVALID_FEE_CONFIG',
+      )
+    }
+    const minPoints = parsePointsBound(row.minPoints, row.minUsd, `feeTiers[${i}].min`)
+    const maxOpen = row.maxPoints == null && (row.maxUsd == null || row.maxUsd === undefined)
+    const maxPoints = maxOpen
+      ? null
+      : parsePointsBound(row.maxPoints ?? undefined, row.maxUsd ?? undefined, `feeTiers[${i}].max`)
+    if (maxPoints != null && maxPoints <= minPoints) {
+      throw new AppError(
+        400,
+        `feeTiers[${i}].max must be greater than min`,
+        'VALIDATION_ERROR',
+      )
+    }
+    return {
+      minPoints,
+      maxPoints,
+      platformFeeRateBp: row.platformFeeRateBp,
+      agentRewardRateBp: row.agentRewardRateBp,
+    }
+  })
+
+  tiers.sort((a, b) => (a.minPoints < b.minPoints ? -1 : a.minPoints > b.minPoints ? 1 : 0))
+
+  for (let i = 0; i < tiers.length; i++) {
+    const cur = tiers[i]!
+    const next = tiers[i + 1]
+    if (i < tiers.length - 1) {
+      if (cur.maxPoints == null) {
+        throw new AppError(
+          400,
+          `feeTiers[${i}] must have a max so the next band can start`,
+          'VALIDATION_ERROR',
+        )
+      }
+      if (!next || cur.maxPoints !== next.minPoints) {
+        throw new AppError(
+          400,
+          'Fee tiers must be contiguous (each max equals the next min)',
+          'VALIDATION_ERROR',
+        )
+      }
+    } else if (cur.maxPoints != null) {
+      throw new AppError(400, 'The last fee tier must be open-ended (max null)', 'VALIDATION_ERROR')
+    }
+  }
+
+  return tiers
+}
+
 export const payrollAdminService = {
   getConfig() {
     return withdrawalService.getPayrollConfig()
@@ -153,6 +262,14 @@ export const payrollAdminService = {
     updates: {
       platformFeeRateBp?: number
       agentRewardRateBp?: number
+      feeTiers?: Array<{
+        minUsd?: number
+        maxUsd?: number | null
+        minPoints?: string
+        maxPoints?: string | null
+        platformFeeRateBp: number
+        agentRewardRateBp: number
+      }>
       serviceFeeUsd?: number
       minWithdrawalUsd?: number
       maxWithdrawalUsd?: number
@@ -167,7 +284,14 @@ export const payrollAdminService = {
       throw new AppError(500, 'Payroll config missing', 'CONFIG_ERROR')
     }
 
-    const newAr = updates.agentRewardRateBp ?? current.agentRewardRateBp
+    const normalizedTiers = updates.feeTiers?.length
+      ? normalizeAndValidateFeeTiers(updates.feeTiers)
+      : null
+
+    const newAr =
+      normalizedTiers?.[0]?.agentRewardRateBp ??
+      updates.agentRewardRateBp ??
+      current.agentRewardRateBp
     if (newAr > 10000) {
       throw new AppError(
         422,
@@ -177,9 +301,13 @@ export const payrollAdminService = {
     }
 
     const data: Prisma.PayrollConfigUpdateInput = {}
-    // platformFeeRateBp is stored for legacy/admin display; runtime fees use tiered rates in resolvePlatformFeeRateBp().
-    if (updates.platformFeeRateBp != null) data.platformFeeRateBp = updates.platformFeeRateBp
-    if (updates.agentRewardRateBp != null) data.agentRewardRateBp = updates.agentRewardRateBp
+    if (normalizedTiers) {
+      data.platformFeeRateBp = normalizedTiers[0]!.platformFeeRateBp
+      data.agentRewardRateBp = normalizedTiers[0]!.agentRewardRateBp
+    } else {
+      if (updates.platformFeeRateBp != null) data.platformFeeRateBp = updates.platformFeeRateBp
+      if (updates.agentRewardRateBp != null) data.agentRewardRateBp = updates.agentRewardRateBp
+    }
     if (updates.serviceFeeUsd != null)
       data.serviceFeeUsd = new Prisma.Decimal(updates.serviceFeeUsd)
     if (updates.minWithdrawalUsd != null)
@@ -197,6 +325,12 @@ export const payrollAdminService = {
       where: { id: 1 },
       data,
     })
+
+    if (normalizedTiers) {
+      await payrollFeeTierRepository.softReplace(normalizedTiers)
+    } else if (updates.agentRewardRateBp != null) {
+      await payrollFeeTierRepository.updateAgentRewardOnActive(updates.agentRewardRateBp)
+    }
 
     await withdrawalService.bustPayrollConfigCache()
     return withdrawalService.getPayrollConfig()

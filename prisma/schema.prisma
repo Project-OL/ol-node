@@ -1643,8 +1643,8 @@ model WithdrawalPayrollAssignment {
 
 model PayrollConfig {
   id                    Int      @id @default(1)
-  platformFeeRateBp     Int      @default(500) @map("platform_fee_rate_bp") // legacy; tiers in resolvePlatformFeeRateBp()
-  agentRewardRateBp     Int      @default(6000) @map("agent_reward_rate_bp")
+  platformFeeRateBp     Int      @default(500) @map("platform_fee_rate_bp") // legacy display; runtime uses payroll_fee_tiers
+  agentRewardRateBp     Int      @default(6000) @map("agent_reward_rate_bp") // legacy display; runtime uses payroll_fee_tiers
   serviceFeeUsd         Decimal  @default(1.00) @map("service_fee_usd") @db.Decimal(8, 2)
   minWithdrawalUsd      Decimal  @default(10.00) @map("min_withdrawal_usd") @db.Decimal(12, 2)
   maxWithdrawalUsd      Decimal  @default(10000000.00) @map("max_withdrawal_usd") @db.Decimal(18, 2)
@@ -1657,6 +1657,23 @@ model PayrollConfig {
   updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
 
   @@map("payroll_config")
+}
+
+/// Withdrawal amount bands → platform fee % and agent reward share of that fee.
+/// Soft-replace via admin `PUT /admin/agency/payroll/config` `feeTiers`.
+/// Bounds are gross points; `maxPoints` is exclusive (`null` = open-ended).
+model PayrollFeeTier {
+  id                 String   @id @default(uuid()) @db.Uuid
+  minPoints          BigInt   @map("min_points")
+  maxPoints          BigInt?  @map("max_points")
+  platformFeeRateBp  Int      @map("platform_fee_rate_bp")
+  agentRewardRateBp  Int      @map("agent_reward_rate_bp")
+  sortOrder          Int      @map("sort_order")
+  isActive           Boolean  @default(true) @map("is_active")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("payroll_fee_tiers")
 }
 
 model WithdrawalPayoutRailConfig {

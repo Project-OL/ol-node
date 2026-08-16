@@ -45,7 +45,13 @@ import {
   mapPaymentMethodMaskedForHost,
 } from '../utils/payment-method-mask'
 import { formatDuration } from '../utils/withdrawal-formatters'
-import { resolvePlatformFeeRateBp } from '../utils/payroll-fee'
+import {
+  defaultPayrollFeeTierDtos,
+  formatPayrollFeeTierDto,
+  resolvePayrollFeeRates,
+  type PayrollFeeTierDto,
+} from '../utils/payroll-fee'
+import { payrollFeeTierRepository } from '../repositories/payrollFeeTier.repository'
 import {
   ADMIN_WITHDRAWAL_REVERT_MAX_AGE_MS,
   isAdminWithdrawalRevertable,
@@ -118,6 +124,8 @@ export type PayrollConfigSnapshot = {
   id: number
   platformFeeRateBp: number
   agentRewardRateBp: number
+  /** Amount-range bands. Runtime fees use the matching row, not the singleton bp fields. */
+  feeTiers?: PayrollFeeTierDto[]
   serviceFeeUsd: number
   minWithdrawalUsd: number
   maxWithdrawalUsd: number
@@ -172,10 +180,13 @@ export function calculateWithdrawalAmounts(
     throw new AppError(400, 'Above maximum withdrawal amount', 'ABOVE_MAX_WITHDRAWAL')
   }
 
-  const platformFeeRateBp = resolvePlatformFeeRateBp(grossPoints)
+  const { platformFeeRateBp, agentRewardRateBp } = resolvePayrollFeeRates(grossPoints, {
+    feeTiers: config.feeTiers,
+    fallbackAgentRewardRateBp: config.agentRewardRateBp,
+  })
   const platformFeePoints = (grossPoints * BigInt(platformFeeRateBp)) / 10000n
   // agentRewardRateBp = share of platform fee (6000 bp = 60% of platformFeePoints)
-  const agentRewardPoints = (platformFeePoints * BigInt(config.agentRewardRateBp)) / 10000n
+  const agentRewardPoints = (platformFeePoints * BigInt(agentRewardRateBp)) / 10000n
   const hostPayoutPoints = grossPoints - platformFeePoints
 
   const hostPayoutUsd = new Prisma.Decimal(hostPayoutPoints.toString()).div(
@@ -201,15 +212,24 @@ export const calculateAmounts = calculateWithdrawalAmounts
 
 export { resolvePlatformFeeRateBp, calculateTieredPlatformFee } from '../utils/payroll-fee'
 
+async function loadFeeTiers(): Promise<PayrollFeeTierDto[]> {
+  const rows = await payrollFeeTierRepository.findActive()
+  if (!rows.length) return defaultPayrollFeeTierDtos()
+  return rows.map((row) => formatPayrollFeeTierDto(row))
+}
+
 async function loadPayrollConfigRow(): Promise<PayrollConfigSnapshot> {
   const row = await prismaRead.payrollConfig.findUnique({ where: { id: 1 } })
   if (!row) {
     throw new AppError(500, 'Payroll config missing', 'CONFIG_ERROR')
   }
+  const feeTiers = await loadFeeTiers()
+  const first = feeTiers[0]
   return {
     id: row.id,
-    platformFeeRateBp: row.platformFeeRateBp,
-    agentRewardRateBp: row.agentRewardRateBp,
+    platformFeeRateBp: first?.platformFeeRateBp ?? row.platformFeeRateBp,
+    agentRewardRateBp: first?.agentRewardRateBp ?? row.agentRewardRateBp,
+    feeTiers,
     serviceFeeUsd: decNum(row.serviceFeeUsd),
     minWithdrawalUsd: decNum(row.minWithdrawalUsd),
     maxWithdrawalUsd: decNum(row.maxWithdrawalUsd),
@@ -224,7 +244,12 @@ export const withdrawalService = {
   async getPayrollConfig(): Promise<PayrollConfigSnapshot> {
     const key = RedisKeys.payrollConfig()
     const hit = await redisClient.get(key)
-    if (hit) return JSON.parse(hit) as PayrollConfigSnapshot
+    if (hit) {
+      const parsed = JSON.parse(hit) as PayrollConfigSnapshot
+      if (Array.isArray(parsed.feeTiers) && parsed.feeTiers.length > 0) {
+        return parsed
+      }
+    }
     const snap = await loadPayrollConfigRow()
     await redisClient.setex(key, PAYROLL_CONFIG_TTL, JSON.stringify(snap))
     return snap

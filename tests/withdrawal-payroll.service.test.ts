@@ -67,6 +67,41 @@ describe("calculateWithdrawalAmounts / calculateAmounts", () => {
     expect(platformFee).toBe(20000n);
     expect(r.agentRewardPoints).toBe((platformFee * 6000n) / 10000n);
   });
+
+  it("uses configured feeTiers for platform and agent share", () => {
+    const cfg: PayrollConfigSnapshot = {
+      ...defaultConfig,
+      feeTiers: [
+        {
+          minPoints: "0",
+          maxPoints: "200000",
+          minUsd: 0,
+          maxUsd: 20,
+          platformFeeRateBp: 400,
+          agentRewardRateBp: 5000,
+          sortOrder: 1,
+        },
+        {
+          minPoints: "200000",
+          maxPoints: null,
+          minUsd: 20,
+          maxUsd: null,
+          platformFeeRateBp: 250,
+          agentRewardRateBp: 7000,
+          sortOrder: 2,
+        },
+      ],
+    };
+    const low = calculateWithdrawalAmounts(100_000n, cfg);
+    expect(low.platformFeeRateBp).toBe(400);
+    expect(low.platformFeePoints).toBe(4000n);
+    expect(low.agentRewardPoints).toBe(2000n);
+
+    const high = calculateWithdrawalAmounts(200_000n, cfg);
+    expect(high.platformFeeRateBp).toBe(250);
+    expect(high.platformFeePoints).toBe(5000n);
+    expect(high.agentRewardPoints).toBe(3500n);
+  });
 });
 
 describe("payment method mask helpers", () => {
