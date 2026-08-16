@@ -170,10 +170,8 @@ export const walletLevelService = {
     levelType: LevelType,
     increment: bigint,
   ): Promise<{ newLevel: number; previousLevel: number; newCumulative: bigint }> {
-    const current = await tx.walletUserLevel.upsert({
-      where: { userId_levelType: { userId, levelType } },
-      create: { userId, levelType, currentLevel: 1, cumulativeTotal: 0n },
-      update: {},
+    const current = await walletUserLevelRepository.getOrCreate(userId, levelType, tx, {
+      lock: true,
     })
 
     const newCumulative = current.cumulativeTotal + increment
@@ -203,10 +201,8 @@ export const walletLevelService = {
     decrement: bigint,
   ): Promise<{ newLevel: number; previousLevel: number; newCumulative: bigint }> {
     if (decrement <= 0n) {
-      const current = await tx.walletUserLevel.upsert({
-        where: { userId_levelType: { userId, levelType } },
-        create: { userId, levelType, currentLevel: 1, cumulativeTotal: 0n },
-        update: {},
+      const current = await walletUserLevelRepository.getOrCreate(userId, levelType, tx, {
+        lock: true,
       })
       return {
         newLevel: current.currentLevel,
@@ -215,10 +211,8 @@ export const walletLevelService = {
       }
     }
 
-    const current = await tx.walletUserLevel.upsert({
-      where: { userId_levelType: { userId, levelType } },
-      create: { userId, levelType, currentLevel: 1, cumulativeTotal: 0n },
-      update: {},
+    const current = await walletUserLevelRepository.getOrCreate(userId, levelType, tx, {
+      lock: true,
     })
 
     const newCumulative =
@@ -324,18 +318,12 @@ export const walletLevelService = {
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      const current = await tx.walletUserLevel.upsert({
-        where: {
-          userId_levelType: { userId: params.userId, levelType: params.levelType },
-        },
-        create: {
-          userId: params.userId,
-          levelType: params.levelType,
-          currentLevel: 1,
-          cumulativeTotal: 0n,
-        },
-        update: {},
-      })
+      const current = await walletUserLevelRepository.getOrCreate(
+        params.userId,
+        params.levelType,
+        tx,
+        { lock: true },
+      )
 
       if (current.cumulativeTotal === targetThreshold) {
         throw new AppError(

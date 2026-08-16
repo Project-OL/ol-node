@@ -18,17 +18,10 @@ export async function runWalletLevelBackfillForUser(userId: string): Promise<voi
       totalCoins,
       thresholds.map((c) => ({ level: c.level, threshold: c.threshold })),
     )
-    await prisma.walletUserLevel.upsert({
-      where: {
-        userId_levelType: { userId, levelType: LevelType.WEALTH },
-      },
-      create: {
-        userId,
-        levelType: LevelType.WEALTH,
-        currentLevel: level,
-        cumulativeTotal: totalCoins,
-      },
-      update: { currentLevel: level, cumulativeTotal: totalCoins },
+    await walletUserLevelRepository.getOrCreate(userId, LevelType.WEALTH)
+    await prisma.walletUserLevel.update({
+      where: { userId_levelType: { userId, levelType: LevelType.WEALTH } },
+      data: { currentLevel: level, cumulativeTotal: totalCoins },
     })
   }
 
@@ -46,17 +39,10 @@ export async function runWalletLevelBackfillForUser(userId: string): Promise<voi
       totalPoints,
       thresholds.map((c) => ({ level: c.level, threshold: c.threshold })),
     )
-    await prisma.walletUserLevel.upsert({
-      where: {
-        userId_levelType: { userId, levelType: LevelType.LIVESTREAM },
-      },
-      create: {
-        userId,
-        levelType: LevelType.LIVESTREAM,
-        currentLevel: level,
-        cumulativeTotal: totalPoints,
-      },
-      update: { currentLevel: level, cumulativeTotal: totalPoints },
+    await walletUserLevelRepository.getOrCreate(userId, LevelType.LIVESTREAM)
+    await prisma.walletUserLevel.update({
+      where: { userId_levelType: { userId, levelType: LevelType.LIVESTREAM } },
+      data: { currentLevel: level, cumulativeTotal: totalPoints },
     })
   }
 
