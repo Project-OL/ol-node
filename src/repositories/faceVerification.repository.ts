@@ -12,6 +12,16 @@ export const faceVerificationRepository = {
 
   /** Indexed face profile or agency KYC `face_verified` (same gate as host leave / agency dashboard). */
   async isVerifiedForUser(userId: string): Promise<boolean> {
+    const state = await this.getMeFaceState(userId)
+    return state.faceVerified
+  },
+
+  /** `/users/me` face block: verified flag plus status so clients can re-register without logging out. */
+  async getMeFaceState(userId: string): Promise<{
+    faceVerified: boolean
+    faceStatus: string
+    faceCanReRegister: boolean
+  }> {
     const [kyc, profile] = await Promise.all([
       prismaRead.agencyApplicationKyc.findUnique({
         where: { userId },
@@ -22,7 +32,12 @@ export const faceVerificationRepository = {
         select: { status: true },
       }),
     ])
-    return Boolean(kyc?.faceVerified) || profile?.status === 'INDEXED'
+    const faceStatus = profile?.status ?? 'NONE'
+    return {
+      faceVerified: Boolean(kyc?.faceVerified) || profile?.status === 'INDEXED',
+      faceStatus,
+      faceCanReRegister: faceStatus === 'REVOKED' || faceStatus === 'FAILED',
+    }
   },
 
   /**

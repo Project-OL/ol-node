@@ -155,6 +155,22 @@ export const csaManagementService = {
     }
   },
 
+  /**
+   * Unpaginated ACTIVE CSA picker for ticket hand-off / queue filters.
+   * Omits emails, phones, lockout stats — unlike SUPER_ADMIN `listCsas`.
+   */
+  async listDirectory() {
+    const rows = await systemAdminRepository.findAllByRole('CUSTOMER_SUPPORT', 'ACTIVE')
+    const csas = rows
+      .map((a) => ({
+        id: a.id,
+        name: a.displayName,
+        username: a.username,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return { csas }
+  },
+
   async getCsa(adminId: string) {
     const admin = await findCsaOrThrow(adminId)
     const [online, performance, ipWhitelist] = await Promise.all([

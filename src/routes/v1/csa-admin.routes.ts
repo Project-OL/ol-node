@@ -20,6 +20,8 @@ import {
 } from '../../models/csa-admin.schemas'
 
 const preAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
+/** Ticket hand-off picker: CSAs and SUPER_ADMIN. Must stay before `/csas/:adminId`. */
+const directoryAuth = [authenticateAdmin, requireAdminRole('CUSTOMER_SUPPORT', 'SUPER_ADMIN')]
 
 /** SUPER_ADMIN management of customer-support (CSA) accounts. Prefix: /admin/support */
 export default async function csaAdminRoutes(app: FastifyInstance) {
@@ -64,6 +66,10 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
         `attachment; filename="csa-export-${query.status ?? 'all'}-${date}.csv"`,
       )
       .send(csv)
+  })
+
+  app.get('/csas/directory', { preHandler: directoryAuth }, async (_req, reply) => {
+    return reply.send(await csaManagementService.listDirectory())
   })
 
   app.get('/csas/:adminId', { preHandler: preAuth }, async (req, reply) => {

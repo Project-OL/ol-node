@@ -278,6 +278,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
   CustomerSupportView: [
     'GET /admin/support/csas/overview',
     'GET /admin/support/csas',
+    'GET /admin/support/csas/directory',
     'GET /admin/support/csas/failed-logins',
     'GET /admin/support/csas/failed-login-attempts',
     'POST /admin/support/csas',
@@ -336,6 +337,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/support/tickets/:ticketId/notes',
     'POST /admin/support/upload-url',
     'GET /admin/support/csas',
+    'GET /admin/support/csas/directory',
   ],
   OtpAuditLogsView: [
     'GET /admin/otp-delivery/audits',

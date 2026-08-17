@@ -118,6 +118,8 @@ function buildMeResponse(
     agency: Awaited<ReturnType<typeof agencyService.buildMeAgencyBlock>>
     livePhoto: Awaited<ReturnType<typeof livePhotoService.buildMeLivePhotoBlock>>
     faceVerified: boolean
+    faceStatus: string
+    faceCanReRegister: boolean
     acceptVideoCalls: boolean
   },
 ): MeResponseDto {
@@ -140,6 +142,8 @@ function buildMeResponse(
     agency: extras.agency,
     livePhoto: extras.livePhoto,
     faceVerified: extras.faceVerified,
+    faceStatus: extras.faceStatus,
+    faceCanReRegister: extras.faceCanReRegister,
     vipMembership: extras.vipMembership,
     acceptVideoCalls: extras.acceptVideoCalls,
     canChangeUsername: usernameEligibility.canChangeUsername,
@@ -265,7 +269,7 @@ export const meService = {
       vipMembership,
       agency,
       livePhoto,
-      faceVerified,
+      faceState,
       acceptVideoCalls,
       activeVipRaw,
     ] = await Promise.all([
@@ -280,7 +284,7 @@ export const meService = {
       vipMembershipService.buildMeVipMembershipBlock(userId),
       agencyService.buildMeAgencyBlock(userId),
       livePhotoService.buildMeLivePhotoBlock(userId),
-      faceVerificationRepository.isVerifiedForUser(userId),
+      faceVerificationRepository.getMeFaceState(userId),
       videoCallSettingsService.getAcceptVideoCalls(userId),
       getRedisForRead()
         .get(RedisKeys.userActiveVipId(userId))
@@ -294,7 +298,9 @@ export const meService = {
       vipMembership,
       agency,
       livePhoto,
-      faceVerified,
+      faceVerified: faceState.faceVerified,
+      faceStatus: faceState.faceStatus,
+      faceCanReRegister: faceState.faceCanReRegister,
       acceptVideoCalls,
     })
     if (activeVipRaw) {
@@ -469,7 +475,7 @@ export const meService = {
       vipMembership,
       agency,
       livePhoto,
-      faceVerified,
+      faceState,
       acceptVideoCalls,
     ] = await Promise.all([
       walletDataPromise,
@@ -483,7 +489,7 @@ export const meService = {
       vipMembershipService.buildMeVipMembershipBlock(userId),
       agencyService.buildMeAgencyBlock(userId),
       livePhotoService.buildMeLivePhotoBlock(userId),
-      faceVerificationRepository.isVerifiedForUser(userId),
+      faceVerificationRepository.getMeFaceState(userId),
       videoCallSettingsService.getAcceptVideoCalls(userId),
     ])
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
@@ -494,7 +500,9 @@ export const meService = {
       vipMembership,
       agency,
       livePhoto,
-      faceVerified,
+      faceVerified: faceState.faceVerified,
+      faceStatus: faceState.faceStatus,
+      faceCanReRegister: faceState.faceCanReRegister,
       acceptVideoCalls,
     })
 

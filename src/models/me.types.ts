@@ -124,6 +124,14 @@ export interface MeResponseDto extends MeProfileCache {
   /** Face registration indexed in Rekognition, or agency KYC `face_verified`. */
   faceVerified: boolean
   /**
+   * Face profile status: `INDEXED` / `PENDING_INDEX` / `FAILED` / `REVOKED` / `DUPLICATE_FACE`,
+   * or `NONE` when the user has never submitted a face. Additive — login sessions stay valid
+   * when this is `REVOKED`; send the user to face registration (`faceCanReRegister`).
+   */
+  faceStatus: string
+  /** True when the caller may start `POST /face-registration/session` (revoked or failed profile). */
+  faceCanReRegister: boolean
+  /**
    * Global video-call availability: `true` = willing to receive calls right now.
    * Default `true` when the user has never configured call settings.
    */

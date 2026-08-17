@@ -121,6 +121,7 @@ export type ServerFrame =
         | 'face.registration.index_pending'
         | 'face.registration.indexed'
         | 'face.registration.rejected'
+        | 'face.registration.revoked'
       sessionId: string
       detail?: Record<string, unknown>
     }

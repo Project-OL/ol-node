@@ -200,6 +200,15 @@ export const adminTransactionsRepository = {
     })
   },
 
+  /** Resolve a coin-trading transfer id to the agent's TRADING_COIN debit ledger row. */
+  async findCoinTradingTransferSenderLedgerId(id: string): Promise<string | null> {
+    const row = await prismaRead.coinTradingTransfer.findUnique({
+      where: { id },
+      select: { senderLedgerEntryId: true },
+    })
+    return row?.senderLedgerEntryId ?? null
+  },
+
   async listCoinTradingTransfers(filter: {
     id?: string
     senderUserId?: string

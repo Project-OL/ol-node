@@ -89,7 +89,8 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Transactions'],
-        description: 'Global TRADING_COIN ledger history.',
+        description:
+          'Global TRADING_COIN ledger history (top-ups, admin adjust, agent transfer debits, reversals). Filter with `direction=credit|debit`. `id` / `q` / `transferId` also match a `coin_trading_transfers` row and resolve to the agent debit ledger entry. Nested `coinTradingTransfer` is present on transfer-linked rows. Revert still uses `revertVia` (ledger or transfer POST).',
       },
     },
     async (request, reply) => {

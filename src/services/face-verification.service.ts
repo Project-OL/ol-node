@@ -13,6 +13,7 @@ import {
 import { auditService } from './audit.service'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { faceRegistrationService } from './faceRegistration.service'
+import { afterFaceProfileRevoked } from './face-profile-invalidate'
 import { faceRegistrationValidationService } from './face-registration/face-registration.validation.service'
 import { faceLivenessConfigService } from './faceLivenessConfig.service'
 import { FACE_REGISTRATION_ERRORS } from '../constants/face-registration-errors'
@@ -372,7 +373,9 @@ export const faceVerificationService = {
       status,
       message: isDuplicate
         ? 'Registration rejected: this face is already associated with another account.'
-        : undefined,
+        : status === 'REVOKED'
+          ? 'Face verification was revoked. Please register your face again. Your login session is still valid.'
+          : undefined,
       faceProfileId: profile?.id ?? null,
       canReRegister: status === 'FAILED' || status === 'REVOKED',
       indexedAt: profile?.indexedAt?.toISOString() ?? null,
@@ -401,6 +404,7 @@ export const faceVerificationService = {
     }
     await faceVerificationRepository.revokeProfile({ userId })
     auditService.log({ userId, actionType: 'face_profile_revoked', actionStatus: 'success' })
+    await afterFaceProfileRevoked(userId)
     return { revoked: true as const }
   },
 

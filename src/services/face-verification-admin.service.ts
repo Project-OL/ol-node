@@ -10,6 +10,7 @@ import {
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { auditService } from './audit.service'
+import { afterFaceProfileRevoked } from './face-profile-invalidate'
 
 async function deleteRekognitionFaceSafe(
   faceId: string | null | undefined,
@@ -128,6 +129,9 @@ async function revokeOneUserFaceProfile(
     actionStatus: 'success',
     actionDetails: { adminUserId, reason: reason ?? null, previousStatus: profile.status },
   })
+
+  // Keep login JWTs valid. Bust /me so faceVerified/faceStatus update immediately.
+  await afterFaceProfileRevoked(targetUserId)
 
   return {
     userId: targetUserId,
@@ -427,6 +431,8 @@ export const faceVerificationAdminService = {
     if (blockedKyc?.faceVerified) {
       await agencyApplicationKycRepository.setFaceVerified(blockedUserId, false)
     }
+
+    await afterFaceProfileRevoked(blockedUserId)
 
     auditService.log({
       userId: blockedUserId,

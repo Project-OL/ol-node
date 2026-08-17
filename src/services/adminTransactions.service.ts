@@ -212,8 +212,14 @@ export const adminTransactionsService = {
 
   async listTradingCoinLedger(query: AdminTransactionsListQuery) {
     const parties = await resolvePartyFilters(query)
+    let ledgerId = parties.id
+    if (ledgerId) {
+      const senderLedgerId =
+        await adminTransactionsRepository.findCoinTradingTransferSenderLedgerId(ledgerId)
+      if (senderLedgerId) ledgerId = senderLedgerId
+    }
     const rows = await adminTransactionsRepository.listCoinLedger({
-      id: parties.id,
+      id: ledgerId,
       userId: parties.userId,
       counterpartyId: parties.counterpartyId ?? parties.receiverUserId ?? parties.senderUserId,
       types: query.types,
