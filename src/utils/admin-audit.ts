@@ -209,11 +209,28 @@ export function resolveAdminActivityDestination(
     }
   }
   if (actionType.startsWith('ADMIN_SYSTEM_SETTINGS_')) {
+    if (settingKey === 'account-deletion') {
+      return {
+        label: 'Account deletion windows',
+        targetUserId: null,
+        resourceType: 'account_deletion',
+        resourceId: 'config',
+      }
+    }
     return {
       label: settingKey ? `Settings: ${settingKey}` : 'System settings',
       targetUserId: null,
       resourceType: 'system_settings',
       resourceId: settingKey,
+    }
+  }
+  if (actionType === 'ADMIN_ACCOUNT_DELETION_CANCELLED') {
+    const deletionId = readStr(details, 'deletionId')
+    return {
+      label: deletionId ? `Account deletion ${deletionId}` : 'Account deletion request',
+      targetUserId,
+      resourceType: 'account_deletion',
+      resourceId: deletionId,
     }
   }
   if (

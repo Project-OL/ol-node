@@ -182,8 +182,6 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/system-settings/admin-auth',
     'GET /admin/system-settings/agency-host',
     'PUT /admin/system-settings/agency-host',
-    'GET /admin/system-settings/account-deletion',
-    'PUT /admin/system-settings/account-deletion',
   ],
   PlatformMessagesView: [
     'GET /admin/users/search',
