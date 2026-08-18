@@ -1,6 +1,12 @@
 import axios, { AxiosError } from 'axios'
 import { env } from '../../config/env'
-import type { OtpProviderResult, SmsOtpParams, WhatsappOtpParams } from './provider.types'
+import type {
+  OtpProviderResult,
+  SmsOtpParams,
+  SmsTemplateParams,
+  WhatsappOtpParams,
+  WhatsappTemplateParams,
+} from './provider.types'
 import { msg91CircuitBreaker } from '../../utils/circuitBreaker'
 
 const MSG91_BASE_URL = 'https://control.msg91.com'
@@ -98,6 +104,45 @@ export function buildWhatsappOtpRequestBody(params: {
   }
 }
 
+export function buildWhatsappTextTemplateRequestBody(params: {
+  phone: string
+  integratedNumber: string
+  templateName: string
+  languageCode: string
+  namespace?: string | null
+  bodyValues: string[]
+}) {
+  const components: Record<string, { type: 'text'; value: string }> = {}
+  params.bodyValues.forEach((value, index) => {
+    components[`body_${index + 1}`] = { type: 'text', value }
+  })
+
+  const template: Record<string, unknown> = {
+    name: params.templateName,
+    language: {
+      code: params.languageCode,
+      policy: 'deterministic',
+    },
+    namespace: params.namespace?.trim() ? params.namespace.trim() : null,
+    to_and_components: [
+      {
+        to: [params.phone],
+        components,
+      },
+    ],
+  }
+
+  return {
+    integrated_number: params.integratedNumber,
+    content_type: 'template',
+    payload: {
+      messaging_product: 'whatsapp',
+      type: 'template',
+      template,
+    },
+  }
+}
+
 export const msg91Provider = {
   async sendWhatsappOtp(params: WhatsappOtpParams): Promise<OtpProviderResult> {
     if (msg91CircuitBreaker.shouldSkip()) {
@@ -152,6 +197,69 @@ export const msg91Provider = {
       )
       msg91CircuitBreaker.recordSuccess()
 
+      return {
+        success: true,
+        providerMessageId: extractProviderMessageId(response.data),
+      }
+    } catch (error) {
+      msg91CircuitBreaker.recordFailure()
+      if (isExpectedProviderError(error)) {
+        return { success: false, error: providerErrorMessage(error) }
+      }
+      throw error
+    }
+  },
+
+  async sendWhatsappTemplate(params: WhatsappTemplateParams): Promise<OtpProviderResult> {
+    if (msg91CircuitBreaker.shouldSkip()) {
+      return { success: false, error: 'MSG91 WhatsApp temporarily unavailable' }
+    }
+    try {
+      const body = buildWhatsappTextTemplateRequestBody({
+        phone: params.phone,
+        integratedNumber: env.MSG91_WHATSAPP_SENDER ?? '',
+        templateName: params.templateName,
+        languageCode: env.MSG91_WHATSAPP_LANGUAGE_CODE ?? 'en',
+        namespace: env.MSG91_WHATSAPP_NAMESPACE,
+        bodyValues: params.bodyValues,
+      })
+      const response = await msg91Client.post(
+        '/api/v5/whatsapp/whatsapp-outbound-message/bulk/',
+        body,
+        { headers: msg91AuthHeaders() },
+      )
+      msg91CircuitBreaker.recordSuccess()
+      return {
+        success: true,
+        providerMessageId: extractProviderMessageId(response.data),
+      }
+    } catch (error) {
+      msg91CircuitBreaker.recordFailure()
+      if (isExpectedProviderError(error)) {
+        return { success: false, error: providerErrorMessage(error) }
+      }
+      throw error
+    }
+  },
+
+  async sendSmsTemplate(params: SmsTemplateParams): Promise<OtpProviderResult> {
+    if (msg91CircuitBreaker.shouldSkip()) {
+      return { success: false, error: 'MSG91 SMS temporarily unavailable' }
+    }
+    try {
+      const response = await msg91Client.post(
+        '/api/v5/flow/',
+        {
+          template_id: params.templateId,
+          sender: env.MSG91_SENDER_ID,
+          short_url: '0',
+          mobiles: params.phone,
+          DLT_TE_ID: env.MSG91_DLT_ENTITY_ID,
+          ...(params.templateVariables ?? {}),
+        },
+        { headers: msg91AuthHeaders() },
+      )
+      msg91CircuitBreaker.recordSuccess()
       return {
         success: true,
         providerMessageId: extractProviderMessageId(response.data),

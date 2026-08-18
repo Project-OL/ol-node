@@ -1,5 +1,6 @@
 /**
- * Account Deletion & Deactivation: schedule (30-day grace, 45-day delete), cancel, status, and daily job.
+ * Account Deletion & Deactivation: schedule (admin-configured grace + delete windows),
+ * cancel, status, 30-minute reminder, and deletion job.
  */
 
 import { RedisKeys } from '../config/redis'
@@ -10,11 +11,12 @@ import { securityPasswordService } from './security-password.service'
 import { cacheService } from './cache.service'
 import { auditService } from './audit.service'
 import { meService } from './me.service'
+import { accountDeletionConfigService } from './accountDeletionConfig.service'
+import { accountDeletionNoticeService } from './account-deletion-notice.service'
 import { AppError } from '../middlewares/errorHandler'
 
-const GRACE_DAYS = 30
-const DELETION_DAYS = 45
 const DELETION_STATUS_CACHE_TTL = 3600
+const REMINDER_LEAD_MS = 30 * 60 * 1000
 
 export const accountDeletionService = {
   async scheduleDeletion(
@@ -35,15 +37,19 @@ export const accountDeletionService = {
     await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
 
     const existing = await accountDeletionRepository.findByUserId(userId)
+    if (existing && existing.isDeleted) {
+      throw new AppError(409, 'Account already deleted', 'ACCOUNT_ALREADY_DELETED')
+    }
     if (existing && !existing.isCancelled) {
       throw new AppError(409, 'Deletion already scheduled', 'DELETION_ALREADY_SCHEDULED')
     }
 
+    const { gracePeriodDays, deletionPeriodDays } = await accountDeletionConfigService.getPeriods()
     const now = new Date()
-    const deactivationUntil = new Date(now.getTime() + GRACE_DAYS * 24 * 60 * 60 * 1000)
-    const deletionAt = new Date(now.getTime() + DELETION_DAYS * 24 * 60 * 60 * 1000)
+    const deactivationUntil = new Date(now.getTime() + gracePeriodDays * 24 * 60 * 60 * 1000)
+    const deletionAt = new Date(now.getTime() + deletionPeriodDays * 24 * 60 * 60 * 1000)
 
-    await accountDeletionRepository.create({
+    await accountDeletionRepository.upsertSchedule({
       userId,
       scheduledAt: now,
       deactivationUntil,
@@ -64,6 +70,8 @@ export const accountDeletionService = {
         scheduledAt: now.toISOString(),
         deactivationUntil: deactivationUntil.toISOString(),
         deletionAt: deletionAt.toISOString(),
+        gracePeriodDays,
+        deletionPeriodDays,
         reason: reason ?? undefined,
         ipAddress: ipAddress ?? undefined,
       },
@@ -75,8 +83,8 @@ export const accountDeletionService = {
       scheduledAt: now,
       deactivationUntil,
       deletionAt,
-      daysUntilDeletion: DELETION_DAYS,
-      daysGracePeriod: GRACE_DAYS,
+      daysUntilDeletion: deletionPeriodDays,
+      daysGracePeriod: gracePeriodDays,
       status: 'deactivating',
     }
   },
@@ -119,7 +127,7 @@ export const accountDeletionService = {
     }
 
     const deletion = await accountDeletionRepository.findByUserId(userId)
-    if (!deletion || deletion.isCancelled) {
+    if (!deletion || deletion.isCancelled || deletion.isDeleted) {
       return { isScheduledForDeletion: false }
     }
 
@@ -169,7 +177,7 @@ export const accountDeletionService = {
     await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
 
     const deletion = await accountDeletionRepository.findByUserId(userId)
-    if (!deletion || deletion.isCancelled) {
+    if (!deletion || deletion.isCancelled || deletion.isDeleted) {
       throw new AppError(400, 'No deletion scheduled', 'NOT_SCHEDULED_FOR_DELETION')
     }
 
@@ -182,26 +190,66 @@ export const accountDeletionService = {
       )
     }
 
-    await accountDeletionRepository.update(deletion.id, {
-      isCancelled: true,
-      cancelledAt: now,
-    })
-    await userRepository.update(userId, { status: 'active' })
-    await invalidateUserCaches(userId)
+    return cancelScheduledDeletion(deletion.id, userId, now, 'user')
+  },
 
-    await auditService.log({
-      userId,
-      actionType: 'ACCOUNT_DELETION_CANCELLED',
-      actionStatus: 'success',
-      actionDetails: { cancelledAt: now.toISOString() },
-    })
-
-    return {
-      success: true,
-      message: 'Account deletion cancelled successfully',
-      status: 'active',
-      cancelledAt: now,
+  async cancelDeletionByAdmin(deletionId: string, _adminUserId: string): Promise<{
+    success: boolean
+    message: string
+    status: string
+    cancelledAt: Date
+    userId: string
+  }> {
+    const deletion = await accountDeletionRepository.findByIdWithUser(deletionId)
+    if (!deletion) {
+      throw new AppError(404, 'Account deletion request not found', 'ACCOUNT_DELETION_NOT_FOUND')
     }
+    if (deletion.isDeleted) {
+      throw new AppError(400, 'Account already deleted', 'ACCOUNT_ALREADY_DELETED')
+    }
+    if (deletion.isCancelled) {
+      throw new AppError(409, 'Deletion already cancelled', 'DELETION_ALREADY_CANCELLED')
+    }
+
+    const now = new Date()
+    const result = await cancelScheduledDeletion(deletion.id, deletion.userId, now, 'admin')
+    return { ...result, userId: deletion.userId }
+  },
+
+  async runReminderJob(): Promise<{
+    notifiedCount: number
+    skippedCount: number
+    errors: Array<{ userId: string; error: string }>
+  }> {
+    const now = new Date()
+    const windowEnd = new Date(now.getTime() + REMINDER_LEAD_MS)
+    const due = await accountDeletionRepository.findDueForReminder(now, windowEnd)
+    const errors: Array<{ userId: string; error: string }> = []
+    let notifiedCount = 0
+    let skippedCount = 0
+
+    for (const deletion of due) {
+      try {
+        const claimed = await accountDeletionRepository.claimReminder(deletion.id, now)
+        if (!claimed) continue
+        const result = await accountDeletionNoticeService.sendUpcomingDeletionNotice({
+          userId: deletion.userId,
+          deletionAt: deletion.deletionAt,
+        })
+        if (result.sent) {
+          notifiedCount += 1
+        } else {
+          skippedCount += 1
+        }
+      } catch (err) {
+        errors.push({
+          userId: deletion.userId,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        })
+      }
+    }
+
+    return { notifiedCount, skippedCount, errors }
   },
 
   async runDeletionJob(): Promise<{
@@ -249,6 +297,41 @@ export const accountDeletionService = {
       errors,
     }
   },
+}
+
+async function cancelScheduledDeletion(
+  deletionId: string,
+  userId: string,
+  now: Date,
+  actor: 'user' | 'admin',
+): Promise<{
+  success: boolean
+  message: string
+  status: string
+  cancelledAt: Date
+}> {
+  await accountDeletionRepository.update(deletionId, {
+    isCancelled: true,
+    cancelledAt: now,
+  })
+  await userRepository.update(userId, { status: 'active' })
+  await invalidateUserCaches(userId)
+
+  if (actor === 'user') {
+    await auditService.log({
+      userId,
+      actionType: 'ACCOUNT_DELETION_CANCELLED',
+      actionStatus: 'success',
+      actionDetails: { cancelledAt: now.toISOString() },
+    })
+  }
+
+  return {
+    success: true,
+    message: 'Account deletion cancelled successfully',
+    status: 'active',
+    cancelledAt: now,
+  }
 }
 
 async function invalidateUserCaches(userId: string): Promise<void> {

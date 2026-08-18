@@ -207,6 +207,10 @@ const envSchema = z
     MSG91_WHATSAPP_LANGUAGE_CODE: z.string().default('en'),
     MSG91_SENDER_ID: z.string().optional(),
     MSG91_DLT_ENTITY_ID: z.string().optional(),
+    /** MSG91 WhatsApp template for the 30-minute pre-deletion notice (body_1 = deletion time). */
+    MSG91_WHATSAPP_ACCOUNT_DELETION_TEMPLATE_ID: z.string().optional(),
+    /** MSG91 SMS flow template for the 30-minute pre-deletion notice (`var` = deletion time). */
+    MSG91_SMS_ACCOUNT_DELETION_TEMPLATE_ID: z.string().optional(),
     SES_FROM_EMAIL: z.string().email().optional(),
     SES_ACCESS_KEY_ID: z.string().optional(),
     SES_SECRET_ACCESS_KEY: z.string().optional(),

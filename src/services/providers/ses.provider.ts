@@ -1,6 +1,6 @@
 import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses'
 import { env } from '../../config/env'
-import type { EmailOtpParams, OtpProviderResult } from './provider.types'
+import type { EmailOtpParams, OtpProviderResult, TransactionalEmailParams } from './provider.types'
 import { sesCircuitBreaker } from '../../utils/circuitBreaker'
 
 const sesClient = new SESClient({
@@ -72,6 +72,46 @@ export const sesProvider = {
       )
       sesCircuitBreaker.recordSuccess()
 
+      return { success: true, providerMessageId: response.MessageId }
+    } catch (error) {
+      sesCircuitBreaker.recordFailure()
+      return { success: false, error: errorMessage(error) }
+    }
+  },
+
+  async sendTransactionalEmail(params: TransactionalEmailParams): Promise<OtpProviderResult> {
+    if (!env.SES_FROM_EMAIL) {
+      return { success: false, error: 'SES_FROM_EMAIL is not configured' }
+    }
+    if (sesCircuitBreaker.shouldSkip()) {
+      return { success: false, error: 'SES temporarily unavailable' }
+    }
+    try {
+      const response = await sesClient.send(
+        new SendEmailCommand({
+          Source: env.SES_FROM_EMAIL,
+          Destination: {
+            ToAddresses: [params.email],
+          },
+          Message: {
+            Subject: {
+              Charset: 'UTF-8',
+              Data: params.subject,
+            },
+            Body: {
+              Text: {
+                Charset: 'UTF-8',
+                Data: params.text,
+              },
+              Html: {
+                Charset: 'UTF-8',
+                Data: params.html,
+              },
+            },
+          },
+        }),
+      )
+      sesCircuitBreaker.recordSuccess()
       return { success: true, providerMessageId: response.MessageId }
     } catch (error) {
       sesCircuitBreaker.recordFailure()

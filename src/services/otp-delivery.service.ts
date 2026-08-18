@@ -21,7 +21,7 @@ import type { OtpProviderName, OtpProviderResult } from './providers/provider.ty
 
 const otpDeliveryLog = rootLogger.child({ module: 'otp-delivery' })
 
-type SmsRouteReason = 'sms_request_threshold'
+type SmsRouteReason = 'sms_request_threshold' | 'fallback_to_sms'
 
 type OtpDeliveryLogContext = {
   purpose: OtpPurpose
@@ -182,6 +182,69 @@ function logProviderResult(params: {
   )
 }
 
+const PHONE_SUCCESS_AUDIT: Record<'msg91_whatsapp' | 'msg91_sms', string> = {
+  msg91_whatsapp: 'OTP_WHATSAPP_SENT',
+  msg91_sms: 'OTP_SMS_SENT',
+}
+
+/**
+ * One audit row per provider attempt (WhatsApp fail + SMS success is two rows).
+ * Failed rows are not billed (`otpDeliveryAuditService.record` charges success only).
+ */
+function recordPhoneChannelAttempt(params: {
+  userId?: string | null
+  purpose: OtpPurpose
+  target: Extract<OtpTarget, { type: 'phone' }>
+  provider: 'msg91_whatsapp' | 'msg91_sms'
+  result: OtpProviderResult
+  fallbackFrom?: OtpProviderName
+  routeReason?: SmsRouteReason
+}) {
+  if (params.result.success) {
+    logDeliverySucceeded({
+      provider: params.provider,
+      purpose: params.purpose,
+      target: params.target.masked,
+      targetType: params.target.type,
+      providerMessageId: params.result.providerMessageId,
+      fallbackFrom: params.fallbackFrom,
+      routeReason: params.routeReason,
+    })
+    auditDelivery({
+      actionType: PHONE_SUCCESS_AUDIT[params.provider],
+      status: 'success',
+      provider: params.provider,
+      purpose: params.purpose,
+      target: params.target.masked,
+      messageId: params.result.providerMessageId,
+    })
+  } else {
+    auditDelivery({
+      actionType: 'OTP_DELIVERY_FAILED',
+      status: 'failed',
+      provider: params.provider,
+      purpose: params.purpose,
+      target: params.target.masked,
+      error: params.result.error,
+    })
+  }
+
+  otpDeliveryAuditService.record({
+    userId: params.userId,
+    purpose: params.purpose,
+    means: meansFromProvider(params.provider),
+    provider: params.provider,
+    status: params.result.success ? 'success' : 'failed',
+    targetType: 'phone',
+    targetMasked: params.target.masked,
+    country: params.target.country,
+    providerMessageId: params.result.providerMessageId,
+    fallbackFrom: params.fallbackFrom,
+    routeReason: params.routeReason,
+    error: params.result.success ? undefined : params.result.error,
+  })
+}
+
 function logDeliverySucceeded(params: {
   provider: OtpProviderName
   purpose: OtpPurpose
@@ -258,61 +321,19 @@ async function deliverPhoneOtpViaSms(params: {
     targetType: params.target.type,
     result: smsResult,
   })
+  recordPhoneChannelAttempt({
+    userId: params.userId,
+    purpose: params.purpose,
+    target: params.target,
+    provider: 'msg91_sms',
+    result: smsResult,
+    fallbackFrom: params.fallbackFrom,
+    routeReason: params.routeReason,
+  })
   if (smsResult.success) {
-    logDeliverySucceeded({
-      provider: 'msg91_sms',
-      purpose: params.purpose,
-      target: params.target.masked,
-      targetType: params.target.type,
-      providerMessageId: smsResult.providerMessageId,
-      fallbackFrom: params.fallbackFrom,
-      routeReason: params.routeReason,
-    })
-    auditDelivery({
-      actionType: 'OTP_SMS_SENT',
-      status: 'success',
-      provider: 'msg91_sms',
-      purpose: params.purpose,
-      target: params.target.masked,
-      messageId: smsResult.providerMessageId,
-    })
-    otpDeliveryAuditService.record({
-      userId: params.userId,
-      purpose: params.purpose,
-      means: meansFromProvider('msg91_sms'),
-      provider: 'msg91_sms',
-      status: 'success',
-      targetType: 'phone',
-      targetMasked: params.target.masked,
-      country: params.target.country,
-      providerMessageId: smsResult.providerMessageId,
-      fallbackFrom: params.fallbackFrom,
-      routeReason: params.routeReason,
-    })
     return
   }
 
-  auditDelivery({
-    actionType: 'OTP_DELIVERY_FAILED',
-    status: 'failed',
-    provider: 'msg91_sms',
-    purpose: params.purpose,
-    target: params.target.masked,
-    error: smsResult.error,
-  })
-  otpDeliveryAuditService.record({
-    userId: params.userId,
-    purpose: params.purpose,
-    means: meansFromProvider('msg91_sms'),
-    provider: 'msg91_sms',
-    status: 'failed',
-    targetType: 'phone',
-    targetMasked: params.target.masked,
-    country: params.target.country,
-    fallbackFrom: params.fallbackFrom,
-    routeReason: params.routeReason,
-    error: smsResult.error,
-  })
   logOtpDelivery(
     'otp_delivery_failed',
     {
@@ -484,33 +505,15 @@ export const otpDeliveryService = {
       targetType: target.type,
       result: whatsappResult,
     })
+    recordPhoneChannelAttempt({
+      userId: params.userId,
+      purpose: params.purpose,
+      target,
+      provider: 'msg91_whatsapp',
+      result: whatsappResult,
+      routeReason: whatsappResult.success ? undefined : 'fallback_to_sms',
+    })
     if (whatsappResult.success) {
-      logDeliverySucceeded({
-        provider: 'msg91_whatsapp',
-        purpose: params.purpose,
-        target: target.masked,
-        targetType: target.type,
-        providerMessageId: whatsappResult.providerMessageId,
-      })
-      auditDelivery({
-        actionType: 'OTP_WHATSAPP_SENT',
-        status: 'success',
-        provider: 'msg91_whatsapp',
-        purpose: params.purpose,
-        target: target.masked,
-        messageId: whatsappResult.providerMessageId,
-      })
-      otpDeliveryAuditService.record({
-        userId: params.userId,
-        purpose: params.purpose,
-        means: meansFromProvider('msg91_whatsapp'),
-        provider: 'msg91_whatsapp',
-        status: 'success',
-        targetType: 'phone',
-        targetMasked: target.masked,
-        country: target.country,
-        providerMessageId: whatsappResult.providerMessageId,
-      })
       return
     }
 

@@ -14,12 +14,14 @@ import { MessagingConfigUpdateSchema } from '../../models/messagingConfig.schema
 import { FaceLivenessConfigUpdateSchema } from '../../models/faceLivenessConfig.schemas'
 import { AdminAuthConfigUpdateSchema } from '../../models/adminAuthConfig.schemas'
 import { AgencyHostConfigUpdateSchema } from '../../models/agencyHostConfig.schemas'
+import { AccountDeletionConfigUpdateSchema } from '../../models/accountDeletionConfig.schemas'
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
 import { messagingConfigService } from '../../services/messagingConfig.service'
 import { supportConfigService } from '../../services/supportConfig.service'
 import { faceLivenessConfigService } from '../../services/faceLivenessConfig.service'
 import { adminAuthConfigService } from '../../services/adminAuthConfig.service'
 import { agencyHostConfigService } from '../../services/agencyHostConfig.service'
+import { accountDeletionConfigService } from '../../services/accountDeletionConfig.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { videoCallPriceCapService } from '../../services/videoCallPriceCap.service'
 import { richTierService } from '../../services/rich-tier.service'
@@ -40,6 +42,7 @@ import { auditService } from '../../services/audit.service'
  * GET|PUT /v1/admin/system-settings/face-liveness
  * GET|PUT /v1/admin/system-settings/admin-auth
  * GET|PUT /v1/admin/system-settings/agency-host
+ * GET|PUT /v1/admin/system-settings/account-deletion
  */
 export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
   app.get(
@@ -299,6 +302,30 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       auditService.logAdminFromRequest(request, {
         actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
         actionDetails: { settingKey: 'agency-host' },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/system-settings/account-deletion',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await accountDeletionConfigService.getConfig())
+    },
+  )
+
+  app.put(
+    '/system-settings/account-deletion',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AccountDeletionConfigUpdateSchema.parse(request.body ?? {})
+      const result = await accountDeletionConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'account-deletion' },
       })
       return reply.send(result)
     },
