@@ -1,5 +1,6 @@
 /**
- * Daily job at 2 AM UTC: permanently delete accounts past the 45-day deletion date.
+ * Daily job at 2 AM UTC plus a 5-minute sweep: send 30-minute reminders, then
+ * permanently delete accounts past deletionAt.
  */
 
 import { accountDeletionService } from '../services/account-deletion.service'
@@ -11,6 +12,16 @@ let accountDeletionIntervalId: NodeJS.Timeout | null = null
 
 export async function runAccountDeletionJob(): Promise<void> {
   try {
+    const reminders = await accountDeletionService.runReminderJob()
+    if (reminders.notifiedCount > 0) {
+      console.info(
+        `[Account Deletion Job] Sent ${reminders.notifiedCount} upcoming-deletion notice(s)`,
+      )
+    }
+    if (reminders.errors.length > 0) {
+      console.error('[Account Deletion Job] Reminder errors:', reminders.errors)
+    }
+
     const result = await accountDeletionService.runDeletionJob()
     if (result.deletedCount > 0) {
       console.info(`[Account Deletion Job] Permanently deleted ${result.deletedCount} account(s)`)

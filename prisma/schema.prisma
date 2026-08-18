@@ -517,6 +517,8 @@ model AccountDeletion {
   cancelledAt       DateTime? @map("cancelled_at")
   isDeleted         Boolean   @default(false) @map("is_deleted")
   deletedAt         DateTime? @map("deleted_at")
+  /// Set when the 30-minute pre-deletion notice was claimed/sent.
+  reminderSentAt    DateTime? @map("reminder_sent_at")
   reason            String?   @db.VarChar(500)
   ipAddress         String?   @map("ip_address") @db.VarChar(45)
   user              User      @relation("AccountDeletion", fields: [userId], references: [id], onDelete: Cascade)
@@ -525,8 +527,23 @@ model AccountDeletion {
   @@index([deactivationUntil])
   @@index([deletionAt])
   @@index([isDeleted])
+  @@index([isCancelled, isDeleted, deletionAt])
   @@index([userId])
   @@map("account_deletions")
+}
+
+/// Singleton: grace + permanent-delete windows for `POST /account/schedule-deletion`.
+/// Admin `GET|PUT /admin/system-settings/account-deletion`. Defaults 30 / 45 days.
+model AccountDeletionConfig {
+  id                 Int      @id @default(1)
+  /// Days the user may cancel after scheduling (deactivationUntil = now + this).
+  gracePeriodDays    Int      @default(30) @map("grace_period_days")
+  /// Days until permanent delete (deletionAt = now + this). Must be >= gracePeriodDays.
+  deletionPeriodDays Int      @default(45) @map("deletion_period_days")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  updatedByUserId    String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("account_deletion_config")
 }
 
 // ─── 10. NEXT_PUBLIC_ID_SEQUENCE (single row, id=1) ───

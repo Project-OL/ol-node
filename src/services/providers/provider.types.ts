@@ -26,3 +26,22 @@ export interface SmsOtpParams extends OtpProviderBaseParams {
 export interface EmailOtpParams extends OtpProviderBaseParams {
   email: string
 }
+
+export interface TransactionalEmailParams {
+  email: string
+  subject: string
+  text: string
+  html: string
+}
+
+export interface WhatsappTemplateParams {
+  phone: string
+  templateName: string
+  bodyValues: string[]
+}
+
+export interface SmsTemplateParams {
+  phone: string
+  templateId: string
+  templateVariables?: Record<string, string>
+}

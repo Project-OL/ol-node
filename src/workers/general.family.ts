@@ -97,6 +97,18 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       removeOnFail: false,
     },
   )
+  await accountDeletionQueue.add(
+    'sweep',
+    {},
+    {
+      jobId: 'account-deletion-sweep-5min',
+      repeat: { every: 5 * 60 * 1000 },
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 30_000 },
+      removeOnComplete: true,
+      removeOnFail: false,
+    },
+  )
 
   const ledgerAuditQueue = new Queue(LEDGER_AUDIT_QUEUE, { connection })
   await ledgerAuditQueue.add(

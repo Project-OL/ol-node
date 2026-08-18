@@ -182,6 +182,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/system-settings/admin-auth',
     'GET /admin/system-settings/agency-host',
     'PUT /admin/system-settings/agency-host',
+    'GET /admin/system-settings/account-deletion',
+    'PUT /admin/system-settings/account-deletion',
   ],
   PlatformMessagesView: [
     'GET /admin/users/search',
@@ -345,5 +347,13 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/otp-delivery/cost-rates',
     'GET /admin/otp-delivery/costs/monthly',
     'GET /admin/otp-delivery/costs/by-country',
+  ],
+  AccountDeletionsView: [
+    'GET /admin/account-deletions',
+    'GET /admin/account-deletions/:id',
+    'POST /admin/account-deletions/:id/cancel',
+    'GET /admin/system-settings/account-deletion',
+    'PUT /admin/system-settings/account-deletion',
+    'GET /admin/users/:id',
   ],
 }
