@@ -809,15 +809,16 @@ export const agencyCommissionService = {
     byTxType: Array<{ txType: string; totalAmount: string }>
   }> {
     const periodKey = commissionCacheKey(periodParams)
-    const key = RedisKeys.agencyCommissionMe(agencyUserId, periodKey)
+    // Epoch is part of the key so an INCR on credit is enough to miss, even if
+    // prefix SCAN/DEL fails (Live-server gifts previously left this snapshot stale).
+    const epoch = await readAgencyEarningsCacheEpoch(agencyUserId)
+    const key = RedisKeys.agencyCommissionMe(agencyUserId, `${periodKey}:${epoch}`)
     try {
       const hit = await redisClient.get(key)
       if (hit) return JSON.parse(hit) as never
     } catch {
       /* miss */
     }
-
-    const epoch = await readAgencyEarningsCacheEpoch(agencyUserId)
     const period = resolveCommissionPeriod(periodParams)
     const { from, toExclusive } = commissionPeriodToLedgerBounds(period.start, period.end)
     const ag = await prisma.agency.findUnique({

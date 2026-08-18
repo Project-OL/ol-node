@@ -313,7 +313,7 @@ export const RedisKeys = {
   ratelimitAgencyLeaveApply: (userId: string) => `ratelimit:agency:leave:apply:${userId}`,
   /** Agency Phase 2: level ladder + derived rates (60s) */
   agencyRate: (agencyUserId: string) => `agency:rate:${agencyUserId}`,
-  /** Commission GET /me / panel fragments */
+  /** Commission GET /me / panel fragments. `periodKey` is `{period}:{epoch}`. */
   agencyCommissionMe: (agencyUserId: string, periodKey?: string | number) =>
     periodKey != null
       ? `agency:commission:me:${agencyUserId}:${periodKey}`
