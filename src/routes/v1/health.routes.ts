@@ -7,7 +7,7 @@ import { requestMetrics } from '../../utils/requestMetrics'
 export default async function healthRoutes(app: FastifyInstance) {
   /** Liveness: cheap, no dependencies. Use for process health. */
   app.get('/', async (_request, reply) => {
-    return reply.send({ status: 'ok', timestamp: new Date().toISOString() })
+    return reply.send({ status: 'okkkkkk', timestamp: new Date().toISOString() })
   })
 
   /** Readiness: DB + Redis. Use for orchestrator readiness (e.g. Kubernetes). */
