@@ -1,6 +1,7 @@
 import {
   AgencyTransferChannel,
   Prisma,
+  RankingBoard,
   SupportTicketType,
   WalletCurrencyType,
 } from '@prisma/client'
@@ -20,6 +21,7 @@ import { rootLogger } from '../utils/rootLogger'
 import { displayNameFromUser } from '../utils/profileDisplay'
 import { formatUserName } from '../utils/user-display'
 import { agencyCommissionService } from './agencyCommission.service'
+import { rankingService } from './ranking.service'
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyKycService } from './agencyKyc.service'
 import { agencyCoinsellerService } from './agencyCoinseller.service'
@@ -64,6 +66,38 @@ export const agencyService = {
 
   async bustRankingCache() {
     await cacheRedisService.delByKeyPrefix('agency:ranking:')
+  },
+
+  /**
+   * After first/last name changes: rewrite `agencies.display_name`, drop ranking Redis,
+   * bump platform ranking epochs so lists pick up the live name immediately.
+   */
+  async onOwnerNameChanged(userId: string): Promise<void> {
+    const owner = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true },
+    })
+    const liveName = formatUserName(owner ?? {}).slice(0, 255)
+    const agency = await prisma.agency.findUnique({
+      where: { userId },
+      select: { defaultPublicId: true },
+    })
+    if (agency) {
+      if (liveName.length > 0) {
+        await prisma.agency.update({
+          where: { userId },
+          data: { displayName: liveName },
+        })
+      }
+      await this.bustCachesForAgency(userId, agency.defaultPublicId)
+      await this.bustRankingCache()
+    }
+    await Promise.all([
+      rankingService.bumpEpoch(RankingBoard.AGENCY),
+      rankingService.bumpEpoch(RankingBoard.HOST),
+      rankingService.bumpEpoch(RankingBoard.GIFT),
+      rankingService.bumpEpoch(RankingBoard.RICH),
+    ])
   },
 
   /**

@@ -18,6 +18,7 @@ import type { AdminUserPatchBody } from '../models/admin-user-detail.schemas'
 import { normalizeAdminPatchTags } from '../models/admin-user-detail.schemas'
 import { cacheService } from './cache.service'
 import { meService } from './me.service'
+import { agencyService } from './agency.service'
 import { pointWalletService } from './point-wallet.service'
 import { providerService } from './provider.service'
 import { sessionService } from './session.service'
@@ -299,6 +300,7 @@ export const adminUserDetailService = {
       }
       await userRepository.updateProfile(userId, profilePatch)
       await meService.invalidateUserCaches(userId)
+      await agencyService.onOwnerNameChanged(userId)
     }
 
     if (body.gender !== undefined) {
