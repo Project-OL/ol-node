@@ -26,8 +26,9 @@ export type AgencyPublicProfile = {
   transferChannel: string
   /** Agency owner `users.avatar_url` (CDN URL or null). */
   avatarUrl: string | null
+  /** Live owner first + last (`formatUserName`). Not `agencies.display_name`. */
   displayName: string
-  /** Agency owner first + last (strict); empty if both missing. No owner → agency displayName. */
+  /** Same as `displayName` (owner first + last; empty if both missing). */
   name: string
   totalHostsCount: number
   lifetimeHostEarningsPoints: string
@@ -122,7 +123,7 @@ export function mapAgencyToPublicProfile(params: {
     whatsappNumber: params.coinseller?.whatsappNumber ?? null,
     transferChannel: params.coinseller?.transferChannel ?? 'EPAY',
     avatarUrl: owner?.avatarUrl ?? null,
-    displayName: agency.displayName,
+    displayName: owner ? formatUserName(owner) : agency.displayName,
     name: owner ? formatUserName(owner) : agency.displayName,
     totalHostsCount: agency.totalHostsCount,
     lifetimeHostEarningsPoints: agency.lifetimeHostEarningsPoints.toString(),

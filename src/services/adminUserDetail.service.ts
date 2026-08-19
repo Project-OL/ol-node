@@ -45,7 +45,11 @@ function pickAuth(
   }
 }
 
-async function buildAgencyBlock(userId: string, isAgent: boolean) {
+async function buildAgencyBlock(
+  userId: string,
+  isAgent: boolean,
+  selfName: string,
+) {
   if (isAgent) {
     const agency = await agencyRepository.getAgencyByUserId(userId)
     if (agency) {
@@ -54,7 +58,7 @@ async function buildAgencyBlock(userId: string, isAgent: boolean) {
         role: 'agent' as const,
         agencyUserId: agency.userId,
         agencyPublicId: agency.defaultPublicId.toString(),
-        agencyName: agency.displayName,
+        agencyName: selfName,
       }
     }
   }
@@ -66,7 +70,7 @@ async function buildAgencyBlock(userId: string, isAgent: boolean) {
       role: 'host' as const,
       agencyUserId: hostRow.agency.userId,
       agencyPublicId: hostRow.agency.defaultPublicId.toString(),
-      agencyName: hostRow.agency.displayName,
+      agencyName: formatUserName(hostRow.agency.user ?? {}),
     }
   }
 
@@ -176,7 +180,7 @@ export const adminUserDetailService = {
       await Promise.all([
       adminUserDetailRepository.getLatestSession(userId),
       adminUserDetailRepository.getLatestDevice(userId),
-      buildAgencyBlock(userId, row.isAgent),
+      buildAgencyBlock(userId, row.isAgent, formatUserName(row)),
       buildVipBlock(userId, row),
       Promise.resolve(pickAuth(row, 'email')),
       Promise.resolve(pickAuth(row, 'phone')),

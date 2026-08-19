@@ -18,7 +18,7 @@ import {
   countryCacheKeySegment,
   normalizeCountryOptional,
 } from '../utils/agency-country'
-import { buildUserDisplayName, formatUserName } from '../utils/user-display'
+import { formatUserName } from '../utils/user-display'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import {
   getPeriodKeys,
@@ -322,7 +322,7 @@ export const rankingService = {
           const livestreamLevel = u
             ? levelFromWallet(u.walletUserLevels, 'LIVESTREAM')
             : 1
-          const displayName = u ? buildUserDisplayName(u) : ''
+          const displayName = u ? formatUserName(u) : ''
           return {
             rank: skip + i + 1,
             score: row.totalScore.toString(),

@@ -40,7 +40,7 @@ export function mapHostAgencyMeBlock(
 ) {
   return {
     agencyPublicId: hostRow.agency.defaultPublicId.toString(),
-    agencyDisplayName: hostRow.agency.displayName,
+    agencyDisplayName: formatUserName(hostRow.agency.user ?? {}),
     /** Agency owner first + last (empty if both missing). */
     name: formatUserName(hostRow.agency.user ?? {}),
     avatarUrl: hostRow.agency.user?.avatarUrl ?? null,
@@ -390,7 +390,7 @@ export const agencyService = {
       asAgent: owned
         ? {
             agencyPublicId: owned.defaultPublicId.toString(),
-            displayName: owned.displayName,
+            displayName: formatUserName(selfProfile ?? {}),
             name: formatUserName(selfProfile ?? {}),
             avatarUrl: selfProfile?.avatarUrl ?? null,
             totalHostsCount: owned.totalHostsCount,
