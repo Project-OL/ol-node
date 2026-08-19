@@ -3,6 +3,7 @@ import { prisma } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { deviceRepository } from '../repositories/device.repository'
+import { sessionRepository, MAX_SESSIONS_PER_USER } from '../repositories/session.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { livePhotoRepository } from '../repositories/livePhoto.repository'
 import { userRepository } from '../repositories/user.repository'
@@ -398,24 +399,60 @@ export const adminUserModerationService = {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
-    const [devices, bans] = await Promise.all([
+    const [devices, bans, sessions] = await Promise.all([
       deviceRepository.findByUserId(userId),
       bannedDeviceRepository.listByRelatedUserId(userId),
+      sessionRepository.findActiveByUserId(userId),
     ])
     const bannedSet = new Set(bans.map((b: { deviceId: string }) => b.deviceId))
+    const sessionByDeviceId = new Map(sessions.map((s) => [s.deviceId, s]))
 
     return {
       userId,
-      devices: devices.map((d: (typeof devices)[number]) => ({
-        registryId: d.id,
-        deviceId: d.deviceId,
-        deviceName: d.deviceName,
-        platform: d.platform,
-        lastActiveAt: d.lastActiveAt.toISOString(),
-        loginAt: d.loginAt.toISOString(),
-        ipAddress: d.ipAddress,
-        isBanned: bannedSet.has(d.deviceId),
+      maxActiveSessions: MAX_SESSIONS_PER_USER,
+      activeSessionCount: sessions.length,
+      activeSessions: sessions.map((s) => ({
+        sessionId: s.id,
+        deviceId: s.deviceId,
+        deviceName: s.deviceName,
+        ipAddress: s.ipAddress,
+        lastActiveAt: s.lastActiveAt.toISOString(),
+        loginType: s.loginType ?? null,
+        expiresAt: s.expiresAt.toISOString(),
       })),
+      devices: devices.map((d: (typeof devices)[number]) => {
+        const session = sessionByDeviceId.get(d.deviceId)
+        return {
+          registryId: d.id,
+          deviceId: d.deviceId,
+          deviceName: d.deviceName,
+          platform: d.platform,
+          lastActiveAt: d.lastActiveAt.toISOString(),
+          loginAt: d.loginAt.toISOString(),
+          ipAddress: d.ipAddress,
+          isBanned: bannedSet.has(d.deviceId),
+          hasActiveSession: Boolean(session),
+          sessionId: session?.id ?? null,
+          loginType: session?.loginType ?? null,
+        }
+      }),
+    }
+  },
+
+  async logoutAllSessions(userId: string) {
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const sessions = await sessionRepository.findActiveByUserId(userId)
+    await sessionService.revokeAllSessions(userId)
+    return {
+      ok: true as const,
+      userId,
+      revokedSessionCount: sessions.length,
+      message:
+        sessions.length === 0
+          ? 'No active sessions'
+          : `Logged out ${sessions.length} device${sessions.length === 1 ? '' : 's'}`,
     }
   },
 

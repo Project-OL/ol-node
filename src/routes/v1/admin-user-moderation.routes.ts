@@ -8,6 +8,7 @@ import {
   adminPasswordResetBodySchema,
 } from '../../models/admin-user-moderation.schemas'
 import { adminUserModerationService } from '../../services/adminUserModeration.service'
+import { auditService } from '../../services/audit.service'
 
 const preAuth = [authenticateAdmin]
 
@@ -186,9 +187,38 @@ export default async function adminUserModerationRoutes(app: FastifyInstance) {
 
   app.get<{ Params: { userId: string } }>(
     '/users/:userId/devices',
-    { preHandler: preAuth, schema: { tags: ['Admin', 'Users', 'Devices'] } },
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Devices'],
+        description:
+          'Registered devices plus which ones currently have an active login (cap 3). Additive `hasActiveSession` / `activeSessions`.',
+      },
+    },
     async (request, reply) => {
       return reply.send(await adminUserModerationService.listUserDevices(request.params.userId))
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/devices/logout-all',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Devices'],
+        description:
+          'Revoke every active session for this user and bump token_version (logout all devices). Does not ban devices.',
+      },
+    },
+    async (request, reply) => {
+      const result = await adminUserModerationService.logoutAllSessions(request.params.userId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_DEVICE_LOGOUT_ALL',
+        targetUserId: request.params.userId,
+        actionDetails: { revokedSessionCount: result.revokedSessionCount },
+        destination: `/admin/users/${request.params.userId}`,
+      })
+      return reply.send(result)
     },
   )
 

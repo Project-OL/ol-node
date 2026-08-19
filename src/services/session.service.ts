@@ -162,6 +162,10 @@ export const sessionService = {
     const started = Date.now()
     const fpHash = computeDeviceBindingHash(params.deviceId, params.userAgent, params.ipAddress)
 
+    let accountDeletionCancelled = false
+    const { accountDeletionService } = await import('./account-deletion.service')
+    accountDeletionCancelled = await accountDeletionService.cancelIfScheduledOnLogin(params.userId)
+
     // Prior-fingerprint read only feeds the SUSPICIOUS_DEVICE_BINDING audit — run it
     // alongside the login transaction and consume it after (awaited below, so a read
     // failure still fails createSession as before).
@@ -288,6 +292,7 @@ export const sessionService = {
       refreshToken,
       sessionId: session.id,
       expiresIn: accessTtlSeconds(),
+      accountDeletionCancelled,
     }
   },
 

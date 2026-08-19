@@ -120,6 +120,14 @@ export function resolveAdminActivityDestination(
       resourceId: streamId,
     }
   }
+  if (actionType === 'ADMIN_DEVICE_LOGOUT_ALL') {
+    return {
+      label: 'Logout all devices',
+      targetUserId,
+      resourceType: 'user',
+      resourceId: targetUserId,
+    }
+  }
   if (actionType.startsWith('ADMIN_DEVICE_')) {
     return {
       label: deviceId ? `Device ${deviceId}` : 'Device ban',
@@ -340,6 +348,7 @@ export const SEEDED_ADMIN_ACTIVITY_ACTION_TYPES = [
   'ADMIN_POST_DELETED',
   'ADMIN_DEVICE_BANNED',
   'ADMIN_DEVICE_UNBANNED',
+  'ADMIN_DEVICE_LOGOUT_ALL',
   'ADMIN_USER_RESTRICTION_APPLIED',
   'ADMIN_USER_RESTRICTION_CLEARED',
   'ADMIN_LIVE_STREAM_STOP_REQUESTED',

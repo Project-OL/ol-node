@@ -294,7 +294,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users'],
         description:
-          'Partial update — send only fields to change (e.g. `{ "firstName": "Jane" }`, `{ "gender": "female" }`). Optional `firstName` (non-empty) / `lastName` (empty string clears). Omitting username/name fields never clears them. Gender is locked while face verification is active (`FACE_VERIFIED_GENDER_LOCKED`). Revokes sessions on status change.',
+          'Partial update — send only fields to change (e.g. `{ "firstName": "Jane" }`, `{ "gender": "female" }`). Optional `firstName` (non-empty) / `lastName` (empty string clears). Omitting username/name fields never clears them. Gender is locked while face verification is active (`FACE_VERIFIED_GENDER_LOCKED`). Ban and suspend revoke sessions. Activate does not (sessions were already revoked at ban/suspend).',
         params: {
           type: 'object',
           required: ['userId'],

@@ -83,6 +83,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/users/:id/profile/reset-identity',
     'POST /admin/users/:id/agency/remove',
     'POST /admin/users/:id/devices/ban',
+    'POST /admin/users/:id/devices/logout-all',
     'DELETE /admin/devices/:deviceId/ban',
   ],
   UserLocationsView: ['GET /admin/locations'],

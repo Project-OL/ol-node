@@ -344,7 +344,11 @@ export const authV2Service = {
     return {
       userId: user.id,
       publicId,
-      status: user.status as 'new' | 'active' | 'suspended' | 'deleted',
+      status: (tokens.accountDeletionCancelled ? 'active' : user.status) as
+        | 'new'
+        | 'active'
+        | 'suspended'
+        | 'deleted',
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       passwordSet: user.passwordSet,
@@ -421,7 +425,11 @@ export const authV2Service = {
     return {
       userId: user.id,
       publicId,
-      status: user.status as 'new' | 'active' | 'suspended' | 'deleted',
+      status: (tokens.accountDeletionCancelled ? 'active' : user.status) as
+        | 'new'
+        | 'active'
+        | 'suspended'
+        | 'deleted',
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       passwordSet: user.passwordSet,
@@ -593,8 +601,7 @@ export const authV2Service = {
   },
 
   /**
-   * Confirm password reset: update password, then revoke-all sessions (same path as password change).
-   * Subsequent requests with old JWTs get SESSION_INVALID (logout), not TOKEN_VERSION_MISMATCH.
+   * Confirm password reset: update password only. Existing sessions stay valid.
    */
   async passwordResetConfirm(resetToken: string, newPassword: string) {
     const userId = await redisClient.get(RedisKeys.passwordResetToken(resetToken))
@@ -614,16 +621,15 @@ export const authV2Service = {
         update: { passwordHash, lastChangedAt: new Date() },
       })
     })
-    // Shared logout-all: revoke sessions + bump tokenVersion + clear Redis session/device caches.
-    await sessionService.revokeAllSessions(userId)
+    // Password only — do not revoke sessions or bump token_version.
     await redisClient.del(RedisKeys.passwordResetToken(resetToken))
     await auditService.log({
       userId,
       actionType: 'password_reset',
       actionStatus: 'success',
-      actionDetails: { allSessionsInvalidated: true },
+      actionDetails: { allSessionsInvalidated: false },
     })
-    return { message: 'Password reset successful', allSessionsInvalidated: true }
+    return { message: 'Password reset successful', allSessionsInvalidated: false }
   },
 
   // ----- Phase 4: Settings, password set/change, devices -----
@@ -728,7 +734,6 @@ export const authV2Service = {
     if (!strength.ok) throw new AppError(400, strength.error, 'WEAK_PASSWORD')
     const updated = await passwordService.verifyAndUpdate(userId, currentPassword, newPassword)
     if (!updated) throw new AppError(401, 'Current password incorrect', 'INVALID_CURRENT_PASSWORD')
-    await sessionService.revokeAllSessions(userId)
     await auditService.log({
       userId,
       actionType: 'password_change',
@@ -737,7 +742,7 @@ export const authV2Service = {
         ? { ip: getIp(request), headers: normalizeHeaders(request.headers) }
         : undefined,
     })
-    return { message: 'Password changed successfully', allSessionsInvalidated: true }
+    return { message: 'Password changed successfully', allSessionsInvalidated: false }
   },
 
   // ----- Email bind & modify -----
@@ -1062,7 +1067,7 @@ export const authV2Service = {
 
   /**
    * After `authenticate` middleware succeeds: confirm the user still exists and may use the API
-   * (not banned / suspended / deleted / deactivating). Returns a compact verified identity DTO.
+   * (not banned / suspended / deleted). Returns a compact verified identity DTO.
    */
   async verifyAuthenticatedUser(userId: string, payload: JwtAccessPayload) {
     const user = await userRepository.findAuthGateById(userId)

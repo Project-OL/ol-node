@@ -8,7 +8,8 @@ type AuthUserRow = {
 }
 
 /**
- * Auto-reactivates expired timed suspensions; throws when login/API auth must be blocked.
+ * Auto-reactivates expired timed suspensions; throws when login/API auth must be blocked
+ * (banned / suspended / deleted). Scheduled deletion is not blocked — login cancels it.
  */
 export async function ensureUserMayAuthenticate(user: AuthUserRow): Promise<void> {
   if (user.status === 'suspended' && user.suspendedUntil && user.suspendedUntil <= new Date()) {
@@ -16,14 +17,6 @@ export async function ensureUserMayAuthenticate(user: AuthUserRow): Promise<void
     return
   }
 
-  if (user.status === 'deactivating') {
-    throw new AppError(
-      403,
-      'Account scheduled for deletion. You can reactivate it in account settings.',
-      'ACCOUNT_DEACTIVATING',
-      { canReactivate: true },
-    )
-  }
   if (user.status === 'deleted') {
     throw new AppError(403, 'Account has been permanently deleted.', 'ACCOUNT_DELETED')
   }

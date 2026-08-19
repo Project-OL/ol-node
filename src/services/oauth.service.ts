@@ -189,7 +189,7 @@ export const oauthService = {
       return {
         userId: user.id,
         publicId: Number(user.publicId),
-        status: user.status,
+        status: tokens.accountDeletionCancelled ? 'active' : user.status,
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         passwordSet: user.passwordSet,
