@@ -49,6 +49,23 @@ async function invalidateAllGiftListCaches() {
   }
 }
 
+function mapPublicGift(g: GiftWithTags) {
+  return {
+    id: g.id,
+    name: g.name,
+    code: g.code,
+    coinCost: g.coinCost,
+    displayImageUrl: g.displayImageUrl,
+    effectUrl: g.effectUrl,
+    displayOrder: g.displayOrder,
+    vipOnly: g.vipOnly,
+    tags: g.tags.map((t: { tag: string }) => t.tag),
+    category: g.category
+      ? { id: g.category.id, name: g.category.name, slug: g.category.slug }
+      : null,
+  }
+}
+
 export const giftService = {
   /**
    * Active gift catalog for clients (includes `vipOnly` gifts).
@@ -79,17 +96,7 @@ export const giftService = {
     })
 
     const payload = {
-      items: items.map((g: GiftWithTags) => ({
-        id: g.id,
-        name: g.name,
-        code: g.code,
-        coinCost: g.coinCost,
-        displayImageUrl: g.displayImageUrl,
-        effectUrl: g.effectUrl,
-        displayOrder: g.displayOrder,
-        vipOnly: g.vipOnly,
-        tags: g.tags.map((t: { tag: string }) => t.tag),
-      })),
+      items: items.map((g: GiftWithTags) => mapPublicGift(g)),
       total,
       page: query.page,
       limit: query.limit,

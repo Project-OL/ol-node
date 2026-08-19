@@ -2,7 +2,7 @@ import { prisma, prismaRead } from '../config/database'
 import { Prisma } from '@prisma/client'
 import { toGiftSlug } from '../utils/gift-slug'
 
-export type GiftWithTags = Prisma.GiftGetPayload<{ include: { tags: true } }>
+export type GiftWithTags = Prisma.GiftGetPayload<{ include: { tags: true; category: true } }>
 
 async function uniqueCodeFromName(name: string): Promise<string> {
   let code = toGiftSlug(name)
@@ -18,7 +18,7 @@ export const giftRepository = {
   async findById(id: string): Promise<GiftWithTags | null> {
     return prismaRead.gift.findUnique({
       where: { id },
-      include: { tags: true },
+      include: { tags: true, category: true },
     })
   },
 
@@ -35,7 +35,7 @@ export const giftRepository = {
     const [items, total] = await Promise.all([
       prismaRead.gift.findMany({
         where,
-        include: { tags: true },
+        include: { tags: true, category: true },
         orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
         skip: params.skip,
         take: params.take,
@@ -66,7 +66,7 @@ export const giftRepository = {
           create: data.tags.map((tag) => ({ tag })),
         },
       },
-      include: { tags: true },
+      include: { tags: true, category: true },
     })
   },
 
@@ -101,7 +101,7 @@ export const giftRepository = {
               }
             : {}),
         },
-        include: { tags: true },
+        include: { tags: true, category: true },
       })
     })
   },
@@ -110,7 +110,7 @@ export const giftRepository = {
     return prisma.gift.update({
       where: { id },
       data: { isActive: false },
-      include: { tags: true },
+      include: { tags: true, category: true },
     })
   },
 

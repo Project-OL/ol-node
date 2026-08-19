@@ -223,9 +223,9 @@ export const RedisKeys = {
   userLivestreamLevel: (userId: string) => `level:stream:${userId}`,
   levelConfigWealth: () => `level:config:wealth`,
   levelConfigStream: () => `level:config:stream`,
-  /** Full active gift catalog (includes vipOnly). Legacy audience suffixes `:vip`/`:novip` are invalidated on write. */
-  giftList: () => `gifts:list`,
-  giftByTag: (tag: string) => `gifts:tag:${tag}`,
+  /** Full active gift catalog (includes vipOnly + category). Legacy keys without `:v2` are invalidated on write. */
+  giftList: () => `gifts:list:v2`,
+  giftByTag: (tag: string) => `gifts:tag:v2:${tag}`,
   /** Global gallery structure for a UTC month (admin-defined template). */
   giftGalleryTemplate: (year: number, month: number) => `gallery:template:${year}:${month}`,
   /** Per-host merged payload (template + that host's progress). */
@@ -303,7 +303,7 @@ export const RedisKeys = {
   agencyByPublicId: (publicId: string) => `agency:pub:${publicId}`,
   /** Bump segment when ranking item shape changes — avoids stale Redis payloads. */
   agencyRanking: (country: string, period: string, limit: number, cursor: string) =>
-    `agency:ranking:v5:${country}:${period}:${limit}:${cursor}`,
+    `agency:ranking:v6:${country}:${period}:${limit}:${cursor}`,
   /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
   /** Throttle gate for HTTP `lastActiveTracker` writes to `users.last_active_at`. */
   userLastActive: (userId: string) => `user:lastActive:${userId}`,

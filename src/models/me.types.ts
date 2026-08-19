@@ -79,8 +79,9 @@ export interface MeResponseDto extends MeProfileCache {
     role: 'AGENT' | 'HOST' | 'NONE'
     asAgent?: {
       agencyPublicId: string
+      /** Live owner first + last (`formatUserName`); empty if both missing. */
       displayName: string
-      /** Owner first + last (`formatUserName`); empty if both missing. */
+      /** Same as `displayName`. */
       name: string
       avatarUrl: string | null
       totalHostsCount: number
@@ -92,8 +93,9 @@ export interface MeResponseDto extends MeProfileCache {
     }
     asHost?: {
       agencyPublicId: string
+      /** Live agency-owner first + last (`formatUserName`); empty if both missing. */
       agencyDisplayName: string
-      /** Agency owner first + last (`formatUserName`); empty if both missing. */
+      /** Same as `agencyDisplayName`. */
       name: string
       avatarUrl: string | null
       joinedAt: string
