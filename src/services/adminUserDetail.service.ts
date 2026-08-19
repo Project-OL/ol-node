@@ -9,6 +9,7 @@ import { agencyHostRepository } from '../repositories/agencyHost.repository'
 import { agencyRepository } from '../repositories/agency.repository'
 import { bannedDeviceRepository } from '../repositories/bannedDevice.repository'
 import { deviceRepository } from '../repositories/device.repository'
+import { sessionRepository, MAX_SESSIONS_PER_USER } from '../repositories/session.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { userRepository } from '../repositories/user.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
@@ -79,22 +80,30 @@ async function buildAgencyBlock(userId: string, isAgent: boolean) {
 }
 
 async function buildDevicesBlock(userId: string, lastIpAddress: string | null) {
-  const [devices, bans] = await Promise.all([
+  const [devices, bans, sessions] = await Promise.all([
     deviceRepository.findByUserId(userId),
     bannedDeviceRepository.listByRelatedUserId(userId),
+    sessionRepository.findActiveByUserId(userId),
   ])
   const bannedSet = new Set(bans.map((b: { deviceId: string }) => b.deviceId))
+  const sessionByDeviceId = new Map(sessions.map((s) => [s.deviceId, s]))
 
-  const mapped = devices.map((d: (typeof devices)[number]) => ({
-    registryId: d.id,
-    deviceId: d.deviceId,
-    deviceName: d.deviceName,
-    platform: d.platform,
-    lastActiveAt: d.lastActiveAt.toISOString(),
-    loginAt: d.loginAt.toISOString(),
-    ipAddress: d.ipAddress,
-    isBanned: bannedSet.has(d.deviceId),
-  }))
+  const mapped = devices.map((d: (typeof devices)[number]) => {
+    const session = sessionByDeviceId.get(d.deviceId)
+    return {
+      registryId: d.id,
+      deviceId: d.deviceId,
+      deviceName: d.deviceName,
+      platform: d.platform,
+      lastActiveAt: d.lastActiveAt.toISOString(),
+      loginAt: d.loginAt.toISOString(),
+      ipAddress: d.ipAddress,
+      isBanned: bannedSet.has(d.deviceId),
+      hasActiveSession: Boolean(session),
+      sessionId: session?.id ?? null,
+      loginType: session?.loginType ?? null,
+    }
+  })
 
   const ipSet = new Set<string>()
   if (lastIpAddress?.trim()) ipSet.add(lastIpAddress.trim())
@@ -105,6 +114,8 @@ async function buildDevicesBlock(userId: string, lastIpAddress: string | null) {
   return {
     devices: mapped,
     ipAddresses: [...ipSet],
+    activeSessionCount: sessions.length,
+    maxActiveSessions: MAX_SESSIONS_PER_USER,
   }
 }
 
@@ -213,6 +224,8 @@ export const adminUserDetailService = {
       deviceName: deviceInfo.deviceName,
       deviceId: deviceInfo.deviceId,
       devices: devicesBlock.devices,
+      activeSessionCount: devicesBlock.activeSessionCount,
+      maxActiveSessions: devicesBlock.maxActiveSessions,
       status: row.status,
       suspendedUntil: row.suspendedUntil?.toISOString() ?? null,
       walletFreeze: {
@@ -321,12 +334,15 @@ export const adminUserDetailService = {
     }
 
     let statusChanged = false
+    let statusAction: 'active' | 'suspend' | 'ban' | undefined
     if (body.status != null) {
       statusChanged = await adminUserDetailService.applyStatusChange(userId, body.status)
+      statusAction = body.status.action
     }
 
-    if (statusChanged) {
-      // revokeAllSessions already bumps users.token_version + busts the Redis TV cache.
+    // Ban/suspend revoke sessions. Activate does not — those users were already logged out
+    // when they were banned or suspended.
+    if (statusChanged && statusAction !== 'active') {
       await sessionService.revokeAllSessions(userId)
     }
 
@@ -380,6 +396,10 @@ export const adminUserDetailService = {
     if (!status) return false
 
     if (status.action === 'active') {
+      const current = await userRepository.findAuthStatusById(userId)
+      if (current?.status === 'active' && current.suspendedUntil == null) {
+        return false
+      }
       await userRepository.update(userId, { status: 'active', suspendedUntil: null })
       return true
     }

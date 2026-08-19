@@ -120,6 +120,14 @@ export function resolveAdminActivityDestination(
       resourceId: streamId,
     }
   }
+  if (actionType === 'ADMIN_DEVICE_LOGOUT_ALL') {
+    return {
+      label: 'Logout all devices',
+      targetUserId,
+      resourceType: 'user',
+      resourceId: targetUserId,
+    }
+  }
   if (actionType.startsWith('ADMIN_DEVICE_')) {
     return {
       label: deviceId ? `Device ${deviceId}` : 'Device ban',
@@ -209,11 +217,28 @@ export function resolveAdminActivityDestination(
     }
   }
   if (actionType.startsWith('ADMIN_SYSTEM_SETTINGS_')) {
+    if (settingKey === 'account-deletion') {
+      return {
+        label: 'Account deletion windows',
+        targetUserId: null,
+        resourceType: 'account_deletion',
+        resourceId: 'config',
+      }
+    }
     return {
       label: settingKey ? `Settings: ${settingKey}` : 'System settings',
       targetUserId: null,
       resourceType: 'system_settings',
       resourceId: settingKey,
+    }
+  }
+  if (actionType === 'ADMIN_ACCOUNT_DELETION_CANCELLED') {
+    const deletionId = readStr(details, 'deletionId')
+    return {
+      label: deletionId ? `Account deletion ${deletionId}` : 'Account deletion request',
+      targetUserId,
+      resourceType: 'account_deletion',
+      resourceId: deletionId,
     }
   }
   if (
@@ -323,6 +348,7 @@ export const SEEDED_ADMIN_ACTIVITY_ACTION_TYPES = [
   'ADMIN_POST_DELETED',
   'ADMIN_DEVICE_BANNED',
   'ADMIN_DEVICE_UNBANNED',
+  'ADMIN_DEVICE_LOGOUT_ALL',
   'ADMIN_USER_RESTRICTION_APPLIED',
   'ADMIN_USER_RESTRICTION_CLEARED',
   'ADMIN_LIVE_STREAM_STOP_REQUESTED',

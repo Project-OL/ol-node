@@ -13,10 +13,16 @@ import { auditService } from './audit.service'
 import { meService } from './me.service'
 import { accountDeletionConfigService } from './accountDeletionConfig.service'
 import { accountDeletionNoticeService } from './account-deletion-notice.service'
+import { platformMessagingService } from './platformMessaging.service'
 import { AppError } from '../middlewares/errorHandler'
+import { rootLogger } from '../utils/rootLogger'
 
 const DELETION_STATUS_CACHE_TTL = 3600
 const REMINDER_LEAD_MS = 30 * 60 * 1000
+const log = rootLogger.child({ module: 'account-deletion' })
+
+const LOGIN_CANCEL_SYSTEM_MESSAGE =
+  'Your account deletion was cancelled because you logged in before the deletion period ended. Your account remains active.'
 
 export const accountDeletionService = {
   async scheduleDeletion(
@@ -216,6 +222,32 @@ export const accountDeletionService = {
     return { ...result, userId: deletion.userId }
   },
 
+  /**
+   * Login while a deletion is still scheduled: cancel it, keep the account active,
+   * and notify the user in the SYSTEM inbox. Returns true when a schedule was cancelled.
+   */
+  async cancelIfScheduledOnLogin(userId: string): Promise<boolean> {
+    const deletion = await accountDeletionRepository.findByUserId(userId)
+    if (!deletion || deletion.isCancelled || deletion.isDeleted) return false
+
+    const now = new Date()
+    await cancelScheduledDeletion(deletion.id, userId, now, 'login')
+
+    try {
+      await platformMessagingService.sendPlatformMessage({
+        targetUserId: userId,
+        type: 'SYSTEM',
+        content: LOGIN_CANCEL_SYSTEM_MESSAGE,
+        metadata: { category: 'system' },
+        clientMessageId: `account-deletion-cancel-login:${deletion.id}`,
+      })
+    } catch (err) {
+      log.warn({ err, userId, deletionId: deletion.id }, 'login-cancel system message failed')
+    }
+
+    return true
+  },
+
   async runReminderJob(): Promise<{
     notifiedCount: number
     skippedCount: number
@@ -303,7 +335,7 @@ async function cancelScheduledDeletion(
   deletionId: string,
   userId: string,
   now: Date,
-  actor: 'user' | 'admin',
+  actor: 'user' | 'admin' | 'login',
 ): Promise<{
   success: boolean
   message: string
@@ -317,12 +349,12 @@ async function cancelScheduledDeletion(
   await userRepository.update(userId, { status: 'active' })
   await invalidateUserCaches(userId)
 
-  if (actor === 'user') {
+  if (actor === 'user' || actor === 'login') {
     await auditService.log({
       userId,
       actionType: 'ACCOUNT_DELETION_CANCELLED',
       actionStatus: 'success',
-      actionDetails: { cancelledAt: now.toISOString() },
+      actionDetails: { cancelledAt: now.toISOString(), cancelledBy: actor },
     })
   }
 

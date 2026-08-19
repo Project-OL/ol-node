@@ -83,6 +83,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/users/:id/profile/reset-identity',
     'POST /admin/users/:id/agency/remove',
     'POST /admin/users/:id/devices/ban',
+    'POST /admin/users/:id/devices/logout-all',
     'DELETE /admin/devices/:deviceId/ban',
   ],
   UserLocationsView: ['GET /admin/locations'],
@@ -182,8 +183,6 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/system-settings/admin-auth',
     'GET /admin/system-settings/agency-host',
     'PUT /admin/system-settings/agency-host',
-    'GET /admin/system-settings/account-deletion',
-    'PUT /admin/system-settings/account-deletion',
   ],
   PlatformMessagesView: [
     'GET /admin/users/search',
