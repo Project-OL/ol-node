@@ -24,6 +24,7 @@ import { walletRepository } from '../repositories/wallet.repository'
 import { withdrawalRepository } from '../repositories/withdrawal.repository'
 import { payrollAssignmentRepository } from '../repositories/payrollAssignment.repository'
 import { userPaymentMethodRepository } from '../repositories/userPaymentMethod.repository'
+import { companyCashRepository } from '../repositories/companyCash.repository'
 import { pointLedgerRepository } from '../repositories/point-ledger.repository'
 import { pointWalletService } from './point-wallet.service'
 import { walletService } from './wallet.service'
@@ -47,6 +48,12 @@ import {
   mapPaymentMethodMaskedForHost,
 } from '../utils/payment-method-mask'
 import { formatDuration } from '../utils/withdrawal-formatters'
+import { companyAgencyService } from './companyAgency.service'
+import {
+  CompanyCashDirection,
+  CompanyCashReason,
+  companyCashService,
+} from './companyCash.service'
 import {
   defaultPayrollFeeTierDtos,
   formatPayrollFeeTierDto,
@@ -1130,18 +1137,14 @@ export const withdrawalService = {
   async getAdminPresignedProofUrl(withdrawalId: string, mimeType: string) {
     const w = await prismaRead.withdrawal.findUnique({ where: { id: withdrawalId } })
     if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
-    if (!isPlatformHandledWithdrawal(w)) {
-      throw new AppError(
-        400,
-        'Proof upload is only for platform-handled EPAY withdrawals',
-        'EPAY_PLATFORM_PAYOUT',
-      )
-    }
     if (w.status !== 'PENDING_PLATFORM') {
       throw new AppError(400, 'Proof upload not allowed', 'INVALID_STATE')
     }
 
-    const key = `payroll/proofs/platform/${withdrawalId}/${randomUUID()}`
+    const isTakeover = !isPlatformHandledWithdrawal(w)
+    const key = isTakeover
+      ? `payroll/proofs/takeover/${withdrawalId}/${randomUUID()}`
+      : `payroll/proofs/platform/${withdrawalId}/${randomUUID()}`
     const uploadUrl = await storageService.getPresignedPutUrl(key, mimeType, 600)
     return {
       uploadUrl,
@@ -1223,6 +1226,90 @@ export const withdrawalService = {
     }
 
     return { hostPayoutPoints: hostPayoutOut, waitingExpiresAt: waitingExpiresAt.toISOString() }
+  },
+
+  /**
+   * BANK payroll the agency could not complete (`PENDING_PLATFORM`, AGENCY handler).
+   * Company pays the host; host-payout units + 60% fee reward go to the company agency user.
+   */
+  async adminCompletePayrollTakeover(
+    adminUserId: string,
+    withdrawalId: string,
+    params: { proofS3Key: string; proofS3Bucket: string },
+  ): Promise<{ hostPayoutPoints: string; waitingExpiresAt: string; companyAgencyUserId: string }> {
+    const prefix = `payroll/proofs/takeover/${withdrawalId}/`
+    if (!params.proofS3Key.startsWith(prefix)) {
+      throw new AppError(400, 'Invalid proof key', 'INVALID_PROOF_KEY')
+    }
+
+    const companyAgencyUserId = await companyAgencyService.requireCompanyAgencyUserId()
+    const config = await withdrawalService.getPayrollConfig()
+    const waitingExpiresAt = new Date(Date.now() + config.waitingHours * 60 * 60 * 1000)
+
+    let hostPayoutOut = '0'
+    let hostUserId: string | null = null
+
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+        if (isPlatformHandledWithdrawal(w)) {
+          throw new AppError(
+            400,
+            'Use platform complete for EPAY withdrawals',
+            'EPAY_PLATFORM_PAYOUT',
+          )
+        }
+        if (w.status !== 'PENDING_PLATFORM') {
+          throw new AppError(400, 'Withdrawal is not awaiting platform takeover', 'INVALID_STATE')
+        }
+
+        const hostPayoutPoints = withdrawalHostPayoutPoints({
+          amountPoints: w.amountPoints,
+          platformFeePoints: w.platformFeePoints,
+          serviceFeePoints: w.serviceFeePoints,
+        })
+        hostPayoutOut = hostPayoutPoints.toString()
+        hostUserId = w.userId
+
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: 'WAITING',
+            proofS3Key: params.proofS3Key,
+            proofS3Bucket: params.proofS3Bucket,
+            waitingExpiresAt,
+            payoutRef: params.proofS3Key,
+          },
+          tx,
+        )
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+
+    await enqueuePlatformWaiting(withdrawalId, waitingExpiresAt)
+
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: hostUserId,
+      actionType: 'WITHDRAWAL_PAYROLL_TAKEOVER_PROOF',
+      actionStatus: 'success',
+      actionDetails: { withdrawalId, proofS3Key: params.proofS3Key, companyAgencyUserId },
+    })
+
+    if (hostUserId) {
+      void enqueuePlatformWithdrawalMessage({
+        withdrawalId,
+        event: 'waiting',
+        hostUserId,
+      }).catch(() => {})
+    }
+
+    return {
+      hostPayoutPoints: hostPayoutOut,
+      waitingExpiresAt: waitingExpiresAt.toISOString(),
+      companyAgencyUserId,
+    }
   },
 
   /** WAITING → COMPLETED + withdrawal PAID; credits agency host-payout + reward. */
@@ -1390,10 +1477,128 @@ export const withdrawalService = {
 
     await removePlatformWaiting(withdrawalId)
 
+    const existingCash = await companyCashRepository.findByWithdrawalReason(
+      withdrawalId,
+      CompanyCashReason.EPAY_PAYOUT,
+    )
+    if (!existingCash && pre.hostPayoutUsd && Number(pre.hostPayoutUsd) > 0) {
+      await companyCashService.record({
+        direction: CompanyCashDirection.OUT,
+        reason: CompanyCashReason.EPAY_PAYOUT,
+        amountUsd: pre.hostPayoutUsd,
+        unitsAmount: withdrawalHostPayoutPoints({
+          amountPoints: pre.amountPoints,
+          platformFeePoints: pre.platformFeePoints,
+          serviceFeePoints: pre.serviceFeePoints,
+        }),
+        counterpartyUserId: pre.userId,
+        withdrawalId,
+        description: 'EPAY host payout',
+        adminUserId: 'system',
+      })
+    }
+
     void enqueuePlatformWithdrawalMessage({
       withdrawalId,
       event: 'paid',
       hostUserId: pre.userId,
+    }).catch(() => {})
+  },
+
+  /** BANK takeover WAITING → PAID; credits company agency inventory + 60% fee reward. */
+  async autoCompleteTakeoverWaiting(withdrawalId: string): Promise<void> {
+    const pre = await prismaRead.withdrawal.findUnique({ where: { id: withdrawalId } })
+    if (!pre) return
+    if (pre.status !== 'WAITING') return
+    if (isPlatformHandledWithdrawal(pre)) return
+    if (pre.waitingExpiresAt && pre.waitingExpiresAt > new Date()) return
+
+    const companyAgencyUserId = await companyAgencyService.requireCompanyAgencyUserId()
+    const hostPayoutPoints = withdrawalHostPayoutPoints({
+      amountPoints: pre.amountPoints,
+      platformFeePoints: pre.platformFeePoints,
+      serviceFeePoints: pre.serviceFeePoints,
+    })
+    const reward = pre.agentRewardPoints ?? 0n
+    const hostUserId = pre.userId
+    const now = new Date()
+
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w || w.status !== 'WAITING') return
+        if (isPlatformHandledWithdrawal(w)) return
+        if (w.waitingExpiresAt && w.waitingExpiresAt > now) return
+
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: 'PAID',
+            payoutRef: w.proofS3Key ?? w.payoutRef ?? undefined,
+            processedAt: now,
+          },
+          tx,
+        )
+
+        if (hostPayoutPoints > 0n) {
+          await pointWalletService.creditInTransaction(
+            companyAgencyUserId,
+            hostPayoutPoints,
+            PointTxType.PAYROLL_TAKEOVER_INVENTORY,
+            tx,
+            {
+              idempotencyKey: `payroll-takeover:${withdrawalId}`,
+              refId: withdrawalId,
+              counterpartyId: hostUserId,
+              description: 'Payroll takeover inventory',
+              applyLivestreamLevel: false,
+            },
+          )
+        }
+
+        if (reward > 0n) {
+          await pointWalletService.creditInTransaction(
+            companyAgencyUserId,
+            reward,
+            PointTxType.PAYROLL_PROCESSING_REWARD,
+            tx,
+            {
+              idempotencyKey: `payroll-takeover-reward:${withdrawalId}`,
+              refId: withdrawalId,
+              counterpartyId: hostUserId,
+              description: 'Payroll takeover processing reward',
+              applyLivestreamLevel: false,
+            },
+          )
+        }
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+
+    await removePlatformWaiting(withdrawalId)
+    await walletService.adjustPointBalanceCache(companyAgencyUserId, 0n)
+
+    const existingCash = await companyCashRepository.findByWithdrawalReason(
+      withdrawalId,
+      CompanyCashReason.PAYROLL_TAKEOVER_PAYOUT,
+    )
+    if (!existingCash && pre.hostPayoutUsd && Number(pre.hostPayoutUsd) > 0) {
+      await companyCashService.record({
+        direction: CompanyCashDirection.OUT,
+        reason: CompanyCashReason.PAYROLL_TAKEOVER_PAYOUT,
+        amountUsd: pre.hostPayoutUsd,
+        unitsAmount: hostPayoutPoints,
+        counterpartyUserId: hostUserId,
+        withdrawalId,
+        description: 'Company takeover host payout',
+        adminUserId: 'system',
+      })
+    }
+
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'paid',
+      hostUserId,
     }).catch(() => {})
   },
 

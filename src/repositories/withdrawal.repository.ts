@@ -303,8 +303,12 @@ export const withdrawalRepository = {
     return prismaRead.withdrawal.findMany({
       where: {
         status: 'WAITING',
-        payoutHandler: 'PLATFORM',
         waitingExpiresAt: { lt: now },
+        OR: [
+          { payoutHandler: 'PLATFORM' },
+          { methodType: 'EPAY' },
+          { payoutHandler: 'AGENCY', proofS3Key: { not: null } },
+        ],
       },
       take: limit,
       orderBy: { waitingExpiresAt: 'asc' },

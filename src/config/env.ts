@@ -70,6 +70,11 @@ const envSchema = z
       .transform((s) => s === 'true'),
     /** Optional override for inbox sender (`users.id`). When unset, server uses or creates `offoo_platform`. */
     PLATFORM_SENDER_USER_ID: z.string().uuid().optional(),
+    /**
+     * Agency user that receives BANK payroll takeover inventory (host payout + 60% fee reward).
+     * Must be an existing `users.is_agent` row. Required to complete takeover payouts.
+     */
+    COMPANY_AGENCY_USER_ID: z.string().uuid().optional(),
     /** HMAC key for device binding fingerprint. Min 32 chars. Required in production. */
     DEVICE_FINGERPRINT_SECRET: z.string().min(32).optional(),
 

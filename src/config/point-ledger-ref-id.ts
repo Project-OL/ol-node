@@ -16,6 +16,7 @@ export const POINT_LEDGER_REF_ENTITY: Partial<Record<PointTxType, string>> = {
   WITHDRAWAL_ESCROW: 'withdrawal',
   WITHDRAWAL_ESCROW_SETTLED: 'withdrawal',
   PAYROLL_HOST_PAYOUT: 'withdrawal',
+  PAYROLL_TAKEOVER_INVENTORY: 'withdrawal',
   PAYROLL_PROCESSING_REWARD: 'withdrawal',
   ADJUSTMENT: 'withdrawal',
   AGENT_POINT_TRANSFER: 'agent_point_transfer',

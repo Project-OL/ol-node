@@ -1161,6 +1161,8 @@ enum PointTxType {
   WITHDRAWAL_ESCROW_SETTLED // host: real debit at payroll completion (reduces ledger sum)
   PAYROLL_HOST_PAYOUT // agent: credit of hostPayoutPoints at payroll completion
   LIVESTREAM_STREAK_REWARD // first-7-days livestream daily reward (2 parts/day); excluded from commission + livestream XP
+  /// Company-agency inventory when platform takes over a failed BANK payroll (host payout units).
+  PAYROLL_TAKEOVER_INVENTORY
 }
 
 enum WithdrawalStatus {
@@ -1614,6 +1616,40 @@ model Withdrawal {
   @@index([payoutHandler, status])
   @@index([status, waitingExpiresAt])
   @@map("withdrawals")
+}
+
+enum CompanyCashDirection {
+  IN
+  OUT
+}
+
+enum CompanyCashReason {
+  AGENCY_TRADING_PURCHASE
+  EPAY_PAYOUT
+  PAYROLL_TAKEOVER_PAYOUT
+}
+
+/// Off-system fiat in/out paired with mint, EPAY payouts, and BANK takeover.
+model CompanyCashEntry {
+  id                 String               @id @default(uuid()) @db.Uuid
+  direction          CompanyCashDirection
+  reason             CompanyCashReason
+  amountUsd          Decimal              @map("amount_usd") @db.Decimal(18, 4)
+  unitsAmount        BigInt?              @map("units_amount")
+  currencyType       WalletCurrencyType?  @map("currency_type")
+  counterpartyUserId String?              @map("counterparty_user_id") @db.Uuid
+  ledgerRefId        String?              @map("ledger_ref_id") @db.VarChar(255)
+  withdrawalId       String?              @map("withdrawal_id") @db.Uuid
+  description        String?              @db.Text
+  promotional        Boolean              @default(false)
+  adminUserId        String               @map("admin_user_id")
+  createdAt          DateTime             @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@index([reason, createdAt(sort: Desc)])
+  @@index([withdrawalId])
+  @@index([counterpartyUserId])
+  @@map("company_cash_entries")
 }
 
 model UserPaymentMethod {

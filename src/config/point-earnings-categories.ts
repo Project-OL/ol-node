@@ -12,6 +12,7 @@ export const POINT_EARNINGS_CATEGORIES = {
   transfer: [PointTxType.AGENT_POINT_TRANSFER, PointTxType.TRANSFER_OUT],
   platform_reward: [
     PointTxType.PAYROLL_PROCESSING_REWARD,
+    PointTxType.PAYROLL_TAKEOVER_INVENTORY,
     PointTxType.PLATFORM_REWARD,
     PointTxType.LIVESTREAM_STREAK_REWARD, // rewards section: first-7-days livestream daily parts
   ],

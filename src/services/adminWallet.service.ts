@@ -45,6 +45,8 @@ export const adminWalletService = {
     idempotencyKey?: string
     /** When true, credits trading coins even if the user is not an agency agent. */
     forceTradingCredit?: boolean
+    /** Promo mint: no cash-in; flagged on ledger metadata. */
+    promotional?: boolean
     auditMeta?: AdminAuditRequestMeta
   }): Promise<AdminWalletCreditResult> {
     const hasCoins = params.coins != null && params.coins > 0n
@@ -60,7 +62,11 @@ export const adminWalletService = {
     const baseKey =
       params.idempotencyKey?.trim() || `admin-wallet-credit:${params.adminUserId}:${randomUUID()}`
     const description = params.description?.trim() || 'Admin wallet adjustment'
-    const metadata = { adminUserId: params.adminUserId, source: 'admin_wallet_credit' }
+    const metadata = {
+      adminUserId: params.adminUserId,
+      source: 'admin_wallet_credit',
+      ...(params.promotional ? { promotional: true } : {}),
+    }
 
     const credited: AdminWalletCreditResult['credited'] = {}
     const balances: AdminWalletCreditResult['balances'] = {}
