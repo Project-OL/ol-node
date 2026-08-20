@@ -26,6 +26,50 @@ export const userRepository = {
     })
   },
 
+  /**
+   * Case-insensitive handle lookup, ignoring permanently deleted accounts.
+   * Uses the write client so uniqueness checks are not replica-stale.
+   */
+  async findOtherByUsernameInsensitive(username: string, excludeUserId?: string) {
+    const value = username.trim()
+    if (!value) return null
+    return prisma.user.findFirst({
+      where: {
+        status: { not: 'deleted' },
+        username: { equals: value, mode: 'insensitive' },
+        ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+      },
+      select: { id: true },
+    })
+  },
+
+  /**
+   * Case-insensitive first+last display-name lookup. Empty last name matches null or "".
+   * Ignores permanently deleted accounts. Uses the write client.
+   */
+  async findOtherByDisplayNameInsensitive(
+    firstName: string,
+    lastName: string | null | undefined,
+    excludeUserId?: string,
+  ) {
+    const first = firstName.trim()
+    if (!first) return null
+    const last = lastName?.trim() ?? ''
+    const lastFilter =
+      last.length === 0
+        ? [{ lastName: null }, { lastName: '' }]
+        : [{ lastName: { equals: last, mode: 'insensitive' as const } }]
+    return prisma.user.findFirst({
+      where: {
+        status: { not: 'deleted' },
+        firstName: { equals: first, mode: 'insensitive' },
+        OR: lastFilter,
+        ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+      },
+      select: { id: true },
+    })
+  },
+
   async findById(id: string) {
     return withDbRetry(prismaRead, () =>
       prismaRead.user.findUnique({

@@ -64,12 +64,16 @@ vi.mock('../../src/services/cacheRedis.service', () => ({
 const findForMe = vi.fn()
 const updateProfile = vi.fn()
 const getTokenVersion = vi.fn()
+const findOtherByUsernameInsensitive = vi.fn()
+const findOtherByDisplayNameInsensitive = vi.fn()
 
 vi.mock('../../src/repositories/user.repository', () => ({
   userRepository: {
     findForMe: (...a: unknown[]) => findForMe(...a),
     updateProfile: (...a: unknown[]) => updateProfile(...a),
     getTokenVersion: (...a: unknown[]) => getTokenVersion(...a),
+    findOtherByUsernameInsensitive: (...a: unknown[]) => findOtherByUsernameInsensitive(...a),
+    findOtherByDisplayNameInsensitive: (...a: unknown[]) => findOtherByDisplayNameInsensitive(...a),
   },
 }))
 
@@ -215,6 +219,10 @@ describe('meService', () => {
     updateProfile.mockReset()
     getTokenVersion.mockReset()
     getTokenVersion.mockResolvedValue(0)
+    findOtherByUsernameInsensitive.mockReset()
+    findOtherByDisplayNameInsensitive.mockReset()
+    findOtherByUsernameInsensitive.mockResolvedValue(null)
+    findOtherByDisplayNameInsensitive.mockResolvedValue(null)
     putObjectBuffer.mockReset()
     deleteObject.mockReset()
     debitForDisplayNameChange.mockReset()
@@ -572,6 +580,17 @@ describe('meService', () => {
       'user-1',
       expect.objectContaining({ firstName: '🎮★राज', lastName: null }),
     )
+    expect(debitForDisplayNameChange).not.toHaveBeenCalled()
+  })
+
+  it('patchMe name rejects when display name is already taken', async () => {
+    findForMe.mockResolvedValueOnce(baseRow())
+    findOtherByDisplayNameInsensitive.mockResolvedValueOnce({ id: 'other-user' })
+    await expect(meService.patchMe('user-1', { name: 'New Name' }, null, {})).rejects.toMatchObject({
+      code: 'USERNAME_TAKEN',
+      statusCode: 409,
+    })
+    expect(updateProfile).not.toHaveBeenCalled()
     expect(debitForDisplayNameChange).not.toHaveBeenCalled()
   })
 

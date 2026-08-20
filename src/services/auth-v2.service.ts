@@ -34,6 +34,7 @@ import { emailSchema, phoneSchema } from '../models/schemas'
 import type { AuthProvider, CheckAvailabilityResult, JwtAccessPayload } from '../models/types'
 import { deviceService } from './device.service'
 import { formatUserName } from '../utils/user-display'
+import { allocateUniqueUsername, assertDisplayNameAvailable } from '../utils/user-identity-unique'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 const SIGNUP_VERIFIED_TTL = 300
@@ -150,8 +151,9 @@ export const authV2Service = {
     await redisClient.del(key)
     const { publicId } = await publicIdService.getNextPublicId('')
     const passwordHash = await passwordService.hash(password)
-    const username =
+    const preferredUsername =
       provider === 'email' ? identifier.split('@')[0]! : `user_${identifier.slice(-6)}`
+    const username = await allocateUniqueUsername(preferredUsername)
     const user = await prisma.$transaction(async (tx) => {
       const u = await tx.user.create({
         data: {
@@ -239,6 +241,7 @@ export const authV2Service = {
     const dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : undefined
     const lastName = data.lastName && data.lastName.trim() !== '' ? data.lastName : null
     const avatarUrl = data.avatarUrl && data.avatarUrl.trim() !== '' ? data.avatarUrl.trim() : null
+    await assertDisplayNameAvailable(data.firstName, lastName, userId)
     await userRepository.updateProfile(userId, {
       firstName: data.firstName,
       lastName,

@@ -18,6 +18,7 @@ import { agencyHostService } from './agencyHost.service'
 import { deviceBanService } from './device-ban.service'
 import { storageService } from './storage.service'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import { allocateUniqueUsername } from '../utils/user-identity-unique'
 import { explainFaceProfileStatus } from '../utils/face-profile-status'
 import {
   describeLivePhotoFailureReason,
@@ -391,7 +392,7 @@ export const adminUserModerationService = {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
-    const username = `user_${user.publicId.toString()}`
+    const username = await allocateUniqueUsername(`user_${user.publicId.toString()}`)
     await userRepository.update(userId, {
       username,
       firstName: null,

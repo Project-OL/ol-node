@@ -18,6 +18,7 @@ import {
   splitDisplayName,
 } from '../utils/profileDisplay'
 import { formatUserName } from '../utils/user-display'
+import { assertDisplayNameAvailable } from '../utils/user-identity-unique'
 import { composePublicAdminTags } from '../utils/adminTags'
 import { detectImageMimeFromBuffer, extensionForImageMime } from '../utils/imageMagic'
 import {
@@ -354,16 +355,19 @@ export const meService = {
       const sameAsCurrent = prevFirst === firstName.trim() && prevLast === nextLast
       if (sameAsCurrent) {
         noopDuplicateDisplayName = true
-      } else if (isFreeUsernameChangeAvailable(row.usernameUpdatedAt)) {
-        updatePayload.firstName = firstName
-        updatePayload.lastName = lastName
-        updatePayload.usernameUpdatedAt = new Date()
-        touchedName = true
-        meEndpointMetrics.bumpProfileField('name')
       } else {
-        await coinWalletService.debitForDisplayNameChange(userId, firstName, lastName)
-        touchedName = true
-        meEndpointMetrics.bumpProfileField('name')
+        await assertDisplayNameAvailable(firstName, lastName, userId)
+        if (isFreeUsernameChangeAvailable(row.usernameUpdatedAt)) {
+          updatePayload.firstName = firstName
+          updatePayload.lastName = lastName
+          updatePayload.usernameUpdatedAt = new Date()
+          touchedName = true
+          meEndpointMetrics.bumpProfileField('name')
+        } else {
+          await coinWalletService.debitForDisplayNameChange(userId, firstName, lastName)
+          touchedName = true
+          meEndpointMetrics.bumpProfileField('name')
+        }
       }
     }
 

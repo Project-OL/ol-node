@@ -21,6 +21,7 @@ import { providerService } from '../services/provider.service'
 import { AppError } from '../middlewares/errorHandler'
 import type { AuthProvider } from '../models/types'
 import { formatUserName } from '../utils/user-display'
+import { allocateUniqueUsername } from '../utils/user-identity-unique'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 export interface OAuthUserInfo {
@@ -206,9 +207,10 @@ export const oauthService = {
         throw new AppError(409, 'Email already linked to another account', 'EMAIL_LINKED')
     }
     const { publicId } = await publicIdService.getNextPublicId('')
-    const username = userInfo.email
+    const preferredUsername = userInfo.email
       ? userInfo.email.split('@')[0]!
       : `user_${userInfo.providerId.slice(0, 8)}`
+    const username = await allocateUniqueUsername(preferredUsername)
     const user = await prisma.user.create({
       data: {
         username,

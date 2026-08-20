@@ -7,6 +7,7 @@ import { walletService } from './wallet.service'
 import { enrichLedgerEntries } from '../utils/ledger-transaction-enrichment'
 import { resolveCoinHistoryTxTypes } from '../config/coin-earnings-categories'
 import { auditService } from './audit.service'
+import { assertDisplayNameAvailable } from '../utils/user-identity-unique'
 import {
   WalletCurrencyType,
   CoinTxType,
@@ -210,6 +211,7 @@ export const coinWalletService = {
     firstName: string,
     lastName: string | null,
   ): Promise<void> {
+    await assertDisplayNameAvailable(firstName, lastName, userId)
     await assertCoinDebitAllowed(userId, WalletCurrencyType.COIN)
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
     const idempotencyKey = `username-change:${userId}:${crypto.randomUUID()}`

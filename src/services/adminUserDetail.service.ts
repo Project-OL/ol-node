@@ -30,6 +30,7 @@ import { storeAdminService } from './store-admin.service'
 import { adminUserSearchService } from './adminUserSearch.service'
 import { phoneSchema } from '../models/schemas'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import { assertDisplayNameAvailable, assertUsernameAvailable } from '../utils/user-identity-unique'
 import { normalizeCountryOptional } from '../utils/agency-country'
 import { normalizeGenderStored } from '../utils/profileDisplay'
 
@@ -289,6 +290,7 @@ export const adminUserDetailService = {
     if (!row) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
     if (body.username != null) {
+      await assertUsernameAvailable(body.username, userId)
       await userRepository.update(userId, { username: body.username })
     }
 
@@ -297,6 +299,12 @@ export const adminUserDetailService = {
       if (body.firstName !== undefined) profilePatch.firstName = body.firstName
       if (body.lastName !== undefined) {
         profilePatch.lastName = body.lastName.length > 0 ? body.lastName : null
+      }
+      const nextFirst = profilePatch.firstName ?? row.firstName
+      const nextLast =
+        profilePatch.lastName !== undefined ? profilePatch.lastName : row.lastName
+      if (nextFirst?.trim()) {
+        await assertDisplayNameAvailable(nextFirst, nextLast, userId)
       }
       await userRepository.updateProfile(userId, profilePatch)
       await meService.invalidateUserCaches(userId)
