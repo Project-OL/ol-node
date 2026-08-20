@@ -16,6 +16,11 @@ import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '..
 import { adminWalletService } from './adminWallet.service'
 import { adminAuditMetaFromRequest } from '../utils/admin-audit'
 import { platformProfitService } from './platform-profit.service'
+import {
+  CompanyCashDirection,
+  CompanyCashReason,
+  companyCashService,
+} from './companyCash.service'
 
 const userSelect = {
   id: true,
@@ -97,6 +102,8 @@ export const adminCurrencyService = {
     const amount = BigInt(params.body.amount)
     const { userId, currency, direction, description, idempotencyKey, forceTradingCredit } =
       params.body
+    const promotional = params.body.promotional === true
+    const cashUsd = params.body.cashUsd
 
     if (direction === 'credit') {
       if (currency === 'COIN') {
@@ -106,6 +113,7 @@ export const adminCurrencyService = {
           coins: amount,
           description,
           idempotencyKey,
+          promotional,
           auditMeta: params.auditMeta,
         })
       }
@@ -116,18 +124,35 @@ export const adminCurrencyService = {
           points: amount,
           description,
           idempotencyKey,
+          promotional,
           auditMeta: params.auditMeta,
         })
       }
-      return adminWalletService.creditUserWallets({
+      const result = await adminWalletService.creditUserWallets({
         adminUserId: params.adminUserId,
         targetUserId: userId,
         tradingCoins: amount,
         description,
         idempotencyKey,
         forceTradingCredit,
+        promotional,
         auditMeta: params.auditMeta,
       })
+      if (cashUsd && result.credited.tradingCoins) {
+        await companyCashService.record({
+          direction: CompanyCashDirection.IN,
+          reason: CompanyCashReason.AGENCY_TRADING_PURCHASE,
+          amountUsd: cashUsd,
+          unitsAmount: amount,
+          currencyType: WalletCurrencyType.TRADING_COIN,
+          counterpartyUserId: userId,
+          ledgerRefId: result.balances.tradingCoins?.ledgerEntryId ?? null,
+          description: description ?? 'Agency trading coin purchase',
+          promotional: false,
+          adminUserId: params.adminUserId,
+        })
+      }
+      return result
     }
 
     if (currency === 'COIN') {

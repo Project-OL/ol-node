@@ -216,11 +216,31 @@ export async function summarizePlatformProfit(params: {
     },
     _sum: { amount: true },
   })
+  const giftAgencyLiveAgg = await prismaRead.pointLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.CREDIT,
+      txType: PointTxType.AGENT_COMMISSION,
+      ...(createdAt ? { createdAt } : {}),
+      metadata: { path: ['hostTxType'], equals: PointTxType.LIVESTREAM_GIFT },
+    },
+    _sum: { amount: true },
+  })
+  const giftRefundAgg = await prismaRead.coinLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.CREDIT,
+      txType: CoinTxType.GIFT_REFUND,
+      wallet: { currencyType: 'COIN' },
+      ...(createdAt ? { createdAt } : {}),
+    },
+    _sum: { amount: true },
+  })
   {
+    const coinsSpent = BigInt(giftAgg._sum.coinCost ?? 0) - (giftRefundAgg._sum.amount ?? 0n)
     const { buckets, rawCoins } = profitFromCoinToPointSplit({
-      coinsSpent: BigInt(giftAgg._sum.coinCost ?? 0),
+      coinsSpent: coinsSpent < 0n ? 0n : coinsSpent,
       hostPoints: BigInt(giftAgg._sum.pointsAwarded ?? 0),
-      agencyCommissionPoints: giftAgencyAgg._sum.amount ?? 0n,
+      agencyCommissionPoints:
+        (giftAgencyAgg._sum.amount ?? 0n) + (giftAgencyLiveAgg._sum.amount ?? 0n),
     })
     warnIfNegative(rawCoins, { kind: 'summary_gifts' })
     parts.push(buckets)
@@ -294,6 +314,53 @@ export async function summarizePlatformProfit(params: {
     })
     warnIfNegative(rawCoins, { kind: `summary_${coinType}` })
     parts.push(buckets)
+  }
+
+  // Full coin sinks not already counted: global message + custom gifts net of refund
+  const extraSinkAgg = await prismaRead.coinLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.DEBIT,
+      txType: { in: [CoinTxType.GLOBAL_MESSAGE, CoinTxType.CUSTOM_GIFT_REQUEST] },
+      ...(createdAt ? { createdAt } : {}),
+      wallet: { currencyType: 'COIN' },
+    },
+    _sum: { amount: true },
+  })
+  const extraRefundAgg = await prismaRead.coinLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.CREDIT,
+      txType: CoinTxType.CUSTOM_GIFT_REFUND,
+      ...(createdAt ? { createdAt } : {}),
+      wallet: { currencyType: 'COIN' },
+    },
+    _sum: { amount: true },
+  })
+  {
+    const net = (extraSinkAgg._sum.amount ?? 0n) - (extraRefundAgg._sum.amount ?? 0n)
+    parts.push(profitForFullCoinSpend(net < 0n ? 0n : net))
+  }
+
+  const pointExOut = await prismaRead.pointLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.DEBIT,
+      txType: PointTxType.TRANSFER_OUT,
+      ...(createdAt ? { createdAt } : {}),
+    },
+    _sum: { amount: true },
+  })
+  const coinExIn = await prismaRead.coinLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.CREDIT,
+      txType: {
+        in: [CoinTxType.POINT_EXCHANGE_TO_COINS, CoinTxType.TRADING_EXCHANGE_FROM_POINTS],
+      },
+      ...(createdAt ? { createdAt } : {}),
+    },
+    _sum: { amount: true },
+  })
+  {
+    const spread = (pointExOut._sum.amount ?? 0n) - (coinExIn._sum.amount ?? 0n)
+    parts.push(profitForFullCoinSpend(spread < 0n ? 0n : spread))
   }
 
   // Withdrawals: net fee on rows that have fee snapshot (typically settled)

@@ -27,7 +27,7 @@ async function isDisplayNameTaken(
   return Boolean(hit)
 }
 
-/** True when another non-deleted user already uses this string as handle or as first+last. *//
+/** True when another non-deleted user already uses this string as handle or as first+last. */
 export async function isIdentityTaken(
   username: string,
   excludeUserId?: string,

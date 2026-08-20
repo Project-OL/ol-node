@@ -15,6 +15,7 @@ const POINT_NAMES: Partial<Record<PointTxType, Partial<Record<DirectionKey, stri
   GUARDIAN_PURCHASE: { CREDIT: 'Guardian earnings' },
   AGENT_COMMISSION: { CREDIT: 'Agent commission' },
   PAYROLL_HOST_PAYOUT: { CREDIT: 'Host payroll points' },
+  PAYROLL_TAKEOVER_INVENTORY: { CREDIT: 'Payroll takeover inventory' },
   PAYROLL_PROCESSING_REWARD: { CREDIT: 'Payroll reward' },
   AGENT_POINT_TRANSFER: {
     CREDIT: 'Point transfer received',

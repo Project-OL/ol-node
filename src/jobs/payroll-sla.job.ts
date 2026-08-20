@@ -21,9 +21,12 @@ export async function processPlatformWaitingAutoComplete(withdrawalId: string): 
   const row = await withdrawalRepository.getById(withdrawalId)
   if (!row) return
   if (row.status !== 'WAITING') return
-  if (row.payoutHandler !== 'PLATFORM' && row.methodType !== 'EPAY') return
   if (row.waitingExpiresAt && row.waitingExpiresAt > new Date()) return
-  await withdrawalService.autoCompletePlatformWaiting(withdrawalId)
+  if (row.payoutHandler === 'PLATFORM' || row.methodType === 'EPAY') {
+    await withdrawalService.autoCompletePlatformWaiting(withdrawalId)
+    return
+  }
+  await withdrawalService.autoCompleteTakeoverWaiting(withdrawalId)
 }
 
 /** Re-enqueue delayed SLA / platform-waiting jobs if Redis/BullMQ dropped them. */

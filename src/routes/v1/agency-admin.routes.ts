@@ -1001,6 +1001,22 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
   )
 
   app.post<{ Params: { id: string } }>(
+    '/withdrawal/:id/takeover',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AdminCompletePlatformSchema.parse(request.body ?? {})
+      const result = await withdrawalService.adminCompletePayrollTakeover(
+        adminUserId,
+        request.params.id,
+        body,
+      )
+      return reply.send({ ok: true, ...result })
+    },
+  )
+
+  app.post<{ Params: { id: string } }>(
     '/withdrawal/:id/resolve-dispute/favour-agent',
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {

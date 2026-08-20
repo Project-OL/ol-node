@@ -89,6 +89,7 @@ export const PointTxTypeEnum = z.enum([
   'WITHDRAWAL_ESCROW_SETTLED',
   'PAYROLL_HOST_PAYOUT',
   'LIVESTREAM_STREAK_REWARD',
+  'PAYROLL_TAKEOVER_INVENTORY',
 ])
 
 /** Category aliases (`livestream`, `commission`, …) or raw `PointTxType` values. */
