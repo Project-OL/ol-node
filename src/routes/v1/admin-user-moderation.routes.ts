@@ -192,7 +192,7 @@ export default async function adminUserModerationRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users', 'Devices'],
         description:
-          'Registered devices plus which ones currently have an active login (cap 3). Additive `hasActiveSession` / `activeSessions`.',
+          'Registered devices plus which ones currently have an active login (cap 3). Additive `hasActiveSession` / `activeSessions` / `otherActiveLogins` (other users currently logged in on the same physical device).',
       },
     },
     async (request, reply) => {

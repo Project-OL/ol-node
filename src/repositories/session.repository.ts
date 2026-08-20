@@ -250,6 +250,43 @@ export const sessionRepository = {
     })
   },
 
+  /** Active sessions on any of the given physical device ids, excluding one user (admin co-login lookup). */
+  async findActiveOnDeviceIdsExcludingUser(deviceIds: string[], excludeUserId: string) {
+    if (deviceIds.length === 0) return []
+    return prismaRead.session.findMany({
+      where: {
+        deviceId: { in: deviceIds },
+        userId: { not: excludeUserId },
+        isActive: true,
+        isRevoked: false,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { lastActiveAt: 'desc' },
+      select: {
+        id: true,
+        userId: true,
+        deviceId: true,
+        deviceName: true,
+        ipAddress: true,
+        lastActiveAt: true,
+        loginType: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            avatarUrl: true,
+            status: true,
+          },
+        },
+      },
+    })
+  },
+
   async revokeAllByDeviceId(deviceId: string): Promise<string[]> {
     const sessions = await prismaRead.session.findMany({
       where: {
