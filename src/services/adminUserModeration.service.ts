@@ -26,6 +26,42 @@ import {
 import { adminAuditMetaFromRequest } from '../utils/admin-audit'
 import type { FastifyRequest } from 'fastify'
 
+const OTHER_ACTIVE_LOGINS_PER_DEVICE = 50
+
+function mapOtherActiveLogin(row: {
+  id: string
+  deviceName: string
+  ipAddress: string
+  lastActiveAt: Date
+  loginType: string | null
+  user: {
+    id: string
+    username: string
+    firstName: string | null
+    lastName: string | null
+    publicId: bigint
+    defaultPublicId: bigint
+    currentVipPublicId: bigint | null
+    avatarUrl: string | null
+    status: string
+  }
+}) {
+  return {
+    userId: row.user.id,
+    username: row.user.username,
+    name: formatUserName(row.user),
+    avatarUrl: row.user.avatarUrl,
+    publicId: String(row.user.publicId),
+    displayPublicId: resolveDisplayPublicId(row.user),
+    status: String(row.user.status),
+    sessionId: row.id,
+    deviceName: row.deviceName,
+    ipAddress: row.ipAddress,
+    lastActiveAt: row.lastActiveAt.toISOString(),
+    loginType: row.loginType,
+  }
+}
+
 function generateTemporaryPassword(): string {
   const suffix = randomBytes(9)
     .toString('base64url')
@@ -406,11 +442,33 @@ export const adminUserModerationService = {
     ])
     const bannedSet = new Set(bans.map((b: { deviceId: string }) => b.deviceId))
     const sessionByDeviceId = new Map(sessions.map((s) => [s.deviceId, s]))
+    const deviceIds = [
+      ...new Set(
+        [...devices.map((d) => d.deviceId), ...sessions.map((s) => s.deviceId)].filter(Boolean),
+      ),
+    ]
+    const otherSessions = await sessionRepository.findActiveOnDeviceIdsExcludingUser(
+      deviceIds,
+      userId,
+    )
+    const otherByDevice = new Map<string, ReturnType<typeof mapOtherActiveLogin>[]>()
+    const seenUserOnDevice = new Set<string>()
+    for (const row of otherSessions) {
+      const key = `${row.deviceId}:${row.userId}`
+      if (seenUserOnDevice.has(key)) continue
+      seenUserOnDevice.add(key)
+      const list = otherByDevice.get(row.deviceId) ?? []
+      if (list.length >= OTHER_ACTIVE_LOGINS_PER_DEVICE) continue
+      list.push(mapOtherActiveLogin(row))
+      otherByDevice.set(row.deviceId, list)
+    }
+    const otherActiveUserIds = new Set(otherSessions.map((s) => s.userId))
 
     return {
       userId,
       maxActiveSessions: MAX_SESSIONS_PER_USER,
       activeSessionCount: sessions.length,
+      otherActiveLoginCount: otherActiveUserIds.size,
       activeSessions: sessions.map((s) => ({
         sessionId: s.id,
         deviceId: s.deviceId,
@@ -419,6 +477,7 @@ export const adminUserModerationService = {
         lastActiveAt: s.lastActiveAt.toISOString(),
         loginType: s.loginType ?? null,
         expiresAt: s.expiresAt.toISOString(),
+        otherActiveLogins: otherByDevice.get(s.deviceId) ?? [],
       })),
       devices: devices.map((d: (typeof devices)[number]) => {
         const session = sessionByDeviceId.get(d.deviceId)
@@ -434,6 +493,7 @@ export const adminUserModerationService = {
           hasActiveSession: Boolean(session),
           sessionId: session?.id ?? null,
           loginType: session?.loginType ?? null,
+          otherActiveLogins: otherByDevice.get(d.deviceId) ?? [],
         }
       }),
     }

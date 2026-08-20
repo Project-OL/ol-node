@@ -1,5 +1,5 @@
 import { AGENCY_RANKING_CACHE_TTL, RedisKeys, redisClient } from '../config/redis'
-import { prismaRead } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { agencyRepository } from '../repositories/agency.repository'
 import { agencyCoinsellerRepository } from '../repositories/agencyCoinseller.repository'
@@ -140,7 +140,7 @@ export const agencyRankingService = {
 
     const [levelsMap, owner, kyc, coinsellerRows] = await Promise.all([
       walletLevelService.getDisplayLevelsForUsers([agency.userId]),
-      prismaRead.user.findUnique({
+      prisma.user.findUnique({
         where: { id: agency.userId },
         select: {
           publicId: true,
@@ -193,7 +193,7 @@ export const agencyRankingService = {
 
     const [levelsMap, owner, kyc, coinsellerRows] = await Promise.all([
       walletLevelService.getDisplayLevelsForUsers([agency.userId]),
-      prismaRead.user.findUnique({
+      prisma.user.findUnique({
         where: { id: agency.userId },
         select: {
           publicId: true,
@@ -281,7 +281,7 @@ export const agencyRankingService = {
       const userIds = page.map((r) => r.userId)
       const [levelsMap, users, kycRows, coinsellerRows] = await Promise.all([
         walletLevelService.getDisplayLevelsForUsers(userIds),
-        prismaRead.user.findMany({
+        prisma.user.findMany({
           where: { id: { in: userIds } },
           select: {
             id: true,

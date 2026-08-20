@@ -1,11 +1,10 @@
 import crypto from 'crypto'
 import sanitizeHtml from 'sanitize-html'
 import { z } from 'zod'
-import { LevelType, RankingBoard } from '@prisma/client'
+import { LevelType } from '@prisma/client'
 import { userRepository } from '../repositories/user.repository'
 import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'
 import { vipAssignmentRepository } from '../repositories/vip-assignment.repository'
-import { agencyRepository } from '../repositories/agency.repository'
 import { walletService } from './wallet.service'
 import { coinWalletService } from './coin-wallet.service'
 import { cacheRedisService } from './cacheRedis.service'
@@ -40,7 +39,6 @@ import { storeService } from './store.service'
 import { richTierService } from './rich-tier.service'
 import { vipMembershipService } from './vip-membership.service'
 import { agencyService } from './agency.service'
-import { rankingService } from './ranking.service'
 import { livePhotoService } from './livePhoto.service'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { videoCallSettingsService } from './video-call.service'
@@ -457,15 +455,7 @@ export const meService = {
     )
 
     if (touchedName) {
-      const agency = await agencyRepository.getAgencyByUserId(userId)
-      if (agency) {
-        await agencyService.bustCachesForAgency(userId, agency.defaultPublicId)
-        await agencyService.bustRankingCache()
-      }
-      await rankingService.bumpEpoch(RankingBoard.AGENCY)
-      await rankingService.bumpEpoch(RankingBoard.HOST)
-      await rankingService.bumpEpoch(RankingBoard.GIFT)
-      await rankingService.bumpEpoch(RankingBoard.RICH)
+      await agencyService.onOwnerNameChanged(userId)
     }
 
     const fresh = await userRepository.findForMe(userId)
