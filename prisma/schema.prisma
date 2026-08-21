@@ -183,6 +183,8 @@ model User {
   hostLiveSessions             HostLiveSession[]
   hostStreamBans               HostStreamBan[]               @relation("UserHostBans")
   liveStreams                  LiveStream[]
+  hostAdminsCreated            LiveStreamAdmin[]             @relation("HostAdminHost")
+  hostAdminsReceived           LiveStreamAdmin[]             @relation("HostAdminUser")
   userRestrictions             UserRestriction[]
   restrictionTargetsAsTarget   UserRestrictionTarget[] @relation("RestrictionTargetUser")
 
@@ -2098,6 +2100,22 @@ model LiveStream {
   @@index([isLive])
   @@index([userId, startedAt])
   @@map("live_streams")
+}
+
+/// Host-appointed live co-admins (shared DB). Unique pair of host + admin user.
+model LiveStreamAdmin {
+  id          String   @id @default(uuid()) @db.Uuid
+  hostUserId  String   @map("host_user_id") @db.Uuid
+  adminUserId String   @map("admin_user_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  hostUser  User @relation("HostAdminHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  adminUser User @relation("HostAdminUser", fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@unique([hostUserId, adminUserId])
+  @@index([hostUserId])
+  @@index([adminUserId])
+  @@map("live_stream_admins")
 }
 
 model VideoCallModerationLog {
