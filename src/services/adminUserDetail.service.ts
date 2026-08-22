@@ -31,6 +31,7 @@ import { adminUserSearchService } from './adminUserSearch.service'
 import { phoneSchema } from '../models/schemas'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { assertDisplayNameAvailable, assertUsernameAvailable } from '../utils/user-identity-unique'
+import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'
 import { normalizeCountryOptional } from '../utils/agency-country'
 import { normalizeGenderStored } from '../utils/profileDisplay'
 
@@ -285,11 +286,17 @@ export const adminUserDetailService = {
     }
   },
 
-  async updateUser(userId: string, body: AdminUserPatchBody) {
+  async updateUser(
+    userId: string,
+    body: AdminUserPatchBody,
+    opts?: { allowRestricted?: boolean },
+  ) {
     const row = await adminUserDetailRepository.findUser(userId)
     if (!row) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    const allowRestricted = opts?.allowRestricted === true
 
     if (body.username != null) {
+      await restrictedIdentityWordsService.assertNotRestricted(body.username, { allowRestricted })
       await assertUsernameAvailable(body.username, userId)
       await userRepository.update(userId, { username: body.username })
     }
@@ -304,6 +311,11 @@ export const adminUserDetailService = {
       const nextLast =
         profilePatch.lastName !== undefined ? profilePatch.lastName : row.lastName
       if (nextFirst?.trim()) {
+        await restrictedIdentityWordsService.assertNamePartsNotRestricted(
+          nextFirst,
+          nextLast,
+          { allowRestricted },
+        )
         await assertDisplayNameAvailable(nextFirst, nextLast, userId)
       }
       await userRepository.updateProfile(userId, profilePatch)

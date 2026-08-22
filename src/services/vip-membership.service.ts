@@ -1,10 +1,11 @@
 import { CoinTxType, LevelType, VipMembershipTier } from '@prisma/client'
-import { prisma, prismaRead } from '../config/database'
+import { prisma } from '../config/database'
 import { RedisKeys, VIPM_ACTIVE_INACTIVE_TTL, VIPM_ACTIVE_TTL_MAX } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { coinWalletService } from './coin-wallet.service'
 import { walletService } from './wallet.service'
 import { cacheService } from './cache.service'
+import { cacheRedisService } from './cacheRedis.service'
 import { vipMembershipRepository } from '../repositories/vipMembership.repository'
 import {
   enqueueVipMembershipExpiry,
@@ -18,6 +19,7 @@ import {
   DIAMOND_COST,
   DIAMOND_PERIOD_DAYS,
   fanSpendIncrementForGift,
+  resolveVipDisplayState,
   SVIP_COST,
   SVIP_PERIOD_DAYS,
   VIP_DAILY_GRANT_COINS,
@@ -71,28 +73,74 @@ function cacheKey(userId: string) {
   return RedisKeys.vipmActive(userId)
 }
 
+async function getDisplayTier(
+  userId: string,
+  now: Date = new Date(),
+): Promise<VipMembershipTier | null> {
+  const rows = await vipMembershipRepository.listPurchasesForDisplay([userId])
+  return resolveVipDisplayState(rows, now).displayTier
+}
+
+async function getDisplayStateByUserIds(
+  userIds: string[],
+  now: Date = new Date(),
+): Promise<Map<string, ReturnType<typeof resolveVipDisplayState>>> {
+  const out = new Map<string, ReturnType<typeof resolveVipDisplayState>>()
+  const rows = await vipMembershipRepository.listPurchasesForDisplay(userIds)
+  const byUser = new Map<string, typeof rows>()
+  for (const row of rows) {
+    const list = byUser.get(row.userId)
+    if (list) list.push(row)
+    else byUser.set(row.userId, [row])
+  }
+  for (const id of userIds) {
+    out.set(id, resolveVipDisplayState(byUser.get(id) ?? [], now))
+  }
+  return out
+}
+
+async function getDisplayTierByUserIds(
+  userIds: string[],
+  now: Date = new Date(),
+): Promise<Map<string, VipMembershipTier>> {
+  const states = await getDisplayStateByUserIds(userIds, now)
+  const out = new Map<string, VipMembershipTier>()
+  for (const [id, state] of states) {
+    if (state.displayTier) out.set(id, state.displayTier)
+  }
+  return out
+}
+
+/** `/users/me` assembled + search-card caches embed `vipMembership.tier`. */
+async function bustProfileVipCaches(userId: string): Promise<void> {
+  await cacheRedisService.del(RedisKeys.userMeAssembled(userId), RedisKeys.userSearchCard(userId))
+}
+
+function cacheTtlSec(expiresAt: Date, cacheUntil?: Date | null): number {
+  const until =
+    cacheUntil != null && cacheUntil.getTime() < expiresAt.getTime() ? cacheUntil : expiresAt
+  return Math.min(VIPM_ACTIVE_TTL_MAX, Math.max(1, Math.floor((until.getTime() - Date.now()) / 1000)))
+}
+
 async function writeMembershipCache(args: {
   userId: string
   isActive: boolean
   expiresAt: Date | null
   tier: VipMembershipTier | null
+  cacheUntil?: Date | null
 }): Promise<void> {
   const key = cacheKey(args.userId)
   if (!args.isActive || !args.expiresAt || args.expiresAt.getTime() <= Date.now() || !args.tier) {
     await cacheService.set(key, 'null', VIPM_ACTIVE_INACTIVE_TTL)
     return
   }
-  const ttlSec = Math.min(
-    VIPM_ACTIVE_TTL_MAX,
-    Math.max(1, Math.floor((args.expiresAt.getTime() - Date.now()) / 1000)),
-  )
   await cacheService.set(
     key,
     JSON.stringify({
       tier: args.tier,
       expiresAt: args.expiresAt.toISOString(),
     }),
-    ttlSec,
+    cacheTtlSec(args.expiresAt, args.cacheUntil),
   )
 }
 
@@ -135,12 +183,18 @@ export const vipMembershipService = {
 
   async refreshCache(userId: string): Promise<void> {
     const state = await vipMembershipRepository.getMembershipState(userId)
-    const tier = state.isActive ? await vipMembershipRepository.getLatestTier(userId) : null
+    const display = state.isActive
+      ? resolveVipDisplayState(
+          await vipMembershipRepository.listPurchasesForDisplay([userId]),
+          new Date(),
+        )
+      : null
     await writeMembershipCache({
       userId,
       isActive: state.isActive,
       expiresAt: state.expiresAt,
-      tier,
+      tier: display?.displayTier ?? null,
+      cacheUntil: display?.displayExpiresAt ?? null,
     })
   },
 
@@ -153,12 +207,18 @@ export const vipMembershipService = {
     }
 
     const state = await vipMembershipRepository.getMembershipState(userId)
-    const tier = state.isActive ? await vipMembershipRepository.getLatestTier(userId) : null
+    const display = state.isActive
+      ? resolveVipDisplayState(
+          await vipMembershipRepository.listPurchasesForDisplay([userId]),
+          new Date(),
+        )
+      : null
     await writeMembershipCache({
       userId,
       isActive: state.isActive,
       expiresAt: state.expiresAt,
-      tier,
+      tier: display?.displayTier ?? null,
+      cacheUntil: display?.displayExpiresAt ?? null,
     })
     return state.isActive
   },
@@ -185,31 +245,17 @@ export const vipMembershipService = {
     if (misses.length > 0) {
       const dbMap = await vipMembershipRepository.getMembershipStateBulk(misses)
       const activeIds = [...dbMap.entries()].filter(([, s]) => s.isActive).map(([id]) => id)
-      const tierRows =
-        activeIds.length > 0
-          ? await prismaRead.vipMembershipPurchase.findMany({
-              where: { userId: { in: activeIds } },
-              orderBy: { createdAt: 'desc' },
-              select: { userId: true, tier: true },
-            })
-          : []
-      const tierByUser = new Map<string, VipMembershipTier>()
-      for (const r of tierRows) {
-        if (!tierByUser.has(r.userId)) tierByUser.set(r.userId, r.tier)
-      }
+      const displayByUser = await getDisplayStateByUserIds(activeIds)
 
       const pipe = redisClient.pipeline()
       for (const id of misses) {
         const st = dbMap.get(id)!
-        const tier = st.isActive ? (tierByUser.get(id) ?? null) : null
+        const display = displayByUser.get(id)
+        const tier = st.isActive ? (display?.displayTier ?? null) : null
         out.set(id, st.isActive)
         if (!st.isActive || !st.expiresAt || !tier || st.expiresAt.getTime() <= Date.now()) {
           pipe.set(cacheKey(id), 'null', 'EX', VIPM_ACTIVE_INACTIVE_TTL)
         } else {
-          const ttlSec = Math.min(
-            VIPM_ACTIVE_TTL_MAX,
-            Math.max(1, Math.floor((st.expiresAt.getTime() - Date.now()) / 1000)),
-          )
           pipe.set(
             cacheKey(id),
             JSON.stringify({
@@ -217,7 +263,7 @@ export const vipMembershipService = {
               expiresAt: st.expiresAt.toISOString(),
             }),
             'EX',
-            ttlSec,
+            cacheTtlSec(st.expiresAt, display?.displayExpiresAt),
           )
         }
       }
@@ -233,9 +279,7 @@ export const vipMembershipService = {
 
   async getMembership(userId: string): Promise<VipMembershipMeDto> {
     const state = await vipMembershipRepository.getMembershipState(userId)
-    const tier = state.isActive
-      ? ((await vipMembershipRepository.getLatestTier(userId)) ?? undefined)
-      : undefined
+    const tier = state.isActive ? ((await getDisplayTier(userId)) ?? undefined) : undefined
     const now = new Date()
     const daysRemaining =
       state.expiresAt && state.expiresAt > now
@@ -277,7 +321,7 @@ export const vipMembershipService = {
         vipLiveTranslationEnabled: false,
       }
     }
-    const tier = (await vipMembershipRepository.getLatestTier(userId)) ?? undefined
+    const tier = (await getDisplayTier(userId)) ?? undefined
     const { expiresAt } = await vipMembershipRepository.getMembershipState(userId)
     return {
       isActive: true,
@@ -300,18 +344,7 @@ export const vipMembershipService = {
     const activeMap = await this.hasActiveBulk(userIds)
     const m = new Map<string, VipMembershipCardDto>()
     const activeIdList = userIds.filter((id) => activeMap.get(id) === true)
-    const tierRows =
-      activeIdList.length > 0
-        ? await prismaRead.vipMembershipPurchase.findMany({
-            where: { userId: { in: activeIdList } },
-            orderBy: { createdAt: 'desc' },
-            select: { userId: true, tier: true },
-          })
-        : []
-    const tierByUser = new Map<string, VipMembershipTier>()
-    for (const r of tierRows) {
-      if (!tierByUser.has(r.userId)) tierByUser.set(r.userId, r.tier)
-    }
+    const tierByUser = await getDisplayTierByUserIds(activeIdList)
     const states = await vipMembershipRepository.getMembershipStateBulk(userIds)
     for (const id of userIds) {
       const isActive = activeMap.get(id) ?? false
@@ -471,6 +504,7 @@ export const vipMembershipService = {
     await walletService.adjustCoinBalanceCache(userId, coinCost)
     await syncLevelCacheFromApplyResult(userId, LevelType.WEALTH, buyerWealthResult)
     await this.refreshCache(userId)
+    await bustProfileVipCaches(userId)
     await removeVipMembershipExpiry(userId)
     await enqueueVipMembershipExpiry(userId, proposedExpiresAt)
 
@@ -563,6 +597,7 @@ export const vipMembershipService = {
       data: { vipSubscriptionActive: false },
     })
     await this.refreshCache(args.userId)
+    await bustProfileVipCaches(args.userId)
   },
 
   async getPurchaseHistory(userId: string, opts: { limit: number; cursor?: string | null }) {

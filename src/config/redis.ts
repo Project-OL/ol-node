@@ -291,7 +291,7 @@ export const RedisKeys = {
     `rich:progress:${userId}:${year}:${month}`,
   richConfig: () => `rich:config`,
   ratelimitRichRead: (userId: string) => `ratelimit:rich:read:${userId}`,
-  /** Paid VIP membership (Diamond/SVIP) active snapshot: JSON `{ tier, expiresAt }` or `null`. */
+  /** Paid VIP membership active snapshot: JSON `{ tier, expiresAt }` (`tier` = display badge) or `null`. */
   vipmActive: (userId: string) => `vipm:active:${userId}`,
   /** Static VIP membership pricing/config cache (optional; service may inline). */
   vipmConfig: () => `vipm:config`,
@@ -382,8 +382,12 @@ export const RedisKeys = {
   faceLivenessConfig: () => 'face-liveness:config',
   /** Admin/CSA login lockout threshold + duration (admin system settings). */
   adminAuthConfig: () => 'admin-auth:config',
+  /** Active restricted identity words (username / first / last substring list). */
+  restrictedIdentityWords: () => 'restricted-identity:words',
   /** Host rejoin cooldown after exit / rejected join (admin system settings). */
   agencyHostConfig: () => 'agency-host:config',
+  /** First-N-days livestream daily reward window + per-hour points (admin system settings). */
+  livestreamRewardConfig: () => 'livestream-reward:config',
   /** Account deletion grace + permanent-delete windows (admin system settings). */
   accountDeletionConfig: () => 'account-deletion:config',
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
@@ -419,6 +423,8 @@ export const RedisKeys = {
   adminViewAccess: (adminId: string) => `admin:views:access:${adminId}`,
   /** Per-admin last searched/viewed users (Redis LIST of userIds; max 10). */
   adminUserSearchHistory: (adminId: string) => `admin:user-search-history:${adminId}`,
+  /** Master ledger: active house (treasury / company-agency) account ids. */
+  ledgerHouseAccounts: () => 'ledger:house-accounts',
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -545,6 +551,9 @@ export const ADMIN_USER_SEARCH_HISTORY_TTL = 60 * 60 * 24 * 90
 /** Max recent users kept in admin search history. */
 export const ADMIN_USER_SEARCH_HISTORY_MAX = 10
 
+/** House account registry cache — busted on every role mutation. */
+export const LEDGER_HOUSE_ACCOUNTS_TTL = 300
+
 export const STORE_CATALOG_TTL = 600
 export const STORE_ITEM_TTL = 600
 export const USER_ACTIVE_STORE_TTL = 300
@@ -568,8 +577,12 @@ export const SUPPORT_CONFIG_TTL = 300
 export const FACE_LIVENESS_CONFIG_TTL = 300
 /** Admin/CSA login lockout config singleton. */
 export const ADMIN_AUTH_CONFIG_TTL = 300
+/** Restricted identity-word list (username / first / last). */
+export const RESTRICTED_IDENTITY_WORDS_TTL = 300
 /** Host rejoin cooldown singleton. */
 export const AGENCY_HOST_CONFIG_TTL = 300
+/** Livestream daily reward singleton. */
+export const LIVESTREAM_REWARD_CONFIG_TTL = 300
 /** Account deletion grace + delete windows singleton. */
 export const ACCOUNT_DELETION_CONFIG_TTL = 300
 /** Agent payroll dashboard summary (tab counts + toggle). */

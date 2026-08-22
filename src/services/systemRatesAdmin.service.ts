@@ -15,6 +15,7 @@ import { agencyCommissionService } from './agencyCommission.service'
 import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import { payrollAdminService } from './payrollAdmin.service'
 import { agencyHostConfigService } from './agencyHostConfig.service'
+import { livestreamRewardConfigService } from './livestreamRewardConfig.service'
 import { accountDeletionConfigService } from './accountDeletionConfig.service'
 import { walletLevelService } from './user-level.service'
 import { videoCallPriceCapService } from './videoCallPriceCap.service'
@@ -491,6 +492,7 @@ export const systemRatesAdminService = {
       commissionWindow,
       payroll,
       agencyHost,
+      livestreamReward,
       accountDeletion,
     ] = await Promise.all([
       hostRevenueShareConfigService.getConfig(),
@@ -506,6 +508,7 @@ export const systemRatesAdminService = {
       agencyCommissionConfigService.getConfig(),
       payrollAdminService.getConfig(),
       agencyHostConfigService.getConfig(),
+      livestreamRewardConfigService.getConfig(),
       accountDeletionConfigService.getConfig(),
     ])
 
@@ -523,6 +526,7 @@ export const systemRatesAdminService = {
       commissionWindow,
       payroll,
       agencyHost,
+      livestreamReward,
       accountDeletion,
     }
   },

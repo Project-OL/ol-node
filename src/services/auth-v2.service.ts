@@ -35,6 +35,7 @@ import type { AuthProvider, CheckAvailabilityResult, JwtAccessPayload } from '..
 import { deviceService } from './device.service'
 import { formatUserName } from '../utils/user-display'
 import { allocateUniqueUsername, assertDisplayNameAvailable } from '../utils/user-identity-unique'
+import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 const SIGNUP_VERIFIED_TTL = 300
@@ -241,6 +242,7 @@ export const authV2Service = {
     const dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : undefined
     const lastName = data.lastName && data.lastName.trim() !== '' ? data.lastName : null
     const avatarUrl = data.avatarUrl && data.avatarUrl.trim() !== '' ? data.avatarUrl.trim() : null
+    await restrictedIdentityWordsService.assertNamePartsNotRestricted(data.firstName, lastName)
     await assertDisplayNameAvailable(data.firstName, lastName, userId)
     await userRepository.updateProfile(userId, {
       firstName: data.firstName,

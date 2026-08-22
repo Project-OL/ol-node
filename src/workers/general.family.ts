@@ -71,6 +71,11 @@ import { platformMessagingService } from '../services/platformMessaging.service'
 import { LEDGER_AUDIT_JOB, LEDGER_AUDIT_QUEUE } from '../queues/ledger-audit.constants'
 import { processLedgerAuditJob } from '../jobs/ledger-audit.job'
 import type { LedgerAuditJobData } from '../queues/ledger-audit.queue'
+import {
+  LEDGER_FLOAT_SNAPSHOT_JOB,
+  LEDGER_FLOAT_SNAPSHOT_QUEUE,
+} from '../queues/ledger-float-snapshot.constants'
+import { processLedgerFloatSnapshotJob } from '../jobs/ledger-float-snapshot.job'
 import { RANKING_BACKFILL_QUEUE } from '../queues/ranking.constants'
 import { registerRankingReconcileJob } from '../queues/ranking.queue'
 import { processRankingBackfillJob } from '../jobs/ranking-backfill.job'
@@ -127,6 +132,26 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   const ledgerAuditWorker = new Worker(
     LEDGER_AUDIT_QUEUE,
     async (job: Job<LedgerAuditJobData>) => processLedgerAuditJob(job),
+    { connection, concurrency: 1 },
+  )
+
+  const ledgerFloatSnapshotQueue = new Queue(LEDGER_FLOAT_SNAPSHOT_QUEUE, { connection })
+  await ledgerFloatSnapshotQueue.add(
+    LEDGER_FLOAT_SNAPSHOT_JOB,
+    {},
+    {
+      jobId: 'ledger-float-snapshot-daily-1am-utc',
+      repeat: { pattern: '0 1 * * *', tz: 'UTC' },
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 60_000 },
+      removeOnComplete: 30,
+      removeOnFail: 30,
+    },
+  )
+
+  const ledgerFloatSnapshotWorker = new Worker(
+    LEDGER_FLOAT_SNAPSHOT_QUEUE,
+    async (job: Job) => processLedgerFloatSnapshotJob(job),
     { connection, concurrency: 1 },
   )
 
@@ -454,6 +479,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   payrollSlaWorker.on('failed', onFail('Payroll SLA'))
   liveSessionWorker.on('failed', onFail('Live session'))
   ledgerAuditWorker.on('failed', onFail('Ledger audit'))
+  ledgerFloatSnapshotWorker.on('failed', onFail('Ledger float snapshot'))
   rankingBackfillWorker.on('failed', onFail('Ranking backfill'))
 
   return {
@@ -463,6 +489,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await liveSessionQueue.close()
       await ledgerAuditWorker.close()
       await ledgerAuditQueue.close()
+      await ledgerFloatSnapshotWorker.close()
+      await ledgerFloatSnapshotQueue.close()
       await payrollSlaWorker.close()
       await payrollSlaQueue.close()
       await epayWebhookRetryWorker.close()
