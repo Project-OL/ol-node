@@ -19,6 +19,7 @@ import {
 } from '../utils/profileDisplay'
 import { formatUserName } from '../utils/user-display'
 import { assertDisplayNameAvailable } from '../utils/user-identity-unique'
+import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'
 import { composePublicAdminTags } from '../utils/adminTags'
 import { detectImageMimeFromBuffer, extensionForImageMime } from '../utils/imageMagic'
 import {
@@ -356,6 +357,7 @@ export const meService = {
       if (sameAsCurrent) {
         noopDuplicateDisplayName = true
       } else {
+        await restrictedIdentityWordsService.assertNamePartsNotRestricted(firstName, lastName)
         await assertDisplayNameAvailable(firstName, lastName, userId)
         if (isFreeUsernameChangeAvailable(row.usernameUpdatedAt)) {
           updatePayload.firstName = firstName

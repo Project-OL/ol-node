@@ -1,5 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { CompanyCashDirection, CompanyCashReason } from '@prisma/client'
+import {
+  CompanyCashDirection,
+  CompanyCashReason,
+  LedgerAccountRoleType,
+  TreasuryFlowClassificationType,
+  TreasuryFlowKind,
+} from '@prisma/client'
 import { AppError } from '../../middlewares/errorHandler'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import {
@@ -8,12 +14,19 @@ import {
   adminCurrencyAdjustBodySchema,
   adminCurrencyAdjustmentsQuerySchema,
   adminCurrencySupplySummaryQuerySchema,
+  adminHouseAccountDeleteBodySchema,
+  adminHouseAccountUpsertBodySchema,
+  adminHouseAccountsQuerySchema,
   adminLedgerPeriodQuerySchema,
+  adminTreasuryFlowClassifyBodySchema,
+  adminTreasuryFlowsQuerySchema,
 } from '../../models/admin-currency.schemas'
 import { adminCurrencyService } from '../../services/adminCurrency.service'
 import { adminAuditMetaFromRequest } from '../../utils/admin-audit'
 import { companyCashService } from '../../services/companyCash.service'
 import { masterLedgerService } from '../../services/masterLedger.service'
+import { ledgerAccountRoleService } from '../../services/ledgerAccountRole.service'
+import { treasuryFlowService } from '../../services/treasuryFlow.service'
 import { auditService } from '../../services/audit.service'
 
 const preAuth = [authenticateAdmin]
@@ -134,6 +147,160 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
           at: parsed.data.at ? new Date(parsed.data.at) : undefined,
         }),
       )
+    },
+  )
+
+  app.get(
+    '/ledger/house-accounts',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Currency'],
+        description:
+          'Registered house accounts (treasury + company agency). House balances are unsold inventory, not liabilities.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminHouseAccountsQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+      }
+      return reply.send(await ledgerAccountRoleService.list(parsed.data.includeInactive))
+    },
+  )
+
+  app.post(
+    '/ledger/house-accounts',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Currency'],
+        description:
+          'Register or update a house account. The user must be an agency agent so it can send trading coins.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminHouseAccountUpsertBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+      }
+      const adminUserId = request.adminUser!.id
+      const row = await ledgerAccountRoleService.upsert({
+        adminUserId,
+        userId: parsed.data.userId,
+        role: parsed.data.role as LedgerAccountRoleType,
+        label: parsed.data.label,
+        note: parsed.data.note,
+        effectiveFrom: parsed.data.effectiveFrom ? new Date(parsed.data.effectiveFrom) : undefined,
+      })
+      auditService.logAdmin({
+        adminUserId,
+        targetUserId: parsed.data.userId,
+        actionType: 'ADMIN_LEDGER_HOUSE_ACCOUNT_UPSERT',
+        actionStatus: 'success',
+        actionDetails: { role: parsed.data.role, label: parsed.data.label ?? null },
+        request: adminAuditMetaFromRequest(request),
+      })
+      return reply.send(row)
+    },
+  )
+
+  app.delete(
+    '/ledger/house-accounts/:userId',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Currency'],
+        description:
+          'Deactivate a house account role. Refused while the account still holds units unless force is set.',
+      },
+    },
+    async (request, reply) => {
+      const { userId } = request.params as { userId: string }
+      const parsed = adminHouseAccountDeleteBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+      }
+      const adminUserId = request.adminUser!.id
+      const result = await ledgerAccountRoleService.deactivate({
+        userId,
+        force: parsed.data.force,
+      })
+      auditService.logAdmin({
+        adminUserId,
+        targetUserId: userId,
+        actionType: 'ADMIN_LEDGER_HOUSE_ACCOUNT_REMOVE',
+        actionStatus: 'success',
+        actionDetails: { force: parsed.data.force === true },
+        request: adminAuditMetaFromRequest(request),
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/ledger/treasury-flows',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Currency'],
+        description:
+          'Treasury outflows with their effective classification. No override means SALE; a house recipient is always INTERNAL.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminTreasuryFlowsQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+      }
+      return reply.send(
+        await treasuryFlowService.list({
+          from: parsed.data.from ? new Date(parsed.data.from) : undefined,
+          to: parsed.data.to ? new Date(parsed.data.to) : undefined,
+          classification: parsed.data.classification as TreasuryFlowClassificationType | undefined,
+          senderUserId: parsed.data.senderUserId,
+          cursor: parsed.data.cursor,
+          limit: parsed.data.limit,
+        }),
+      )
+    },
+  )
+
+  app.post(
+    '/ledger/treasury-flows/classify',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Currency'],
+        description:
+          'Reclassify a treasury outflow as SALE, PROMO, or WRITE_OFF. Overrides are stored only when they differ from the SALE default.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminTreasuryFlowClassifyBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+      }
+      const adminUserId = request.adminUser!.id
+      const result = await treasuryFlowService.classify({
+        adminUserId,
+        flowKind: parsed.data.flowKind as TreasuryFlowKind,
+        flowId: parsed.data.flowId,
+        classification: parsed.data.classification as TreasuryFlowClassificationType,
+        reason: parsed.data.reason,
+      })
+      auditService.logAdmin({
+        adminUserId,
+        actionType: 'ADMIN_TREASURY_FLOW_CLASSIFY',
+        actionStatus: 'success',
+        actionDetails: {
+          flowKind: parsed.data.flowKind,
+          flowId: parsed.data.flowId,
+          classification: parsed.data.classification,
+        },
+        request: adminAuditMetaFromRequest(request),
+      })
+      return reply.send(result)
     },
   )
 

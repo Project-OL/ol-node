@@ -311,7 +311,9 @@ export default async function userAdminRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const result = await adminUserDetailService.updateUser(request.params.userId, parsed.data)
+      const result = await adminUserDetailService.updateUser(request.params.userId, parsed.data, {
+        allowRestricted: request.adminUser?.role === 'SUPER_ADMIN',
+      })
       const changedFields = Object.keys(parsed.data).filter((k) => k !== 'status')
       if (changedFields.length > 0) {
         auditService.logAdminFromRequest(request, {

@@ -4,18 +4,34 @@ import {
   PointTxType,
   Prisma,
   WalletCurrencyType,
-  WithdrawalStatus,
 } from '@prisma/client'
 import { prismaRead } from '../config/database'
-import { POINTS_PER_USD } from '../utils/points-currency'
+import { POINTS_PER_USD, unitsToUsd } from '../utils/points-currency'
 import {
   profitFromCoinToPointSplit,
   profitFromFullCoinSink,
   profitFromWithdrawalFee,
 } from '../utils/platform-profit'
-import { companyAgencyService } from './companyAgency.service'
 import { companyCashService } from './companyCash.service'
 import { platformProfitService } from './platform-profit.service'
+import { ledgerAccountRoleService, type HouseAccounts } from './ledgerAccountRole.service'
+import { treasuryFlowService } from './treasuryFlow.service'
+import { ledgerFloatSnapshotRepository } from '../repositories/ledgerFloatSnapshot.repository'
+
+/**
+ * Master ledger — unit-based accounting at a fixed 10,000 units = $1.
+ *
+ * Accounts are either HOUSE (treasury + company agency) or CUSTOMER. House
+ * balances are unsold inventory, not liabilities; their outflows are imputed
+ * sales. Because consumption moves value out of customer float by exactly the
+ * margin retained, the two reports cross-validate:
+ *
+ *   gross sale units − company payout units = Δ customer float + operating profit
+ *
+ * Promo grants and reward mints cancel out of that identity (they raise float
+ * and lower operating profit equally), so a non-zero delta means a real problem
+ * — most often a house account that was never registered.
+ */
 
 export type LedgerGrain = 'month' | 'quarter' | 'year' | 'custom'
 
@@ -24,15 +40,6 @@ export type LedgerLine = {
   label: string
   units: string
   usd: string
-}
-
-function unitsToUsd(units: bigint): string {
-  const sign = units < 0n ? '-' : ''
-  const abs = units < 0n ? -units : units
-  const whole = abs / POINTS_PER_USD
-  const frac = abs % POINTS_PER_USD
-  const fracStr = frac.toString().padStart(4, '0').slice(0, 2)
-  return `${sign}${whole}.${fracStr}`
 }
 
 function line(id: string, label: string, units: bigint): LedgerLine {
@@ -88,6 +95,21 @@ export function resolveLedgerPeriod(params: {
   return { from, to, grain: 'month' }
 }
 
+/** Which side of the house/customer split a ledger aggregate should cover. */
+type Owner = 'customer' | 'house' | 'any'
+
+/**
+ * Wallet-owner filter. An empty house registry means every account is a
+ * customer, so the `notIn` clause is omitted rather than emitting `NOT IN ()`.
+ */
+function ownerFilter(owner: Owner, house: HouseAccounts): { userId?: Prisma.UuidFilter } {
+  const ids = [...house.allIds]
+  if (owner === 'any' || ids.length === 0) {
+    return owner === 'house' ? { userId: { in: ids } } : {}
+  }
+  return owner === 'house' ? { userId: { in: ids } } : { userId: { notIn: ids } }
+}
+
 async function sumCoin(params: {
   direction: LedgerDirection
   txTypes: CoinTxType[]
@@ -95,13 +117,17 @@ async function sumCoin(params: {
   from?: Date
   to?: Date
   promotionalOnly?: boolean
+  owner?: Owner
+  house?: HouseAccounts
 }): Promise<bigint> {
   const createdAt = dateFilter(params.from, params.to)
+  const owner = params.owner ?? 'any'
+  const ownerWhere = params.house ? ownerFilter(owner, params.house) : {}
   const agg = await prismaRead.coinLedgerEntry.aggregate({
     where: {
       direction: params.direction,
       txType: { in: params.txTypes },
-      wallet: { currencyType: params.currency },
+      wallet: { currencyType: params.currency, ...ownerWhere },
       ...(createdAt ? { createdAt } : {}),
       ...(params.promotionalOnly
         ? { metadata: { path: ['promotional'], equals: true } }
@@ -118,16 +144,43 @@ async function sumPoint(params: {
   from?: Date
   to?: Date
   promotionalOnly?: boolean
+  owner?: Owner
+  house?: HouseAccounts
 }): Promise<bigint> {
   const createdAt = dateFilter(params.from, params.to)
+  const owner = params.owner ?? 'any'
+  const ownerWhere = params.house ? ownerFilter(owner, params.house) : {}
   const agg = await prismaRead.pointLedgerEntry.aggregate({
     where: {
       direction: params.direction,
       txType: { in: params.txTypes },
+      ...(Object.keys(ownerWhere).length > 0 ? { wallet: ownerWhere } : {}),
       ...(createdAt ? { createdAt } : {}),
       ...(params.promotionalOnly
         ? { metadata: { path: ['promotional'], equals: true } }
         : {}),
+    },
+    _sum: { amount: true },
+  })
+  return agg._sum.amount ?? 0n
+}
+
+/** Agency commission credited to customer agencies for one host tx type. */
+async function sumAgencyCommission(params: {
+  hostTxType: PointTxType
+  from?: Date
+  to?: Date
+  house: HouseAccounts
+}): Promise<bigint> {
+  const createdAt = dateFilter(params.from, params.to)
+  const ownerWhere = ownerFilter('customer', params.house)
+  const agg = await prismaRead.pointLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.CREDIT,
+      txType: PointTxType.AGENT_COMMISSION,
+      ...(createdAt ? { createdAt } : {}),
+      ...(Object.keys(ownerWhere).length > 0 ? { wallet: ownerWhere } : {}),
+      metadata: { path: ['hostTxType'], equals: params.hostTxType },
     },
     _sum: { amount: true },
   })
@@ -204,14 +257,151 @@ async function ledgerNetAt(at: Date): Promise<bigint> {
   )
 }
 
+/** Raw unit buckets at an instant, split house vs customer. */
+export type FloatBuckets = {
+  customerCoins: bigint
+  customerTradingCoins: bigint
+  customerHostPoints: bigint
+  customerAgencyPoints: bigint
+  customerTotal: bigint
+  houseCoins: bigint
+  houseTradingCoins: bigint
+  housePoints: bigint
+  houseTotal: bigint
+  ledgerNet: bigint
+  identityDelta: bigint
+}
+
+export const ZERO_FLOAT: FloatBuckets = {
+  customerCoins: 0n,
+  customerTradingCoins: 0n,
+  customerHostPoints: 0n,
+  customerAgencyPoints: 0n,
+  customerTotal: 0n,
+  houseCoins: 0n,
+  houseTradingCoins: 0n,
+  housePoints: 0n,
+  houseTotal: 0n,
+  ledgerNet: 0n,
+  identityDelta: 0n,
+}
+
+/** Full wallet scan at `at`. Prefer {@link floatAt} so snapshots are reused. */
+export async function computeFloatAt(at: Date, house: HouseAccounts): Promise<FloatBuckets> {
+  const [rows, ledgerNet] = await Promise.all([loadWalletBalancesAt(at), ledgerNetAt(at)])
+
+  const b: FloatBuckets = { ...ZERO_FLOAT, ledgerNet }
+  for (const r of rows) {
+    const bal = BigInt(r.balance ?? 0)
+    const isHouse = house.allIds.has(r.user_id)
+    if (r.currency === 'COIN') {
+      if (isHouse) b.houseCoins += bal
+      else b.customerCoins += bal
+    } else if (r.currency === 'TRADING_COIN') {
+      if (isHouse) b.houseTradingCoins += bal
+      else b.customerTradingCoins += bal
+    } else if (r.currency === 'POINT') {
+      if (isHouse) b.housePoints += bal
+      else if (r.is_agent) b.customerAgencyPoints += bal
+      else b.customerHostPoints += bal
+    }
+  }
+
+  b.customerTotal =
+    b.customerCoins + b.customerTradingCoins + b.customerHostPoints + b.customerAgencyPoints
+  b.houseTotal = b.houseCoins + b.houseTradingCoins + b.housePoints
+  // Identity spans every wallet: house + customer must equal global credit − debit.
+  b.identityDelta = b.customerTotal + b.houseTotal - b.ledgerNet
+  return b
+}
+
+/**
+ * Float at `at`, served from the daily snapshot when one exists for that exact
+ * instant. Period starts land on UTC day boundaries so they normally hit the
+ * snapshot, leaving only the period end to be scanned live.
+ */
+export async function floatAt(
+  at: Date,
+  house: HouseAccounts,
+  opts?: { allowSnapshot?: boolean },
+): Promise<{ buckets: FloatBuckets; source: 'snapshot' | 'live' }> {
+  if (opts?.allowSnapshot !== false) {
+    const snap = await ledgerFloatSnapshotRepository.findAt(at)
+    if (snap) {
+      return {
+        source: 'snapshot',
+        buckets: {
+          customerCoins: snap.customerCoins,
+          customerTradingCoins: snap.customerTradingCoins,
+          customerHostPoints: snap.customerHostPoints,
+          customerAgencyPoints: snap.customerAgencyPoints,
+          customerTotal: snap.customerTotal,
+          houseCoins: snap.houseCoins,
+          houseTradingCoins: snap.houseTradingCoins,
+          housePoints: snap.housePoints,
+          houseTotal: snap.houseTotal,
+          ledgerNet: snap.ledgerNet,
+          identityDelta: snap.identityDelta,
+        },
+      }
+    }
+  }
+  return { source: 'live', buckets: await computeFloatAt(at, house) }
+}
+
+/** Company fiat actually paid out, expressed in units. */
+async function companyPayoutUnits(from?: Date, to?: Date): Promise<bigint> {
+  const rows = await prismaRead.$queryRaw<{ units: bigint | null }[]>(Prisma.sql`
+    SELECT COALESCE(
+             SUM(COALESCE(units_amount, ROUND(amount_usd * ${POINTS_PER_USD.toString()}::numeric)::bigint)),
+             0
+           ) AS units
+    FROM company_cash_entries
+    WHERE direction = 'OUT'
+      AND promotional = false
+      ${from ? Prisma.sql`AND created_at >= ${from}` : Prisma.empty}
+      ${to ? Prisma.sql`AND created_at < ${to}` : Prisma.empty}
+  `)
+  return BigInt(rows[0]?.units ?? 0)
+}
+
+/** Units that left customer accounts back into a house account (sale refunds). */
+async function returnsToHouseUnits(
+  house: HouseAccounts,
+  from?: Date,
+  to?: Date,
+): Promise<bigint> {
+  if (house.allIds.size === 0) return 0n
+  const ids = Prisma.join([...house.allIds].map((id) => Prisma.sql`${id}::uuid`))
+  const [coin, point] = await Promise.all([
+    prismaRead.$queryRaw<{ units: bigint | null }[]>(Prisma.sql`
+      SELECT COALESCE(SUM(t.trading_coins_debited), 0) AS units
+      FROM coin_trading_transfers t
+      WHERE t.recipient_user_id IN (${ids})
+        AND t.sender_agent_user_id NOT IN (${ids})
+        AND t.reversed_at IS NULL
+        ${from ? Prisma.sql`AND t.created_at >= ${from}` : Prisma.empty}
+        ${to ? Prisma.sql`AND t.created_at < ${to}` : Prisma.empty}
+    `),
+    prismaRead.$queryRaw<{ units: bigint | null }[]>(Prisma.sql`
+      SELECT COALESCE(SUM(t.points), 0) AS units
+      FROM agent_point_transfers t
+      WHERE t.recipient_agent_user_id IN (${ids})
+        AND t.sender_agent_user_id NOT IN (${ids})
+        ${from ? Prisma.sql`AND t.created_at >= ${from}` : Prisma.empty}
+        ${to ? Prisma.sql`AND t.created_at < ${to}` : Prisma.empty}
+    `),
+  ])
+  return BigInt(coin[0]?.units ?? 0) + BigInt(point[0]?.units ?? 0)
+}
+
 export const masterLedgerService = {
   unitsToUsd,
 
-  async stock(at: Date) {
-    const companyAgencyUserId = companyAgencyService.configuredUserId()
-    const [rows, ledgerNet, mint, convertedCoinsCreated] = await Promise.all([
-      loadWalletBalancesAt(at),
-      ledgerNetAt(at),
+  async stock(at: Date, houseArg?: HouseAccounts) {
+    const house = houseArg ?? (await ledgerAccountRoleService.getHouseAccounts())
+    const [{ buckets }, mint, convertedCoinsCreated, houseMinted] = await Promise.all([
+      floatAt(at, house, { allowSnapshot: false }),
       platformProfitService.summarizeAdminCurrencySupply({ to: at }),
       sumCoin({
         direction: LedgerDirection.CREDIT,
@@ -219,30 +409,61 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.COIN,
         to: at,
       }),
+      house.allIds.size === 0
+        ? Promise.resolve(0n)
+        : (async () => {
+            const [coinC, coinD, tradeC, tradeD, pointC, pointD] = await Promise.all([
+              sumCoin({
+                direction: LedgerDirection.CREDIT,
+                txTypes: [CoinTxType.ADJUSTMENT],
+                currency: WalletCurrencyType.COIN,
+                to: at,
+                owner: 'house',
+                house,
+              }),
+              sumCoin({
+                direction: LedgerDirection.DEBIT,
+                txTypes: [CoinTxType.ADJUSTMENT],
+                currency: WalletCurrencyType.COIN,
+                to: at,
+                owner: 'house',
+                house,
+              }),
+              sumCoin({
+                direction: LedgerDirection.CREDIT,
+                txTypes: [CoinTxType.ADJUSTMENT],
+                currency: WalletCurrencyType.TRADING_COIN,
+                to: at,
+                owner: 'house',
+                house,
+              }),
+              sumCoin({
+                direction: LedgerDirection.DEBIT,
+                txTypes: [CoinTxType.ADJUSTMENT],
+                currency: WalletCurrencyType.TRADING_COIN,
+                to: at,
+                owner: 'house',
+                house,
+              }),
+              sumPoint({
+                direction: LedgerDirection.CREDIT,
+                txTypes: [PointTxType.ADJUSTMENT],
+                to: at,
+                owner: 'house',
+                house,
+              }),
+              sumPoint({
+                direction: LedgerDirection.DEBIT,
+                txTypes: [PointTxType.ADJUSTMENT],
+                to: at,
+                owner: 'house',
+                house,
+              }),
+            ])
+            return coinC - coinD + tradeC - tradeD + pointC - pointD
+          })(),
     ])
 
-    let personalCoins = 0n
-    let tradingCoins = 0n
-    let hostPoints = 0n
-    let agencyPoints = 0n
-    let companyAgencyPoints = 0n
-    let companyAgencyTrading = 0n
-
-    for (const r of rows) {
-      const bal = BigInt(r.balance ?? 0)
-      if (r.currency === 'COIN') personalCoins += bal
-      else if (r.currency === 'TRADING_COIN') {
-        if (companyAgencyUserId && r.user_id === companyAgencyUserId) companyAgencyTrading += bal
-        else tradingCoins += bal
-      } else if (r.currency === 'POINT') {
-        if (companyAgencyUserId && r.user_id === companyAgencyUserId) companyAgencyPoints += bal
-        else if (r.is_agent) agencyPoints += bal
-        else hostPoints += bal
-      }
-    }
-
-    const outstanding =
-      personalCoins + tradingCoins + hostPoints + agencyPoints + companyAgencyPoints + companyAgencyTrading
     const netMinted =
       BigInt(mint.created.coins) +
       BigInt(mint.created.points) +
@@ -250,37 +471,214 @@ export const masterLedgerService = {
       BigInt(mint.returned.coins) -
       BigInt(mint.returned.points) -
       BigInt(mint.returned.tradingCoins)
-    const destroyedUnits = netMinted - outstanding
-    const identityDelta = outstanding - ledgerNet
-    const identityOk = identityDelta === 0n
 
-    const inventory: LedgerLine[] = [
-      line('personalCoins', 'User unspent coins', personalCoins),
-      line('convertedCoinsCreated', 'Host coins created via point conversion (cumulative credits)', convertedCoinsCreated),
-      line('tradingCoins', 'Agency trading-coin stock', tradingCoins),
-      line('hostPoints', 'Host unconverted points', hostPoints),
-      line('agencyPoints', 'Agency points (commission + payroll reward)', agencyPoints),
-      line('companyAgencyPoints', 'Company-agency takeover points', companyAgencyPoints),
-      line('companyAgencyTrading', 'Company-agency trading coins', companyAgencyTrading),
-      line('outstanding', 'Total outstanding', outstanding),
-      line('netMinted', 'Net admin issued', netMinted),
-      line('destroyedUnits', 'Company retained (issued − outstanding)', destroyedUnits),
+    const outstanding = buckets.customerTotal
+    const totalUnits = buckets.customerTotal + buckets.houseTotal
+    const destroyedUnits = netMinted - totalUnits
+
+    const customerFloat: LedgerLine[] = [
+      line('userCoins', 'User unspent coins', buckets.customerCoins),
+      line('agencyTradingCoins', 'Agency trading-coin stock', buckets.customerTradingCoins),
+      line('hostPoints', 'Host unconverted points', buckets.customerHostPoints),
+      line('agencyPoints', 'Agency points (commission + payroll)', buckets.customerAgencyPoints),
+      line('customerFloatTotal', 'Total customer float (liability)', buckets.customerTotal),
+    ]
+
+    const houseInventory: LedgerLine[] = [
+      line('houseCoins', 'House personal coins', buckets.houseCoins),
+      line('houseTradingCoins', 'House trading-coin inventory', buckets.houseTradingCoins),
+      line('housePoints', 'House points (incl. takeover inventory)', buckets.housePoints),
+      line('houseInventoryTotal', 'Total house inventory (not a liability)', buckets.houseTotal),
     ]
 
     return {
       at: at.toISOString(),
-      companyAgencyUserId,
-      identityOk,
-      identityDelta: identityDelta.toString(),
-      inventory,
+      houseAccountIds: [...house.allIds],
+      treasuryAccountIds: [...house.treasuryIds],
+      companyAgencyAccountIds: [...house.companyAgencyIds],
+      /** Kept for the pre-treasury response shape. */
+      companyAgencyUserId: [...house.companyAgencyIds][0] ?? null,
+      identityOk: buckets.identityDelta === 0n,
+      identityDelta: buckets.identityDelta.toString(),
+      customerFloat,
+      houseInventory,
+      /** Legacy combined view: customer float first, then house inventory. */
+      inventory: [
+        ...customerFloat,
+        ...houseInventory,
+        line(
+          'convertedCoinsCreated',
+          'Host coins created via point conversion (cumulative, memo)',
+          convertedCoinsCreated,
+        ),
+        line('netMinted', 'Net admin issued', netMinted),
+      ],
       outstanding: outstanding.toString(),
       outstandingUsd: unitsToUsd(outstanding),
+      customerFloatUnits: buckets.customerTotal.toString(),
+      customerFloatUsd: unitsToUsd(buckets.customerTotal),
+      houseInventoryUnits: buckets.houseTotal.toString(),
+      houseInventoryUsd: unitsToUsd(buckets.houseTotal),
+      totalUnits: totalUnits.toString(),
       netMinted: netMinted.toString(),
+      houseMinted: houseMinted.toString(),
       destroyedUnits: destroyedUnits.toString(),
+      ledgerNet: buckets.ledgerNet.toString(),
     }
   },
 
-  async operatingPnl(from: Date, to: Date) {
+  /**
+   * Imputed cash view: units sold out of house inventory valued at 10,000 = $1,
+   * less the fiat the company actually paid out and the units it gave away.
+   */
+  async imputedCash(from: Date, to: Date, houseArg?: HouseAccounts) {
+    const house = houseArg ?? (await ledgerAccountRoleService.getHouseAccounts())
+
+    const [
+      treasury,
+      epayCoinTopups,
+      epayTradingTopups,
+      adminCreditsCoin,
+      adminCreditsTrading,
+      adminCreditsPoint,
+      promoCoins,
+      promoTrading,
+      promoPoints,
+      payouts,
+      returnsToHouse,
+    ] = await Promise.all([
+      treasuryFlowService.periodTotals({ from, to }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [CoinTxType.TOPUP],
+        currency: WalletCurrencyType.COIN,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [CoinTxType.TRADING_TOPUP],
+        currency: WalletCurrencyType.TRADING_COIN,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [CoinTxType.ADJUSTMENT],
+        currency: WalletCurrencyType.COIN,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [CoinTxType.ADJUSTMENT],
+        currency: WalletCurrencyType.TRADING_COIN,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [PointTxType.ADJUSTMENT],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [CoinTxType.ADJUSTMENT],
+        currency: WalletCurrencyType.COIN,
+        from,
+        to,
+        promotionalOnly: true,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [CoinTxType.ADJUSTMENT],
+        currency: WalletCurrencyType.TRADING_COIN,
+        from,
+        to,
+        promotionalOnly: true,
+        owner: 'customer',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [PointTxType.ADJUSTMENT],
+        from,
+        to,
+        promotionalOnly: true,
+        owner: 'customer',
+        house,
+      }),
+      companyPayoutUnits(from, to),
+      returnsToHouseUnits(house, from, to),
+    ])
+
+    const promoAdminMints = promoCoins + promoTrading + promoPoints
+    // Promotional credits are a cost, so they must not also count as a sale.
+    const directAdminSales =
+      adminCreditsCoin + adminCreditsTrading + adminCreditsPoint - promoAdminMints
+    const treasuryGiveaway = treasury.promoUnits + treasury.writeOffUnits
+
+    const revenue: LedgerLine[] = [
+      line('treasurySales', 'Treasury unit sales (imputed)', treasury.saleUnits),
+      line('treasurySaleReversals', 'Treasury sale reversals', -treasury.reversedSaleUnits),
+      line('returnsToHouse', 'Units returned to house accounts', -returnsToHouse),
+      line('epayCoinTopups', 'Epay personal coin top-ups', epayCoinTopups),
+      line('epayTradingTopups', 'Epay trading-coin top-ups', epayTradingTopups),
+      line('directAdminSales', 'Direct admin mints to customers', directAdminSales),
+    ]
+
+    let grossSaleUnits = 0n
+    for (const l of revenue) grossSaleUnits += BigInt(l.units)
+
+    const costs: LedgerLine[] = [
+      line('companyPayouts', 'Company fiat payouts (EPAY + takeover)', -payouts),
+      line('treasuryGiveaway', 'Treasury promo / write-off grants', -treasuryGiveaway),
+      line('promoAdminMints', 'Promotional admin mints', -promoAdminMints),
+    ]
+
+    const netMargin = grossSaleUnits - payouts - treasuryGiveaway - promoAdminMints
+
+    return {
+      revenue,
+      costs,
+      grossSaleUnits: grossSaleUnits.toString(),
+      grossSaleUsd: unitsToUsd(grossSaleUnits),
+      companyPayoutUnits: payouts.toString(),
+      companyPayoutUsd: unitsToUsd(payouts),
+      netMarginUnits: netMargin.toString(),
+      netMarginUsd: unitsToUsd(netMargin),
+      saleCount: treasury.saleCount,
+      treasuryConfigured: house.treasuryIds.size > 0,
+      /** Raw figures the reconciliation identity consumes. */
+      _internal: {
+        grossSaleUnits,
+        payouts,
+        treasuryGiveaway,
+        promoAdminMints,
+      },
+    }
+  },
+
+  /**
+   * Consumption P&L. Revenue is recognised when units are spent, not when they
+   * are sold, so this and {@link imputedCash} only agree once customer float is
+   * flat.
+   */
+  async operatingPnl(from: Date, to: Date, houseArg?: HouseAccounts) {
+    const house = houseArg ?? (await ledgerAccountRoleService.getHouseAccounts())
     const createdAt = dateFilter(from, to)
 
     const giftAgg = await prismaRead.giftTransaction.aggregate({
@@ -295,28 +693,12 @@ export const masterLedgerService = {
         from,
         to,
       }),
-      prismaRead.pointLedgerEntry.aggregate({
-        where: {
-          direction: LedgerDirection.CREDIT,
-          txType: PointTxType.AGENT_COMMISSION,
-          createdAt,
-          metadata: { path: ['hostTxType'], equals: PointTxType.GIFT_RECEIVE },
-        },
-        _sum: { amount: true },
-      }),
-      prismaRead.pointLedgerEntry.aggregate({
-        where: {
-          direction: LedgerDirection.CREDIT,
-          txType: PointTxType.AGENT_COMMISSION,
-          createdAt,
-          metadata: { path: ['hostTxType'], equals: PointTxType.LIVESTREAM_GIFT },
-        },
-        _sum: { amount: true },
-      }),
+      sumAgencyCommission({ hostTxType: PointTxType.GIFT_RECEIVE, from, to, house }),
+      sumAgencyCommission({ hostTxType: PointTxType.LIVESTREAM_GIFT, from, to, house }),
     ])
     const giftCoins = BigInt(giftAgg._sum.coinCost ?? 0) - giftRefunds
     const giftHost = BigInt(giftAgg._sum.pointsAwarded ?? 0)
-    const giftAgency = (giftAgencyReceive._sum.amount ?? 0n) + (giftAgencyLive._sum.amount ?? 0n)
+    const giftAgency = giftAgencyReceive + giftAgencyLive
     const gifts = profitFromCoinToPointSplit({
       coinsSpent: giftCoins < 0n ? 0n : giftCoins,
       hostPoints: giftHost,
@@ -359,16 +741,10 @@ export const masterLedgerService = {
           txTypes: [p.pointType],
           from,
           to,
+          owner: 'customer',
+          house,
         }),
-        prismaRead.pointLedgerEntry.aggregate({
-          where: {
-            direction: LedgerDirection.CREDIT,
-            txType: PointTxType.AGENT_COMMISSION,
-            createdAt,
-            metadata: { path: ['hostTxType'], equals: p.pointType },
-          },
-          _sum: { amount: true },
-        }),
+        sumAgencyCommission({ hostTxType: p.pointType, from, to, house }),
       ])
       splitLines.push({
         id: p.id,
@@ -376,7 +752,7 @@ export const masterLedgerService = {
         units: profitFromCoinToPointSplit({
           coinsSpent: coins,
           hostPoints: host,
-          agencyCommissionPoints: agency._sum.amount ?? 0n,
+          agencyCommissionPoints: agency,
         }).rawCoins,
       })
     }
@@ -400,6 +776,13 @@ export const masterLedgerService = {
       promoCoins,
       promoPoints,
       promoTrading,
+      coinExpiry,
+      forceExitPenalty,
+      adminClawbackCoin,
+      adminClawbackTrading,
+      adminClawbackPoint,
+      withdrawalDebits,
+      withdrawalCustomerCredits,
     ] = await Promise.all([
       prismaRead.userStoreItem.aggregate({
         where: createdAt ? { createdAt } : undefined,
@@ -470,6 +853,8 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.COIN,
         from,
         to,
+        owner: 'customer',
+        house,
       }),
       sumCoin({
         direction: LedgerDirection.CREDIT,
@@ -477,6 +862,8 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.COIN,
         from,
         to,
+        owner: 'customer',
+        house,
       }),
       sumCoin({
         direction: LedgerDirection.CREDIT,
@@ -484,6 +871,8 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.COIN,
         from,
         to,
+        owner: 'customer',
+        house,
       }),
       sumCoin({
         direction: LedgerDirection.CREDIT,
@@ -491,12 +880,16 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.COIN,
         from,
         to,
+        owner: 'customer',
+        house,
       }),
       sumPoint({
         direction: LedgerDirection.CREDIT,
         txTypes: [PointTxType.LIVESTREAM_STREAK_REWARD, PointTxType.PLATFORM_REWARD],
         from,
         to,
+        owner: 'customer',
+        house,
       }),
       sumCoin({
         direction: LedgerDirection.CREDIT,
@@ -505,6 +898,8 @@ export const masterLedgerService = {
         from,
         to,
         promotionalOnly: true,
+        owner: 'customer',
+        house,
       }),
       sumPoint({
         direction: LedgerDirection.CREDIT,
@@ -512,6 +907,8 @@ export const masterLedgerService = {
         from,
         to,
         promotionalOnly: true,
+        owner: 'customer',
+        house,
       }),
       sumCoin({
         direction: LedgerDirection.CREDIT,
@@ -520,27 +917,106 @@ export const masterLedgerService = {
         from,
         to,
         promotionalOnly: true,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [CoinTxType.EXPIRE],
+        currency: WalletCurrencyType.COIN,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [PointTxType.AGENCY_FORCE_EXIT_PENALTY],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [CoinTxType.ADJUSTMENT],
+        currency: WalletCurrencyType.COIN,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [CoinTxType.ADJUSTMENT],
+        currency: WalletCurrencyType.TRADING_COIN,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [PointTxType.ADJUSTMENT],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      // Withdrawal subsystem is measured from the ledger rather than the
+      // withdrawals table so refunds, disputes, takeovers and cross-period
+      // settlement all net out on their own.
+      sumPoint({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [PointTxType.WITHDRAWAL, PointTxType.WITHDRAWAL_ESCROW_SETTLED],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [
+          PointTxType.PAYROLL_HOST_PAYOUT,
+          PointTxType.PAYROLL_PROCESSING_REWARD,
+          PointTxType.PAYROLL_TAKEOVER_INVENTORY,
+          PointTxType.WITHDRAWAL_REFUND,
+        ],
+        from,
+        to,
+        owner: 'customer',
+        house,
       }),
     ])
+
+    const payouts = await companyPayoutUnits(from, to)
 
     const storeUnits = profitFromFullCoinSink(BigInt(store._sum.coinsPaid ?? 0))
     const conversionSpread = pointExchangeOut - coinExchangeIn - tradingExchangeIn
     const customNet = customGift - customRefund
-    const promoCost = promoCoins + promoPoints + promoTrading
-    const rewardCost =
-      dailyLogin + weeklyTopup + platformRewardCoins + vipReward + streak + promoCost
+    const promoAdminMints = promoCoins + promoPoints + promoTrading
+    const rewardCost = dailyLogin + weeklyTopup + platformRewardCoins + vipReward + streak
+    const adminClawback = adminClawbackCoin + adminClawbackTrading + adminClawbackPoint
+    // Net float reduction caused by the withdrawal subsystem, minus the fiat the
+    // company itself paid (that leg is a cost in the imputed-cash report).
+    const withdrawalNet = withdrawalDebits - withdrawalCustomerCredits - payouts
 
+    const treasury = await treasuryFlowService.periodTotals({ from, to })
+    const treasuryGiveaway = treasury.promoUnits + treasury.writeOffUnits
+
+    // Fee-snapshot view of the same economics, kept as a memo because the
+    // ledger-derived line above is what reconciles.
     const withdrawals = await prismaRead.withdrawal.findMany({
       where: {
         platformFeePoints: { not: null },
-        status: { in: [WithdrawalStatus.PAID, WithdrawalStatus.WAITING] },
+        status: { in: ['PAID', 'WAITING'] },
         OR: [{ processedAt: createdAt }, { processedAt: null, requestedAt: createdAt }],
       },
       select: { platformFeePoints: true, agentRewardPoints: true, serviceFeePoints: true },
     })
-    let withdrawShare = 0n
+    let feeShareMemo = 0n
     for (const w of withdrawals) {
-      withdrawShare += profitFromWithdrawalFee({
+      feeShareMemo += profitFromWithdrawalFee({
         platformFeePoints: w.platformFeePoints ?? 0n,
         agentRewardPoints: w.agentRewardPoints ?? 0n,
         serviceFeePoints: w.serviceFeePoints ?? 0n,
@@ -556,22 +1032,119 @@ export const masterLedgerService = {
       line('usernameChange', 'Username change', username),
       line('globalMessage', 'Global message', globalMessage),
       line('customGifts', 'Custom gifts (net)', customNet < 0n ? 0n : customNet),
-      line('conversionSpread', 'Point→coin conversion spread', conversionSpread < 0n ? 0n : conversionSpread),
-      line('withdrawCompanyShare', 'Withdraw company share (40% of fee + EPAY service)', withdrawShare),
+      line(
+        'conversionSpread',
+        'Point→coin conversion spread',
+        conversionSpread < 0n ? 0n : conversionSpread,
+      ),
+      line('withdrawalNet', 'Withdrawal retention (net of company payouts)', withdrawalNet),
+      line('coinExpiry', 'Expired coins', coinExpiry),
+      line('forceExitPenalty', 'Agency force-exit penalties', forceExitPenalty),
+      line('adminClawback', 'Admin clawbacks from customers', adminClawback),
     ]
     const costLines: LedgerLine[] = [
-      line('rewards', 'Platform rewards / login / streak / promo mint', -rewardCost),
+      line('rewards', 'Platform rewards / login / streak', -rewardCost),
+      line('promoAdminMints', 'Promotional admin mints', -promoAdminMints),
+      line('treasuryGiveaway', 'Treasury promo / write-off grants', -treasuryGiveaway),
     ]
+
     let operating = 0n
     for (const l of revenueLines) operating += BigInt(l.units)
-    operating -= rewardCost
+    for (const l of costLines) operating += BigInt(l.units)
 
     return {
       revenue: revenueLines,
       costs: costLines,
+      memo: [
+        line('withdrawFeeShareMemo', 'Withdrawal fee share (fee-snapshot view)', feeShareMemo),
+        line('hostPointsEarned', 'Host points earned from spend', giftHost),
+        line('agencyCommission', 'Agency commission minted', giftAgency),
+      ],
       operatingProfitUnits: operating.toString(),
       operatingProfitUsd: unitsToUsd(operating),
     }
+  },
+
+  /** Non-additive breakdown of where units moved inside customer float. */
+  async unitFlowMemo(from: Date, to: Date, house: HouseAccounts) {
+    const [
+      hostPoints,
+      agencyCommission,
+      agencyPayroll,
+      takeoverInventory,
+      withdrawalDebits,
+      withdrawalRefunds,
+      rewardPoints,
+    ] = await Promise.all([
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [
+          PointTxType.GIFT_RECEIVE,
+          PointTxType.LIVESTREAM_GIFT,
+          PointTxType.VIDEO_CALL,
+          PointTxType.SUBSCRIPTION,
+          PointTxType.GUARDIAN_PURCHASE,
+        ],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [PointTxType.AGENT_COMMISSION],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [PointTxType.PAYROLL_HOST_PAYOUT, PointTxType.PAYROLL_PROCESSING_REWARD],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [PointTxType.PAYROLL_TAKEOVER_INVENTORY],
+        from,
+        to,
+        owner: 'house',
+        house,
+      }),
+      sumPoint({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [PointTxType.WITHDRAWAL, PointTxType.WITHDRAWAL_ESCROW_SETTLED],
+        from,
+        to,
+      }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [PointTxType.WITHDRAWAL_REFUND],
+        from,
+        to,
+      }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [PointTxType.LIVESTREAM_STREAK_REWARD, PointTxType.PLATFORM_REWARD],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+    ])
+
+    return [
+      line('hostPointsEarned', 'Host points earned from user spend', hostPoints),
+      line('agencyCommissionMinted', 'Agency commission points minted', agencyCommission),
+      line('agencyPayrollCredits', 'Agency payroll credits (liability transfer)', agencyPayroll),
+      line('takeoverInventory', 'Company-agency takeover inventory', takeoverInventory),
+      line('withdrawalsSettled', 'Host points withdrawn (gross)', withdrawalDebits),
+      line('withdrawalRefunds', 'Withdrawal refunds returned', withdrawalRefunds),
+      line('rewardPointsMinted', 'Reward points minted', rewardPoints),
+    ]
   },
 
   async dashboard(params: { from?: Date; to?: Date; grain?: LedgerGrain; at?: Date }) {
@@ -581,11 +1154,27 @@ export const masterLedgerService = {
       grain: params.grain,
     })
     const at = params.at ?? period.to
-    const [stock, pnl, cash] = await Promise.all([
-      this.stock(at),
-      this.operatingPnl(period.from, period.to),
+    const house = await ledgerAccountRoleService.getHouseAccounts()
+
+    const [stock, pnl, imputed, cash, openingFloat, memo] = await Promise.all([
+      this.stock(at, house),
+      this.operatingPnl(period.from, period.to, house),
+      this.imputedCash(period.from, period.to, house),
       companyCashService.periodCash({ from: period.from, to: period.to }),
+      floatAt(period.from, house),
+      this.unitFlowMemo(period.from, period.to, house),
     ])
+
+    // gross sales − company payouts = Δ customer float + operating profit
+    const closingFloatUnits = BigInt(stock.customerFloatUnits)
+    const openingFloatUnits = openingFloat.buckets.customerTotal
+    const deltaFloat = closingFloatUnits - openingFloatUnits
+    const lhs = imputed._internal.grossSaleUnits - imputed._internal.payouts
+    const rhs = deltaFloat + BigInt(pnl.operatingProfitUnits)
+    const reconciliationDelta = lhs - rhs
+
+    const { _internal, ...imputedPublic } = imputed
+
     return {
       period: {
         grain: period.grain,
@@ -593,17 +1182,49 @@ export const masterLedgerService = {
         to: period.to.toISOString(),
       },
       hero: {
-        capitalInUsd: cash.capitalInUsd,
-        cashOutUsd: cash.cashOutUsd,
-        cashProfitUsd: cash.cashProfitUsd,
+        // Legacy key names retained; now carrying the imputed figures.
+        capitalInUsd: imputed.grossSaleUsd,
+        cashOutUsd: imputed.companyPayoutUsd,
+        cashProfitUsd: imputed.netMarginUsd,
         operatingProfitUnits: pnl.operatingProfitUnits,
         operatingProfitUsd: pnl.operatingProfitUsd,
         identityOk: stock.identityOk,
         identityDelta: stock.identityDelta,
+        grossSaleUnits: imputed.grossSaleUnits,
+        grossSaleUsd: imputed.grossSaleUsd,
+        companyPayoutUnits: imputed.companyPayoutUnits,
+        companyPayoutUsd: imputed.companyPayoutUsd,
+        netImputedMarginUnits: imputed.netMarginUnits,
+        netImputedMarginUsd: imputed.netMarginUsd,
+        customerFloatUnits: stock.customerFloatUnits,
+        customerFloatUsd: stock.customerFloatUsd,
+        houseInventoryUnits: stock.houseInventoryUnits,
+        houseInventoryUsd: stock.houseInventoryUsd,
+        treasuryConfigured: imputed.treasuryConfigured,
+        reconciliationOk: reconciliationDelta === 0n,
+        reconciliationDelta: reconciliationDelta.toString(),
       },
       stock,
       pnl,
-      cash,
+      imputed: imputedPublic,
+      reconciliation: {
+        ok: reconciliationDelta === 0n,
+        delta: reconciliationDelta.toString(),
+        deltaUsd: unitsToUsd(reconciliationDelta),
+        grossSaleUnits: imputed.grossSaleUnits,
+        companyPayoutUnits: imputed.companyPayoutUnits,
+        openingCustomerFloatUnits: openingFloatUnits.toString(),
+        closingCustomerFloatUnits: closingFloatUnits.toString(),
+        deltaCustomerFloatUnits: deltaFloat.toString(),
+        operatingProfitUnits: pnl.operatingProfitUnits,
+        openingFloatSource: openingFloat.source,
+      },
+      unitFlow: memo,
+      /**
+       * Recorded fiat journal. Audit-only under pure imputation: revenue now
+       * comes from unit flow, so counting these rows too would double count.
+       */
+      cash: { ...cash, recordedOnly: true as const },
     }
   },
 }

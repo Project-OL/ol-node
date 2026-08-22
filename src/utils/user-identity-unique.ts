@@ -1,6 +1,8 @@
 import { AppError } from '../middlewares/errorHandler'
 import { userRepository } from '../repositories/user.repository'
 import { formatUserName } from './user-display'
+import { containsRestrictedWord } from './restricted-identity-words'
+import { restrictedIdentityWordsService } from '../services/restrictedIdentityWords.service'
 
 export const USERNAME_TAKEN = 'USERNAME_TAKEN'
 export const USERNAME_TAKEN_MESSAGE = 'Username is already taken'
@@ -76,15 +78,23 @@ export async function assertDisplayNameAvailable(
  * User-chosen names should use {@link assertUsernameAvailable} instead (409).
  */
 export async function allocateUniqueUsername(preferred: string): Promise<string> {
-  const base = preferred.trim().slice(0, 240) || 'user'
-  if (!(await isIdentityTaken(base))) return base
+  const words = await restrictedIdentityWordsService.getActiveWords()
+  let base = preferred.trim().slice(0, 240) || 'user'
+  if (containsRestrictedWord(base, words)) {
+    base = 'user'
+  }
+
+  const usable = async (candidate: string) =>
+    !containsRestrictedWord(candidate, words) && !(await isIdentityTaken(candidate))
+
+  if (await usable(base)) return base
 
   for (let i = 2; i <= 50; i += 1) {
     const candidate = `${base}_${i}`.slice(0, 255)
-    if (!(await isIdentityTaken(candidate))) return candidate
+    if (await usable(candidate)) return candidate
   }
 
   const fallback = `${base}_${Date.now().toString(36)}`.slice(0, 255)
-  if (await isIdentityTaken(fallback)) throwUsernameTaken()
+  if (!(await usable(fallback))) throwUsernameTaken()
   return fallback
 }

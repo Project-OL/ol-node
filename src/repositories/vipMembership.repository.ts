@@ -2,6 +2,15 @@ import type { Prisma, VipMembershipTier } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 
+const displayPurchaseSelect = {
+  id: true,
+  userId: true,
+  tier: true,
+  periodDays: true,
+  createdAt: true,
+  expiresAtAfter: true,
+} as const
+
 export const vipMembershipRepository = {
   async getMembershipState(userId: string) {
     const u = await prismaRead.user.findUnique({
@@ -210,13 +219,13 @@ export const vipMembershipRepository = {
     return { items: page, nextCursor, hasMore }
   },
 
-  async getLatestTier(userId: string) {
-    const row = await prismaRead.vipMembershipPurchase.findFirst({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      select: { tier: true },
+  async listPurchasesForDisplay(userIds: string[]) {
+    if (userIds.length === 0) return []
+    return prismaRead.vipMembershipPurchase.findMany({
+      where: { userId: { in: userIds } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: displayPurchaseSelect,
     })
-    return row?.tier ?? null
   },
 
   async incrementQuotaUsage(

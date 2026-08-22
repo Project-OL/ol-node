@@ -16,33 +16,17 @@ export const adminCurrencyAdjustBodySchema = z
     /** Allow trading credit when target is not an agency agent. */
     forceTradingCredit: z.boolean().optional(),
     /**
-     * USD received off-system for this mint. Required when crediting TRADING_COIN
-     * unless `promotional` is true.
+     * @deprecated Accepted but ignored since the treasury imputed-ledger model.
+     * Revenue is now derived from unit flow at 10,000 units = $1, so recording a
+     * USD figure here as well would double count. Still parsed so existing
+     * clients keep working.
      */
     cashUsd: z
       .string()
       .regex(/^\d+(\.\d{1,4})?$/, 'cashUsd must be a positive USD amount')
       .optional(),
-    /** Promo mint with no cash-in; counted as operating cost, not capital. */
+    /** Promo mint: operating cost rather than a sale. */
     promotional: z.boolean().optional(),
-  })
-  .superRefine((val, ctx) => {
-    const promo = val.promotional === true
-    const hasCash = val.cashUsd != null && val.cashUsd.length > 0 && Number(val.cashUsd) > 0
-    if (val.direction === 'credit' && val.currency === 'TRADING_COIN' && !promo && !hasCash) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['cashUsd'],
-        message: 'cashUsd is required when crediting trading coins (or set promotional=true)',
-      })
-    }
-    if (promo && hasCash) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['promotional'],
-        message: 'Promotional mint cannot include cashUsd',
-      })
-    }
   })
 
 export type AdminCurrencyAdjustBody = z.infer<typeof adminCurrencyAdjustBodySchema>
@@ -103,3 +87,57 @@ export const adminLedgerPeriodQuerySchema = z.object({
 })
 
 export type AdminLedgerPeriodQuery = z.infer<typeof adminLedgerPeriodQuerySchema>
+
+export const adminHouseAccountsQuerySchema = z.object({
+  includeInactive: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((v) => v === true || v === 'true'),
+})
+
+export type AdminHouseAccountsQuery = z.infer<typeof adminHouseAccountsQuerySchema>
+
+export const adminHouseAccountUpsertBodySchema = z.object({
+  userId: z.string().uuid(),
+  role: z.enum(['TREASURY', 'COMPANY_AGENCY']),
+  label: z.string().max(120).optional(),
+  note: z.string().max(500).optional(),
+  effectiveFrom: z.string().datetime().optional(),
+})
+
+export type AdminHouseAccountUpsertBody = z.infer<typeof adminHouseAccountUpsertBodySchema>
+
+export const adminHouseAccountDeleteBodySchema = z.object({
+  /** Deactivate even though the account still holds units. */
+  force: z.boolean().optional(),
+})
+
+export type AdminHouseAccountDeleteBody = z.infer<typeof adminHouseAccountDeleteBodySchema>
+
+export const treasuryFlowClassificationEnum = z.enum([
+  'SALE',
+  'PROMO',
+  'INTERNAL',
+  'WRITE_OFF',
+])
+
+export const adminTreasuryFlowsQuerySchema = z.object({
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  classification: treasuryFlowClassificationEnum.optional(),
+  senderUserId: z.string().uuid().optional(),
+  cursor: z.string().min(1).max(256).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+})
+
+export type AdminTreasuryFlowsQuery = z.infer<typeof adminTreasuryFlowsQuerySchema>
+
+export const adminTreasuryFlowClassifyBodySchema = z.object({
+  flowKind: z.enum(['COIN_TRADING_TRANSFER', 'AGENT_POINT_TRANSFER']),
+  flowId: z.string().uuid(),
+  /** INTERNAL is derived from a house recipient and cannot be set manually. */
+  classification: z.enum(['SALE', 'PROMO', 'WRITE_OFF']),
+  reason: z.string().max(500).optional(),
+})
+
+export type AdminTreasuryFlowClassifyBody = z.infer<typeof adminTreasuryFlowClassifyBodySchema>

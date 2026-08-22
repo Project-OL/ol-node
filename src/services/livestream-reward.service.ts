@@ -5,15 +5,20 @@ import { pointWalletService } from './point-wallet.service'
 import { walletService } from './wallet.service'
 import { liveStreamRepository } from '../repositories/liveStream.repository'
 import { livestreamRewardRepository } from '../repositories/livestreamReward.repository'
+import {
+  LIVESTREAM_REWARD_PART_THRESHOLDS_MIN,
+  livestreamRewardConfigService,
+  type LivestreamRewardEffectiveConfig,
+} from './livestreamRewardConfig.service'
 import { addUtcDays, utcDateString, utcStartOfDay } from '../utils/datetime'
 import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
-/** First-N-days-from-join eligibility window for the livestream daily reward. */
+/** @deprecated Use livestreamRewardConfigService.getConfig().windowDays */
 export const LIVESTREAM_REWARD_WINDOW_DAYS = 7
+/** @deprecated Use livestreamRewardConfigService.getConfig().pointsPerHourBigInt */
 export const LIVESTREAM_REWARD_PART_POINTS = 2500n
-export const LIVESTREAM_REWARD_PART_THRESHOLDS_MIN: Record<number, number> = { 1: 60, 2: 120 }
 
 export type LivestreamRewardPartDto = {
   part: number
@@ -23,7 +28,7 @@ export type LivestreamRewardPartDto = {
   claimed: boolean
 }
 
-/** One past day (1..7) of the reward window, with each part's final unlocked/claimed status for that day. */
+/** One past day (1..N) of the reward window, with each part's final unlocked/claimed status for that day. */
 export type LivestreamRewardDayDto = {
   dayIndex: number
   date: string
@@ -34,9 +39,9 @@ export type LivestreamRewardStatusDto = {
   eligible: boolean
   dayIndex: number
   streamedMinutesToday: number
-  /** Today's parts. Empty once `eligible` is false (past the first-7-days window). */
+  /** Today's parts. Empty once `eligible` is false (past the reward window). */
   parts: LivestreamRewardPartDto[]
-  /** Prior days in the window, oldest first. On day N (2..7) this covers days 1..N-1; once the window has closed it always covers all 7 days. */
+  /** Prior days in the window, oldest first. */
   previousRewards: LivestreamRewardDayDto[]
 }
 
@@ -69,12 +74,13 @@ async function streamedMinutesForUserOnDate(userId: string, dayStartUtc: Date): 
 function buildParts(
   streamedMinutes: number,
   claims: { part: number }[],
+  config: LivestreamRewardEffectiveConfig,
 ): LivestreamRewardPartDto[] {
   const claimedParts = new Set(claims.map((c) => c.part))
   return [1, 2].map((part) => ({
     part,
     thresholdMinutes: LIVESTREAM_REWARD_PART_THRESHOLDS_MIN[part]!,
-    points: LIVESTREAM_REWARD_PART_POINTS.toString(),
+    points: config.pointsPerHourBigInt.toString(),
     unlocked: streamedMinutes >= LIVESTREAM_REWARD_PART_THRESHOLDS_MIN[part]!,
     claimed: claimedParts.has(part),
   }))
@@ -85,6 +91,7 @@ async function buildPreviousRewards(
   userId: string,
   joinDay: Date,
   dayCount: number,
+  config: LivestreamRewardEffectiveConfig,
 ): Promise<LivestreamRewardDayDto[]> {
   const rangeEnd = addUtcDays(joinDay, dayCount)
   const [sessions, claims] = await Promise.all([
@@ -118,7 +125,7 @@ async function buildPreviousRewards(
     days.push({
       dayIndex,
       date: dateKey,
-      parts: buildParts(streamedMinutes, claimsByDate.get(dateKey) ?? []),
+      parts: buildParts(streamedMinutes, claimsByDate.get(dateKey) ?? [], config),
     })
   }
   return days
@@ -127,34 +134,39 @@ async function buildPreviousRewards(
 export const livestreamRewardService = {
   /**
    * `parts` covers today only (empty once the window has closed). `previousRewards` covers
-   * completed days in the window: days 1..dayIndex-1 while eligible, or all 7 once
-   * `dayIndex` has moved past the window — so history stays visible after day 7.
+   * completed days in the window: days 1..dayIndex-1 while eligible, or all N once
+   * `dayIndex` has moved past the window — so history stays visible after the window ends.
    */
   async getStatus(userId: string): Promise<LivestreamRewardStatusDto> {
-    const user = await prismaRead.user.findUnique({
-      where: { id: userId },
-      select: { createdAt: true },
-    })
+    const [user, config] = await Promise.all([
+      prismaRead.user.findUnique({
+        where: { id: userId },
+        select: { createdAt: true },
+      }),
+      livestreamRewardConfigService.getConfig(),
+    ])
     if (!user) throw new AppError(404, 'User not found', 'NOT_FOUND')
 
     const today = utcStartOfDay(new Date())
     const joinDay = utcStartOfDay(user.createdAt)
     const dayIndex = dayIndexSinceJoin(user.createdAt, today)
-    const eligible = dayIndex >= 1 && dayIndex <= LIVESTREAM_REWARD_WINDOW_DAYS
+    const eligible = dayIndex >= 1 && dayIndex <= config.windowDays
 
     let streamedMinutesToday = 0
     let parts: LivestreamRewardPartDto[] = []
     if (eligible) {
       streamedMinutesToday = await streamedMinutesForUserOnDate(userId, today)
       const claims = await livestreamRewardRepository.getClaimsForDate(userId, today)
-      parts = buildParts(streamedMinutesToday, claims)
+      parts = buildParts(streamedMinutesToday, claims, config)
     }
 
     const previousDayCount = eligible
-      ? Math.min(dayIndex - 1, LIVESTREAM_REWARD_WINDOW_DAYS)
-      : LIVESTREAM_REWARD_WINDOW_DAYS
+      ? Math.min(dayIndex - 1, config.windowDays)
+      : config.windowDays
     const previousRewards =
-      previousDayCount > 0 ? await buildPreviousRewards(userId, joinDay, previousDayCount) : []
+      previousDayCount > 0
+        ? await buildPreviousRewards(userId, joinDay, previousDayCount, config)
+        : []
 
     return {
       eligible,
@@ -173,15 +185,18 @@ export const livestreamRewardService = {
       throw new AppError(400, 'Invalid reward part', 'INVALID_REQUEST')
     }
 
-    const user = await prismaRead.user.findUnique({
-      where: { id: userId },
-      select: { createdAt: true },
-    })
+    const [user, config] = await Promise.all([
+      prismaRead.user.findUnique({
+        where: { id: userId },
+        select: { createdAt: true },
+      }),
+      livestreamRewardConfigService.getConfig(),
+    ])
     if (!user) throw new AppError(404, 'User not found', 'NOT_FOUND')
 
     const today = utcStartOfDay(new Date())
     const dayIndex = dayIndexSinceJoin(user.createdAt, today)
-    if (dayIndex < 1 || dayIndex > LIVESTREAM_REWARD_WINDOW_DAYS) {
+    if (dayIndex < 1 || dayIndex > config.windowDays) {
       throw new AppError(
         403,
         'Livestream reward window is closed',
@@ -199,6 +214,7 @@ export const livestreamRewardService = {
       )
     }
 
+    const pointsAmount = config.pointsPerHourBigInt
     const claimDateStr = utcDateString(today)
     const idempotencyKey = `livestream-reward:${userId}:${claimDateStr}:${part}`
 
@@ -218,7 +234,7 @@ export const livestreamRewardService = {
             // tx type is not in point-wallet's commission-eligible set).
             const credit = await pointWalletService.creditInTransaction(
               userId,
-              LIVESTREAM_REWARD_PART_POINTS,
+              pointsAmount,
               PointTxType.LIVESTREAM_STREAK_REWARD,
               tx,
               {
@@ -234,7 +250,7 @@ export const livestreamRewardService = {
                 userId,
                 claimDate: today,
                 part,
-                pointsAmount: LIVESTREAM_REWARD_PART_POINTS,
+                pointsAmount,
                 ledgerEntryId: credit.ledgerEntryId,
               },
               tx,
@@ -250,11 +266,11 @@ export const livestreamRewardService = {
       throw err
     }
 
-    await walletService.adjustPointBalanceCache(userId, LIVESTREAM_REWARD_PART_POINTS)
+    await walletService.adjustPointBalanceCache(userId, pointsAmount)
 
     return {
       part,
-      pointsAmount: LIVESTREAM_REWARD_PART_POINTS.toString(),
+      pointsAmount: pointsAmount.toString(),
       claimedAt: new Date().toISOString(),
     }
   },

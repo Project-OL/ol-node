@@ -176,6 +176,7 @@ model User {
   tradingCoinTopupOrders       CoinTradingTopupOrder[]       @relation("TradingCoinTopupsByAgent")
   tradingCoinTransfersSent     CoinTradingTransfer[]         @relation("TradingCoinTransferSender")
   tradingCoinTransfersReceived CoinTradingTransfer[]         @relation("TradingCoinTransferRecipient")
+  ledgerAccountRole            LedgerAccountRole?            @relation("LedgerAccountRoleUser")
   paymentMethods               UserPaymentMethod[]
   withdrawals                  Withdrawal[]
   locationSamples              UserLocationSample[]
@@ -1654,6 +1655,92 @@ model CompanyCashEntry {
   @@map("company_cash_entries")
 }
 
+enum LedgerAccountRoleType {
+  /// Management-owned app account holding unsold unit inventory.
+  TREASURY
+  /// Agency account that absorbs BANK payroll takeover inventory.
+  COMPANY_AGENCY
+}
+
+/// Marks app users as house (non-liability) accounts for master-ledger reporting.
+/// Balances on these accounts are unsold inventory; their outflows are imputed sales.
+model LedgerAccountRole {
+  id            String                @id @default(uuid()) @db.Uuid
+  userId        String                @unique @map("user_id") @db.Uuid
+  role          LedgerAccountRoleType
+  label         String?               @db.VarChar(120)
+  isActive      Boolean               @default(true) @map("is_active")
+  effectiveFrom DateTime              @default(now()) @map("effective_from")
+  /// `system_admins.id` — no FK (admins are not app users).
+  createdByAdminId String?  @map("created_by_admin_id") @db.Uuid
+  note             String?  @db.Text
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  user User @relation("LedgerAccountRoleUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([role, isActive])
+  @@map("ledger_account_roles")
+}
+
+enum TreasuryFlowKind {
+  COIN_TRADING_TRANSFER
+  AGENT_POINT_TRANSFER
+}
+
+enum TreasuryFlowClassificationType {
+  /// Units handed to a customer against off-system payment (default).
+  SALE
+  /// Free grant; operating cost, not revenue.
+  PROMO
+  /// House-to-house movement; economically neutral.
+  INTERNAL
+  /// Units handed out but never paid for.
+  WRITE_OFF
+}
+
+/// Override-only classification for treasury outflows. Absence of a row means SALE.
+model TreasuryFlowClassification {
+  id             String                         @id @default(uuid()) @db.Uuid
+  flowKind       TreasuryFlowKind               @map("flow_kind")
+  flowId         String                         @map("flow_id") @db.Uuid
+  classification TreasuryFlowClassificationType
+  reason         String?                        @db.Text
+  /// `system_admins.id` — no FK (admins are not app users).
+  adminUserId String   @map("admin_user_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([flowKind, flowId])
+  @@index([classification, createdAt(sort: Desc)])
+  @@map("treasury_flow_classifications")
+}
+
+/// Daily materialized unit float so period-start balances do not re-scan every wallet.
+model LedgerFloatSnapshot {
+  id         String   @id @default(uuid()) @db.Uuid
+  snapshotAt DateTime @unique @map("snapshot_at")
+
+  customerCoins        BigInt @default(0) @map("customer_coins")
+  customerTradingCoins BigInt @default(0) @map("customer_trading_coins")
+  customerHostPoints   BigInt @default(0) @map("customer_host_points")
+  customerAgencyPoints BigInt @default(0) @map("customer_agency_points")
+  customerTotal        BigInt @default(0) @map("customer_total")
+
+  houseCoins        BigInt @default(0) @map("house_coins")
+  houseTradingCoins BigInt @default(0) @map("house_trading_coins")
+  housePoints       BigInt @default(0) @map("house_points")
+  houseTotal        BigInt @default(0) @map("house_total")
+
+  ledgerNet      BigInt @default(0) @map("ledger_net")
+  identityDelta  BigInt @default(0) @map("identity_delta")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([snapshotAt(sort: Desc)])
+  @@map("ledger_float_snapshots")
+}
+
 model UserPaymentMethod {
   id                     String    @id @default(uuid()) @db.Uuid
   userId                 String    @map("user_id") @db.Uuid
@@ -2493,6 +2580,20 @@ model AgencyHostConfig {
   updatedByAdminId     String?  @map("updated_by_admin_id")
 
   @@map("agency_host_config")
+}
+
+/// Singleton: first-N-days livestream daily reward (2 parts/day at 1h and 2h streamed).
+/// Admin `GET|PUT /admin/system-settings/livestream-reward`. Default 7 days, 2,500 points/hour.
+model LivestreamRewardConfig {
+  id             Int      @id @default(1)
+  /// Membership days 1..N eligible for the reward window.
+  windowDays     Int      @default(7) @map("window_days")
+  /// Points credited per hour milestone (part 1 at 1h, part 2 at 2h streamed today).
+  pointsPerHour  Int      @default(2500) @map("points_per_hour")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  updatedByAdminId String? @map("updated_by_admin_id")
+
+  @@map("livestream_reward_config")
 }
 
 model AgencyDailyEarning {

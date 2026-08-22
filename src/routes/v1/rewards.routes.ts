@@ -50,7 +50,7 @@ export default async function rewardsRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Rewards'],
         description:
-          'Claim a livestream daily reward part (2,500 points at 1hr and 2hr streamed today, first 7 days of membership only)',
+          'Claim a livestream daily reward part (configurable points at 1hr and 2hr streamed today, first N days of membership only)',
       },
     },
     async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
