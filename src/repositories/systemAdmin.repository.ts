@@ -225,10 +225,27 @@ export const systemAdminRepository = {
     })
   },
 
-  /** Revoke every active session except `exceptSessionId` (single-session admin login). */
-  async revokeOtherSessions(adminId: string, exceptSessionId: string) {
+  /**
+   * Cap concurrent admin sessions: keep `exceptSessionId` and the newest others
+   * up to `maxSessions`; revoke the oldest excess (FIFO).
+   */
+  async revokeExcessSessions(adminId: string, exceptSessionId: string, maxSessions: number) {
+    const active = await prisma.adminSession.findMany({
+      where: { adminId, revokedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    })
+    if (active.length <= maxSessions) return { count: 0 }
+
+    const excess = active.length - maxSessions
+    const toRevoke = active
+      .filter((s) => s.id !== exceptSessionId)
+      .slice(0, excess)
+      .map((s) => s.id)
+    if (toRevoke.length === 0) return { count: 0 }
+
     return prisma.adminSession.updateMany({
-      where: { adminId, revokedAt: null, id: { not: exceptSessionId } },
+      where: { id: { in: toRevoke } },
       data: { revokedAt: new Date() },
     })
   },
