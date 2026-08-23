@@ -25,7 +25,7 @@ interface AdminAccessPayload {
   role: AdminRole
   iss: 'offoo-admin'
   type: 'access'
-  /** Bound for single-session roles so a new login can invalidate prior access JWTs. */
+  /** Bound for session-capped roles so revoked sessions invalidate prior access JWTs. */
   sessionId?: string
 }
 
@@ -215,9 +215,10 @@ export const systemAdminService = {
     const tokenHash = await bcrypt.hash(refreshToken, 10)
     await systemAdminRepository.updateSessionTokenHash(session.id, tokenHash)
 
-    // Single-session roles: revoke peers after minting this one (new login wins).
-    if (usesSingleAdminSession(admin.role)) {
-      await systemAdminRepository.revokeOtherSessions(admin.id, session.id)
+    // Session-capped roles: revoke oldest excess after minting this one.
+    const sessionCap = adminSessionCap(admin.role)
+    if (sessionCap != null) {
+      await systemAdminRepository.revokeExcessSessions(admin.id, session.id, sessionCap)
     }
 
     await systemAdminRepository.updateLastLogin(admin.id)
@@ -226,7 +227,7 @@ export const systemAdminService = {
       accessToken: signAccessToken(
         admin.id,
         admin.role,
-        usesSingleAdminSession(admin.role) ? session.id : undefined,
+        sessionCap != null ? session.id : undefined,
       ),
       refreshToken,
       admin: {
@@ -267,7 +268,8 @@ export const systemAdminService = {
       throw new AppError(401, 'Admin not found or inactive', 'ADMIN_INVALID_CREDENTIALS')
     }
 
-    const bindSession = usesSingleAdminSession(session.admin.role) ? session.id : undefined
+    const bindSession =
+      adminSessionCap(session.admin.role) != null ? session.id : undefined
     return {
       accessToken: signAccessToken(session.admin.id, session.admin.role, bindSession),
     }
@@ -342,8 +344,8 @@ export const systemAdminService = {
         throw new AppError(401, 'Admin not found or inactive', 'ADMIN_INVALID_CREDENTIALS')
       }
 
-      // Single-session roles: access JWT must match a non-revoked AdminSession.
-      if (usesSingleAdminSession(admin.role)) {
+      // Session-capped roles: access JWT must match a non-revoked AdminSession.
+      if (adminSessionCap(admin.role) != null) {
         if (!payload.sessionId) {
           throw new AppError(401, 'Admin token invalid or expired', 'ADMIN_TOKEN_INVALID')
         }
@@ -381,8 +383,14 @@ async function recordLoginFailure(failKey: string): Promise<void> {
   }
 }
 
-function usesSingleAdminSession(role: AdminRole): boolean {
-  return role === 'CUSTOMER_SUPPORT' || role === 'SUPER_ADMIN'
+/** Max concurrent `admin_sessions` for SUPER_ADMIN (FIFO revoke when exceeded). */
+export const MAX_SUPER_ADMIN_SESSIONS = 3
+
+/** Max concurrent `admin_sessions` for the role, or `null` for uncapped multi-session. */
+function adminSessionCap(role: AdminRole): number | null {
+  if (role === 'CUSTOMER_SUPPORT') return 1
+  if (role === 'SUPER_ADMIN') return MAX_SUPER_ADMIN_SESSIONS
+  return null
 }
 
 function shouldEnforceIpWhitelist(role: AdminRole): boolean {
