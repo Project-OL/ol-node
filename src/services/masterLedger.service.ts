@@ -16,6 +16,7 @@ import { companyCashService } from './companyCash.service'
 import { platformProfitService } from './platform-profit.service'
 import { ledgerAccountRoleService, type HouseAccounts } from './ledgerAccountRole.service'
 import { treasuryFlowService } from './treasuryFlow.service'
+import { AppError } from '../middlewares/errorHandler'
 import { ledgerFloatSnapshotRepository } from '../repositories/ledgerFloatSnapshot.repository'
 
 /**
@@ -33,7 +34,16 @@ import { ledgerFloatSnapshotRepository } from '../repositories/ledgerFloatSnapsh
  * — most often a house account that was never registered.
  */
 
-export type LedgerGrain = 'month' | 'quarter' | 'year' | 'custom'
+export type LedgerGrain =
+  | 'today'
+  | 'yesterday'
+  | 'month'
+  | 'quarter'
+  | 'year'
+  | 'custom'
+
+/** Maximum inclusive span for custom ledger periods (730 days). */
+export const MAX_CUSTOM_LEDGER_PERIOD_MS = 730 * 24 * 60 * 60 * 1000
 
 export type LedgerLine = {
   id: string
@@ -67,6 +77,24 @@ function startOfUtcYear(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), 0, 1, 0, 0, 0, 0))
 }
 
+function startOfUtcDay(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0))
+}
+
+/** Reject custom periods longer than {@link MAX_CUSTOM_LEDGER_PERIOD_MS}. */
+export function assertCustomLedgerPeriodSpan(from: Date, to: Date): void {
+  if (to.getTime() - from.getTime() > MAX_CUSTOM_LEDGER_PERIOD_MS) {
+    throw new AppError(
+      400,
+      'Custom period cannot exceed 730 days (2 years)',
+      'INVALID_REQUEST',
+    )
+  }
+  if (to.getTime() <= from.getTime()) {
+    throw new AppError(400, 'Period end must be after period start', 'INVALID_REQUEST')
+  }
+}
+
 export function resolveLedgerPeriod(params: {
   from?: Date
   to?: Date
@@ -78,6 +106,17 @@ export function resolveLedgerPeriod(params: {
   if (grain === 'custom' && (params.from || params.to)) {
     const from = params.from ?? new Date(0)
     const to = params.to ?? now
+    assertCustomLedgerPeriodSpan(from, to)
+    return { from, to, grain }
+  }
+  if (grain === 'today') {
+    const from = startOfUtcDay(now)
+    const to = new Date(from.getTime() + 24 * 60 * 60 * 1000)
+    return { from, to, grain }
+  }
+  if (grain === 'yesterday') {
+    const to = startOfUtcDay(now)
+    const from = new Date(to.getTime() - 24 * 60 * 60 * 1000)
     return { from, to, grain }
   }
   if (grain === 'year') {
