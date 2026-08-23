@@ -17,7 +17,9 @@ import {
   adminHouseAccountDeleteBodySchema,
   adminHouseAccountUpsertBodySchema,
   adminHouseAccountsQuerySchema,
+  adminLedgerBreakageInvestigateQuerySchema,
   adminLedgerPeriodQuerySchema,
+  adminLedgerReconciliationInvestigateQuerySchema,
   adminTreasuryFlowClassifyBodySchema,
   adminTreasuryFlowsQuerySchema,
 } from '../../models/admin-currency.schemas'
@@ -25,6 +27,7 @@ import { adminCurrencyService } from '../../services/adminCurrency.service'
 import { adminAuditMetaFromRequest } from '../../utils/admin-audit'
 import { companyCashService } from '../../services/companyCash.service'
 import { masterLedgerService } from '../../services/masterLedger.service'
+import { masterLedgerInvestigateService } from '../../services/masterLedgerInvestigate.service'
 import { ledgerAccountRoleService } from '../../services/ledgerAccountRole.service'
 import { treasuryFlowService } from '../../services/treasuryFlow.service'
 import { auditService } from '../../services/audit.service'
@@ -131,7 +134,8 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Currency'],
-        description: 'Period operating P&L, cash P&L, inventory, and identity (month/quarter/year).',
+        description:
+          'Period operating P&L, cash P&L, inventory, and identity (today/yesterday/month/quarter/year/custom up to 730 days).',
       },
     },
     async (request, reply) => {
@@ -145,6 +149,54 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
           to: parsed.data.to ? new Date(parsed.data.to) : undefined,
           grain: parsed.data.grain,
           at: parsed.data.at ? new Date(parsed.data.at) : undefined,
+        }),
+      )
+    },
+  )
+
+  app.get(
+    '/ledger/investigate/breakage',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Currency'],
+        description:
+          'When Books balanced shows BREAKAGE, list wallets whose balance_after disagrees with ledger net, with users and recent entries.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminLedgerBreakageInvestigateQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+      }
+      return reply.send(
+        await masterLedgerInvestigateService.investigateBreakage({
+          at: parsed.data.at ? new Date(parsed.data.at) : undefined,
+        }),
+      )
+    },
+  )
+
+  app.get(
+    '/ledger/investigate/reconciliation',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Currency'],
+        description:
+          'When Sales vs usage shows DELTA, list investigation leads: unregistered treasury senders, returns to house, and large customer Adjustments.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminLedgerReconciliationInvestigateQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+      }
+      return reply.send(
+        await masterLedgerInvestigateService.investigateReconciliation({
+          from: parsed.data.from ? new Date(parsed.data.from) : undefined,
+          to: parsed.data.to ? new Date(parsed.data.to) : undefined,
+          grain: parsed.data.grain,
         }),
       )
     },

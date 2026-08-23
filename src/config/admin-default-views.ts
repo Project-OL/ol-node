@@ -262,6 +262,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/currency/adjustments',
     'GET /admin/ledger/stock',
     'GET /admin/ledger/pnl',
+    'GET /admin/ledger/investigate/breakage',
+    'GET /admin/ledger/investigate/reconciliation',
     'GET /admin/ledger/house-accounts',
     'POST /admin/ledger/house-accounts',
     'DELETE /admin/ledger/house-accounts/:userId',

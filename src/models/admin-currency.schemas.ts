@@ -79,14 +79,41 @@ export const adminCashJournalCreateBodySchema = z.object({
 
 export type AdminCashJournalCreateBody = z.infer<typeof adminCashJournalCreateBodySchema>
 
+const ledgerGrainEnum = z.enum([
+  'today',
+  'yesterday',
+  'month',
+  'quarter',
+  'year',
+  'custom',
+])
+
 export const adminLedgerPeriodQuerySchema = z.object({
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
-  grain: z.enum(['month', 'quarter', 'year', 'custom']).optional(),
+  grain: ledgerGrainEnum.optional(),
   at: z.string().datetime().optional(),
 })
 
 export type AdminLedgerPeriodQuery = z.infer<typeof adminLedgerPeriodQuerySchema>
+
+export const adminLedgerBreakageInvestigateQuerySchema = z.object({
+  at: z.string().datetime().optional(),
+})
+
+export type AdminLedgerBreakageInvestigateQuery = z.infer<
+  typeof adminLedgerBreakageInvestigateQuerySchema
+>
+
+export const adminLedgerReconciliationInvestigateQuerySchema = z.object({
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  grain: ledgerGrainEnum.optional(),
+})
+
+export type AdminLedgerReconciliationInvestigateQuery = z.infer<
+  typeof adminLedgerReconciliationInvestigateQuerySchema
+>
 
 export const adminHouseAccountsQuerySchema = z.object({
   includeInactive: z
