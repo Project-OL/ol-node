@@ -1,8 +1,14 @@
 import { z } from 'zod'
 import { passwordSchema } from './schemas'
+import { securityPinSchema } from './security-password.schemas'
 
 export const adminPasswordResetBodySchema = z.object({
   newPassword: passwordSchema.optional(),
+})
+
+/** Admin set/overwrite security PIN (4–8 digits). Overwrites any existing PIN and clears lockout. */
+export const adminSecurityPasswordSetBodySchema = z.object({
+  pin: securityPinSchema,
 })
 
 export const adminFaceRevokeBodySchema = z.object({

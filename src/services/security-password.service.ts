@@ -288,6 +288,29 @@ export const securityPasswordService = {
     return { changedAt: record.updatedAt }
   },
 
+  /**
+   * Admin set or overwrite security PIN. No OTP. Clears failed-attempt lockout and Redis caches.
+   */
+  async adminSetPin(
+    userId: string,
+    newPin: string,
+  ): Promise<{ setAt: Date; updatedAt: Date; overwritten: boolean }> {
+    const existing = await securityPasswordRepository.findByUserId(userId)
+    const passwordHash = await passwordService.hash(newPin)
+    const record = await securityPasswordRepository.upsert({
+      userId,
+      passwordHash,
+      failedAttempts: 0,
+      lockedUntil: null,
+    })
+    await invalidateSecurityPasswordCache(userId)
+    return {
+      setAt: record.setAt,
+      updatedAt: record.updatedAt,
+      overwritten: existing != null,
+    }
+  },
+
   async resetPassword(
     userId: string,
     identifierId: string,

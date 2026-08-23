@@ -78,6 +78,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/users/:id/live-moderation',
     'POST /admin/users/:id/host-stream-suspension/clear',
     'POST /admin/users/:id/password/reset',
+    'POST /admin/users/:id/security-password',
     'POST /admin/users/:id/profile/remove-avatar',
     'POST /admin/users/:id/profile/remove-bio',
     'POST /admin/users/:id/profile/reset-identity',

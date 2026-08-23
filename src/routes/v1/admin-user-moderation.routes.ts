@@ -6,6 +6,7 @@ import {
   adminFaceRevokeBodySchema,
   adminLivePhotoRemoveBodySchema,
   adminPasswordResetBodySchema,
+  adminSecurityPasswordSetBodySchema,
 } from '../../models/admin-user-moderation.schemas'
 import { adminUserModerationService } from '../../services/adminUserModeration.service'
 import { auditService } from '../../services/audit.service'
@@ -37,6 +38,35 @@ export default async function adminUserModerationRoutes(app: FastifyInstance) {
           targetUserId: request.params.userId,
           adminUserId: request.adminUser!.id,
           newPassword: parsed.data.newPassword,
+        }),
+      )
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/security-password',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users'],
+        description:
+          'Set or overwrite the user security PIN (4–8 digits). Clears failed-attempt lockout. Does not revoke sessions.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminSecurityPasswordSetBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await adminUserModerationService.setSecurityPassword({
+          targetUserId: request.params.userId,
+          adminUserId: request.adminUser!.id,
+          pin: parsed.data.pin,
         }),
       )
     },
