@@ -681,11 +681,23 @@ export const masterLedgerService = {
     const house = houseArg ?? (await ledgerAccountRoleService.getHouseAccounts())
     const createdAt = dateFilter(from, to)
 
-    const giftAgg = await prismaRead.giftTransaction.aggregate({
-      where: createdAt ? { createdAt } : undefined,
-      _sum: { coinCost: true, pointsAwarded: true },
-    })
-    const [giftRefunds, giftAgencyReceive, giftAgencyLive] = await Promise.all([
+    // Gift margin from ledgers (not gift_transactions.coinCost): live combo rows
+    // can under-store coinCost while GIFT_SEND / GIFT_RECEIVE stay correct.
+    // Agency commission rule unchanged — AGENT_COMMISSION filtered by hostTxType meta.
+    const [
+      giftSendCoins,
+      giftRefunds,
+      giftHost,
+      giftAgencyReceive,
+      giftAgencyLive,
+    ] = await Promise.all([
+      sumCoin({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [CoinTxType.GIFT_SEND],
+        currency: WalletCurrencyType.COIN,
+        from,
+        to,
+      }),
       sumCoin({
         direction: LedgerDirection.CREDIT,
         txTypes: [CoinTxType.GIFT_REFUND],
@@ -693,11 +705,18 @@ export const masterLedgerService = {
         from,
         to,
       }),
+      sumPoint({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [PointTxType.GIFT_RECEIVE, PointTxType.LIVESTREAM_GIFT],
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
       sumAgencyCommission({ hostTxType: PointTxType.GIFT_RECEIVE, from, to, house }),
       sumAgencyCommission({ hostTxType: PointTxType.LIVESTREAM_GIFT, from, to, house }),
     ])
-    const giftCoins = BigInt(giftAgg._sum.coinCost ?? 0) - giftRefunds
-    const giftHost = BigInt(giftAgg._sum.pointsAwarded ?? 0)
+    const giftCoins = giftSendCoins - giftRefunds
     const giftAgency = giftAgencyReceive + giftAgencyLive
     const gifts = profitFromCoinToPointSplit({
       coinsSpent: giftCoins < 0n ? 0n : giftCoins,

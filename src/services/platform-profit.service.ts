@@ -202,10 +202,24 @@ export async function summarizePlatformProfit(params: {
   const createdAt = dateFilter(params.from, params.to)
   const parts: PlatformProfitBuckets[] = []
 
-  // Gifts: sum(coinCost − pointsAwarded) − AGENT_COMMISSION (hostTxType GIFT_RECEIVE)
-  const giftAgg = await prismaRead.giftTransaction.aggregate({
-    where: createdAt ? { createdAt } : undefined,
-    _sum: { coinCost: true, pointsAwarded: true },
+  // Gifts: GIFT_SEND − GIFT_REFUND − host GIFT_RECEIVE/LIVESTREAM_GIFT − AGENT_COMMISSION
+  // (hostTxType meta). Do not use gift_transactions.coinCost — live combos can under-store it.
+  const giftSendAgg = await prismaRead.coinLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.DEBIT,
+      txType: CoinTxType.GIFT_SEND,
+      wallet: { currencyType: 'COIN' },
+      ...(createdAt ? { createdAt } : {}),
+    },
+    _sum: { amount: true },
+  })
+  const giftHostAgg = await prismaRead.pointLedgerEntry.aggregate({
+    where: {
+      direction: LedgerDirection.CREDIT,
+      txType: { in: [PointTxType.GIFT_RECEIVE, PointTxType.LIVESTREAM_GIFT] },
+      ...(createdAt ? { createdAt } : {}),
+    },
+    _sum: { amount: true },
   })
   const giftAgencyAgg = await prismaRead.pointLedgerEntry.aggregate({
     where: {
@@ -235,10 +249,10 @@ export async function summarizePlatformProfit(params: {
     _sum: { amount: true },
   })
   {
-    const coinsSpent = BigInt(giftAgg._sum.coinCost ?? 0) - (giftRefundAgg._sum.amount ?? 0n)
+    const coinsSpent = (giftSendAgg._sum.amount ?? 0n) - (giftRefundAgg._sum.amount ?? 0n)
     const { buckets, rawCoins } = profitFromCoinToPointSplit({
       coinsSpent: coinsSpent < 0n ? 0n : coinsSpent,
-      hostPoints: BigInt(giftAgg._sum.pointsAwarded ?? 0),
+      hostPoints: giftHostAgg._sum.amount ?? 0n,
       agencyCommissionPoints:
         (giftAgencyAgg._sum.amount ?? 0n) + (giftAgencyLiveAgg._sum.amount ?? 0n),
     })

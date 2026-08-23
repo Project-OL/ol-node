@@ -10,6 +10,7 @@ import { userRepository } from '../repositories/user.repository'
 import { livePhotoService } from './livePhoto.service'
 import { bannedDeviceRepository } from '../repositories/bannedDevice.repository'
 import { passwordService } from './password.service'
+import { securityPasswordService } from './security-password.service'
 import { sessionService } from './session.service'
 import { meService } from './me.service'
 import { auditService } from './audit.service'
@@ -118,6 +119,36 @@ export const adminUserModerationService = {
       userId: params.targetUserId,
       temporaryPassword: params.newPassword ? undefined : plain,
       message: 'Password reset; all sessions revoked',
+    }
+  },
+
+  async setSecurityPassword(params: {
+    targetUserId: string
+    adminUserId: string
+    pin: string
+  }) {
+    const user = await userRepository.findById(params.targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const result = await securityPasswordService.adminSetPin(params.targetUserId, params.pin)
+
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
+      actionType: 'ADMIN_SECURITY_PASSWORD_SET',
+      actionStatus: 'success',
+      actionDetails: { overwritten: result.overwritten },
+    })
+
+    return {
+      ok: true as const,
+      userId: params.targetUserId,
+      overwritten: result.overwritten,
+      setAt: result.setAt.toISOString(),
+      updatedAt: result.updatedAt.toISOString(),
+      message: result.overwritten
+        ? 'Security password overwritten'
+        : 'Security password set',
     }
   },
 

@@ -60,6 +60,7 @@
         "seed:admin-views": "tsx scripts/seed-admin-views.ts",
         "seed:coin-trading-rates": "tsx scripts/seed-coin-trading-rates.ts",
         "seed:coin-trading-topup-packages": "tsx scripts/seed-coin-trading-topup-packages.ts",
+        "ledger:flush-sandbox": "tsx scripts/flush-ledger-sandbox.ts",
         "lab:seed": "tsx lab/fixtures/seed.ts",
         "lab:concurrency": "vitest run lab/concurrency --fileParallelism=false",
         "lab:auth": "k6 run lab/modules/02-auth/k6-scenario.js",
