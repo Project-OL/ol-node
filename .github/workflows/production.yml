@@ -9,9 +9,20 @@ concurrency:
   group: production-ec2-ol-node
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ROLE_ARN: arn:aws:iam::465457334877:role/ol-prod-github-deploy-role
+  DEPLOY_BUCKET: ol-production-deploy-artifacts-465457334877
+  EC2_INSTANCE_ID: i-0351dd6514d9c3f06
+
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +44,12 @@ jobs:
 
       - name: Pack artifact
         run: |
-          tar -czf ol-node-artifact.tgz dist prisma package.json package-lock.json
+          tar -czf ol-node-artifact.tgz \
+            dist \
+            prisma \
+            package.json \
+            package-lock.json
+
           ls -lh ol-node-artifact.tgz
 
       - name: Upload GitHub Actions artifact
@@ -46,40 +62,141 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download artifact
+      - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: ol-node-${{ github.sha }}
 
-      - name: Check EC2 secrets
-        env:
-          KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.EC2_HOST }}
-          USER: ${{ secrets.EC2_USER }}
-        run: |
-          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
-            echo "Set repo secrets EC2_SSH_PRIVATE_KEY, EC2_HOST, and EC2_USER (see workflow comments)."
-            exit 1
-          fi
+      # ------------------------------------------------------------
+      # AWS OIDC
+      # ------------------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to EC2
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
+      - name: Verify AWS identity
         run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-          scp -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            ol-node-artifact.tgz "$EC2_USER@$EC2_HOST:/tmp/ol-node-artifact.tgz"
-          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            "$EC2_USER@$EC2_HOST" 'bash -s' < .github/deploy/ec2-unpack-ol-node.sh
-# Required GitHub Actions secrets (repo or org):
-#   EC2_HOST              e.g. 13.232.76.134
-#   EC2_USER              e.g. ec2-user
-#   EC2_SSH_PRIVATE_KEY   PEM / OpenSSH private key for that user
+          aws sts get-caller-identity
+
+      # ------------------------------------------------------------
+      # Upload deployment artifact to private S3 bucket
+      # ------------------------------------------------------------
+      - name: Upload deployment artifact to S3
+        run: |
+          aws s3 cp \
+            ol-node-artifact.tgz \
+            "s3://${DEPLOY_BUCKET}/ol-node/ol-node-${GITHUB_SHA}.tgz"
+
+      # Upload the existing EC2 unpack script separately.
+      # It is NOT part of the application artifact.
+      - name: Upload deployment script to S3
+        run: |
+          aws s3 cp \
+            .github/deploy/ec2-unpack-ol-node.sh \
+            "s3://${DEPLOY_BUCKET}/ol-node/ec2-unpack-ol-node-${GITHUB_SHA}.sh"
+
+      # ------------------------------------------------------------
+      # Deploy through AWS Systems Manager
+      # ------------------------------------------------------------
+      - name: Send deployment command to EC2
+        env:
+          ARTIFACT_KEY: ol-node/ol-node-${{ github.sha }}.tgz
+          DEPLOY_SCRIPT_KEY: ol-node/ec2-unpack-ol-node-${{ github.sha }}.sh
+        run: |
+          COMMAND_ID=$(
+            aws ssm send-command \
+              --region "$AWS_REGION" \
+              --instance-ids "$EC2_INSTANCE_ID" \
+              --document-name "AWS-RunShellScript" \
+              --comment "OL Node production deployment ${GITHUB_SHA}" \
+              --parameters commands="[
+                \"set -e\",
+                \"rm -f /tmp/ol-node-artifact.tgz /tmp/ec2-unpack-ol-node.sh\",
+                \"aws s3 cp s3://${DEPLOY_BUCKET}/${ARTIFACT_KEY} /tmp/ol-node-artifact.tgz\",
+                \"aws s3 cp s3://${DEPLOY_BUCKET}/${DEPLOY_SCRIPT_KEY} /tmp/ec2-unpack-ol-node.sh\",
+                \"chmod 700 /tmp/ec2-unpack-ol-node.sh\",
+                \"RUN_MIGRATE=1 RESTART_WORKERS=1 bash /tmp/ec2-unpack-ol-node.sh\"
+              ]" \
+              --query 'Command.CommandId' \
+              --output text
+          )
+
+          echo "SSM Command ID: $COMMAND_ID"
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------
+      # Wait for deployment and show EC2 output
+      # ------------------------------------------------------------
+      - name: Wait for deployment
+        run: |
+          echo "Waiting for SSM deployment..."
+
+          for i in {1..60}; do
+            STATUS=$(
+              aws ssm get-command-invocation \
+                --region "$AWS_REGION" \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$EC2_INSTANCE_ID" \
+                --query 'Status' \
+                --output text
+            )
+
+            echo "Attempt $i: SSM status = $STATUS"
+
+            case "$STATUS" in
+              Success)
+                echo "Deployment completed successfully."
+                break
+                ;;
+
+              Failed|Cancelled|TimedOut|Cancelling)
+                echo "Deployment failed with status: $STATUS"
+
+                aws ssm get-command-invocation \
+                  --region "$AWS_REGION" \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$EC2_INSTANCE_ID" \
+                  --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                  --output yaml
+
+                exit 1
+                ;;
+
+              Pending|InProgress|Delayed)
+                sleep 5
+                ;;
+
+              *)
+                echo "Unknown SSM status: $STATUS"
+                sleep 5
+                ;;
+            esac
+
+            if [ "$i" -eq 60 ]; then
+              echo "Deployment timed out waiting for SSM."
+
+              aws ssm get-command-invocation \
+                --region "$AWS_REGION" \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$EC2_INSTANCE_ID" \
+                --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                --output yaml
+
+              exit 1
+            fi
+          done
+
+      - name: Show deployment output
+        run: |
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+            --output yaml
