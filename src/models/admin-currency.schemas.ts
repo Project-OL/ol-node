@@ -5,29 +5,28 @@ const positiveAmountSchema = z
   .regex(/^\d+$/, 'Amount must be a non-negative integer string')
   .refine((v) => BigInt(v) > 0n, 'Amount must be positive')
 
-export const adminCurrencyAdjustBodySchema = z
-  .object({
-    userId: z.string().uuid(),
-    currency: z.enum(['COIN', 'POINT', 'TRADING_COIN']),
-    direction: z.enum(['credit', 'debit']),
-    amount: positiveAmountSchema,
-    description: z.string().max(500).optional(),
-    idempotencyKey: z.string().max(128).optional(),
-    /** Allow trading credit when target is not an agency agent. */
-    forceTradingCredit: z.boolean().optional(),
-    /**
-     * @deprecated Accepted but ignored since the treasury imputed-ledger model.
-     * Revenue is now derived from unit flow at 10,000 units = $1, so recording a
-     * USD figure here as well would double count. Still parsed so existing
-     * clients keep working.
-     */
-    cashUsd: z
-      .string()
-      .regex(/^\d+(\.\d{1,4})?$/, 'cashUsd must be a positive USD amount')
-      .optional(),
-    /** Promo mint: operating cost rather than a sale. */
-    promotional: z.boolean().optional(),
-  })
+export const adminCurrencyAdjustBodySchema = z.object({
+  userId: z.string().uuid(),
+  currency: z.enum(['COIN', 'POINT', 'TRADING_COIN']),
+  direction: z.enum(['credit', 'debit']),
+  amount: positiveAmountSchema,
+  description: z.string().max(500).optional(),
+  idempotencyKey: z.string().max(128).optional(),
+  /** Allow trading credit when target is not an agency agent. */
+  forceTradingCredit: z.boolean().optional(),
+  /**
+   * @deprecated Accepted but ignored since the treasury imputed-ledger model.
+   * Revenue is now derived from unit flow at 10,000 units = $1, so recording a
+   * USD figure here as well would double count. Still parsed so existing
+   * clients keep working.
+   */
+  cashUsd: z
+    .string()
+    .regex(/^\d+(\.\d{1,4})?$/, 'cashUsd must be a positive USD amount')
+    .optional(),
+  /** Promo mint: operating cost rather than a sale. */
+  promotional: z.boolean().optional(),
+})
 
 export type AdminCurrencyAdjustBody = z.infer<typeof adminCurrencyAdjustBodySchema>
 
@@ -36,9 +35,7 @@ export const adminCurrencySupplySummaryQuerySchema = z.object({
   to: z.string().datetime().optional(),
 })
 
-export type AdminCurrencySupplySummaryQuery = z.infer<
-  typeof adminCurrencySupplySummaryQuerySchema
->
+export type AdminCurrencySupplySummaryQuery = z.infer<typeof adminCurrencySupplySummaryQuerySchema>
 
 export const adminCurrencyAdjustmentsQuerySchema = z.object({
   currency: z.enum(['COIN', 'POINT', 'TRADING_COIN']).optional(),
@@ -71,22 +68,12 @@ export const adminCashJournalCreateBodySchema = z.object({
   ledgerRefId: z.string().max(255).optional(),
   withdrawalId: z.string().uuid().optional(),
   description: z.string().max(500).optional(),
-  unitsAmount: z
-    .string()
-    .regex(/^\d+$/)
-    .optional(),
+  unitsAmount: z.string().regex(/^\d+$/).optional(),
 })
 
 export type AdminCashJournalCreateBody = z.infer<typeof adminCashJournalCreateBodySchema>
 
-const ledgerGrainEnum = z.enum([
-  'today',
-  'yesterday',
-  'month',
-  'quarter',
-  'year',
-  'custom',
-])
+const ledgerGrainEnum = z.enum(['today', 'yesterday', 'month', 'quarter', 'year', 'custom'])
 
 export const adminLedgerPeriodQuerySchema = z.object({
   from: z.string().datetime().optional(),
@@ -141,12 +128,7 @@ export const adminHouseAccountDeleteBodySchema = z.object({
 
 export type AdminHouseAccountDeleteBody = z.infer<typeof adminHouseAccountDeleteBodySchema>
 
-export const treasuryFlowClassificationEnum = z.enum([
-  'SALE',
-  'PROMO',
-  'INTERNAL',
-  'WRITE_OFF',
-])
+export const treasuryFlowClassificationEnum = z.enum(['SALE', 'PROMO', 'INTERNAL', 'WRITE_OFF'])
 
 export const adminTreasuryFlowsQuerySchema = z.object({
   from: z.string().datetime().optional(),

@@ -157,9 +157,7 @@ export const vipMembershipRepository = {
     const hasMore = rows.length > opts.limit
     const page = hasMore ? rows.slice(0, opts.limit) : rows
     const last = page[page.length - 1]
-    const nextCursor = hasMore && last
-      ? last.claimDate.toISOString().slice(0, 10)
-      : undefined
+    const nextCursor = hasMore && last ? last.claimDate.toISOString().slice(0, 10) : undefined
 
     return { items: page, nextCursor, hasMore }
   },

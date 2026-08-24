@@ -1,17 +1,8 @@
-import {
-  CoinTxType,
-  LedgerAccountRoleType,
-  PointTxType,
-  Prisma,
-} from '@prisma/client'
+import { CoinTxType, LedgerAccountRoleType, PointTxType, Prisma } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { formatUserName } from '../utils/user-display'
 import { ledgerAccountRoleService } from './ledgerAccountRole.service'
-import {
-  computeFloatAt,
-  masterLedgerService,
-  resolveLedgerPeriod,
-} from './masterLedger.service'
+import { computeFloatAt, masterLedgerService, resolveLedgerPeriod } from './masterLedger.service'
 
 const WALLET_GAP_LIMIT = 50
 const RECENT_ENTRIES_LIMIT = 10
@@ -285,9 +276,7 @@ export const masterLedgerInvestigateService = {
     const house = await ledgerAccountRoleService.getHouseAccounts()
     const houseIds = [...house.allIds]
     const houseSql =
-      houseIds.length > 0
-        ? Prisma.join(houseIds.map((id) => Prisma.sql`${id}::uuid`))
-        : null
+      houseIds.length > 0 ? Prisma.join(houseIds.map((id) => Prisma.sql`${id}::uuid`)) : null
 
     const from = period.from
     const to = period.to

@@ -1,12 +1,5 @@
-import {
-  DEFAULT_HOST_REVENUE_SHARES,
-  type HostRevenueShares,
-} from '../config/host-revenue-shares'
-import {
-  RedisKeys,
-  SYSTEM_RATES_CONFIG_TTL,
-  redisClient,
-} from '../config/redis'
+import { DEFAULT_HOST_REVENUE_SHARES, type HostRevenueShares } from '../config/host-revenue-shares'
+import { RedisKeys, SYSTEM_RATES_CONFIG_TTL, redisClient } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { hostRevenueShareConfigRepository } from '../repositories/hostRevenueShareConfig.repository'
 

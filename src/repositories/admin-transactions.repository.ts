@@ -59,11 +59,7 @@ export const adminTransactionsRepository = {
   async resolveUserIdByPublicId(publicId: bigint): Promise<string | null> {
     const user = await prismaRead.user.findFirst({
       where: {
-        OR: [
-          { publicId },
-          { defaultPublicId: publicId },
-          { currentVipPublicId: publicId },
-        ],
+        OR: [{ publicId }, { defaultPublicId: publicId }, { currentVipPublicId: publicId }],
       },
       select: { id: true },
     })
@@ -619,7 +615,9 @@ export const adminTransactionsRepository = {
       select: { idempotencyKey: true },
     })
     return rows.map((r) => ({
-      giftTransactionId: r.idempotencyKey.replace(/^admin-revert:gift:/, '').replace(/:credit$/, ''),
+      giftTransactionId: r.idempotencyKey
+        .replace(/^admin-revert:gift:/, '')
+        .replace(/:credit$/, ''),
     }))
   },
 }

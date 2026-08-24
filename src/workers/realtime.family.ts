@@ -30,7 +30,10 @@ import {
   PUSH_BROADCAST_SWEEP_JOB,
   PUSH_NOTIFICATION_QUEUE,
 } from '../queues/push-notification.constants'
-import { pushNotificationQueue, registerPushBroadcastSweep } from '../queues/push-notification.queue'
+import {
+  pushNotificationQueue,
+  registerPushBroadcastSweep,
+} from '../queues/push-notification.queue'
 import {
   processPushBroadcastBatchJob,
   processPushBroadcastJob,

@@ -80,11 +80,7 @@ export function resolveAdminCatalogAssetContentType(
         : domain === 'banner'
           ? 'INVALID_BANNER_ASSET_TYPE'
           : 'INVALID_STORE_ASSET_TYPE'
-    throw new AppError(
-      400,
-      `Unsupported file type .${ext || '(none)'}. Allowed: ${allowed}`,
-      code,
-    )
+    throw new AppError(400, `Unsupported file type .${ext || '(none)'}. Allowed: ${allowed}`, code)
   }
   return { ext, contentType: extMap[ext]! }
 }
@@ -131,9 +127,14 @@ export async function generatePresignedAdminCatalogAssetUpload(params: {
     fileName: params.fileName,
   })
 
-  const uploadUrl = await storageService.getPresignedPutUrl(key, contentType, PRESIGNED_URL_EXPIRES_IN, {
-    cacheControl: 'public, max-age=31536000, immutable',
-  })
+  const uploadUrl = await storageService.getPresignedPutUrl(
+    key,
+    contentType,
+    PRESIGNED_URL_EXPIRES_IN,
+    {
+      cacheControl: 'public, max-age=31536000, immutable',
+    },
+  )
 
   return {
     uploadUrl,

@@ -79,7 +79,10 @@ export async function getOrCreatePlatformSenderUser(): Promise<{ id: string }> {
       select: { id: true },
     })
 
-    log.info({ userId: created.id, publicId: publicId.toString() }, 'auto-provisioned platform sender user')
+    log.info(
+      { userId: created.id, publicId: publicId.toString() },
+      'auto-provisioned platform sender user',
+    )
     return created
   } catch (err) {
     const raced = await prisma.user.findFirst({

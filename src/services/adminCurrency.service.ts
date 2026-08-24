@@ -272,10 +272,7 @@ export const adminCurrencyService = {
           : {}),
         ...(cursor
           ? {
-              OR: [
-                { createdAt: { lt: cursor.t } },
-                { createdAt: cursor.t, id: { lt: cursor.id } },
-              ],
+              OR: [{ createdAt: { lt: cursor.t } }, { createdAt: cursor.t, id: { lt: cursor.id } }],
             }
           : {}),
       }

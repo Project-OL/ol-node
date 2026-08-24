@@ -115,7 +115,8 @@ export const customGiftAdminService = {
 
   async getRequest(id: string): Promise<AdminCustomGiftRequestDto> {
     const row = await customGiftRepository.findByIdWithUserAndGift(id)
-    if (!row) throw new AppError(404, 'Custom gift request not found', 'CUSTOM_GIFT_REQUEST_NOT_FOUND')
+    if (!row)
+      throw new AppError(404, 'Custom gift request not found', 'CUSTOM_GIFT_REQUEST_NOT_FOUND')
     return toAdminDto(row)
   },
 
@@ -129,7 +130,8 @@ export const customGiftAdminService = {
     adminId: string,
   ): Promise<AdminCustomGiftRequestDto> {
     const row = await customGiftRepository.findByIdWithUserAndGift(id)
-    if (!row) throw new AppError(404, 'Custom gift request not found', 'CUSTOM_GIFT_REQUEST_NOT_FOUND')
+    if (!row)
+      throw new AppError(404, 'Custom gift request not found', 'CUSTOM_GIFT_REQUEST_NOT_FOUND')
 
     if (body.giftId) {
       const gift = await prisma.gift.findUnique({ where: { id: body.giftId } })
@@ -143,9 +145,14 @@ export const customGiftAdminService = {
       resolvedByAdminId: adminId,
     })
     if (updated === 0) {
-      throw new AppError(409, 'Request is already resolved', 'CUSTOM_GIFT_REQUEST_ALREADY_RESOLVED', {
-        status: row.status,
-      })
+      throw new AppError(
+        409,
+        'Request is already resolved',
+        'CUSTOM_GIFT_REQUEST_ALREADY_RESOLVED',
+        {
+          status: row.status,
+        },
+      )
     }
     return this.getRequest(id)
   },
@@ -161,7 +168,8 @@ export const customGiftAdminService = {
     adminId: string,
   ): Promise<AdminCustomGiftRequestDto> {
     const row = await customGiftRepository.findByIdWithUserAndGift(id)
-    if (!row) throw new AppError(404, 'Custom gift request not found', 'CUSTOM_GIFT_REQUEST_NOT_FOUND')
+    if (!row)
+      throw new AppError(404, 'Custom gift request not found', 'CUSTOM_GIFT_REQUEST_NOT_FOUND')
 
     const updated = await prisma.$transaction(
       async (tx) => {
@@ -201,9 +209,14 @@ export const customGiftAdminService = {
     )
 
     if (updated === 0) {
-      throw new AppError(409, 'Request is already resolved', 'CUSTOM_GIFT_REQUEST_ALREADY_RESOLVED', {
-        status: row.status,
-      })
+      throw new AppError(
+        409,
+        'Request is already resolved',
+        'CUSTOM_GIFT_REQUEST_ALREADY_RESOLVED',
+        {
+          status: row.status,
+        },
+      )
     }
     if (body.refund) {
       await walletService.adjustCoinBalanceCache(row.userId, row.coinCost)

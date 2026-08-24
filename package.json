@@ -53,6 +53,7 @@
         "test:http": "vitest run tests/http",
         "postman:auth": "node scripts/generate-auth-postman-collection.mjs",
         "seed:fresh-agency": "tsx scripts/seed-fresh-agency.ts",
+        "seed:fresh-user": "tsx scripts/seed-fresh-user.ts",
         "seed:agency-commission-test": "tsx scripts/seed-agency-commission-test.ts",
         "seed:payroll-testland": "tsx scripts/seed-payroll-testland.ts",
         "seed:payroll-pair": "tsx scripts/seed-payroll-pair.ts",

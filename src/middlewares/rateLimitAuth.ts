@@ -24,6 +24,22 @@ export interface UserRateLimitConfig {
  * Per-user rate limit using Redis. Key is built from keyFn (e.g. userId).
  * Use after authenticate. keyBuilder receives the result of keyFn(request).
  */
+const noopRateLimit = async (
+  _request: FastifyRequest & { userId?: string },
+  _reply: FastifyReply,
+): Promise<void> => {}
+
+/** Face endpoints only — no-op when `FACE_RATE_LIMIT_DISABLED=true` (ol-dev testing). */
+function buildFaceRateLimit(config: {
+  max: number
+  windowMs: number
+  keyFn: (req: FastifyRequest & { userId?: string }) => string
+  keyBuilder: (key: string) => string
+}) {
+  if (env.FACE_RATE_LIMIT_DISABLED) return noopRateLimit
+  return buildRateLimit(config)
+}
+
 export function buildRateLimit(config: {
   max: number
   windowMs: number
@@ -580,7 +596,7 @@ export const rateLimitPmBind = buildRateLimit({
 })
 
 export const giftSendRateLimit = buildRateLimit({
-  max: 30,
+  max: 50,
   windowMs: 60_000,
   keyFn: (r) => r.userId ?? '',
   keyBuilder: (userId) => RedisKeys.giftSendRateLimit(userId),
@@ -682,14 +698,14 @@ export const rateLimitLivestreamRewardClaim = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.ratelimitLivestreamRewardClaim(userId),
 })
 
-export const rateLimitFaceRegister = buildRateLimit({
+export const rateLimitFaceRegister = buildFaceRateLimit({
   max: env.FACE_REGISTER_RATE_PER_HOUR,
   windowMs: 3_600_000,
   keyFn: (r) => r.userId ?? '',
   keyBuilder: (userId) => RedisKeys.faceRegisterRateLimit(userId),
 })
 
-export const rateLimitFaceVerify = buildRateLimit({
+export const rateLimitFaceVerify = buildFaceRateLimit({
   max: env.FACE_VERIFY_RATE_PER_HOUR,
   windowMs: 3_600_000,
   keyFn: (r) => r.userId ?? '',
@@ -710,14 +726,14 @@ export const rateLimitLivePhotoVerify = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.ratelimitLivePhotoVerify(userId),
 })
 
-export const rateLimitFaceRegistrationSession = buildRateLimit({
+export const rateLimitFaceRegistrationSession = buildFaceRateLimit({
   max: env.FACE_REGISTRATION_RATE_SESSION_PER_HOUR,
   windowMs: 3_600_000,
   keyFn: (r) => r.userId ?? '',
   keyBuilder: (userId) => RedisKeys.faceRegistrationSessionRate(userId),
 })
 
-export const rateLimitFaceRegistrationVerify = buildRateLimit({
+export const rateLimitFaceRegistrationVerify = buildFaceRateLimit({
   max: env.FACE_REGISTRATION_RATE_VERIFY_PER_HOUR,
   windowMs: 3_600_000,
   keyFn: (r) => r.userId ?? '',

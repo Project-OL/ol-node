@@ -31,10 +31,7 @@ const STALE_TOKEN_ERROR_CODES = new Set([
   'messaging/invalid-registration-token',
 ])
 
-function statusFromResult(result: {
-  success: boolean
-  skipped?: boolean
-}): PushDeliveryStatus {
+function statusFromResult(result: { success: boolean; skipped?: boolean }): PushDeliveryStatus {
   if (result.success) return PushDeliveryStatus.SENT
   if (result.skipped) return PushDeliveryStatus.SKIPPED
   return PushDeliveryStatus.FAILED
@@ -153,7 +150,10 @@ export const pushNotificationService = {
         const { code, message } = extractFirebaseError(err)
         if (STALE_TOKEN_ERROR_CODES.has(code)) {
           await prisma.user
-            .update({ where: { id: userId }, data: { fcmToken: null, fcmTokenUpdatedAt: new Date() } })
+            .update({
+              where: { id: userId },
+              data: { fcmToken: null, fcmTokenUpdatedAt: new Date() },
+            })
             .catch(() => {})
         }
         log.warn(

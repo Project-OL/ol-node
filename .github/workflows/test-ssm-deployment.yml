@@ -1,0 +1,83 @@
+name: Test SSM Deployment Access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test-ssm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::465457334877:role/ol-prod-github-deploy-role
+          aws-region: ap-south-1
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+      - name: Send test command to EC2
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region ap-south-1 \
+            --instance-ids i-0351dd6514d9c3f06 \
+            --document-name AWS-RunShellScript \
+            --parameters 'commands=[
+              "echo ===== HOSTNAME =====",
+              "hostname",
+              "echo ===== USER =====",
+              "whoami",
+              "echo ===== NODE =====",
+              "node --version",
+              "echo ===== NPM =====",
+              "npm --version",
+              "echo ===== PM2 =====",
+              "pm2 --version"
+            ]' \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "COMMAND_ID=$COMMAND_ID"
+
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --region ap-south-1 \
+              --command-id "$COMMAND_ID" \
+              --instance-id i-0351dd6514d9c3f06 \
+              --query 'Status' \
+              --output text)
+
+            echo "SSM status: $STATUS"
+
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation \
+                  --region ap-south-1 \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id i-0351dd6514d9c3f06 \
+                  --query 'StandardOutputContent' \
+                  --output text
+                exit 0
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                aws ssm get-command-invocation \
+                  --region ap-south-1 \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id i-0351dd6514d9c3f06 \
+                  --query '[Status,StandardOutputContent,StandardErrorContent]' \
+                  --output text
+                exit 1
+                ;;
+            esac
+
+            sleep 2
+          done
+
+          echo "Timed out waiting for SSM command"
+          exit 1

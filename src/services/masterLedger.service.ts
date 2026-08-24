@@ -34,13 +34,7 @@ import { ledgerFloatSnapshotRepository } from '../repositories/ledgerFloatSnapsh
  * — most often a house account that was never registered.
  */
 
-export type LedgerGrain =
-  | 'today'
-  | 'yesterday'
-  | 'month'
-  | 'quarter'
-  | 'year'
-  | 'custom'
+export type LedgerGrain = 'today' | 'yesterday' | 'month' | 'quarter' | 'year' | 'custom'
 
 /** Maximum inclusive span for custom ledger periods (730 days). */
 export const MAX_CUSTOM_LEDGER_PERIOD_MS = 730 * 24 * 60 * 60 * 1000
@@ -84,11 +78,7 @@ function startOfUtcDay(d: Date): Date {
 /** Reject custom periods longer than {@link MAX_CUSTOM_LEDGER_PERIOD_MS}. */
 export function assertCustomLedgerPeriodSpan(from: Date, to: Date): void {
   if (to.getTime() - from.getTime() > MAX_CUSTOM_LEDGER_PERIOD_MS) {
-    throw new AppError(
-      400,
-      'Custom period cannot exceed 730 days (2 years)',
-      'INVALID_REQUEST',
-    )
+    throw new AppError(400, 'Custom period cannot exceed 730 days (2 years)', 'INVALID_REQUEST')
   }
   if (to.getTime() <= from.getTime()) {
     throw new AppError(400, 'Period end must be after period start', 'INVALID_REQUEST')
@@ -168,9 +158,7 @@ async function sumCoin(params: {
       txType: { in: params.txTypes },
       wallet: { currencyType: params.currency, ...ownerWhere },
       ...(createdAt ? { createdAt } : {}),
-      ...(params.promotionalOnly
-        ? { metadata: { path: ['promotional'], equals: true } }
-        : {}),
+      ...(params.promotionalOnly ? { metadata: { path: ['promotional'], equals: true } } : {}),
     },
     _sum: { amount: true },
   })
@@ -195,9 +183,7 @@ async function sumPoint(params: {
       txType: { in: params.txTypes },
       ...(Object.keys(ownerWhere).length > 0 ? { wallet: ownerWhere } : {}),
       ...(createdAt ? { createdAt } : {}),
-      ...(params.promotionalOnly
-        ? { metadata: { path: ['promotional'], equals: true } }
-        : {}),
+      ...(params.promotionalOnly ? { metadata: { path: ['promotional'], equals: true } } : {}),
     },
     _sum: { amount: true },
   })
@@ -405,11 +391,7 @@ async function companyPayoutUnits(from?: Date, to?: Date): Promise<bigint> {
 }
 
 /** Units that left customer accounts back into a house account (sale refunds). */
-async function returnsToHouseUnits(
-  house: HouseAccounts,
-  from?: Date,
-  to?: Date,
-): Promise<bigint> {
+async function returnsToHouseUnits(house: HouseAccounts, from?: Date, to?: Date): Promise<bigint> {
   if (house.allIds.size === 0) return 0n
   const ids = Prisma.join([...house.allIds].map((id) => Prisma.sql`${id}::uuid`))
   const [coin, point] = await Promise.all([
@@ -723,38 +705,33 @@ export const masterLedgerService = {
     // Gift margin from ledgers (not gift_transactions.coinCost): live combo rows
     // can under-store coinCost while GIFT_SEND / GIFT_RECEIVE stay correct.
     // Agency commission rule unchanged — AGENT_COMMISSION filtered by hostTxType meta.
-    const [
-      giftSendCoins,
-      giftRefunds,
-      giftHost,
-      giftAgencyReceive,
-      giftAgencyLive,
-    ] = await Promise.all([
-      sumCoin({
-        direction: LedgerDirection.DEBIT,
-        txTypes: [CoinTxType.GIFT_SEND],
-        currency: WalletCurrencyType.COIN,
-        from,
-        to,
-      }),
-      sumCoin({
-        direction: LedgerDirection.CREDIT,
-        txTypes: [CoinTxType.GIFT_REFUND],
-        currency: WalletCurrencyType.COIN,
-        from,
-        to,
-      }),
-      sumPoint({
-        direction: LedgerDirection.CREDIT,
-        txTypes: [PointTxType.GIFT_RECEIVE, PointTxType.LIVESTREAM_GIFT],
-        from,
-        to,
-        owner: 'customer',
-        house,
-      }),
-      sumAgencyCommission({ hostTxType: PointTxType.GIFT_RECEIVE, from, to, house }),
-      sumAgencyCommission({ hostTxType: PointTxType.LIVESTREAM_GIFT, from, to, house }),
-    ])
+    const [giftSendCoins, giftRefunds, giftHost, giftAgencyReceive, giftAgencyLive] =
+      await Promise.all([
+        sumCoin({
+          direction: LedgerDirection.DEBIT,
+          txTypes: [CoinTxType.GIFT_SEND],
+          currency: WalletCurrencyType.COIN,
+          from,
+          to,
+        }),
+        sumCoin({
+          direction: LedgerDirection.CREDIT,
+          txTypes: [CoinTxType.GIFT_REFUND],
+          currency: WalletCurrencyType.COIN,
+          from,
+          to,
+        }),
+        sumPoint({
+          direction: LedgerDirection.CREDIT,
+          txTypes: [PointTxType.GIFT_RECEIVE, PointTxType.LIVESTREAM_GIFT],
+          from,
+          to,
+          owner: 'customer',
+          house,
+        }),
+        sumAgencyCommission({ hostTxType: PointTxType.GIFT_RECEIVE, from, to, house }),
+        sumAgencyCommission({ hostTxType: PointTxType.LIVESTREAM_GIFT, from, to, house }),
+      ])
     const giftCoins = giftSendCoins - giftRefunds
     const giftAgency = giftAgencyReceive + giftAgencyLive
     const gifts = profitFromCoinToPointSplit({

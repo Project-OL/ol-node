@@ -25,17 +25,14 @@ export const supportAssignmentService = {
    * Never throws on assignment failure paths that should not break ticket creation —
    * callers on the create path wrap this in try/catch anyway.
    */
-  async assignTicket(
-    ticketId: bigint,
-    opts?: { excludeAdminId?: string },
-  ): Promise<string | null> {
+  async assignTicket(ticketId: bigint, opts?: { excludeAdminId?: string }): Promise<string | null> {
     const ticket = await supportRepository.findTicketById(ticketId)
     if (!ticket || ticket.status === 'CLOSED' || ticket.status === 'PENDING_REVIEW') return null
     if (ticket.rating != null) return null
 
-    const candidates = (await systemAdminRepository.findAllByRole('CUSTOMER_SUPPORT', 'ACTIVE')).filter(
-      (a) => a.id !== opts?.excludeAdminId,
-    )
+    const candidates = (
+      await systemAdminRepository.findAllByRole('CUSTOMER_SUPPORT', 'ACTIVE')
+    ).filter((a) => a.id !== opts?.excludeAdminId)
     if (candidates.length === 0) return null
 
     const owner = await userRepository.findById(ticket.userId)
@@ -59,7 +56,8 @@ export const supportAssignmentService = {
     // reassignment the current status is preserved (only ownership changes).
     const wasUnassigned = !ticket.assignedAdminId
     await supportRepository.assignTicket(ticketId, chosen.id, {
-      setStatusAssigned: wasUnassigned && (ticket.status === 'OPEN' || ticket.status === 'AWAITING_REPLY'),
+      setStatusAssigned:
+        wasUnassigned && (ticket.status === 'OPEN' || ticket.status === 'AWAITING_REPLY'),
     })
 
     await csaNotificationService.notify(

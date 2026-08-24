@@ -24,8 +24,7 @@ export type SupportConfigDto = {
 }
 
 function serialize(row: { reviewWindowMs: number; updatedAt: Date }): SupportConfigDto {
-  const windowMs =
-    row.reviewWindowMs > 0 ? row.reviewWindowMs : DEFAULT_SUPPORT_REVIEW_WINDOW_MS
+  const windowMs = row.reviewWindowMs > 0 ? row.reviewWindowMs : DEFAULT_SUPPORT_REVIEW_WINDOW_MS
   const display = toDisplayAmountUnit(windowMs)
   return {
     amount: display.amount,

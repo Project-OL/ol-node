@@ -10,7 +10,8 @@ const LIVE_PHOTO_FAILURE_MESSAGES: Record<string, string> = {
   live_object_missing: 'The uploaded live photo object was missing from storage.',
   invalid_image_format: 'The uploaded file is not a valid image format.',
   rekognition_detect_error: 'Rekognition failed while detecting faces in the live photo.',
-  rekognition_compare_error: 'Rekognition failed while comparing the live photo to the face profile.',
+  rekognition_compare_error:
+    'Rekognition failed while comparing the live photo to the face profile.',
   no_face_in_live_image: 'No face was detected in the live photo.',
   multiple_faces_in_live_image: 'Multiple faces were detected; a solo photo is required.',
   below_similarity_threshold: 'The live photo did not match the indexed face closely enough.',
@@ -109,7 +110,8 @@ export function explainLivePhotoStatus(input: {
   }
 
   if (state === 'PENDING_VERIFICATION') {
-    const reason = 'A replacement live photo is waiting to be verified. The previous verified photo is still shown.'
+    const reason =
+      'A replacement live photo is waiting to be verified. The previous verified photo is still shown.'
     return {
       statusLabel: 'Pending verification',
       statusDetail: reason,

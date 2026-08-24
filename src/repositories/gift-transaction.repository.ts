@@ -17,9 +17,7 @@ export const giftTransactionRepository = {
   ) {
     const { id, quantity, ...rest } = data
     return tx.giftTransaction.create({
-      data: id
-        ? { id, ...rest, quantity: quantity ?? 1 }
-        : { ...rest, quantity: quantity ?? 1 },
+      data: id ? { id, ...rest, quantity: quantity ?? 1 } : { ...rest, quantity: quantity ?? 1 },
     })
   },
 }

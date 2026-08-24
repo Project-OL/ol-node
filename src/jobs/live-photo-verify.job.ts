@@ -14,10 +14,7 @@ import { bustLivePhotoCaches } from '../services/live-photo/live-photo-cache'
 import { livePhotoPreCompareHooks } from '../services/live-photo/live-photo-extension.hooks'
 import { livePhotoMetrics } from '../services/live-photo/live-photo.metrics'
 import { FACE_REGISTRATION_ERRORS } from '../constants/face-registration-errors'
-import {
-  LIVE_PHOTO_S3_PURGE_JOB,
-  LIVE_PHOTO_VERIFY_JOB,
-} from '../queues/live-photo.constants'
+import { LIVE_PHOTO_S3_PURGE_JOB, LIVE_PHOTO_VERIFY_JOB } from '../queues/live-photo.constants'
 import { enqueueLivePhotoS3Purge } from '../queues/live-photo.queue'
 import { rootLogger } from '../utils/rootLogger'
 
@@ -90,7 +87,14 @@ export async function processLivePhotoVerifyJob(
     }
     if (!matchesTarget) {
       log.warn(
-        { userId, generation, requestId, jobS3Key: s3Key, rowS3Key: row.s3Key, pending: row.pendingS3Key },
+        {
+          userId,
+          generation,
+          requestId,
+          jobS3Key: s3Key,
+          rowS3Key: row.s3Key,
+          pending: row.pendingS3Key,
+        },
         'live_photo_verify_job_s3_key_mismatch_superseded',
       )
       livePhotoMetrics.verifyStaleSkipped += 1
@@ -226,11 +230,27 @@ export async function processLivePhotoVerifyJob(
           },
           'live_photo_rekognition_invalid_image_format_compare',
         )
-        await failAndAudit(userId, row.id, s3Key, 'invalid_image_format', null, t0, Date.now() - cmpT0)
+        await failAndAudit(
+          userId,
+          row.id,
+          s3Key,
+          'invalid_image_format',
+          null,
+          t0,
+          Date.now() - cmpT0,
+        )
         return
       }
       log.error({ err, userId, requestId }, 'compare_faces_error')
-      await failAndAudit(userId, row.id, s3Key, 'rekognition_compare_error', null, t0, Date.now() - cmpT0)
+      await failAndAudit(
+        userId,
+        row.id,
+        s3Key,
+        'rekognition_compare_error',
+        null,
+        t0,
+        Date.now() - cmpT0,
+      )
       return
     }
     const rekMs = Date.now() - cmpT0

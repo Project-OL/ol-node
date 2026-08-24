@@ -172,7 +172,11 @@ function parsePointsBound(
     return BigInt(points)
   }
   if (usd == null || !Number.isFinite(usd) || usd < 0) {
-    throw new AppError(400, `${label} requires minUsd/maxUsd or minPoints/maxPoints`, 'VALIDATION_ERROR')
+    throw new AppError(
+      400,
+      `${label} requires minUsd/maxUsd or minPoints/maxPoints`,
+      'VALIDATION_ERROR',
+    )
   }
   return usdToPoints(usd)
 }
@@ -225,11 +229,7 @@ function normalizeAndValidateFeeTiers(
       ? null
       : parsePointsBound(row.maxPoints ?? undefined, row.maxUsd ?? undefined, `feeTiers[${i}].max`)
     if (maxPoints != null && maxPoints <= minPoints) {
-      throw new AppError(
-        400,
-        `feeTiers[${i}].max must be greater than min`,
-        'VALIDATION_ERROR',
-      )
+      throw new AppError(400, `feeTiers[${i}].max must be greater than min`, 'VALIDATION_ERROR')
     }
     return {
       minPoints,
@@ -330,7 +330,12 @@ function normalizeAndValidateCountryRates(
 }
 
 function pickLegacyRate(
-  rows: Array<{ country: string; countryCode: string | null; currencyCode: string; ratePerUsd: Prisma.Decimal }>,
+  rows: Array<{
+    country: string
+    countryCode: string | null
+    currencyCode: string
+    ratePerUsd: Prisma.Decimal
+  }>,
   match: { countries: string[]; codes: string[]; currency: string },
 ): Prisma.Decimal | undefined {
   const hit = rows.find(

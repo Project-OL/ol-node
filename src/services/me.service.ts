@@ -13,10 +13,7 @@ import { env } from '../config/env'
 import { signAccess } from '../utils/jwt'
 import { AppError } from '../middlewares/errorHandler'
 import { storageService } from './storage.service'
-import {
-  normalizeGenderStored,
-  splitDisplayName,
-} from '../utils/profileDisplay'
+import { normalizeGenderStored, splitDisplayName } from '../utils/profileDisplay'
 import { formatUserName } from '../utils/user-display'
 import { assertDisplayNameAvailable } from '../utils/user-identity-unique'
 import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'

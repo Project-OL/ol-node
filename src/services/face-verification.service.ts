@@ -47,6 +47,7 @@ function extractIp(ctx: RequestCtx): string | undefined {
 }
 
 async function applyRateLimit(key: string, max: number, windowSec: number) {
+  if (env.FACE_RATE_LIMIT_DISABLED) return
   const count = Number(await redisClient.eval(RATE_LIMIT_LUA, 1, key, String(windowSec)))
   if (count > max) {
     throw new AppError(

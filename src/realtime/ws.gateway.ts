@@ -238,7 +238,10 @@ async function handleJoinSupportTicket(
   if (!isAdmin) {
     await markSupportTicketWatching(ticketKey, principal)
   }
-  app.log.info({ principal, socketId, ticketId: ticketKey, msg: 'ws join_support_ticket' }, 'realtime')
+  app.log.info(
+    { principal, socketId, ticketId: ticketKey, msg: 'ws join_support_ticket' },
+    'realtime',
+  )
 }
 
 async function handleLeaveSupportTicket(
@@ -381,97 +384,121 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
       socket.on('message', (raw: Buffer | ArrayBuffer | Buffer[]) => {
         inboundChain = inboundChain
           .then(async () => {
-          try {
-            const byteLen = incomingBytesLength(raw)
+            try {
+              const byteLen = incomingBytesLength(raw)
 
-            if (byteLen > env.WS_MAX_INCOMING_BYTES) {
-              socket.close(WS_TOO_LARGE, 'frame_too_large')
+              if (byteLen > env.WS_MAX_INCOMING_BYTES) {
+                socket.close(WS_TOO_LARGE, 'frame_too_large')
 
-              return
-            }
-
-            if (!wsFrameLimiter.allow(socketId)) {
-              socket.close(WS_RATE_LIMITED, 'rate_limited')
-
-              return
-            }
-
-            bumpIdle()
-
-            const text = raw.toString()
-
-            const data: unknown = JSON.parse(text)
-
-            const parsed = clientFrameSchema.safeParse(data)
-
-            if (!parsed.success) {
-              app.log.warn(
-                { userId, socketId, err: parsed.error.flatten(), data },
-                '[ws] invalid client frame',
-              )
-              sendServerFrame(socket, {
-                t: 'ERROR',
-                code: 'INVALID_FRAME',
-                message:
-                  'Invalid WebSocket frame. JOIN_GUARDIAN requires { t, userIds: string[] } with user UUIDs (not publicId).',
-                details: parsed.error.flatten(),
-              })
-              return
-            }
-
-            const frame = parsed.data
-
-            if (frame.t === 'JOIN') {
-              if (!isAdmin) {
-                app.log.info({ userId, socketId, conversationId: frame.conversationId, msg: 'ws join' }, 'realtime')
-                await handleJoin(app, socket, userId, socketId, frame.conversationId)
+                return
               }
-            } else if (frame.t === 'LEAVE') {
-              if (!isAdmin) {
-                app.log.info({ userId, socketId, conversationId: frame.conversationId, msg: 'ws leave' }, 'realtime')
-                await handleLeave(socketId, frame.conversationId)
+
+              if (!wsFrameLimiter.allow(socketId)) {
+                socket.close(WS_RATE_LIMITED, 'rate_limited')
+
+                return
               }
-            } else if (frame.t === 'PING') {
-              if (!isAdmin) void presenceService.refreshOnlineHeartbeat(userId)
-              sendServerFrame(socket, { t: 'PONG', ts: frame.ts })
-            } else if (frame.t === 'TYPING') {
-              if (!isAdmin) await messagingService.handleTypingFrame(userId, frame.conversationId, frame.isTyping)
-            } else if (frame.t === 'RECORDING') {
-              if (!isAdmin) await messagingService.handleRecordingFrame(userId, frame.conversationId, frame.isRecording)
-            } else if (frame.t === 'READ') {
-              if (!isAdmin) messagingService.scheduleReadReceipt(userId, frame.conversationId, frame.lastReadMessageId)
-            } else if (frame.t === 'JOIN_PRESENCE') {
-              if (!isAdmin) await handleJoinPresence(socket, socketId, userId, frame.userIds)
-            } else if (frame.t === 'LEAVE_PRESENCE') {
-              if (!isAdmin) await handleLeavePresence(socketId, frame.userIds)
-            } else if (frame.t === 'JOIN_GUARDIAN') {
-              if (!isAdmin) await handleJoinGuardian(socket, socketId, userId, frame.userIds)
-            } else if (frame.t === 'LEAVE_GUARDIAN') {
-              if (!isAdmin) await handleLeaveGuardian(socketId, frame.userIds)
-            } else if (frame.t === 'JOIN_SUPPORT_TICKET') {
-              await handleJoinSupportTicket(app, socket, principal, socketId, frame.ticketId)
-            } else if (frame.t === 'LEAVE_SUPPORT_TICKET') {
-              await handleLeaveSupportTicket(principal, socketId, frame.ticketId)
-            } else if (frame.t === 'RESUME') {
-              if (!isAdmin) {
-                const rows = await messagingService.getResumeSyncStates(userId, frame.conversations)
-                for (const r of rows) {
-                  sendServerFrame(socket, {
-                    t: 'SYNC_STATE',
-                    conversationId: r.conversationId,
-                    latestSeq: r.latestSeq,
-                    hasGap: r.hasGap,
-                  })
+
+              bumpIdle()
+
+              const text = raw.toString()
+
+              const data: unknown = JSON.parse(text)
+
+              const parsed = clientFrameSchema.safeParse(data)
+
+              if (!parsed.success) {
+                app.log.warn(
+                  { userId, socketId, err: parsed.error.flatten(), data },
+                  '[ws] invalid client frame',
+                )
+                sendServerFrame(socket, {
+                  t: 'ERROR',
+                  code: 'INVALID_FRAME',
+                  message:
+                    'Invalid WebSocket frame. JOIN_GUARDIAN requires { t, userIds: string[] } with user UUIDs (not publicId).',
+                  details: parsed.error.flatten(),
+                })
+                return
+              }
+
+              const frame = parsed.data
+
+              if (frame.t === 'JOIN') {
+                if (!isAdmin) {
+                  app.log.info(
+                    { userId, socketId, conversationId: frame.conversationId, msg: 'ws join' },
+                    'realtime',
+                  )
+                  await handleJoin(app, socket, userId, socketId, frame.conversationId)
+                }
+              } else if (frame.t === 'LEAVE') {
+                if (!isAdmin) {
+                  app.log.info(
+                    { userId, socketId, conversationId: frame.conversationId, msg: 'ws leave' },
+                    'realtime',
+                  )
+                  await handleLeave(socketId, frame.conversationId)
+                }
+              } else if (frame.t === 'PING') {
+                if (!isAdmin) void presenceService.refreshOnlineHeartbeat(userId)
+                sendServerFrame(socket, { t: 'PONG', ts: frame.ts })
+              } else if (frame.t === 'TYPING') {
+                if (!isAdmin)
+                  await messagingService.handleTypingFrame(
+                    userId,
+                    frame.conversationId,
+                    frame.isTyping,
+                  )
+              } else if (frame.t === 'RECORDING') {
+                if (!isAdmin)
+                  await messagingService.handleRecordingFrame(
+                    userId,
+                    frame.conversationId,
+                    frame.isRecording,
+                  )
+              } else if (frame.t === 'READ') {
+                if (!isAdmin)
+                  messagingService.scheduleReadReceipt(
+                    userId,
+                    frame.conversationId,
+                    frame.lastReadMessageId,
+                  )
+              } else if (frame.t === 'JOIN_PRESENCE') {
+                if (!isAdmin) await handleJoinPresence(socket, socketId, userId, frame.userIds)
+              } else if (frame.t === 'LEAVE_PRESENCE') {
+                if (!isAdmin) await handleLeavePresence(socketId, frame.userIds)
+              } else if (frame.t === 'JOIN_GUARDIAN') {
+                if (!isAdmin) await handleJoinGuardian(socket, socketId, userId, frame.userIds)
+              } else if (frame.t === 'LEAVE_GUARDIAN') {
+                if (!isAdmin) await handleLeaveGuardian(socketId, frame.userIds)
+              } else if (frame.t === 'JOIN_SUPPORT_TICKET') {
+                await handleJoinSupportTicket(app, socket, principal, socketId, frame.ticketId)
+              } else if (frame.t === 'LEAVE_SUPPORT_TICKET') {
+                await handleLeaveSupportTicket(principal, socketId, frame.ticketId)
+              } else if (frame.t === 'RESUME') {
+                if (!isAdmin) {
+                  const rows = await messagingService.getResumeSyncStates(
+                    userId,
+                    frame.conversations,
+                  )
+                  for (const r of rows) {
+                    sendServerFrame(socket, {
+                      t: 'SYNC_STATE',
+                      conversationId: r.conversationId,
+                      latestSeq: r.latestSeq,
+                      hasGap: r.hasGap,
+                    })
+                  }
                 }
               }
+            } catch (e) {
+              app.log.warn({ e, userId, isAdmin, socketId }, '[ws] message handler error')
             }
-          } catch (e) {
-            app.log.warn({ e, userId, isAdmin, socketId }, '[ws] message handler error')
-          }
-        })
-        .catch((e) => {
-          app.log.warn({ e, userId, isAdmin, socketId }, '[ws] inbound chain error')
-        })
+          })
+          .catch((e) => {
+            app.log.warn({ e, userId, isAdmin, socketId }, '[ws] inbound chain error')
+          })
       })
     },
   )

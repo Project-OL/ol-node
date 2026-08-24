@@ -1,8 +1,4 @@
-import {
-  Prisma,
-  TreasuryFlowClassificationType,
-  TreasuryFlowKind,
-} from '@prisma/client'
+import { Prisma, TreasuryFlowClassificationType, TreasuryFlowKind } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { unitsToUsd } from '../utils/points-currency'
@@ -329,7 +325,11 @@ export const treasuryFlowService = {
     const flow = await findFlow(params.flowKind, params.flowId)
     if (!flow) throw new AppError(404, 'Treasury flow not found', 'FLOW_NOT_FOUND')
     if (!house.allIds.has(flow.senderUserId)) {
-      throw new AppError(400, 'Flow sender is not a registered house account', 'NOT_A_TREASURY_FLOW')
+      throw new AppError(
+        400,
+        'Flow sender is not a registered house account',
+        'NOT_A_TREASURY_FLOW',
+      )
     }
     if (house.allIds.has(flow.recipientUserId)) {
       throw new AppError(
@@ -373,7 +373,9 @@ async function findFlow(
       where: { id },
       select: { senderAgentUserId: true, recipientUserId: true },
     })
-    return row ? { senderUserId: row.senderAgentUserId, recipientUserId: row.recipientUserId } : null
+    return row
+      ? { senderUserId: row.senderAgentUserId, recipientUserId: row.recipientUserId }
+      : null
   }
   const row = await prismaRead.agentPointTransfer.findUnique({
     where: { id },

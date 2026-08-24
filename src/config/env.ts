@@ -101,6 +101,11 @@ const envSchema = z
     FACE_LIVENESS_CREDENTIALS_REQUIRED: z.coerce.boolean().default(false),
     FACE_REGISTER_RATE_PER_HOUR: z.coerce.number().int().positive().default(5),
     FACE_VERIFY_RATE_PER_HOUR: z.coerce.number().int().positive().default(10),
+    /**
+     * When true, skip all face register/verify/liveness rate limits (1h window + IP caps).
+     * **ol-dev testing only** — must be false (or unset) in production. See CURRENT_CONTEXT go-live note.
+     */
+    FACE_RATE_LIMIT_DISABLED: z.coerce.boolean().default(false),
     /** `worker-face-index` sleep between Postgres polls (ms). */
     FACE_INDEX_POLL_MS: z.coerce.number().int().positive().default(2000),
     /** Max `PENDING_INDEX` rows processed per poll cycle (capped at 50 in job). */
@@ -132,12 +137,7 @@ const envSchema = z
      */
     FACE_LIVENESS_STS_ROLE_ARN: z.string().optional(),
     /** STS session duration for Face Liveness client credentials (seconds). */
-    FACE_LIVENESS_CREDENTIALS_DURATION_SEC: z.coerce
-      .number()
-      .int()
-      .min(900)
-      .max(3600)
-      .default(900),
+    FACE_LIVENESS_CREDENTIALS_DURATION_SEC: z.coerce.number().int().min(900).max(3600).default(900),
 
     /** Rekognition DetectFaces quality thresholds (0–100 scale). */
     FACE_MIN_BRIGHTNESS: z.coerce.number().min(0).max(100).default(30),
@@ -238,7 +238,7 @@ const envSchema = z
           .filter(Boolean),
       ),
 
-    RATE_LIMIT_MAX: z.coerce.number().default(100),
+    RATE_LIMIT_MAX: z.coerce.number().default(200),
     RATE_LIMIT_TIME_WINDOW: z.coerce.number().default(60000),
     AUTH_RATE_LIMIT_MAX: z.coerce.number().default(5),
     AUTH_RATE_LIMIT_TIME_WINDOW: z.coerce.number().default(60000),

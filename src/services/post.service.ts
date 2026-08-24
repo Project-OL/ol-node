@@ -259,9 +259,7 @@ export const postService = {
     const likedSet = await postRepository.batchExistsLike(postIds, requesterId)
     const lockedCreatorIds = [
       ...new Set(
-        posts
-          .filter((p) => p.subscriberOnly && p.user.id !== requesterId)
-          .map((p) => p.user.id),
+        posts.filter((p) => p.subscriberOnly && p.user.id !== requesterId).map((p) => p.user.id),
       ),
     ]
     const accessMap =
@@ -273,8 +271,7 @@ export const postService = {
     for (const post of posts) {
       const isLiked = likedSet.has(post.id)
       if (post.subscriberOnly) {
-        const allowed =
-          post.user.id === requesterId || accessMap.get(post.user.id) === true
+        const allowed = post.user.id === requesterId || accessMap.get(post.user.id) === true
         responses.push(
           allowed
             ? assemblePostResponse(post, { isLiked })

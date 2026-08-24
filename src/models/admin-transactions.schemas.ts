@@ -56,9 +56,7 @@ export const adminPlatformProfitSummaryQuerySchema = z.object({
   to: z.string().datetime().optional(),
 })
 
-export type AdminPlatformProfitSummaryQuery = z.infer<
-  typeof adminPlatformProfitSummaryQuerySchema
->
+export type AdminPlatformProfitSummaryQuery = z.infer<typeof adminPlatformProfitSummaryQuerySchema>
 
 export const adminTransactionRevertBodySchema = z.object({
   reason: z.string().min(1).max(1000),

@@ -14,10 +14,7 @@ import {
 import { agencyRankingService } from './agencyRanking.service'
 import { privacyService } from './privacy.service'
 import { richTierService } from './rich-tier.service'
-import {
-  countryCacheKeySegment,
-  normalizeCountryOptional,
-} from '../utils/agency-country'
+import { countryCacheKeySegment, normalizeCountryOptional } from '../utils/agency-country'
 import { formatUserName } from '../utils/user-display'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import {
@@ -316,12 +313,8 @@ export const rankingService = {
         items = page.map((row, i) => {
           const u = byId.get(row.entityId)
           const mysteryOn = mystery?.get(row.entityId)?.mysteryOnRank === true
-          const wealthLevel = u
-            ? levelFromWallet(u.walletUserLevels, 'WEALTH')
-            : 1
-          const livestreamLevel = u
-            ? levelFromWallet(u.walletUserLevels, 'LIVESTREAM')
-            : 1
+          const wealthLevel = u ? levelFromWallet(u.walletUserLevels, 'WEALTH') : 1
+          const livestreamLevel = u ? levelFromWallet(u.walletUserLevels, 'LIVESTREAM') : 1
           const displayName = u ? formatUserName(u) : ''
           return {
             rank: skip + i + 1,
@@ -338,7 +331,8 @@ export const rankingService = {
               age: mysteryOn ? null : computeAge(u?.dateOfBirth),
               wealthLevel,
               livestreamLevel,
-              richTier: board === RankingBoard.RICH ? (richTiers.get(row.entityId) ?? 0) : undefined,
+              richTier:
+                board === RankingBoard.RICH ? (richTiers.get(row.entityId) ?? 0) : undefined,
               mysteryRank: mysteryOn,
             },
           }
@@ -346,11 +340,7 @@ export const rankingService = {
       }
 
       try {
-        await redisClient.setex(
-          cacheKey,
-          ttl,
-          JSON.stringify({ epoch, items, nextCursor }),
-        )
+        await redisClient.setex(cacheKey, ttl, JSON.stringify({ epoch, items, nextCursor }))
       } catch {
         /* ignore */
       }

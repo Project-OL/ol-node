@@ -98,7 +98,10 @@ export const livestreamRewardConfigService = {
     const windowDays = clampWindowDays(input.windowDays ?? current.windowDays)
     const pointsPerHour = clampPointsPerHour(input.pointsPerHour ?? current.pointsPerHour)
 
-    if (input.windowDays != null && (input.windowDays < MIN_WINDOW_DAYS || input.windowDays > MAX_WINDOW_DAYS)) {
+    if (
+      input.windowDays != null &&
+      (input.windowDays < MIN_WINDOW_DAYS || input.windowDays > MAX_WINDOW_DAYS)
+    ) {
       throw new AppError(
         400,
         `windowDays must be between ${MIN_WINDOW_DAYS} and ${MAX_WINDOW_DAYS}`,

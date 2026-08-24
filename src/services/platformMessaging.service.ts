@@ -1,8 +1,5 @@
 import type { MessageType } from '@prisma/client'
-import {
-  messageRepository,
-  type MessageWithDetails,
-} from '../repositories/message.repository'
+import { messageRepository, type MessageWithDetails } from '../repositories/message.repository'
 import { userRepository } from '../repositories/user.repository'
 import { cacheService } from './cache.service'
 import { RedisKeys, redisClient, MSG_HOT_CACHE_SIZE } from '../config/redis'
@@ -23,7 +20,10 @@ function serializeMessageForHotCache(msg: MessageWithDetails): string {
   )
 }
 
-async function pushMessageToHotCache(conversationId: string, msg: MessageWithDetails): Promise<void> {
+async function pushMessageToHotCache(
+  conversationId: string,
+  msg: MessageWithDetails,
+): Promise<void> {
   const msgKey = RedisKeys.convMessages(conversationId)
   await redisClient.zadd(msgKey, Number(msg.seq), serializeMessageForHotCache(msg))
   await redisClient.expire(msgKey, MSG_HOT_TTL)

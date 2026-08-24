@@ -21,10 +21,7 @@ import {
   AddGiftsToGalleryCategoryBodySchema,
   RemoveGiftsFromGalleryCategoryBodySchema,
 } from '../../models/gift-admin.schemas'
-import {
-  giftAdminService,
-  giftCategoryService,
-} from '../../services/gift-admin.service'
+import { giftAdminService, giftCategoryService } from '../../services/gift-admin.service'
 import { giftGalleryAdminService } from '../../services/gift-gallery-admin.service'
 import { adminCatalogAssetUploadService } from '../../services/admin-catalog-asset-upload.service'
 import { AdminCatalogAssetUploadUrlBodySchema } from '../../models/admin-catalog-asset-upload.schemas'
@@ -409,13 +406,13 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
     { preHandler: preAuth },
     async (request: FastifyRequest<{ Params: { sectionId: string } }>, reply: FastifyReply) => {
       const body = UpdateGalleryCategoryBodySchema.parse(request.body ?? {})
-      const updated = await giftGalleryAdminService.updateCategory(
-        request.params.sectionId,
-        body,
-      )
+      const updated = await giftGalleryAdminService.updateCategory(request.params.sectionId, body)
       auditService.logAdminFromRequest(request, {
         actionType: 'ADMIN_GIFT_GALLERY_UPDATED',
-        actionDetails: { sectionId: request.params.sectionId, categoryId: request.params.sectionId },
+        actionDetails: {
+          sectionId: request.params.sectionId,
+          categoryId: request.params.sectionId,
+        },
       })
       return reply.send(updated)
     },
@@ -446,7 +443,10 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
       await giftGalleryAdminService.deleteCategory(request.params.sectionId)
       auditService.logAdminFromRequest(request, {
         actionType: 'ADMIN_GIFT_GALLERY_DELETED',
-        actionDetails: { sectionId: request.params.sectionId, categoryId: request.params.sectionId },
+        actionDetails: {
+          sectionId: request.params.sectionId,
+          categoryId: request.params.sectionId,
+        },
       })
       return reply.status(204).send()
     },

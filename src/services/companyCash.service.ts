@@ -1,9 +1,4 @@
-import {
-  CompanyCashDirection,
-  CompanyCashReason,
-  Prisma,
-  WalletCurrencyType,
-} from '@prisma/client'
+import { CompanyCashDirection, CompanyCashReason, Prisma, WalletCurrencyType } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import { companyCashRepository } from '../repositories/companyCash.repository'
 import { formatUserName } from '../utils/user-display'
@@ -63,7 +58,10 @@ function mapEntry(
 }
 
 export const companyCashService = {
-  async record(input: Parameters<typeof companyCashRepository.create>[0], tx?: Prisma.TransactionClient) {
+  async record(
+    input: Parameters<typeof companyCashRepository.create>[0],
+    tx?: Prisma.TransactionClient,
+  ) {
     if (new Prisma.Decimal(input.amountUsd.toString()).lte(0)) {
       throw new AppError(400, 'Cash amount must be positive', 'INVALID_REQUEST')
     }

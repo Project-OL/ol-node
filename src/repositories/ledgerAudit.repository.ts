@@ -81,11 +81,7 @@ export const ledgerAuditRepository = {
     })
   },
 
-  async listFlags(args: {
-    where: Prisma.LedgerAuditFlagWhereInput
-    skip: number
-    take: number
-  }) {
+  async listFlags(args: { where: Prisma.LedgerAuditFlagWhereInput; skip: number; take: number }) {
     const [items, total] = await Promise.all([
       prisma.ledgerAuditFlag.findMany({
         where: args.where,

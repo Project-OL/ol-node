@@ -26,7 +26,10 @@ import {
 /** Ticket workbench + notifications for CSAs; SUPER_ADMIN has full access. */
 const csAuth = [authenticateAdmin, requireAdminRole('CUSTOMER_SUPPORT', 'SUPER_ADMIN')]
 /** Report review additionally allows MODERATOR. */
-const reportAuth = [authenticateAdmin, requireAdminRole('CUSTOMER_SUPPORT', 'SUPER_ADMIN', 'MODERATOR')]
+const reportAuth = [
+  authenticateAdmin,
+  requireAdminRole('CUSTOMER_SUPPORT', 'SUPER_ADMIN', 'MODERATOR'),
+]
 
 function actorOf(req: FastifyRequest) {
   if (!req.adminUser) throw new AppError(401, 'Not authenticated as admin', 'ADMIN_TOKEN_MISSING')

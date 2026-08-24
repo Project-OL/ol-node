@@ -622,8 +622,7 @@ export const agencyDashboardRepository = {
     const [ownToday, ownAllTime, pointsBalance] = await Promise.all([
       sumAgentOwnEarnings(agencyUserId, todayStart, todayEnd, db),
       // All-time agent own eligible credits (no lower bound).
-      db
-        .$queryRaw<Array<{ earned: bigint }>>`
+      db.$queryRaw<Array<{ earned: bigint }>>`
           SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS earned
           FROM point_ledger_entries ple
           INNER JOIN wallets w ON w.id = ple.wallet_id
@@ -631,8 +630,7 @@ export const agencyDashboardRepository = {
             AND w.currency_type = 'POINT'
             AND ple.direction   = 'CREDIT'
             AND ple.tx_type::text = ANY(${[...AGENT_OWN_EARNINGS_TX_TYPES]}::text[])
-        `
-        .then((rows) => rows[0]?.earned ?? 0n),
+        `.then((rows) => rows[0]?.earned ?? 0n),
       getPointsBalance(agencyUserId, db),
     ])
 

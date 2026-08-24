@@ -59,20 +59,22 @@ function mapConversationMemberUser(user: {
   }
 }
 
-function withNamedMembers<T extends {
-  members: Array<{
-    user: {
-      id: string
-      username: string
-      firstName: string | null
-      lastName: string | null
-      publicId: bigint
-      defaultPublicId: bigint
-      currentVipPublicId: bigint | null
-      avatarUrl: string | null
-    }
-  }>
-}>(conv: T): T {
+function withNamedMembers<
+  T extends {
+    members: Array<{
+      user: {
+        id: string
+        username: string
+        firstName: string | null
+        lastName: string | null
+        publicId: bigint
+        defaultPublicId: bigint
+        currentVipPublicId: bigint | null
+        avatarUrl: string | null
+      }
+    }>
+  },
+>(conv: T): T {
   return {
     ...conv,
     members: conv.members.map((m) => ({
@@ -169,9 +171,7 @@ export async function findPlatformConversationForUser(
     where: {
       type,
       members: {
-        some: opts?.includeDeletedMembership
-          ? { userId }
-          : { userId, isDeleted: false },
+        some: opts?.includeDeletedMembership ? { userId } : { userId, isDeleted: false },
       },
     },
     orderBy: { createdAt: 'asc' },
@@ -179,10 +179,7 @@ export async function findPlatformConversationForUser(
 }
 
 /** Re-list a soft-deleted platform membership so the thread shows in GET /conversations again. */
-export async function reactivateMember(
-  conversationId: string,
-  userId: string,
-): Promise<boolean> {
+export async function reactivateMember(conversationId: string, userId: string): Promise<boolean> {
   const result = await prisma.conversationMember.updateMany({
     where: { conversationId, userId, isDeleted: true },
     data: { isDeleted: false },
@@ -270,9 +267,7 @@ async function findDirectByExactMembers(
       id: { in: ids },
       type: 'DIRECT',
       members: {
-        some: opts.includeDeleted
-          ? { userId: userBId }
-          : { userId: userBId, isDeleted: false },
+        some: opts.includeDeleted ? { userId: userBId } : { userId: userBId, isDeleted: false },
       },
     },
     include: {
@@ -293,10 +288,7 @@ async function findDirectByExactMembers(
 }
 
 /** Advisory lock for DIRECT get-or-create (same transaction). */
-export async function lockDirectPair(
-  tx: Prisma.TransactionClient,
-  pairKey: string,
-): Promise<void> {
+export async function lockDirectPair(tx: Prisma.TransactionClient, pairKey: string): Promise<void> {
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`dm-pair:${pairKey}`}, 0))::text AS locked`
 }
 
@@ -393,9 +385,7 @@ export async function listConversationsForUser(
   const conversations = await prismaRead.conversation.findMany({
     where: {
       id: { in: convIds },
-      lastMessageAt: cursor
-        ? { not: null, lt: new Date(cursor) }
-        : { not: null },
+      lastMessageAt: cursor ? { not: null, lt: new Date(cursor) } : { not: null },
     },
     orderBy: { lastMessageAt: { sort: 'desc', nulls: 'last' } },
     take: limit + 1,

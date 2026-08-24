@@ -133,7 +133,7 @@ export const livePhotoRepository = {
     const isReplace = row.pendingS3Key === data.verifiedS3Key
     const previousS3KeyToPurge =
       isReplace && row.s3Key.trim() && row.s3Key !== data.verifiedS3Key ? row.s3Key.trim() : null
-    const bucket = isReplace ? (row.pendingS3Bucket?.trim() || row.s3Bucket) : row.s3Bucket
+    const bucket = isReplace ? row.pendingS3Bucket?.trim() || row.s3Bucket : row.s3Bucket
 
     await db.userLivePhoto.update({
       where: { userId },

@@ -391,7 +391,10 @@ export const agencyHostService = {
     }
 
     const lastResolved = await agencyHostRepository.findLatestResolvedLeaveApplication(hostUserId)
-    if (lastResolved?.resolvedAt && Date.now() - lastResolved.resolvedAt.getTime() < LEAVE_COOLDOWN_MS) {
+    if (
+      lastResolved?.resolvedAt &&
+      Date.now() - lastResolved.resolvedAt.getTime() < LEAVE_COOLDOWN_MS
+    ) {
       throw new AppError(429, 'Leave cooldown', 'LEAVE_COOLDOWN', {
         nextAllowedAt: nextAllowedFrom(lastResolved.resolvedAt, LEAVE_COOLDOWN_MS).toISOString(),
       })

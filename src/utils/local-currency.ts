@@ -88,7 +88,12 @@ export function resolveLocalFx(
   const inr = rows.find((r) => r.currencyCode.toUpperCase() === 'INR')
   return {
     code: 'INR',
-    rate: inr?.ratePerUsd && inr.ratePerUsd > 0 ? inr.ratePerUsd : rates.inrPerUsd > 0 ? rates.inrPerUsd : 94,
+    rate:
+      inr?.ratePerUsd && inr.ratePerUsd > 0
+        ? inr.ratePerUsd
+        : rates.inrPerUsd > 0
+          ? rates.inrPerUsd
+          : 94,
   }
 }
 

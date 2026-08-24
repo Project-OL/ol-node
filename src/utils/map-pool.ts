@@ -12,7 +12,7 @@ export async function mapPool<T, R>(
   let next = 0
 
   async function worker(): Promise<void> {
-    while (true) {
+    for (;;) {
       const i = next
       next += 1
       if (i >= items.length) return

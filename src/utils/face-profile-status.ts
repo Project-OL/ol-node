@@ -53,8 +53,7 @@ export function explainFaceProfileStatus(input: {
     if (input.kycFaceVerified) {
       return {
         statusLabel: 'KYC verified',
-        statusDetail:
-          'No Rekognition face profile. Agency KYC marked this user as face verified.',
+        statusDetail: 'No Rekognition face profile. Agency KYC marked this user as face verified.',
         notIndexedReason: 'No Rekognition reference image or indexed face id.',
       }
     }

@@ -121,7 +121,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminLedgerPeriodQuerySchema.safeParse(request.query ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
       }
       const at = parsed.data.at ? new Date(parsed.data.at) : new Date()
       return reply.send(await masterLedgerService.stock(at))
@@ -141,7 +145,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminLedgerPeriodQuerySchema.safeParse(request.query ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
       }
       return reply.send(
         await masterLedgerService.dashboard({
@@ -167,7 +175,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminLedgerBreakageInvestigateQuerySchema.safeParse(request.query ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
       }
       return reply.send(
         await masterLedgerInvestigateService.investigateBreakage({
@@ -190,7 +202,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminLedgerReconciliationInvestigateQuerySchema.safeParse(request.query ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
       }
       return reply.send(
         await masterLedgerInvestigateService.investigateReconciliation({
@@ -215,7 +231,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminHouseAccountsQuerySchema.safeParse(request.query ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
       }
       return reply.send(await ledgerAccountRoleService.list(parsed.data.includeInactive))
     },
@@ -234,7 +254,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminHouseAccountUpsertBodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
       }
       const adminUserId = request.adminUser!.id
       const row = await ledgerAccountRoleService.upsert({
@@ -271,7 +295,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
       const { userId } = request.params as { userId: string }
       const parsed = adminHouseAccountDeleteBodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
       }
       const adminUserId = request.adminUser!.id
       const result = await ledgerAccountRoleService.deactivate({
@@ -303,7 +331,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminTreasuryFlowsQuerySchema.safeParse(request.query ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
       }
       return reply.send(
         await treasuryFlowService.list({
@@ -331,7 +363,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminTreasuryFlowClassifyBodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
       }
       const adminUserId = request.adminUser!.id
       const result = await treasuryFlowService.classify({
@@ -368,7 +404,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminCashJournalQuerySchema.safeParse(request.query ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
       }
       return reply.send(
         await companyCashService.list({
@@ -395,7 +435,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const parsed = adminCashJournalCreateBodySchema.safeParse(request.body ?? {})
       if (!parsed.success) {
-        throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
       }
       const adminUserId = request.adminUser!.id
       const row = await companyCashService.record({

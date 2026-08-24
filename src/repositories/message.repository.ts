@@ -136,7 +136,8 @@ export function giftSnapshotFromMetadata(metadata: unknown): GiftMessageSnapshot
   const m = metadata as Record<string, unknown>
   const giftId = typeof m.giftId === 'string' ? m.giftId : null
   const giftTransactionId = typeof m.giftTransactionId === 'string' ? m.giftTransactionId : null
-  const name = typeof m.name === 'string' ? m.name : typeof m.giftName === 'string' ? m.giftName : null
+  const name =
+    typeof m.name === 'string' ? m.name : typeof m.giftName === 'string' ? m.giftName : null
   const displayImageUrl =
     typeof m.displayImageUrl === 'string'
       ? m.displayImageUrl
@@ -147,8 +148,7 @@ export function giftSnapshotFromMetadata(metadata: unknown): GiftMessageSnapshot
   const coinCost = typeof m.coinCost === 'number' ? m.coinCost : Number(m.coinCost) || 0
   const quantityRaw =
     typeof m.quantity === 'number' ? m.quantity : m.quantity != null ? Number(m.quantity) : 1
-  const quantity =
-    Number.isFinite(quantityRaw) && quantityRaw >= 1 ? Math.floor(quantityRaw) : 1
+  const quantity = Number.isFinite(quantityRaw) && quantityRaw >= 1 ? Math.floor(quantityRaw) : 1
   const unitFromMeta =
     typeof m.unitCoinCost === 'number'
       ? m.unitCoinCost

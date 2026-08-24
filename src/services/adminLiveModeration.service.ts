@@ -34,11 +34,15 @@ function evidenceUrl(key: string | null | undefined): string | null {
   }
 }
 
-function mapUserBrief<T extends { firstName?: string | null; lastName?: string | null } | null | undefined>(
-  u: T,
-) {
+function mapUserBrief<
+  T extends { firstName?: string | null; lastName?: string | null } | null | undefined,
+>(u: T) {
   if (u == null) return u
-  return { ...u, name: formatUserName(u), publicId: (u as { publicId?: bigint }).publicId?.toString() }
+  return {
+    ...u,
+    name: formatUserName(u),
+    publicId: (u as { publicId?: bigint }).publicId?.toString(),
+  }
 }
 
 function toJsonSafe<T>(value: T): T {
@@ -196,7 +200,9 @@ function mapUserReport(row: {
     additionalInfo: row.additionalInfo,
     liveSessionId: row.liveSessionId,
     hostUserId: row.hostUserId,
-    evidenceUrls: row.evidenceS3Keys.map((k) => evidenceUrl(k)).filter((u): u is string => Boolean(u)),
+    evidenceUrls: row.evidenceS3Keys
+      .map((k) => evidenceUrl(k))
+      .filter((u): u is string => Boolean(u)),
     createdAt: row.createdAt.toISOString(),
     reporter: mapUserBrief(row.reporter) ?? null,
     reportedUser: mapUserBrief(row.reportedUser) ?? null,
@@ -376,7 +382,9 @@ export const adminLiveModerationService = {
 
     if (kind === 'nudity') {
       const hostedIds = userId
-        ? (await prismaRead.liveStream.findMany({ where: { userId }, select: { id: true } })).map((s) => s.id)
+        ? (await prismaRead.liveStream.findMany({ where: { userId }, select: { id: true } })).map(
+            (s) => s.id,
+          )
         : null
       const streamFilter: Prisma.LiveStreamModerationLogWhereInput = {
         ...(hostedIds ? { streamId: { in: hostedIds } } : {}),
@@ -394,7 +402,12 @@ export const adminLiveModerationService = {
       return toJsonSafe({
         kind,
         items: await mapLiveNudityLogs(rows),
-        pagination: { page: query.page, limit: query.limit, total, hasMore: skip + rows.length < total },
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          hasMore: skip + rows.length < total,
+        },
       })
     }
 
@@ -430,7 +443,12 @@ export const adminLiveModerationService = {
       return toJsonSafe({
         kind,
         items: await mapVideoCallLogs(rows),
-        pagination: { page: query.page, limit: query.limit, total, hasMore: skip + rows.length < total },
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          hasMore: skip + rows.length < total,
+        },
       })
     }
 
@@ -452,7 +470,12 @@ export const adminLiveModerationService = {
           ...mapHostBan(r),
           user: mapUserBrief(r.user),
         })),
-        pagination: { page: query.page, limit: query.limit, total, hasMore: skip + rows.length < total },
+        pagination: {
+          page: query.page,
+          limit: query.limit,
+          total,
+          hasMore: skip + rows.length < total,
+        },
       })
     }
 
@@ -486,7 +509,12 @@ export const adminLiveModerationService = {
     return toJsonSafe({
       kind,
       items: rows.map(mapUserReport),
-      pagination: { page: query.page, limit: query.limit, total, hasMore: skip + rows.length < total },
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        hasMore: skip + rows.length < total,
+      },
     })
   },
 

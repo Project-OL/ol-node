@@ -10,10 +10,7 @@ import { AppError } from '../middlewares/errorHandler'
 import type { OtpPurpose } from '../models/types'
 import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
-import {
-  meansFromProvider,
-  otpDeliveryAuditService,
-} from './otp-delivery-audit.service'
+import { meansFromProvider, otpDeliveryAuditService } from './otp-delivery-audit.service'
 import { otpDeliveryConfigService } from './otp-delivery-config.service'
 import { msg91Provider } from './providers/msg91.provider'
 import { sesProvider } from './providers/ses.provider'
@@ -73,9 +70,7 @@ function maskPhone(e164: string): string {
   return `${'*'.repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`
 }
 
-function normalizePhoneTarget(
-  input: string,
-): { e164: string; country: string | null } | null {
+function normalizePhoneTarget(input: string): { e164: string; country: string | null } | null {
   const cleaned = input.trim().replace(/[\s\-().]/g, '')
   const candidates = cleaned.startsWith('+')
     ? [cleaned]

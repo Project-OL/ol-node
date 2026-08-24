@@ -81,9 +81,7 @@ function mapRow(row: LedgerAccountRoleRow) {
 }
 
 /** Latest ledger balance per wallet for one user (all currencies). */
-async function userBalances(
-  userId: string,
-): Promise<{ currency: string; balance: bigint }[]> {
+async function userBalances(userId: string): Promise<{ currency: string; balance: bigint }[]> {
   const rows = await prismaRead.$queryRaw<{ currency: string; balance: bigint }[]>(Prisma.sql`
     SELECT w.currency_type::text AS currency,
            COALESCE(c.balance_after, p.balance_after, 0) AS balance

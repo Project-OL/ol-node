@@ -1,5 +1,8 @@
 import { vipMembershipService } from './vip-membership.service'
-import { livestreamRewardService, type LivestreamRewardStatusDto } from './livestream-reward.service'
+import {
+  livestreamRewardService,
+  type LivestreamRewardStatusDto,
+} from './livestream-reward.service'
 
 export type VipRewardDto = {
   type: 'VIP_DAILY'

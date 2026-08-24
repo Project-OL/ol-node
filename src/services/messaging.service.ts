@@ -413,11 +413,10 @@ export const messagingService = {
 
           let convId: string | null = existing?.id ?? null
           if (!convId) {
-            const fallback =
-              await conversationRepository.findDirectConversationIncludingDeleted(
-                initiatorId,
-                recipientId,
-              )
+            const fallback = await conversationRepository.findDirectConversationIncludingDeleted(
+              initiatorId,
+              recipientId,
+            )
             convId = fallback?.id ?? null
             // Attach pair key to legacy unkeyed thread when safe
             if (fallback && !fallback.directPairKey) {
@@ -525,9 +524,7 @@ export const messagingService = {
       conversationId,
     })
     await Promise.all(
-      otherMemberIds.map((otherId) =>
-        this.canUserMessage(senderId, otherId, { bypassDmPrivacy }),
-      ),
+      otherMemberIds.map((otherId) => this.canUserMessage(senderId, otherId, { bypassDmPrivacy })),
     )
     if (input.replyToId) {
       const replyTo = await messageRepository.findMessageById(input.replyToId)
@@ -1348,7 +1345,9 @@ export const messagingService = {
     try {
       let cursor = lastReadMessageId
       try {
-        const fromRedis = await redisClient.get(RedisKeys.readReceiptPending(userId, conversationId))
+        const fromRedis = await redisClient.get(
+          RedisKeys.readReceiptPending(userId, conversationId),
+        )
         if (fromRedis) cursor = fromRedis
         const acquired = await redisClient.set(
           RedisKeys.readReceiptFlushLock(userId, conversationId),
@@ -1361,11 +1360,7 @@ export const messagingService = {
       } catch {
         // Redis down: flush locally so receipts are not dropped.
       }
-      const updated = await messageRepository.updateReadCursor(
-        conversationId,
-        userId,
-        cursor,
-      )
+      const updated = await messageRepository.updateReadCursor(conversationId, userId, cursor)
       if (!updated) return
       await clearUnreadAndConvListCache(userId, conversationId)
       await publishServerFrameToConversation(conversationId, {

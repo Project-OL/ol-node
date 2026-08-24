@@ -92,10 +92,7 @@ export const APP_POINT_TX_TYPES = new Set([
 
 export type LedgerOriginClass = 'APP' | 'ADMIN' | 'UNKNOWN'
 
-export function isAdminLedgerProvenance(
-  idempotencyKey: string,
-  metadata: unknown,
-): boolean {
+export function isAdminLedgerProvenance(idempotencyKey: string, metadata: unknown): boolean {
   if (idempotencyKey.startsWith('admin-wallet-')) return true
   if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
     const source = (metadata as Record<string, unknown>).source

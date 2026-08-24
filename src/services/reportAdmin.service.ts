@@ -15,9 +15,9 @@ interface AdminActor {
   request?: AdminAuditRequestMeta
 }
 
-function withName<T extends { firstName?: string | null; lastName?: string | null } | null | undefined>(
-  u: T,
-): T extends null | undefined ? T : T & { name: string } {
+function withName<
+  T extends { firstName?: string | null; lastName?: string | null } | null | undefined,
+>(u: T): T extends null | undefined ? T : T & { name: string } {
   if (u == null) return u as any
   return { ...u, name: formatUserName(u) } as any
 }
@@ -69,7 +69,12 @@ export const reportAdminService = {
     })
     return toJsonSafe({
       reports: reports.map(mapReportUsers),
-      pagination: { page: query.page, limit: query.limit, total, hasMore: skip + reports.length < total },
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        hasMore: skip + reports.length < total,
+      },
     })
   },
 
@@ -83,7 +88,10 @@ export const reportAdminService = {
   async reviewReport(
     actor: AdminActor,
     reportId: string,
-    input: { status: Extract<ReportStatus, 'REVIEWED' | 'RESOLVED' | 'DISMISSED'>; resolutionNote?: string },
+    input: {
+      status: Extract<ReportStatus, 'REVIEWED' | 'RESOLVED' | 'DISMISSED'>
+      resolutionNote?: string
+    },
   ) {
     const report = await reportRepository.findById(reportId)
     if (!report) throw new AppError(404, 'Report not found', 'REPORT_NOT_FOUND')

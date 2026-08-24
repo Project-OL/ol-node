@@ -1,19 +1,11 @@
-import {
-  CoinTxType,
-  LedgerDirection,
-  type Prisma,
-  WalletCurrencyType,
-} from '@prisma/client'
+import { CoinTxType, LedgerDirection, type Prisma, WalletCurrencyType } from '@prisma/client'
 import { prisma } from '../config/database'
 import { ledgerAuditRepository } from '../repositories/ledgerAudit.repository'
 import {
   classifyCoinLedgerOrigin,
   classifyPointLedgerOrigin,
 } from './ledger-audit/ledger-origin.classifier'
-import {
-  LEDGER_AUDIT_CODES,
-  type LedgerAuditFlagDraft,
-} from './ledger-audit/ledger-audit.types'
+import { LEDGER_AUDIT_CODES, type LedgerAuditFlagDraft } from './ledger-audit/ledger-audit.types'
 import {
   auditUtcDayKey,
   reconstructVipExpiresAt,
@@ -54,7 +46,8 @@ function userSnapshot(u: {
 }
 
 async function loadUserMap(userIds: string[]) {
-  if (userIds.length === 0) return new Map<string, Awaited<ReturnType<typeof prisma.user.findMany>>[number]>()
+  if (userIds.length === 0)
+    return new Map<string, Awaited<ReturnType<typeof prisma.user.findMany>>[number]>()
   const users = await prisma.user.findMany({
     where: { id: { in: [...new Set(userIds)] } },
     select: {
@@ -629,10 +622,7 @@ export const ledgerAuditService = {
     for (;;) {
       const users = await prisma.user.findMany({
         where: {
-          OR: [
-            { vipSubscriptionActive: true },
-            { vipSubscriptionExpiresAt: { gt: now } },
-          ],
+          OR: [{ vipSubscriptionActive: true }, { vipSubscriptionExpiresAt: { gt: now } }],
           ...(userCursor ? { id: { gt: userCursor } } : {}),
         },
         orderBy: { id: 'asc' },
@@ -675,7 +665,8 @@ export const ledgerAuditService = {
       for (const u of users) {
         const purchases = byUser.get(u.id) ?? []
         const isActive =
-          (u.vipSubscriptionExpiresAt != null && u.vipSubscriptionExpiresAt.getTime() > now.getTime()) ||
+          (u.vipSubscriptionExpiresAt != null &&
+            u.vipSubscriptionExpiresAt.getTime() > now.getTime()) ||
           u.vipSubscriptionActive
 
         if (isActive && purchases.length === 0) {
@@ -789,9 +780,7 @@ export const ledgerAuditService = {
             firstName: flag.user.firstName,
             lastName: flag.user.lastName,
             name: formatUserName(flag.user),
-            displayId: (
-              flag.user.currentVipPublicId ?? flag.user.publicId
-            ).toString(),
+            displayId: (flag.user.currentVipPublicId ?? flag.user.publicId).toString(),
           }
         : undefined,
     }

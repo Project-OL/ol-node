@@ -1,8 +1,5 @@
 import { redisClient, RedisKeys } from '../config/redis'
-import {
-  publishServerFrameToSupportTicket,
-  publishServerFrameToUser,
-} from '../utils/ws-publisher'
+import { publishServerFrameToSupportTicket, publishServerFrameToUser } from '../utils/ws-publisher'
 import { pushNotificationService } from './pushNotification.service'
 import type { ServerFrame } from '../realtime/types'
 

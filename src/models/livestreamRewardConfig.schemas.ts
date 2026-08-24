@@ -9,6 +9,4 @@ export const LivestreamRewardConfigUpdateSchema = z
     message: 'Provide windowDays and/or pointsPerHour',
   })
 
-export type LivestreamRewardConfigUpdateInput = z.infer<
-  typeof LivestreamRewardConfigUpdateSchema
->
+export type LivestreamRewardConfigUpdateInput = z.infer<typeof LivestreamRewardConfigUpdateSchema>

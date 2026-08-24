@@ -11,10 +11,7 @@ const log = rootLogger.child({ module: 'messaging-outbox' })
 
 const PUSHABLE_CONVERSATION_TYPES = new Set(['DIRECT', 'GROUP'])
 
-function isConversationMuted(member: {
-  isMuted: boolean
-  mutedUntil: Date | null
-}): boolean {
+function isConversationMuted(member: { isMuted: boolean; mutedUntil: Date | null }): boolean {
   if (!member.isMuted) return false
   if (member.mutedUntil == null) return true
   return member.mutedUntil.getTime() > Date.now()
@@ -85,7 +82,8 @@ async function publishOutboxPayload(params: {
       message: {
         id: msg.id,
         type: msg.type,
-        content: typeof msg.content === 'string' ? msg.content.slice(0, 100) : (msg.content ?? null),
+        content:
+          typeof msg.content === 'string' ? msg.content.slice(0, 100) : (msg.content ?? null),
         createdAt: msg.createdAt,
         isDeleted: msg.isDeleted ?? false,
       },

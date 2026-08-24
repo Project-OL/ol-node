@@ -305,7 +305,8 @@ export default async function usersRoutes(app: FastifyInstance) {
       preHandler: [authenticate],
       schema: {
         tags: ['Users'],
-        description: 'Register/update the caller\'s FCM push token (per-user, single token — a new device login overwrites it)',
+        description:
+          "Register/update the caller's FCM push token (per-user, single token — a new device login overwrites it)",
       },
     },
     async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {

@@ -18,9 +18,7 @@ declare global {
 
 const baseLog: Prisma.LogLevel[] = ['error', 'warn']
 const devLog: Prisma.LogLevel[] =
-  env.NODE_ENV === 'development' && !env.LAB_REQUEST_METRICS
-    ? ['query', 'error', 'warn']
-    : baseLog
+  env.NODE_ENV === 'development' && !env.LAB_REQUEST_METRICS ? ['query', 'error', 'warn'] : baseLog
 
 const prismaLog: Prisma.LogDefinition[] = env.LAB_REQUEST_METRICS
   ? [

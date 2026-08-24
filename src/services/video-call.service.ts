@@ -20,10 +20,7 @@ import {
   LedgerDirection,
   LevelType,
 } from '@prisma/client'
-import {
-  MIN_CALL_PRICE,
-  type UpdateCallSettingsInput,
-} from '../models/call.schemas'
+import { MIN_CALL_PRICE, type UpdateCallSettingsInput } from '../models/call.schemas'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { callerCoinDebitForCall } from '../config/host-revenue-shares'
 import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
@@ -135,7 +132,10 @@ export const videoCallSettingsService = {
     return withAllowedPrices(userId, toPublicSettings(userId, row))
   },
 
-  async setAcceptVideoCalls(userId: string, acceptVideoCalls: boolean): Promise<VideoCallSettingsDto> {
+  async setAcceptVideoCalls(
+    userId: string,
+    acceptVideoCalls: boolean,
+  ): Promise<VideoCallSettingsDto> {
     const row = await videoCallRepository.upsertSettings(userId, { acceptVideoCalls })
     return withAllowedPrices(userId, toPublicSettings(userId, row))
   },

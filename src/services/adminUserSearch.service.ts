@@ -94,10 +94,7 @@ export const adminUserSearchService = {
    * Push a user to the top of this admin's recent-search history (max 10, per admin).
    * Dedupes by userId. Failures are swallowed — history is best-effort.
    */
-  async recordHistory(
-    adminUserId: string,
-    user: { userId: string } | string,
-  ): Promise<void> {
+  async recordHistory(adminUserId: string, user: { userId: string } | string): Promise<void> {
     const userId = typeof user === 'string' ? user : user.userId
     if (!userId) return
     const key = RedisKeys.adminUserSearchHistory(adminUserId)

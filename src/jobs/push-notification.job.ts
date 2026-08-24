@@ -71,7 +71,10 @@ export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): P
         recipients: parsePendingBatch(raw),
       })
     }
-    log.info({ campaignId, reEnqueued: Object.keys(pending).length }, 'push broadcast plan replayed')
+    log.info(
+      { campaignId, reEnqueued: Object.keys(pending).length },
+      'push broadcast plan replayed',
+    )
     return
   }
 
@@ -233,7 +236,11 @@ export async function sweepStalePushBroadcasts(): Promise<void> {
     const pendingKey = RedisKeys.pushBroadcastPending(campaignId)
     const state = await redisClient.hgetall(stateKey)
     if (!state.createdAt) {
-      await redisClient.multi().del(pendingKey).srem(RedisKeys.pushBroadcastActive(), campaignId).exec()
+      await redisClient
+        .multi()
+        .del(pendingKey)
+        .srem(RedisKeys.pushBroadcastActive(), campaignId)
+        .exec()
       continue
     }
     if (Date.now() - Number(state.createdAt) < BROADCAST_STALE_MS) continue

@@ -1,9 +1,4 @@
-import {
-  CompanyCashDirection,
-  CompanyCashReason,
-  Prisma,
-  WalletCurrencyType,
-} from '@prisma/client'
+import { CompanyCashDirection, CompanyCashReason, Prisma, WalletCurrencyType } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 
 export type CompanyCashCreateInput = {

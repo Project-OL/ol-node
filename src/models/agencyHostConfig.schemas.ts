@@ -9,9 +9,7 @@ export const AgencyHostConfigUpdateSchema = z
     rejoinCooldownHours: z.number().int().positive().optional(),
   })
   .refine(
-    (v) =>
-      v.rejoinCooldownHours !== undefined ||
-      (v.amount !== undefined && v.unit !== undefined),
+    (v) => v.rejoinCooldownHours !== undefined || (v.amount !== undefined && v.unit !== undefined),
     { message: 'Provide rejoinCooldownHours or amount+unit' },
   )
   .refine((v) => (v.amount === undefined) === (v.unit === undefined), {

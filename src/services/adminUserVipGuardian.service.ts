@@ -1,10 +1,7 @@
 import { CoinTxType, LedgerDirection, WalletCurrencyType } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
-import {
-  guardianRepository,
-  type GuardianUserCard,
-} from '../repositories/guardian.repository'
+import { guardianRepository, type GuardianUserCard } from '../repositories/guardian.repository'
 import { vipMembershipRepository } from '../repositories/vipMembership.repository'
 import { vipMembershipService } from './vip-membership.service'
 import { richTierService } from './rich-tier.service'
@@ -27,7 +24,10 @@ function computeAge(dob: Date | null): number | null {
   return age >= 0 ? age : null
 }
 
-function mapCounterparty(u: GuardianUserCard, levels?: { livestreamLevel: number; wealthLevel: number }) {
+function mapCounterparty(
+  u: GuardianUserCard,
+  levels?: { livestreamLevel: number; wealthLevel: number },
+) {
   const displayName = buildUserDisplayName(u)
   return {
     userId: u.id,
@@ -68,23 +68,31 @@ export const adminUserVipGuardianService = {
     const purchasesLimit = Math.min(Math.max(opts?.purchasesLimit ?? 50, 1), 100)
     const claimsLimit = Math.min(Math.max(opts?.claimsLimit ?? 50, 1), 100)
 
-    const [row, membership, richTier, purchasesPage, claimsPage, purchaseCount, claimCount, config] =
-      await Promise.all([
-        vipMembershipRepository.getMembershipRow(userId),
-        vipMembershipService.buildMeVipMembershipBlock(userId),
-        richTierService.getRichTierCardFields(userId),
-        vipMembershipService.getPurchaseHistory(userId, {
-          limit: purchasesLimit,
-          cursor: opts?.purchasesCursor,
-        }),
-        vipMembershipRepository.getDailyClaimHistory(userId, {
-          limit: claimsLimit,
-          cursorClaimDate: opts?.claimsCursor,
-        }),
-        vipMembershipRepository.countPurchases(userId),
-        vipMembershipRepository.countDailyClaims(userId),
-        Promise.resolve(vipMembershipService.getPublicConfig()),
-      ])
+    const [
+      row,
+      membership,
+      richTier,
+      purchasesPage,
+      claimsPage,
+      purchaseCount,
+      claimCount,
+      config,
+    ] = await Promise.all([
+      vipMembershipRepository.getMembershipRow(userId),
+      vipMembershipService.buildMeVipMembershipBlock(userId),
+      richTierService.getRichTierCardFields(userId),
+      vipMembershipService.getPurchaseHistory(userId, {
+        limit: purchasesLimit,
+        cursor: opts?.purchasesCursor,
+      }),
+      vipMembershipRepository.getDailyClaimHistory(userId, {
+        limit: claimsLimit,
+        cursorClaimDate: opts?.claimsCursor,
+      }),
+      vipMembershipRepository.countPurchases(userId),
+      vipMembershipRepository.countDailyClaims(userId),
+      Promise.resolve(vipMembershipService.getPublicConfig()),
+    ])
 
     if (!row) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
@@ -142,10 +150,7 @@ export const adminUserVipGuardianService = {
     }
   },
 
-  async getUserGuardians(
-    userId: string,
-    opts?: { purchaseHistoryLimit?: number },
-  ) {
+  async getUserGuardians(userId: string, opts?: { purchaseHistoryLimit?: number }) {
     await assertUserExists(userId)
 
     const purchaseHistoryLimit = Math.min(Math.max(opts?.purchaseHistoryLimit ?? 50, 1), 100)
@@ -207,9 +212,7 @@ export const adminUserVipGuardianService = {
       }
     }
 
-    const asGuardian = asGuardianRows.map((r) =>
-      mapRel('guardian', r, r.targetUser),
-    )
+    const asGuardian = asGuardianRows.map((r) => mapRel('guardian', r, r.targetUser))
     const asTarget = asTargetRows.map((r) => mapRel('target', r, r.guardianUser))
 
     // Mark top guardian among active targets of this user.
@@ -255,8 +258,7 @@ export const adminUserVipGuardianService = {
     const purchases = purchaseLedger.map((e) => {
       const meta = (e.metadata ?? {}) as Record<string, unknown>
       const targetId =
-        e.counterpartyId ??
-        (typeof meta.targetUserId === 'string' ? meta.targetUserId : null)
+        e.counterpartyId ?? (typeof meta.targetUserId === 'string' ? meta.targetUserId : null)
       const related = targetId ? ledgerUserById.get(targetId) : undefined
       // Current relationship (if still present after upsert) for type/duration.
       const current = asGuardian.find((r) => r.counterparty.userId === targetId)

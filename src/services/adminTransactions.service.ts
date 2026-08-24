@@ -28,18 +28,13 @@ import { pointWalletService } from './point-wallet.service'
 import { coinTradingService } from './coinTrading.service'
 import { withdrawalService } from './withdrawal.service'
 import { walletService } from './wallet.service'
-import {
-  syncLevelCacheFromApplyResult,
-  walletLevelService,
-} from './user-level.service'
+import { syncLevelCacheFromApplyResult, walletLevelService } from './user-level.service'
 import { agencyCommissionService } from './agencyCommission.service'
 import {
   buildAdminCounterpartyDetailsMap,
   type CounterpartyDetails,
 } from '../utils/ledger-transaction-enrichment'
-import {
-  platformProfitService,
-} from './platform-profit.service'
+import { platformProfitService } from './platform-profit.service'
 import { ZERO_PLATFORM_PROFIT } from '../utils/platform-profit'
 
 const TX_TIMEOUT_MS = 20_000
@@ -75,8 +70,7 @@ export function resolvePointLedgerRevertability(params: {
   return POINT_WALLET_SOURCE_PEER_TYPES.has(params.txType)
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export type AdminUserBrief = {
   userId: string
@@ -115,8 +109,8 @@ async function resolvePartyFilters(query: AdminTransactionsListQuery): Promise<{
   id?: string
 }> {
   let userId = query.userId
-  let senderUserId = query.senderUserId
-  let receiverUserId = query.receiverUserId
+  const senderUserId = query.senderUserId
+  const receiverUserId = query.receiverUserId
   const counterpartyId = query.counterpartyId
   let id =
     query.id ??
@@ -478,9 +472,7 @@ export const adminTransactionsService = {
     if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
 
     if (entry.wallet.currencyType !== WalletCurrencyType.TRADING_COIN) {
-      const linkedTransfers = await coinTradingRepository.findTransfersByLedgerEntryIds([
-        entry.id,
-      ])
+      const linkedTransfers = await coinTradingRepository.findTransfersByLedgerEntryIds([entry.id])
       const linked = linkedTransfers[0]
       throw new AppError(
         400,
@@ -504,8 +496,7 @@ export const adminTransactionsService = {
     })
     const currencyType = WalletCurrencyType.TRADING_COIN
     const amount = entry.amount
-    const baseKey =
-      params.idempotencyKey?.trim() || `admin-revert:coin:${entry.id}:${randomUUID()}`
+    const baseKey = params.idempotencyKey?.trim() || `admin-revert:coin:${entry.id}:${randomUUID()}`
 
     try {
       const result = await prisma.$transaction(
@@ -625,7 +616,11 @@ export const adminTransactionsService = {
     const entry = await adminTransactionsRepository.findPointLedgerById(params.ledgerEntryId)
     if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
 
-    if (ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(entry.txType) && entry.refId && UUID_RE.test(entry.refId)) {
+    if (
+      ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(entry.txType) &&
+      entry.refId &&
+      UUID_RE.test(entry.refId)
+    ) {
       const row = await withdrawalService.adminReverseWithdrawal(
         params.adminUserId,
         entry.refId,
@@ -638,10 +633,12 @@ export const adminTransactionsService = {
       }
     }
 
-    if (!resolvePointLedgerRevertability({
-      txType: entry.txType,
-      counterpartyId: entry.counterpartyId,
-    })) {
+    if (
+      !resolvePointLedgerRevertability({
+        txType: entry.txType,
+        counterpartyId: entry.counterpartyId,
+      })
+    ) {
       throw new AppError(
         400,
         COIN_FUNDED_POINT_TX_TYPES.has(entry.txType)
@@ -837,11 +834,7 @@ export const adminTransactionsService = {
       throw new AppError(409, 'Transfer already reversed', 'TRANSFER_ALREADY_REVERSED')
     }
 
-    await coinTradingService.reverseTransfer(
-      params.adminUserId,
-      params.transferId,
-      params.reason,
-    )
+    await coinTradingService.reverseTransfer(params.adminUserId, params.transferId, params.reason)
 
     auditService.logAdmin({
       adminUserId: params.adminUserId,
@@ -869,16 +862,12 @@ export const adminTransactionsService = {
   },
 }
 
-type CoinLedgerRow = Awaited<
-  ReturnType<typeof adminTransactionsRepository.listCoinLedger>
->[number]
+type CoinLedgerRow = Awaited<ReturnType<typeof adminTransactionsRepository.listCoinLedger>>[number]
 type PointLedgerRow = Awaited<
   ReturnType<typeof adminTransactionsRepository.listPointLedger>
 >[number]
 
-function walletContextForCoinRow(
-  currencyType: WalletCurrencyType,
-): 'COIN' | 'TRADING_COIN' {
+function walletContextForCoinRow(currencyType: WalletCurrencyType): 'COIN' | 'TRADING_COIN' {
   return currencyType === WalletCurrencyType.TRADING_COIN ? 'TRADING_COIN' : 'COIN'
 }
 
@@ -1019,8 +1008,7 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
   return page.map((e) => {
     const cp = e.counterpartyId ? userMap.get(e.counterpartyId) : undefined
     const giftRef = e.refId ?? readMetaString(e.metadata, 'giftTransactionId')
-    const giftTx =
-      (giftRef ? giftTxMap.get(giftRef) : undefined) ?? giftTxByLedgerId.get(e.id)
+    const giftTx = (giftRef ? giftTxMap.get(giftRef) : undefined) ?? giftTxByLedgerId.get(e.id)
     const storeItemId = readMetaString(e.metadata, 'storeItemId')
     const storeItem = storeItemId ? storeMap.get(storeItemId) : undefined
     const vip = vipMap.get(e.id)
@@ -1089,8 +1077,7 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
           }
         : null,
       platformProfit:
-        e.direction === LedgerDirection.DEBIT &&
-        e.wallet.currencyType === WalletCurrencyType.COIN
+        e.direction === LedgerDirection.DEBIT && e.wallet.currencyType === WalletCurrencyType.COIN
           ? platformProfitService.profitForCoinDebitRow({
               txType: e.txType,
               amount: e.amount,
@@ -1147,10 +1134,7 @@ export function resolveCoinLedgerRevertability(params: {
   }
 
   // TRADING_COIN peer movement (implementation still needs a peer to reverse).
-  if (
-    params.currencyType === WalletCurrencyType.TRADING_COIN &&
-    Boolean(params.counterpartyId)
-  ) {
+  if (params.currencyType === WalletCurrencyType.TRADING_COIN && Boolean(params.counterpartyId)) {
     return {
       canRevert: true,
       revertVia: { endpoint: 'coin_ledger', id: params.ledgerEntryId },
@@ -1176,7 +1160,9 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
   const withdrawalIds = [
     ...new Set(
       page
-        .filter((e) => ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(e.txType) && e.refId && UUID_RE.test(e.refId))
+        .filter(
+          (e) => ADMIN_WITHDRAWAL_LEDGER_TX_TYPES.has(e.txType) && e.refId && UUID_RE.test(e.refId),
+        )
         .map((e) => e.refId as string),
     ),
   ]

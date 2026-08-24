@@ -8,7 +8,10 @@ import {
   ADMIN_LOGIN_FAIL_TTL,
   ADMIN_LOGIN_FAIL_LIMIT,
 } from '../config/redis'
-import { systemAdminRepository, type AdminProfileData } from '../repositories/systemAdmin.repository'
+import {
+  systemAdminRepository,
+  type AdminProfileData,
+} from '../repositories/systemAdmin.repository'
 import { AppError } from '../middlewares/errorHandler'
 import { parseJwtExpiresToSeconds } from '../utils/jwt'
 import { normalizeIp } from '../utils/ipAddress'
@@ -106,7 +109,8 @@ export const systemAdminService = {
     if (existing) throw new AppError(409, 'Email already registered', 'ADMIN_EMAIL_CONFLICT')
     if (data.username) {
       const usernameTaken = await systemAdminRepository.findByUsername(data.username)
-      if (usernameTaken) throw new AppError(409, 'Username already taken', 'ADMIN_USERNAME_CONFLICT')
+      if (usernameTaken)
+        throw new AppError(409, 'Username already taken', 'ADMIN_USERNAME_CONFLICT')
     }
 
     const passwordHash = await bcrypt.hash(data.password, BCRYPT_ROUNDS)
@@ -185,11 +189,7 @@ export const systemAdminService = {
           role: admin.role,
           ipAddress: clientIp ?? meta.ipAddress ?? null,
         })
-        throw new AppError(
-          403,
-          'Login not allowed from this IP address',
-          'ADMIN_IP_FORBIDDEN',
-        )
+        throw new AppError(403, 'Login not allowed from this IP address', 'ADMIN_IP_FORBIDDEN')
       }
     }
 
@@ -268,8 +268,7 @@ export const systemAdminService = {
       throw new AppError(401, 'Admin not found or inactive', 'ADMIN_INVALID_CREDENTIALS')
     }
 
-    const bindSession =
-      adminSessionCap(session.admin.role) != null ? session.id : undefined
+    const bindSession = adminSessionCap(session.admin.role) != null ? session.id : undefined
     return {
       accessToken: signAccessToken(session.admin.id, session.admin.role, bindSession),
     }

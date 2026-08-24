@@ -1,9 +1,4 @@
-import {
-  CoinTxType,
-  LedgerDirection,
-  PointTxType,
-  WalletCurrencyType,
-} from '@prisma/client'
+import { CoinTxType, LedgerDirection, PointTxType, WalletCurrencyType } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { getTransactionName } from '../config/transaction-display-names'
 import {

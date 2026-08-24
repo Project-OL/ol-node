@@ -138,10 +138,7 @@ export const auditRepository = {
   async listDistinctAdminActionTypes(): Promise<string[]> {
     const rows = await prismaRead.auditLog.findMany({
       where: {
-        OR: [
-          { adminUserId: { not: null } },
-          { actionType: { startsWith: 'ADMIN_' } },
-        ],
+        OR: [{ adminUserId: { not: null } }, { actionType: { startsWith: 'ADMIN_' } }],
       },
       distinct: ['actionType'],
       select: { actionType: true },

@@ -46,10 +46,7 @@ function mapSection(s: AdminGallerySection) {
 export const giftGalleryAdminService = {
   async listCategories(year?: number, month?: number) {
     const period = resolvePeriod(year, month)
-    const gallery = await giftGalleryAdminRepository.getOrCreateGallery(
-      period.year,
-      period.month,
-    )
+    const gallery = await giftGalleryAdminRepository.getOrCreateGallery(period.year, period.month)
     const sections = await giftGalleryAdminRepository.listSections(gallery.id)
     const mapped = sections.map(mapSection)
     return {
@@ -70,10 +67,7 @@ export const giftGalleryAdminService = {
     month?: number
   }) {
     const period = resolvePeriod(input.year, input.month)
-    const gallery = await giftGalleryAdminRepository.getOrCreateGallery(
-      period.year,
-      period.month,
-    )
+    const gallery = await giftGalleryAdminRepository.getOrCreateGallery(period.year, period.month)
     const section = await giftGalleryAdminRepository.createSection({
       galleryId: gallery.id,
       title: input.name,
@@ -112,10 +106,7 @@ export const giftGalleryAdminService = {
 
   async reorderCategories(orderedIds: string[], year?: number, month?: number) {
     const period = resolvePeriod(year, month)
-    const gallery = await giftGalleryAdminRepository.getOrCreateGallery(
-      period.year,
-      period.month,
-    )
+    const gallery = await giftGalleryAdminRepository.getOrCreateGallery(period.year, period.month)
     await giftGalleryAdminRepository.reorderSections(gallery.id, orderedIds)
     await giftGalleryService.invalidateMonthCaches(period.year, period.month)
     return this.listCategories(period.year, period.month)

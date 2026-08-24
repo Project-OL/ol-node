@@ -104,12 +104,7 @@ export const presenceService = {
   /** HTTP or foreground app: mark online + refresh last-active timestamp. */
   async setUserOnline(userId: string): Promise<void> {
     const wasOnline = await redisClient.get(RedisKeys.userOnlineStatus(userId))
-    await redisClient.set(
-      RedisKeys.userOnlineStatus(userId),
-      '1',
-      'EX',
-      PRESENCE_HEARTBEAT_TTL_SEC,
-    )
+    await redisClient.set(RedisKeys.userOnlineStatus(userId), '1', 'EX', PRESENCE_HEARTBEAT_TTL_SEC)
     await touchPresenceLastActive(userId)
     if (wasOnline !== '1') {
       await publishPresence(userId, true)

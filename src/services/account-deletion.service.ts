@@ -199,7 +199,10 @@ export const accountDeletionService = {
     return cancelScheduledDeletion(deletion.id, userId, now, 'user')
   },
 
-  async cancelDeletionByAdmin(deletionId: string, _adminUserId: string): Promise<{
+  async cancelDeletionByAdmin(
+    deletionId: string,
+    _adminUserId: string,
+  ): Promise<{
     success: boolean
     message: string
     status: string

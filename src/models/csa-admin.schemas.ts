@@ -98,9 +98,7 @@ export type FailedLoginAttemptsQuery = z.infer<typeof FailedLoginAttemptsQuerySc
 
 /** Per-CSA ticket list (SUPER_ADMIN) — all tickets or CLOSED+rated filter. */
 export const CsaTicketsQuerySchema = z.object({
-  status: z
-    .enum(['OPEN', 'AWAITING_REPLY', 'CLOSED', 'ASSIGNED', 'PENDING_REVIEW'])
-    .optional(),
+  status: z.enum(['OPEN', 'AWAITING_REPLY', 'CLOSED', 'ASSIGNED', 'PENDING_REVIEW']).optional(),
   /** When true, only CLOSED tickets that have a star rating. */
   ratedOnly: z.coerce.boolean().default(false),
   page: z.coerce.number().int().min(1).default(1),

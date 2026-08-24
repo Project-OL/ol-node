@@ -6,12 +6,7 @@ import { giftGalleryService } from './gift-gallery.service'
 
 async function invalidateGiftCaches(affectedTags: string[]) {
   try {
-    await redisClient.del(
-      RedisKeys.giftList(),
-      'gifts:list:vip',
-      'gifts:list:novip',
-      'gifts:list',
-    )
+    await redisClient.del(RedisKeys.giftList(), 'gifts:list:vip', 'gifts:list:novip', 'gifts:list')
     for (const tag of affectedTags) {
       await redisClient.del(
         RedisKeys.giftByTag(tag),
@@ -28,12 +23,7 @@ async function invalidateGiftCaches(affectedTags: string[]) {
 
 async function invalidateAllGiftListCaches() {
   try {
-    await redisClient.del(
-      RedisKeys.giftList(),
-      'gifts:list:vip',
-      'gifts:list:novip',
-      'gifts:list',
-    )
+    await redisClient.del(RedisKeys.giftList(), 'gifts:list:vip', 'gifts:list:novip', 'gifts:list')
     const pattern = 'gifts:tag:*'
     let cursor = '0'
     do {
