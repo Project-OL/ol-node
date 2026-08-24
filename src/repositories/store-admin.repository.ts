@@ -11,12 +11,7 @@ export type StoreAdminListParams = {
   take: number
 }
 
-const ALL_CATEGORIES: StoreItemCategory[] = [
-  'RIDE',
-  'AVATAR_FRAME',
-  'CHAT_BUBBLE',
-  'PROFILE_CARD',
-]
+const ALL_CATEGORIES: StoreItemCategory[] = ['RIDE', 'AVATAR_FRAME', 'CHAT_BUBBLE', 'PROFILE_CARD']
 
 export const storeAdminRepository = {
   async getTodayStart(): Promise<Date> {
@@ -83,9 +78,7 @@ export const storeAdminRepository = {
 
     if (params.search) {
       const q = params.search.trim()
-      const or: Prisma.StoreItemWhereInput[] = [
-        { name: { contains: q, mode: 'insensitive' } },
-      ]
+      const or: Prisma.StoreItemWhereInput[] = [{ name: { contains: q, mode: 'insensitive' } }]
       if (/^[0-9a-f-]{36}$/i.test(q)) {
         or.push({ id: q })
       }

@@ -111,7 +111,9 @@ export function giftFieldsFromHostLedger(
 ): GiftCommissionMetadata | null {
   if (!hostEntry) return null
   const meta =
-    hostEntry.metadata && typeof hostEntry.metadata === 'object' && !Array.isArray(hostEntry.metadata)
+    hostEntry.metadata &&
+    typeof hostEntry.metadata === 'object' &&
+    !Array.isArray(hostEntry.metadata)
       ? (hostEntry.metadata as Record<string, unknown>)
       : null
   if (!meta || typeof meta.giftId !== 'string' || meta.giftId.length === 0) {
@@ -1095,7 +1097,10 @@ export const agencyCommissionService = {
       withdrawalService.getPayrollConfig(),
     ])
     const usdAmount = formatPointsAsUsd(points)
-    const local = formatLocalAmount(Number(usdAmount), resolveLocalFx(sender?.country, payrollConfig))
+    const local = formatLocalAmount(
+      Number(usdAmount),
+      resolveLocalFx(sender?.country, payrollConfig),
+    )
     const fxFields = {
       points: points.toString(),
       usdAmount,

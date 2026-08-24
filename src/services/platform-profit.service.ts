@@ -1,10 +1,4 @@
-import {
-  CoinTxType,
-  LedgerDirection,
-  PointTxType,
-  Prisma,
-  WithdrawalStatus,
-} from '@prisma/client'
+import { CoinTxType, LedgerDirection, PointTxType, Prisma, WithdrawalStatus } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { rootLogger } from '../utils/rootLogger'
 import {
@@ -44,9 +38,7 @@ function warnIfNegative(raw: bigint, context: Record<string, unknown>) {
 /**
  * Sum AGENT_COMMISSION credits grouped by refId (gift id, session id, subscription id, …).
  */
-export async function sumAgencyCommissionByRefIds(
-  refIds: string[],
-): Promise<Map<string, bigint>> {
+export async function sumAgencyCommissionByRefIds(refIds: string[]): Promise<Map<string, bigint>> {
   const unique = [...new Set(refIds.filter(Boolean))]
   const map = new Map<string, bigint>()
   if (unique.length === 0) return map
@@ -384,10 +376,7 @@ export async function summarizePlatformProfit(params: {
       status: { in: [WithdrawalStatus.PAID, WithdrawalStatus.WAITING] },
       ...(createdAt
         ? {
-            OR: [
-              { processedAt: createdAt },
-              { processedAt: null, requestedAt: createdAt },
-            ],
+            OR: [{ processedAt: createdAt }, { processedAt: null, requestedAt: createdAt }],
           }
         : {}),
     },
@@ -411,10 +400,7 @@ export async function summarizePlatformProfit(params: {
 /**
  * Admin ADJUSTMENT created (credit) vs returned (debit) supply totals.
  */
-export async function summarizeAdminCurrencySupply(params: {
-  from?: Date
-  to?: Date
-}): Promise<{
+export async function summarizeAdminCurrencySupply(params: { from?: Date; to?: Date }): Promise<{
   created: PlatformProfitBuckets
   returned: PlatformProfitBuckets
 }> {

@@ -293,9 +293,7 @@ export const giftAdminRepository = {
         displayOrder: data.displayOrder ?? 0,
         vipOnly: data.vipOnly ?? false,
         categoryId: data.categoryId ?? null,
-        tags: data.tags?.length
-          ? { create: data.tags.map((tag) => ({ tag })) }
-          : undefined,
+        tags: data.tags?.length ? { create: data.tags.map((tag) => ({ tag })) } : undefined,
       },
       include: { category: true, tags: true },
     })
@@ -326,17 +324,13 @@ export const giftAdminRepository = {
           ...(data.name !== undefined ? { name: data.name } : {}),
           ...(data.code !== undefined ? { code: data.code } : {}),
           ...(data.coinCost !== undefined ? { coinCost: data.coinCost } : {}),
-          ...(data.displayImageUrl !== undefined
-            ? { displayImageUrl: data.displayImageUrl }
-            : {}),
+          ...(data.displayImageUrl !== undefined ? { displayImageUrl: data.displayImageUrl } : {}),
           ...(data.effectUrl !== undefined ? { effectUrl: data.effectUrl } : {}),
           ...(data.displayOrder !== undefined ? { displayOrder: data.displayOrder } : {}),
           ...(data.vipOnly !== undefined ? { vipOnly: data.vipOnly } : {}),
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
           ...(data.categoryId !== undefined ? { categoryId: data.categoryId } : {}),
-          ...(data.tags
-            ? { tags: { create: data.tags.map((tag) => ({ tag })) } }
-            : {}),
+          ...(data.tags ? { tags: { create: data.tags.map((tag) => ({ tag })) } } : {}),
         },
         include: { category: true, tags: true },
       })

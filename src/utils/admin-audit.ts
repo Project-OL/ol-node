@@ -19,8 +19,7 @@ export type AdminActivityDestination = {
   resourceId: string | null
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function readStr(details: Record<string, unknown>, ...keys: string[]): string | null {
   for (const k of keys) {
@@ -62,7 +61,11 @@ export function resolveAdminActivityDestination(
   const customGiftRequestId = readStr(details, 'customGiftRequestId', 'requestId')
   const settingKey = readStr(details, 'settingKey')
 
-  if (actionType.startsWith('ADMIN_WALLET_') || actionType.startsWith('ADMIN_FREEZE_') || actionType.startsWith('ADMIN_UNFREEZE_')) {
+  if (
+    actionType.startsWith('ADMIN_WALLET_') ||
+    actionType.startsWith('ADMIN_FREEZE_') ||
+    actionType.startsWith('ADMIN_UNFREEZE_')
+  ) {
     return {
       label: targetUserId ? `User wallet ${targetUserId}` : 'User wallet',
       targetUserId,
@@ -208,9 +211,7 @@ export function resolveAdminActivityDestination(
   }
   if (actionType.startsWith('ADMIN_CUSTOM_GIFT_')) {
     return {
-      label: customGiftRequestId
-        ? `Custom gift ${customGiftRequestId}`
-        : 'Custom gift',
+      label: customGiftRequestId ? `Custom gift ${customGiftRequestId}` : 'Custom gift',
       targetUserId,
       resourceType: customGiftRequestId ? 'custom_gift_request' : 'custom_gift_config',
       resourceId: customGiftRequestId,
@@ -257,7 +258,11 @@ export function resolveAdminActivityDestination(
       resourceId: targetUserId,
     }
   }
-  if (actionType.startsWith('ADMIN_NOTIFICATION') || actionType.startsWith('ADMIN_SYSTEM_MESSAGE') || actionType === 'ADMIN_USER_WARNING') {
+  if (
+    actionType.startsWith('ADMIN_NOTIFICATION') ||
+    actionType.startsWith('ADMIN_SYSTEM_MESSAGE') ||
+    actionType === 'ADMIN_USER_WARNING'
+  ) {
     return {
       label: targetUserId ? `Message to user ${targetUserId}` : 'Platform message',
       targetUserId,
@@ -269,7 +274,12 @@ export function resolveAdminActivityDestination(
     return { label: 'Push broadcast', targetUserId: null, resourceType: null, resourceId: null }
   }
   if (actionType === 'ADMIN_LOGIN' || actionType === 'ADMIN_LOGOUT') {
-    return { label: 'Admin session', targetUserId: null, resourceType: 'admin_session', resourceId: null }
+    return {
+      label: 'Admin session',
+      targetUserId: null,
+      resourceType: 'admin_session',
+      resourceId: null,
+    }
   }
   if (actionType.startsWith('ADMIN_SUPPORT_TICKET')) {
     const display = ticketPublicId ?? ticketId
@@ -316,7 +326,12 @@ export function resolveAdminActivityDestination(
     }
   }
 
-  return { label: actionType.replace(/_/g, ' ').toLowerCase(), targetUserId: null, resourceType: null, resourceId: null }
+  return {
+    label: actionType.replace(/_/g, ' ').toLowerCase(),
+    targetUserId: null,
+    resourceType: null,
+    resourceId: null,
+  }
 }
 
 export const CSA_ACTIVITY_ACTION_TYPES = [

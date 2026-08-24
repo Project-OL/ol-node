@@ -6,7 +6,11 @@ import { supportAssignmentService } from './supportAssignment.service'
 import { csaNotificationService } from './csaNotification.service'
 import { notifySupportTicketMessage } from './supportRealtime.service'
 import { AppError } from '../middlewares/errorHandler'
-import { SUPPORT_TYPE_CONFIG, isValidSubType, getDefaultPriority } from '../config/support-types.config'
+import {
+  SUPPORT_TYPE_CONFIG,
+  isValidSubType,
+  getDefaultPriority,
+} from '../config/support-types.config'
 import type {
   SupportUploadUrlInput,
   CreateTicketInput,
@@ -32,9 +36,9 @@ function toJsonSafe<T>(value: T): T {
   ) as T
 }
 
-function withName<T extends { firstName?: string | null; lastName?: string | null } | null | undefined>(
-  u: T,
-): T extends null | undefined ? T : T & { name: string } {
+function withName<
+  T extends { firstName?: string | null; lastName?: string | null } | null | undefined,
+>(u: T): T extends null | undefined ? T : T & { name: string } {
   if (u == null) return u as any
   return { ...u, name: formatUserName(u) } as any
 }
@@ -349,8 +353,7 @@ export const supportService = {
     await supportRepository.createMessage({
       ticketId,
       senderType: 'SUPPORT',
-      content:
-        'This ticket has been closed by support. Please rate your experience (1–5 stars).',
+      content: 'This ticket has been closed by support. Please rate your experience (1–5 stars).',
     })
     const updated = await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
       closedAt: now,
@@ -435,8 +438,7 @@ export const supportService = {
     await supportRepository.createMessage({
       ticketId,
       senderType: 'SUPPORT',
-      content:
-        'This ticket was closed automatically. Please rate your experience (1–5 stars).',
+      content: 'This ticket was closed automatically. Please rate your experience (1–5 stars).',
     })
     await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
       closedAt: now,

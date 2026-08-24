@@ -1,12 +1,7 @@
 import { LevelType, Prisma } from '@prisma/client'
 import { PERSONAL_COIN_EXCHANGE_RATES } from '../config/coin-trading-rates.defaults'
 import { prisma } from '../config/database'
-import {
-  CT_RATES_TTL,
-  RedisKeys,
-  SYSTEM_RATES_CONFIG_TTL,
-  redisClient,
-} from '../config/redis'
+import { CT_RATES_TTL, RedisKeys, SYSTEM_RATES_CONFIG_TTL, redisClient } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { coinTradingRepository } from '../repositories/coinTrading.repository'
 import { walletUserLevelRepository } from '../repositories/wallet-user-level.repository'

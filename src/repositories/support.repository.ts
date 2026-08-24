@@ -9,7 +9,11 @@ import type {
 } from '@prisma/client'
 
 /** Business reference types for payment-conflict tickets. */
-export type SupportTicketRefType = 'WITHDRAWAL' | 'POINT_TRANSFER' | 'COIN_TRANSFER' | 'LEDGER_ENTRY'
+export type SupportTicketRefType =
+  | 'WITHDRAWAL'
+  | 'POINT_TRANSFER'
+  | 'COIN_TRANSFER'
+  | 'LEDGER_ENTRY'
 
 const noteAdminSelect = {
   id: true,
@@ -137,11 +141,7 @@ export const supportRepository = {
     })
   },
 
-  async assignTicket(
-    ticketId: bigint,
-    adminId: string,
-    opts?: { setStatusAssigned?: boolean },
-  ) {
+  async assignTicket(ticketId: bigint, adminId: string, opts?: { setStatusAssigned?: boolean }) {
     return prisma.supportTicket.update({
       where: { id: ticketId },
       data: {
@@ -185,7 +185,8 @@ export const supportRepository = {
 
   /** Star-rating aggregates per assigned CSA. */
   async ratingStatsByAdminIds(adminIds: string[]) {
-    if (adminIds.length === 0) return new Map<string, { avgRating: number | null; ratingCount: number }>()
+    if (adminIds.length === 0)
+      return new Map<string, { avgRating: number | null; ratingCount: number }>()
     const rows = await prismaRead.supportTicket.groupBy({
       by: ['assignedAdminId'],
       where: { assignedAdminId: { in: adminIds }, rating: { not: null } },

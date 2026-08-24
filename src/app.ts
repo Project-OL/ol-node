@@ -167,9 +167,7 @@ export async function buildApp() {
   const isLocalhostOrigin = (origin: string): boolean => {
     try {
       const url = new URL(origin)
-      return (
-        url.hostname === 'localhost' && (url.protocol === 'http:' || url.protocol === 'https:')
-      )
+      return url.hostname === 'localhost' && (url.protocol === 'http:' || url.protocol === 'https:')
     } catch {
       return false
     }

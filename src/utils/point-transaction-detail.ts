@@ -92,10 +92,7 @@ export function resolvePointTransactionStatus(
   }
 
   if (!withdrawalStatus) {
-    if (
-      txType === PointTxTypeEnum.WITHDRAWAL_ESCROW ||
-      txType === PointTxTypeEnum.WITHDRAWAL
-    ) {
+    if (txType === PointTxTypeEnum.WITHDRAWAL_ESCROW || txType === PointTxTypeEnum.WITHDRAWAL) {
       return { status: 'PENDING', statusLabel: 'Withdrawal Processing' }
     }
     if (

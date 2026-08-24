@@ -92,14 +92,26 @@ export const userRestrictionRepository = {
     activeOnly: boolean
     skip: number
     take: number
-  }): Promise<{ rows: Array<UserRestrictionWithTargets & { user: { id: string; publicId: bigint; username: string | null; firstName: string | null; lastName: string | null; avatarUrl: string | null } }>; total: number }> {
+  }): Promise<{
+    rows: Array<
+      UserRestrictionWithTargets & {
+        user: {
+          id: string
+          publicId: bigint
+          username: string | null
+          firstName: string | null
+          lastName: string | null
+          avatarUrl: string | null
+        }
+      }
+    >
+    total: number
+  }> {
     const now = new Date()
     const where = {
       ...(filter.type ? { type: filter.type } : {}),
       ...(filter.userId ? { userId: filter.userId } : {}),
-      ...(filter.activeOnly
-        ? { clearedAt: null, restrictedUntil: { gt: now } }
-        : {}),
+      ...(filter.activeOnly ? { clearedAt: null, restrictedUntil: { gt: now } } : {}),
     }
     const userSelect = {
       id: true,

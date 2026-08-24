@@ -21,26 +21,18 @@ import { parseRequest } from '../../utils/zod-request'
  * GET /v1/admin/otp-delivery/cost-rates
  */
 export default async function otpDeliveryAdminRoutes(app: FastifyInstance) {
-  app.get(
-    '/otp-delivery/config',
-    { preHandler: [authenticateAdmin] },
-    async (_request, reply) => {
-      const config = await otpDeliveryConfigService.getConfig()
-      return reply.send(config)
-    },
-  )
+  app.get('/otp-delivery/config', { preHandler: [authenticateAdmin] }, async (_request, reply) => {
+    const config = await otpDeliveryConfigService.getConfig()
+    return reply.send(config)
+  })
 
-  app.put(
-    '/otp-delivery/config',
-    { preHandler: [authenticateAdmin] },
-    async (request, reply) => {
-      const adminUserId = request.adminUser?.id
-      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
-      const body = OtpDeliveryConfigUpdateSchema.parse(request.body ?? {})
-      const config = await otpDeliveryConfigService.updateConfig(adminUserId, body)
-      return reply.send(config)
-    },
-  )
+  app.put('/otp-delivery/config', { preHandler: [authenticateAdmin] }, async (request, reply) => {
+    const adminUserId = request.adminUser?.id
+    if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+    const body = OtpDeliveryConfigUpdateSchema.parse(request.body ?? {})
+    const config = await otpDeliveryConfigService.updateConfig(adminUserId, body)
+    return reply.send(config)
+  })
 
   app.get(
     '/otp-delivery/cost-rates',

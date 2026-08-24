@@ -22,7 +22,10 @@ import type {
   AdminTicketMessagesQuerySchema,
   AdminUploadUrlSchema,
 } from '../models/support-admin.schemas'
-import { buildTicketInitialSubmission, resolveSupportTypeLabels } from '../config/support-types.config'
+import {
+  buildTicketInitialSubmission,
+  resolveSupportTypeLabels,
+} from '../config/support-types.config'
 import {
   formatSupportReviewWindowLabel,
   supportConfigService,
@@ -82,9 +85,9 @@ function toJsonSafe<T>(value: T): T {
   ) as T
 }
 
-function withName<T extends { firstName?: string | null; lastName?: string | null } | null | undefined>(
-  u: T,
-): T extends null | undefined ? T : T & { name: string } {
+function withName<
+  T extends { firstName?: string | null; lastName?: string | null } | null | undefined,
+>(u: T): T extends null | undefined ? T : T & { name: string } {
   if (u == null) return u as any
   return { ...u, name: formatUserName(u) } as any
 }
@@ -189,7 +192,12 @@ export const supportAdminService = {
 
     return toJsonSafe({
       tickets: await Promise.all(tickets.map((t) => ticketDto(t))),
-      pagination: { page: query.page, limit: query.limit, total, hasMore: skip + tickets.length < total },
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        hasMore: skip + tickets.length < total,
+      },
     })
   },
 
@@ -342,7 +350,10 @@ export const supportAdminService = {
       resolution: input.resolution,
       assignedAdminId: ticket.assignedAdminId ?? actor.id,
     }).catch((err) => {
-      console.warn('[support-admin] status-changed notify failed', { ticketId: ticketId.toString(), err })
+      console.warn('[support-admin] status-changed notify failed', {
+        ticketId: ticketId.toString(),
+        err,
+      })
     })
 
     try {
@@ -357,7 +368,9 @@ export const supportAdminService = {
     logTicketActivity(
       actor,
       ticket,
-      input.resolution === 'REJECTED' ? 'ADMIN_SUPPORT_TICKET_REJECT' : 'ADMIN_SUPPORT_TICKET_RESOLVE',
+      input.resolution === 'REJECTED'
+        ? 'ADMIN_SUPPORT_TICKET_REJECT'
+        : 'ADMIN_SUPPORT_TICKET_RESOLVE',
       { resolution: input.resolution },
     )
 
@@ -380,8 +393,7 @@ export const supportAdminService = {
     await supportRepository.createMessage({
       ticketId,
       senderType: 'SUPPORT',
-      content:
-        'This ticket has been closed by support. Please rate your experience (1–5 stars).',
+      content: 'This ticket has been closed by support. Please rate your experience (1–5 stars).',
     })
 
     const updated = await supportRepository.updateTicketStatus(ticketId, 'CLOSED', {
@@ -400,7 +412,10 @@ export const supportAdminService = {
       resolution,
       assignedAdminId: ticket.assignedAdminId ?? actor.id,
     }).catch((err) => {
-      console.warn('[support-admin] status-changed notify failed (forceClose)', { ticketId: ticketId.toString(), err })
+      console.warn('[support-admin] status-changed notify failed (forceClose)', {
+        ticketId: ticketId.toString(),
+        err,
+      })
     })
 
     logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_CLOSE', { resolution })
@@ -440,7 +455,8 @@ export const supportAdminService = {
 
     const wasUnassigned = !ticket.assignedAdminId
     const updated = await supportRepository.assignTicket(ticketId, target.id, {
-      setStatusAssigned: wasUnassigned && (ticket.status === 'OPEN' || ticket.status === 'AWAITING_REPLY'),
+      setStatusAssigned:
+        wasUnassigned && (ticket.status === 'OPEN' || ticket.status === 'AWAITING_REPLY'),
     })
 
     await csaNotificationService.notify(
@@ -481,7 +497,9 @@ export const supportAdminService = {
     }
     assertCanAct(actor, ticket)
 
-    const updated = await supportRepository.updateTicketStatus(ticketId, ticket.status, { priority })
+    const updated = await supportRepository.updateTicketStatus(ticketId, ticket.status, {
+      priority,
+    })
     logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_PRIORITY', { priority })
     return toJsonSafe(await ticketDto(updated))
   },

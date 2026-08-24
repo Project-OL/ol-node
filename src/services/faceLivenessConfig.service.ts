@@ -84,9 +84,7 @@ export const faceLivenessConfigService = {
   ): Promise<FaceLivenessConfigDto> {
     await faceLivenessConfigRepository.getOrCreate()
     const row = await faceLivenessConfigRepository.update({
-      ...(input.livenessRequired !== undefined
-        ? { livenessRequired: input.livenessRequired }
-        : {}),
+      ...(input.livenessRequired !== undefined ? { livenessRequired: input.livenessRequired } : {}),
       ...(input.credentialsRequired !== undefined
         ? { credentialsRequired: input.credentialsRequired }
         : {}),

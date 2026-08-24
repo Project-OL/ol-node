@@ -23,8 +23,7 @@ function toPostRefSnapshot(post: {
   return {
     id: post.id,
     caption: post.caption,
-    createdAt:
-      typeof post.createdAt === 'string' ? post.createdAt : post.createdAt.toISOString(),
+    createdAt: typeof post.createdAt === 'string' ? post.createdAt : post.createdAt.toISOString(),
     mediaUrl: post.mediaUrl,
     thumbnailUrl: post.thumbnailUrl ?? null,
     ...(post.mediaType ? { mediaType: post.mediaType } : {}),

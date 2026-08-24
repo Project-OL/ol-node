@@ -1,7 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { rateLimitReport } from '../../middlewares/rateLimitAuth'
-import { CreateReportSchema, GetReportEvidenceUploadUrlsSchema } from '../../models/messaging.schemas'
+import {
+  CreateReportSchema,
+  GetReportEvidenceUploadUrlsSchema,
+} from '../../models/messaging.schemas'
 import { z } from 'zod'
 import { reportService } from '../../services/report.service'
 import { uploadService } from '../../services/upload.service'

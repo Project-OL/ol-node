@@ -50,7 +50,7 @@ const FEATURE_DESCRIPTIONS: Record<PrivacyToggleKey, { description: string; effe
   },
   invisibleOnline: {
     description: 'Hide online status',
-    effect: "Others see you as offline with a frozen last-seen from when you enabled this",
+    effect: 'Others see you as offline with a frozen last-seen from when you enabled this',
   },
 }
 

@@ -53,7 +53,7 @@ export type WithdrawalWithMethodRow = {
 export type InboxAssignmentRow = Prisma.WithdrawalPayrollAssignmentGetPayload<{
   include: {
     withdrawal: {
-      include: { paymentMethod: true, user: { select: { country: true } } }
+      include: { paymentMethod: true; user: { select: { country: true } } }
     }
   }
 }>

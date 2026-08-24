@@ -48,11 +48,7 @@ export function withdrawalHostPayoutPoints(params: {
   platformFeePoints?: bigint | null
   serviceFeePoints?: bigint | null
 }): bigint {
-  return (
-    params.amountPoints -
-    (params.platformFeePoints ?? 0n) -
-    (params.serviceFeePoints ?? 0n)
-  )
+  return params.amountPoints - (params.platformFeePoints ?? 0n) - (params.serviceFeePoints ?? 0n)
 }
 
 export function formatPayrollFeeTierDto(
@@ -103,7 +99,9 @@ export function matchPayrollFeeTier(
     if (tier.maxPoints != null && grossPoints >= tier.maxPoints) continue
     return tier
   }
-  return sorted[sorted.length - 1] ?? DEFAULT_PAYROLL_FEE_TIERS[DEFAULT_PAYROLL_FEE_TIERS.length - 1]!
+  return (
+    sorted[sorted.length - 1] ?? DEFAULT_PAYROLL_FEE_TIERS[DEFAULT_PAYROLL_FEE_TIERS.length - 1]!
+  )
 }
 
 /**

@@ -241,9 +241,20 @@ export const uploadService = {
   /** Additive v2: image + video evidence (the original count-only endpoint stays image/jpeg-only for old clients). */
   async getReportEvidenceUploadUrlsV2(
     userId: string,
-    files: Array<{ mediaType: 'IMAGE' | 'VIDEO'; fileName: string; mimeType: string; sizeBytes: number }>,
+    files: Array<{
+      mediaType: 'IMAGE' | 'VIDEO'
+      fileName: string
+      mimeType: string
+      sizeBytes: number
+    }>,
   ): Promise<
-    Array<{ s3Key: string; uploadUrl: string; publicUrl: string; mediaType: string; expiresInSec: number }>
+    Array<{
+      s3Key: string
+      uploadUrl: string
+      publicUrl: string
+      mediaType: string
+      expiresInSec: number
+    }>
   > {
     const IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
     const VIDEO_MIME = ['video/mp4', 'video/quicktime', 'video/webm']
@@ -294,7 +305,13 @@ export const uploadService = {
         presignTtl,
       )
       const publicUrl = storageService.getCdnOrS3PublicUrl(s3Key)
-      result.push({ s3Key, uploadUrl, publicUrl, mediaType: file.mediaType, expiresInSec: presignTtl })
+      result.push({
+        s3Key,
+        uploadUrl,
+        publicUrl,
+        mediaType: file.mediaType,
+        expiresInSec: presignTtl,
+      })
     }
     return result
   },

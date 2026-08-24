@@ -23,10 +23,7 @@ import {
   utcYearMonth,
 } from '../utils/datetime'
 import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
-import {
-  effectiveTierWindowTotal,
-  serializeAgencyTierLock,
-} from '../utils/agency-tier-lock'
+import { effectiveTierWindowTotal, serializeAgencyTierLock } from '../utils/agency-tier-lock'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -151,11 +148,7 @@ async function resolveUserIdByIdentifier(identifier: string): Promise<string> {
     return user.id
   }
   if (!/^\d+$/.test(trimmed)) {
-    throw new AppError(
-      400,
-      'hostUserId must be a UUID or numeric public ID',
-      'INVALID_REQUEST',
-    )
+    throw new AppError(400, 'hostUserId must be a UUID or numeric public ID', 'INVALID_REQUEST')
   }
   const pid = BigInt(trimmed)
   const user = await prismaRead.user.findFirst({
@@ -373,8 +366,8 @@ export const agencyAdminService = {
       ...tierLockFields(
         agency,
         agency.tierLockLevel
-          ? ((await agencyCommissionRepository.getLevelRow(agency.tierLockLevel))?.minWindowPoints ??
-              null)
+          ? ((await agencyCommissionRepository.getLevelRow(agency.tierLockLevel))
+              ?.minWindowPoints ?? null)
           : null,
       ),
       payrollPrivilegeGranted: agency.payrollPrivilegeGranted,
@@ -420,7 +413,7 @@ export const agencyAdminService = {
     const lockMin = async (row: typeof agency) =>
       row.tierLockLevel
         ? ((await agencyCommissionRepository.getLevelRow(row.tierLockLevel))?.minWindowPoints ??
-            null)
+          null)
         : null
 
     const before = {
@@ -642,8 +635,7 @@ export const agencyAdminService = {
           e.metadata && typeof e.metadata === 'object' && !Array.isArray(e.metadata)
             ? (e.metadata as Record<string, unknown>)
             : null
-        const senderUserId =
-          typeof meta?.senderUserId === 'string' ? meta.senderUserId : null
+        const senderUserId = typeof meta?.senderUserId === 'string' ? meta.senderUserId : null
         const host = toCard(e.counterpartyId)
         return {
           id: e.id,

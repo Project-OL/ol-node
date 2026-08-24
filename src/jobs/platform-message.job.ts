@@ -169,21 +169,25 @@ export async function processPlatformNotificationBroadcastBatchJob(
 ): Promise<void> {
   const { campaignId, batchIndex, adminUserId, message, userIds } = job.data
 
-  const results = await mapPool(userIds, env.WORKER_CONCURRENCY_PLATFORM_MESSAGE, async (userId) => {
-    const metadata: PlatformMessageMetadata = {
-      category: 'notification',
-      campaignId,
-      adminUserId,
-    }
-    const result = await platformMessagingService.sendPlatformMessage({
-      targetUserId: userId,
-      type: 'NOTIFICATION',
-      content: message,
-      metadata,
-      clientMessageId: `notify:${campaignId}:${userId}`,
-    })
-    return result.created ? 1 : 0
-  })
+  const results = await mapPool(
+    userIds,
+    env.WORKER_CONCURRENCY_PLATFORM_MESSAGE,
+    async (userId) => {
+      const metadata: PlatformMessageMetadata = {
+        category: 'notification',
+        campaignId,
+        adminUserId,
+      }
+      const result = await platformMessagingService.sendPlatformMessage({
+        targetUserId: userId,
+        type: 'NOTIFICATION',
+        content: message,
+        metadata,
+        clientMessageId: `notify:${campaignId}:${userId}`,
+      })
+      return result.created ? 1 : 0
+    },
+  )
   const sent = results.reduce<number>((a, b) => a + b, 0)
 
   const stateKey = RedisKeys.notifyBroadcastState(campaignId)

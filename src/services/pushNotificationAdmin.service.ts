@@ -2,7 +2,10 @@ import { Prisma } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
-import type { ListPushUsersQuery, ListPushDeliveriesQuery } from '../models/push-notification.schemas'
+import type {
+  ListPushUsersQuery,
+  ListPushDeliveriesQuery,
+} from '../models/push-notification.schemas'
 import { pushNotificationService } from './pushNotification.service'
 import { pushDeliveryLogService } from './pushDeliveryLog.service'
 import { enqueuePushBroadcast } from '../queues/push-notification.queue'
@@ -21,20 +24,14 @@ export type PushEligibleUser = {
 }
 
 export const pushNotificationAdminService = {
-  async listUsersWithFcmToken(
-    query: ListPushUsersQuery,
-  ): Promise<{
+  async listUsersWithFcmToken(query: ListPushUsersQuery): Promise<{
     users: PushEligibleUser[]
     pagination: { page: number; limit: number; total: number; hasMore: boolean }
   }> {
     const where: Prisma.UserWhereInput = {
       fcmToken: { not: null },
-      ...(query.activeOnly
-        ? { status: 'active', isSupport: false }
-        : {}),
-      ...(query.country
-        ? { country: { equals: query.country, mode: 'insensitive' } }
-        : {}),
+      ...(query.activeOnly ? { status: 'active', isSupport: false } : {}),
+      ...(query.country ? { country: { equals: query.country, mode: 'insensitive' } } : {}),
     }
 
     if (query.q) {
@@ -144,12 +141,10 @@ export const pushNotificationAdminService = {
         result.error === 'FIREBASE_NOT_CONFIGURED' ||
         result.error === 'FIREBASE_PRIVATE_KEY_INVALID'
       ) {
-        throw new AppError(
-          503,
-          result.errorMessage ?? 'Firebase not configured',
-          result.error,
-          { reason: result.error, message: result.errorMessage },
-        )
+        throw new AppError(503, result.errorMessage ?? 'Firebase not configured', result.error, {
+          reason: result.error,
+          message: result.errorMessage,
+        })
       }
       throw new AppError(502, 'Push send failed', 'PUSH_SEND_FAILED', {
         reason: result.error,

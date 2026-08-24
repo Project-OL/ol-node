@@ -34,11 +34,7 @@ export function resolveCustomGiftDuration(params: {
 }): CustomGiftDurationMonths {
   if (params.durationMonths != null) {
     if (!isCustomGiftDurationMonths(params.durationMonths)) {
-      throw new AppError(
-        400,
-        'durationMonths must be 1 or 3',
-        'INVALID_CUSTOM_GIFT_DURATION',
-      )
+      throw new AppError(400, 'durationMonths must be 1 or 3', 'INVALID_CUSTOM_GIFT_DURATION')
     }
     return params.durationMonths
   }

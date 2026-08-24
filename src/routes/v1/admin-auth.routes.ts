@@ -130,7 +130,8 @@ export async function registerAdminAuthRoutes(app: FastifyInstance) {
 
   /** Mint a short-lived single-use WS upgrade ticket for the authenticated admin. */
   app.post('/auth/ws-ticket', { preHandler: [authenticateAdmin] }, async (req, reply) => {
-    if (!req.adminUser) return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    if (!req.adminUser)
+      return reply.status(401).send({ code: 'UNAUTHORIZED', message: 'Unauthorized' })
     const result = await mintAdminWsTicket(req.adminUser.id)
     return reply.send(result)
   })

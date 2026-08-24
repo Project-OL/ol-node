@@ -48,11 +48,7 @@ function pickAuth(
   }
 }
 
-async function buildAgencyBlock(
-  userId: string,
-  isAgent: boolean,
-  selfName: string,
-) {
+async function buildAgencyBlock(userId: string, isAgent: boolean, selfName: string) {
   if (isAgent) {
     const agency = await agencyRepository.getAgencyByUserId(userId)
     if (agency) {
@@ -181,17 +177,17 @@ export const adminUserDetailService = {
 
     const [session, device, agency, vip, email, phone, levels, devicesBlock, store, faceVerified] =
       await Promise.all([
-      adminUserDetailRepository.getLatestSession(userId),
-      adminUserDetailRepository.getLatestDevice(userId),
-      buildAgencyBlock(userId, row.isAgent, formatUserName(row)),
-      buildVipBlock(userId, row),
-      Promise.resolve(pickAuth(row, 'email')),
-      Promise.resolve(pickAuth(row, 'phone')),
-      walletLevelService.getDisplayLevelsForUsers([userId]),
-      buildDevicesBlock(userId, row.lastIpAddress),
-      storeAdminService.getUserStoreSummary(userId),
-      faceVerificationRepository.isVerifiedForUser(userId),
-    ])
+        adminUserDetailRepository.getLatestSession(userId),
+        adminUserDetailRepository.getLatestDevice(userId),
+        buildAgencyBlock(userId, row.isAgent, formatUserName(row)),
+        buildVipBlock(userId, row),
+        Promise.resolve(pickAuth(row, 'email')),
+        Promise.resolve(pickAuth(row, 'phone')),
+        walletLevelService.getDisplayLevelsForUsers([userId]),
+        buildDevicesBlock(userId, row.lastIpAddress),
+        storeAdminService.getUserStoreSummary(userId),
+        faceVerificationRepository.isVerifiedForUser(userId),
+      ])
 
     const deviceInfo = resolveDeviceAndIp(row, session, device)
     const level = levels.get(userId) ?? { wealthLevel: 0, livestreamLevel: 0 }
@@ -286,11 +282,7 @@ export const adminUserDetailService = {
     }
   },
 
-  async updateUser(
-    userId: string,
-    body: AdminUserPatchBody,
-    opts?: { allowRestricted?: boolean },
-  ) {
+  async updateUser(userId: string, body: AdminUserPatchBody, opts?: { allowRestricted?: boolean }) {
     const row = await adminUserDetailRepository.findUser(userId)
     if (!row) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     const allowRestricted = opts?.allowRestricted === true
@@ -308,14 +300,11 @@ export const adminUserDetailService = {
         profilePatch.lastName = body.lastName.length > 0 ? body.lastName : null
       }
       const nextFirst = profilePatch.firstName ?? row.firstName
-      const nextLast =
-        profilePatch.lastName !== undefined ? profilePatch.lastName : row.lastName
+      const nextLast = profilePatch.lastName !== undefined ? profilePatch.lastName : row.lastName
       if (nextFirst?.trim()) {
-        await restrictedIdentityWordsService.assertNamePartsNotRestricted(
-          nextFirst,
-          nextLast,
-          { allowRestricted },
-        )
+        await restrictedIdentityWordsService.assertNamePartsNotRestricted(nextFirst, nextLast, {
+          allowRestricted,
+        })
         await assertDisplayNameAvailable(nextFirst, nextLast, userId)
       }
       await userRepository.updateProfile(userId, profilePatch)

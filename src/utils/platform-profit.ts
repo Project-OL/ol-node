@@ -77,9 +77,7 @@ export function profitFromWithdrawalFee(params: {
   }
 }
 
-export function sumPlatformProfit(
-  parts: PlatformProfitBuckets[],
-): PlatformProfitBuckets {
+export function sumPlatformProfit(parts: PlatformProfitBuckets[]): PlatformProfitBuckets {
   let coins = 0n
   let points = 0n
   let tradingCoins = 0n

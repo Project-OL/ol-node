@@ -116,18 +116,14 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   )
 
   const ledgerAuditQueue = new Queue(LEDGER_AUDIT_QUEUE, { connection })
-  await ledgerAuditQueue.add(
-    LEDGER_AUDIT_JOB,
-    {} satisfies LedgerAuditJobData,
-    {
-      jobId: 'ledger-audit-daily-3am-utc',
-      repeat: { pattern: '0 3 * * *', tz: 'UTC' },
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 60_000 },
-      removeOnComplete: 50,
-      removeOnFail: 50,
-    },
-  )
+  await ledgerAuditQueue.add(LEDGER_AUDIT_JOB, {} satisfies LedgerAuditJobData, {
+    jobId: 'ledger-audit-daily-3am-utc',
+    repeat: { pattern: '0 3 * * *', tz: 'UTC' },
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 60_000 },
+    removeOnComplete: 50,
+    removeOnFail: 50,
+  })
 
   const ledgerAuditWorker = new Worker(
     LEDGER_AUDIT_QUEUE,

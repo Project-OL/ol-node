@@ -284,11 +284,7 @@ export const walletLevelService = {
    * Admin-only: set cumulative XP to the threshold of `targetLevel` (raise or lower).
    * Leaves the user at the start of that level so further XP progresses from there.
    */
-  async setLevel(params: {
-    userId: string
-    levelType: LevelType
-    targetLevel: number
-  }): Promise<{
+  async setLevel(params: { userId: string; levelType: LevelType; targetLevel: number }): Promise<{
     levelType: LevelType
     previousLevel: number
     previousCumulative: string

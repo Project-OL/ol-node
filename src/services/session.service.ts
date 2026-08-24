@@ -390,7 +390,9 @@ export const sessionService = {
     prefetchedRaw?: string | null,
   ): Promise<void> {
     const raw =
-      prefetchedRaw !== undefined ? prefetchedRaw : await redisClient.get(RedisKeys.session(sessionId))
+      prefetchedRaw !== undefined
+        ? prefetchedRaw
+        : await redisClient.get(RedisKeys.session(sessionId))
     if (raw) {
       let blob: SessionRedisBlob
       try {

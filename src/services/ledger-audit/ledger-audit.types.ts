@@ -1,8 +1,4 @@
-import type {
-  LedgerAuditCategory,
-  LedgerAuditSeverity,
-  Prisma,
-} from '@prisma/client'
+import type { LedgerAuditCategory, LedgerAuditSeverity, Prisma } from '@prisma/client'
 
 export type LedgerAuditFlagDraft = {
   userId: string

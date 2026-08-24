@@ -30,10 +30,7 @@ async function isDisplayNameTaken(
 }
 
 /** True when another non-deleted user already uses this string as handle or as first+last. */
-export async function isIdentityTaken(
-  username: string,
-  excludeUserId?: string,
-): Promise<boolean> {
+export async function isIdentityTaken(username: string, excludeUserId?: string): Promise<boolean> {
   const value = username.trim()
   if (!value) return false
   if (await isHandleTaken(value, excludeUserId)) return true

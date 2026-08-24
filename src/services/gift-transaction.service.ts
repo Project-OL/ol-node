@@ -209,7 +209,6 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
             tx,
           )
           bustAgentUserId = ac.bustAgentUserId
-
         }
 
         const gt = await giftTransactionRepository.create(tx, {

@@ -47,7 +47,10 @@ export const pushDeliveryLogService = {
         },
       })
     } catch (err) {
-      log.warn({ err, userId: entry.userId, source: entry.source }, 'push delivery log write failed')
+      log.warn(
+        { err, userId: entry.userId, source: entry.source },
+        'push delivery log write failed',
+      )
     }
   },
 
@@ -79,10 +82,7 @@ export const pushDeliveryLogService = {
     failed: number
     skipped: number
     total: number
-    bySource: Record<
-      string,
-      { sent: number; failed: number; skipped: number; total: number }
-    >
+    bySource: Record<string, { sent: number; failed: number; skipped: number; total: number }>
   }> {
     const { start, end, date } = utcDayBounds()
     const rows = await prismaRead.pushDeliveryLog.groupBy({

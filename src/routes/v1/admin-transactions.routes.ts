@@ -49,7 +49,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.getPlatformProfitSummary(parseProfitSummaryQuery(request.query)),
+        await adminTransactionsService.getPlatformProfitSummary(
+          parseProfitSummaryQuery(request.query),
+        ),
       )
     },
   )
@@ -65,7 +67,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      return reply.send(await adminTransactionsService.listCoinTransactions(parseListQuery(request.query)))
+      return reply.send(
+        await adminTransactionsService.listCoinTransactions(parseListQuery(request.query)),
+      )
     },
   )
 
@@ -79,7 +83,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      return reply.send(await adminTransactionsService.listPointTransactions(parseListQuery(request.query)))
+      return reply.send(
+        await adminTransactionsService.listPointTransactions(parseListQuery(request.query)),
+      )
     },
   )
 
@@ -94,7 +100,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      return reply.send(await adminTransactionsService.listTradingCoinLedger(parseListQuery(request.query)))
+      return reply.send(
+        await adminTransactionsService.listTradingCoinLedger(parseListQuery(request.query)),
+      )
     },
   )
 
@@ -124,7 +132,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      return reply.send(await adminTransactionsService.listGiftTransactions(parseListQuery(request.query)))
+      return reply.send(
+        await adminTransactionsService.listGiftTransactions(parseListQuery(request.query)),
+      )
     },
   )
 
@@ -138,7 +148,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      return reply.send(await adminTransactionsService.listSubscriptions(parseListQuery(request.query)))
+      return reply.send(
+        await adminTransactionsService.listSubscriptions(parseListQuery(request.query)),
+      )
     },
   )
 
@@ -152,7 +164,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      return reply.send(await adminTransactionsService.listVipPurchases(parseListQuery(request.query)))
+      return reply.send(
+        await adminTransactionsService.listVipPurchases(parseListQuery(request.query)),
+      )
     },
   )
 
@@ -166,7 +180,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      return reply.send(await adminTransactionsService.listStorePurchases(parseListQuery(request.query)))
+      return reply.send(
+        await adminTransactionsService.listStorePurchases(parseListQuery(request.query)),
+      )
     },
   )
 

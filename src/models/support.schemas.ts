@@ -15,7 +15,10 @@ export const TransactionRefSchema = z.object({
 })
 
 /** SubTypes that must carry a transaction reference. */
-const TRANSACTION_REF_REQUIRED_SUBTYPES = new Set(['POINT_TRANSFER_CONFLICT', 'COIN_TRANSFER_CONFLICT'])
+const TRANSACTION_REF_REQUIRED_SUBTYPES = new Set([
+  'POINT_TRANSFER_CONFLICT',
+  'COIN_TRANSFER_CONFLICT',
+])
 
 // Ticket creation
 export const CreateTicketSchema = z

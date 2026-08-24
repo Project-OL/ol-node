@@ -93,10 +93,7 @@ export const userLocationService = {
     }
   },
 
-  async getUserLocationsForAdmin(
-    userId: string,
-    opts: { limit: number; cursor?: string },
-  ) {
+  async getUserLocationsForAdmin(userId: string, opts: { limit: number; cursor?: string }) {
     const exists = await userRepository.findById(userId)
     if (!exists) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 

@@ -11,10 +11,7 @@ import { auditService } from './audit.service'
 import { publishServerFrameToUser } from '../utils/ws-publisher'
 import { formatUserName } from '../utils/user-display'
 
-const ERROR_BY_TYPE: Record<
-  UserRestrictionType,
-  { code: string; message: string }
-> = {
+const ERROR_BY_TYPE: Record<UserRestrictionType, { code: string; message: string }> = {
   LIVE_CHAT_MUTE: {
     code: 'LIVE_CHAT_MUTED',
     message: 'Live stream chatting is muted for this account',
@@ -273,11 +270,7 @@ export const userRestrictionService = {
       })
       if (!report) throw new AppError(404, 'Report not found', 'REPORT_NOT_FOUND')
       if (report.reportedUserId !== params.userId) {
-        throw new AppError(
-          400,
-          'reportId does not belong to this user',
-          'REPORT_USER_MISMATCH',
-        )
+        throw new AppError(400, 'reportId does not belong to this user', 'REPORT_USER_MISMATCH')
       }
     }
 
@@ -343,12 +336,7 @@ export const userRestrictionService = {
       targetUserIds,
     })
 
-    await cacheActive(
-      params.userId,
-      params.type,
-      restrictedUntil,
-      targetUserIdsFromRow(row),
-    )
+    await cacheActive(params.userId, params.type, restrictedUntil, targetUserIdsFromRow(row))
 
     auditService.logAdmin({
       adminUserId: params.adminUserId,
@@ -421,11 +409,7 @@ export const userRestrictionService = {
     return dto
   },
 
-  async clearType(params: {
-    userId: string
-    type: UserRestrictionType
-    adminUserId: string
-  }) {
+  async clearType(params: { userId: string; type: UserRestrictionType; adminUserId: string }) {
     const user = await userRepository.findById(params.userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
@@ -531,10 +515,7 @@ export const userRestrictionService = {
     }
   },
 
-  async getActiveUntil(
-    userId: string,
-    type: UserRestrictionType,
-  ): Promise<Date | null> {
+  async getActiveUntil(userId: string, type: UserRestrictionType): Promise<Date | null> {
     const key = RedisKeys.userRestriction(userId, type)
     const cached = await redisClient.get(key)
     if (cached) {

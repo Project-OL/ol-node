@@ -1,9 +1,6 @@
 import { env } from '../config/env'
 import { prisma } from '../config/database'
-import type {
-  OtpDeliveryAuditStatus,
-  OtpDeliveryMeans,
-} from '../models/otp-delivery-audit.schemas'
+import type { OtpDeliveryAuditStatus, OtpDeliveryMeans } from '../models/otp-delivery-audit.schemas'
 import type { OtpPurpose } from '../models/types'
 import { otpDeliveryAuditRepository } from '../repositories/otpDeliveryAudit.repository'
 import type { OtpProviderName } from './providers/provider.types'
@@ -39,7 +36,10 @@ export function chargeMinorForMeans(means: OtpDeliveryMeans): number {
 }
 
 /** UTC calendar month window: [start, end). Defaults to current UTC month. */
-export function utcMonthRange(year?: number, month?: number): {
+export function utcMonthRange(
+  year?: number,
+  month?: number,
+): {
   year: number
   month: number
   from: Date
@@ -163,8 +163,7 @@ export const otpDeliveryAuditService = {
     routeReason?: string
     error?: string
   }) {
-    const charged =
-      params.status === 'success' ? chargeMinorForMeans(params.means) : 0
+    const charged = params.status === 'success' ? chargeMinorForMeans(params.means) : 0
     const rates = otpDeliveryCostRates()
     void (async () => {
       let country = params.country?.trim() || null
@@ -386,12 +385,12 @@ export const otpDeliveryAuditService = {
 }
 
 /** Resolve list/summary time window. Prefer year+month (UTC calendar month) over from/to. */
-function resolveUtcListRange(filters: {
+function resolveUtcListRange(filters: { from?: Date; to?: Date; year?: number; month?: number }): {
   from?: Date
   to?: Date
   year?: number
   month?: number
-}): { from?: Date; to?: Date; year?: number; month?: number } {
+} {
   if (filters.year != null && filters.month != null) {
     const r = utcMonthRange(filters.year, filters.month)
     return { from: r.from, to: r.to, year: r.year, month: r.month }

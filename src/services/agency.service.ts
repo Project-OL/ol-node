@@ -244,19 +244,14 @@ export const agencyService = {
       select: { agencyBarredAt: true, currentAgencyId: true },
     })
     if (applicant?.currentAgencyId) {
-      throw new AppError(
-        409,
-        'Applicant is already a host in an agency',
-        'ALREADY_IN_AGENCY',
-      )
+      throw new AppError(409, 'Applicant is already a host in an agency', 'ALREADY_IN_AGENCY')
     }
     if (applicant?.agencyBarredAt) {
       throw new AppError(403, 'User is barred from operating an agency', 'AGENCY_BARRED')
     }
 
     let initialLevel = 'D'
-    const explicitTier =
-      params.commissionTier != null && params.commissionTier.trim() !== ''
+    const explicitTier = params.commissionTier != null && params.commissionTier.trim() !== ''
     if (explicitTier) {
       const tierRow = await agencyCommissionRepository.getLevelRow(params.commissionTier!.trim())
       if (!tierRow) {
@@ -469,11 +464,7 @@ export const agencyService = {
     )
     if (opts?.unfreezeWallets !== false) {
       const { adminWalletService } = await import('./adminWallet.service')
-      await adminWalletService.setAllWalletsFrozen(
-        userId,
-        false,
-        opts?.adminUserId ?? userId,
-      )
+      await adminWalletService.setAllWalletsFrozen(userId, false, opts?.adminUserId ?? userId)
     }
     await agencyService.onAgencyMutation(userId)
     return updated
@@ -509,11 +500,7 @@ export const agencyService = {
     const agency = await agencyRepository.getAgencyByUserId(userId)
     if (!agency) throw new AppError(404, 'Agency not found', 'AGENCY_NOT_FOUND')
     if (enabled && !agency.payrollPrivilegeGranted) {
-      throw new AppError(
-        403,
-        'Payroll privilege is disabled by admin',
-        'PAYROLL_PRIVILEGE_DENIED',
-      )
+      throw new AppError(403, 'Payroll privilege is disabled by admin', 'PAYROLL_PRIVILEGE_DENIED')
     }
     const updated = await agencyRepository.setPayrollEnabled(userId, enabled)
     await agencyService.onAgencyMutation(userId)
@@ -582,8 +569,7 @@ export const agencyService = {
     if (!agency) throw new AppError(404, 'Agency not found', 'NOT_FOUND')
 
     const result = {
-      takeOrderEnabled:
-        agency.payrollPrivilegeGranted && agency.payrollEnabled && !agency.pausedAt,
+      takeOrderEnabled: agency.payrollPrivilegeGranted && agency.payrollEnabled && !agency.pausedAt,
       payrollEnabled: agency.payrollEnabled,
       payrollPrivilegeGranted: agency.payrollPrivilegeGranted,
       isPaused: !!agency.pausedAt,

@@ -3,7 +3,10 @@ import { adminTransactionsRepository } from '../repositories/admin-transactions.
 import { systemAdminRepository } from '../repositories/systemAdmin.repository'
 import type { AdminActivityListQuery } from '../models/admin-activity.schemas'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
-import { resolveAdminActivityDestination, SEEDED_ADMIN_ACTIVITY_ACTION_TYPES } from '../utils/admin-audit'
+import {
+  resolveAdminActivityDestination,
+  SEEDED_ADMIN_ACTIVITY_ACTION_TYPES,
+} from '../utils/admin-audit'
 import { AppError } from '../middlewares/errorHandler'
 
 type AdminBrief = {
@@ -115,9 +118,7 @@ export const adminActivityService = {
       Promise.all(adminIds.map((id) => systemAdminRepository.findById(id))),
       adminTransactionsRepository.findUsersByIds(userIds),
     ])
-    const adminMap = new Map(
-      admins.filter(Boolean).map((a) => [a!.id, mapAdminBrief(a!)]),
-    )
+    const adminMap = new Map(admins.filter(Boolean).map((a) => [a!.id, mapAdminBrief(a!)]))
     const userMap = new Map(users.map((u) => [u.id, mapUserBrief(u)]))
 
     return {

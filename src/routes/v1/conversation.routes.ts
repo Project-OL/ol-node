@@ -387,7 +387,10 @@ export default async function conversationRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (request: FastifyRequest<{ Params: { conversationId: string } }>, reply: FastifyReply) => {
+    async (
+      request: FastifyRequest<{ Params: { conversationId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const userId = request.userId!
       await messagingService.clearMessagesOnly(userId, request.params.conversationId)
       return reply.code(204).send()
@@ -408,7 +411,10 @@ export default async function conversationRoutes(app: FastifyInstance) {
         },
       },
     },
-    async (request: FastifyRequest<{ Params: { conversationId: string } }>, reply: FastifyReply) => {
+    async (
+      request: FastifyRequest<{ Params: { conversationId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const userId = request.userId!
       const result = await messagingService.getPeerSettings(userId, request.params.conversationId)
       return reply.send(result)

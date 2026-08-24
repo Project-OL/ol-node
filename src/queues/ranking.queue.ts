@@ -1,6 +1,10 @@
 import { Queue } from 'bullmq'
 import { redisClient } from '../config/redis'
-import { RANKING_BACKFILL_JOB, RANKING_BACKFILL_QUEUE, RANKING_RECONCILE_JOB } from './ranking.constants'
+import {
+  RANKING_BACKFILL_JOB,
+  RANKING_BACKFILL_QUEUE,
+  RANKING_RECONCILE_JOB,
+} from './ranking.constants'
 
 export const rankingBackfillQueue = new Queue(RANKING_BACKFILL_QUEUE, {
   connection: redisClient,

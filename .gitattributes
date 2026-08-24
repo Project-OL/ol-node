@@ -1,0 +1,6 @@
+# Normalize text to LF so ESLint/Prettier match GitHub Actions (Linux).
+* text=auto eol=lf
+
+*.{png,jpg,jpeg,gif,webp,ico,woff,woff2,ttf,eot,pdf,zip,tgz,gz} binary
+*.node binary
+*.dll binary

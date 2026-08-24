@@ -15,9 +15,7 @@ export function normalizeCountry(value: string): string {
 }
 
 /** Empty / whitespace → null; otherwise Title Case. */
-export function normalizeCountryOptional(
-  value: string | null | undefined,
-): string | null {
+export function normalizeCountryOptional(value: string | null | undefined): string | null {
   if (value == null) return null
   const normalized = normalizeCountry(value)
   return normalized.length > 0 ? normalized : null

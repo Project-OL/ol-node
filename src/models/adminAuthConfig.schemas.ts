@@ -9,9 +9,7 @@ export const AdminAuthConfigUpdateSchema = z
     unit: AdminAuthLockoutUnitSchema.optional(),
   })
   .refine(
-    (v) =>
-      v.failedLoginThreshold !== undefined ||
-      (v.amount !== undefined && v.unit !== undefined),
+    (v) => v.failedLoginThreshold !== undefined || (v.amount !== undefined && v.unit !== undefined),
     { message: 'Provide failedLoginThreshold and/or amount+unit' },
   )
   .refine((v) => (v.amount === undefined) === (v.unit === undefined), {

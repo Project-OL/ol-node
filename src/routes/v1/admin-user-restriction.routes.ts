@@ -150,7 +150,8 @@ export default async function adminUserRestrictionRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Users', 'Live'],
-        description: 'List ongoing live streams for a user (host_live_sessions + live_streams + Redis).',
+        description:
+          'List ongoing live streams for a user (host_live_sessions + live_streams + Redis).',
       },
     },
     async (request, reply) => {

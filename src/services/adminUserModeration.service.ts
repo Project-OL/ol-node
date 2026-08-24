@@ -21,10 +21,7 @@ import { storageService } from './storage.service'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { allocateUniqueUsername } from '../utils/user-identity-unique'
 import { explainFaceProfileStatus } from '../utils/face-profile-status'
-import {
-  describeLivePhotoFailureReason,
-  explainLivePhotoStatus,
-} from '../utils/live-photo-status'
+import { describeLivePhotoFailureReason, explainLivePhotoStatus } from '../utils/live-photo-status'
 import { adminAuditMetaFromRequest } from '../utils/admin-audit'
 import type { FastifyRequest } from 'fastify'
 
@@ -122,11 +119,7 @@ export const adminUserModerationService = {
     }
   },
 
-  async setSecurityPassword(params: {
-    targetUserId: string
-    adminUserId: string
-    pin: string
-  }) {
+  async setSecurityPassword(params: { targetUserId: string; adminUserId: string; pin: string }) {
     const user = await userRepository.findById(params.targetUserId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
@@ -146,9 +139,7 @@ export const adminUserModerationService = {
       overwritten: result.overwritten,
       setAt: result.setAt.toISOString(),
       updatedAt: result.updatedAt.toISOString(),
-      message: result.overwritten
-        ? 'Security password overwritten'
-        : 'Security password set',
+      message: result.overwritten ? 'Security password overwritten' : 'Security password set',
     }
   },
 
@@ -174,8 +165,8 @@ export const adminUserModerationService = {
 
     const relatedIds = [
       ...new Set(
-        [profile?.duplicateOfUserId, profile?.matchedUserId].filter(
-          (id): id is string => Boolean(id),
+        [profile?.duplicateOfUserId, profile?.matchedUserId].filter((id): id is string =>
+          Boolean(id),
         ),
       ),
     ]
@@ -202,8 +193,8 @@ export const adminUserModerationService = {
     const hasReferenceImage = Boolean(refKey)
     const isIndexed = Boolean(
       profile?.status === 'INDEXED' &&
-        profile.rekognitionFaceId?.trim() &&
-        profile.s3KeyReference?.trim(),
+      profile.rekognitionFaceId?.trim() &&
+      profile.s3KeyReference?.trim(),
     )
     const kycFaceVerified = Boolean(kyc?.faceVerified)
     const explanation = explainFaceProfileStatus({
@@ -270,8 +261,8 @@ export const adminUserModerationService = {
       (Boolean(row.imageUrl?.trim()) || Boolean(primaryKey))
     const replaceInProgress = Boolean(
       pendingKey ||
-        row?.verificationState === 'PENDING_VERIFICATION' ||
-        (row?.verificationState === 'PROCESSING' && hasVerifiedPhotoFields),
+      row?.verificationState === 'PENDING_VERIFICATION' ||
+      (row?.verificationState === 'PROCESSING' && hasVerifiedPhotoFields),
     )
     const isVerified =
       row?.verificationState === 'VERIFIED' ||
@@ -279,8 +270,7 @@ export const adminUserModerationService = {
         (row?.verificationState === 'PENDING_VERIFICATION' ||
           row?.verificationState === 'PROCESSING'))
 
-    const imageUrl =
-      row?.imageUrl?.trim() || (primaryKey ? safePublicUrl(primaryKey) : null)
+    const imageUrl = row?.imageUrl?.trim() || (primaryKey ? safePublicUrl(primaryKey) : null)
     const pendingImageUrl = pendingKey ? safePublicUrl(pendingKey) : null
 
     const failureReason =
@@ -342,10 +332,10 @@ export const adminUserModerationService = {
     const row = await livePhotoRepository.findByUserId(params.targetUserId)
     const hasPhoto = Boolean(
       row &&
-        (row.s3Key.trim() ||
-          row.pendingS3Key?.trim() ||
-          row.imageUrl?.trim() ||
-          (row.verificationState !== 'NOT_UPLOADED' && row.verificationState !== 'PENDING_UPLOAD')),
+      (row.s3Key.trim() ||
+        row.pendingS3Key?.trim() ||
+        row.imageUrl?.trim() ||
+        (row.verificationState !== 'NOT_UPLOADED' && row.verificationState !== 'PENDING_UPLOAD')),
     )
     if (!row || !hasPhoto) {
       throw new AppError(404, 'Live photo not found', 'LIVE_PHOTO_NOT_FOUND')

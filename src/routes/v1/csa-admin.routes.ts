@@ -55,18 +55,22 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
     return reply.send(result)
   })
 
-  app.get('/csas/export', { preHandler: preAuth, config: { timeoutMs: SLOW_REPORT_TIMEOUT_MS } }, async (req, reply) => {
-    const query = parseRequest(ExportCsasQuerySchema, req.query)
-    const { csv } = await csaManagementService.exportCsasCsv(query.status)
-    const date = new Date().toISOString().slice(0, 10)
-    return reply
-      .header('Content-Type', 'text/csv; charset=utf-8')
-      .header(
-        'Content-Disposition',
-        `attachment; filename="csa-export-${query.status ?? 'all'}-${date}.csv"`,
-      )
-      .send(csv)
-  })
+  app.get(
+    '/csas/export',
+    { preHandler: preAuth, config: { timeoutMs: SLOW_REPORT_TIMEOUT_MS } },
+    async (req, reply) => {
+      const query = parseRequest(ExportCsasQuerySchema, req.query)
+      const { csv } = await csaManagementService.exportCsasCsv(query.status)
+      const date = new Date().toISOString().slice(0, 10)
+      return reply
+        .header('Content-Type', 'text/csv; charset=utf-8')
+        .header(
+          'Content-Disposition',
+          `attachment; filename="csa-export-${query.status ?? 'all'}-${date}.csv"`,
+        )
+        .send(csv)
+    },
+  )
 
   app.get('/csas/directory', { preHandler: directoryAuth }, async (_req, reply) => {
     return reply.send(await csaManagementService.listDirectory())
@@ -119,11 +123,15 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
     return reply.code(201).send({ ip })
   })
 
-  app.delete('/csas/:adminId/ip-whitelist/:whitelistId', { preHandler: preAuth }, async (req, reply) => {
-    const { adminId, whitelistId } = parseRequest(CsaIpWhitelistIdParamsSchema, req.params)
-    const result = await csaManagementService.removeIp(adminId, whitelistId)
-    return reply.send(result)
-  })
+  app.delete(
+    '/csas/:adminId/ip-whitelist/:whitelistId',
+    { preHandler: preAuth },
+    async (req, reply) => {
+      const { adminId, whitelistId } = parseRequest(CsaIpWhitelistIdParamsSchema, req.params)
+      const result = await csaManagementService.removeIp(adminId, whitelistId)
+      return reply.send(result)
+    },
+  )
 
   // Views assigned to this CSA (empty = unrestricted legacy role-based access).
   app.get('/csas/:adminId/views', { preHandler: preAuth }, async (req, reply) => {

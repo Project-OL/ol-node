@@ -18,10 +18,20 @@ export type AccountDeletionNoticeResult = {
 }
 
 function formatDeletionAt(deletionAt: Date): string {
-  return deletionAt.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+  return deletionAt
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d{3}Z$/, ' UTC')
 }
 
-function pickEmail(identifiers: Array<{ provider: string; identifier: string; isPrimary: boolean; isVerified: boolean }>): string | null {
+function pickEmail(
+  identifiers: Array<{
+    provider: string
+    identifier: string
+    isPrimary: boolean
+    isVerified: boolean
+  }>,
+): string | null {
   const emails = identifiers.filter((i) => i.provider === 'email')
   const preferred =
     emails.find((i) => i.isVerified && i.isPrimary) ??
@@ -34,7 +44,14 @@ function pickEmail(identifiers: Array<{ provider: string; identifier: string; is
   return googleish?.identifier ?? null
 }
 
-function pickPhone(identifiers: Array<{ provider: string; identifier: string; isPrimary: boolean; isVerified: boolean }>): string | null {
+function pickPhone(
+  identifiers: Array<{
+    provider: string
+    identifier: string
+    isPrimary: boolean
+    isVerified: boolean
+  }>,
+): string | null {
   const phones = identifiers.filter((i) => i.provider === 'phone')
   const preferred =
     phones.find((i) => i.isVerified && i.isPrimary) ??

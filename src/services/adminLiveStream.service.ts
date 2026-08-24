@@ -114,11 +114,18 @@ async function persistLiveChats(roomId: string): Promise<void> {
 async function tryDeleteLivekitRoom(roomName: string): Promise<boolean> {
   if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) return false
   try {
-    const client = new RoomServiceClient(env.LIVEKIT_URL, env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET)
+    const client = new RoomServiceClient(
+      env.LIVEKIT_URL,
+      env.LIVEKIT_API_KEY,
+      env.LIVEKIT_API_SECRET,
+    )
     await client.deleteRoom(roomName)
     return true
   } catch (err) {
-    rootLogger.warn({ err, roomName }, 'admin live stop: LiveKit deleteRoom failed (room may already be gone)')
+    rootLogger.warn(
+      { err, roomName },
+      'admin live stop: LiveKit deleteRoom failed (room may already be gone)',
+    )
     return false
   }
 }
@@ -141,7 +148,9 @@ async function tryStopEgress(playbackId: string | null | undefined): Promise<voi
  * and livestream Redis keys are cleared so the host is not stuck "already live".
  */
 export const adminLiveStreamService = {
-  async listActiveForUser(userId: string): Promise<{ userId: string; streams: AdminLiveStreamRow[] }> {
+  async listActiveForUser(
+    userId: string,
+  ): Promise<{ userId: string; streams: AdminLiveStreamRow[] }> {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
@@ -311,7 +320,11 @@ export const adminLiveStreamService = {
     })
     const userId = hostSession?.hostUserId ?? liveStream?.userId
     if (!userId) {
-      throw new AppError(404, 'No active live stream found for this reference', 'LIVE_STREAM_NOT_FOUND')
+      throw new AppError(
+        404,
+        'No active live stream found for this reference',
+        'LIVE_STREAM_NOT_FOUND',
+      )
     }
     return this.requestStop({
       userId,
@@ -355,13 +368,18 @@ export const adminLiveStreamService = {
         })
 
     if (!hostSession && !liveStream) {
-      throw new AppError(404, 'No active live stream found for this reference', 'LIVE_STREAM_NOT_FOUND')
+      throw new AppError(
+        404,
+        'No active live stream found for this reference',
+        'LIVE_STREAM_NOT_FOUND',
+      )
     }
 
     const roomId = hostSession?.roomId ?? liveStream!.streamId
     const dbId = liveStream?.id ?? null
     const endedAt = new Date()
-    const startedAt = hostSession?.startedAt ?? liveStream?.startedAt ?? liveStream?.createdAt ?? endedAt
+    const startedAt =
+      hostSession?.startedAt ?? liveStream?.startedAt ?? liveStream?.createdAt ?? endedAt
 
     const uncountedRaw = await redisClient.get(`stream:uncounted_seconds:${roomId}`)
     const cameraOffAt = await redisClient.get(`stream:camera_off_at:${roomId}`)
@@ -370,7 +388,10 @@ export const adminLiveStreamService = {
       const offSec = Math.floor((endedAt.getTime() - Number(cameraOffAt)) / 1000)
       if (offSec > 60) uncountedSec += offSec - 60
     }
-    const grossDurationSeconds = Math.max(0, Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000))
+    const grossDurationSeconds = Math.max(
+      0,
+      Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
+    )
     const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec)
 
     try {

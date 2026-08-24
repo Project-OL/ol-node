@@ -17,7 +17,10 @@ import { coinTradingRepository } from '../repositories/coinTrading.repository'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
 import { coinTradingService } from './coinTrading.service'
-import { resolveCoinLedgerRevertability, resolvePointLedgerRevertability } from './adminTransactions.service'
+import {
+  resolveCoinLedgerRevertability,
+  resolvePointLedgerRevertability,
+} from './adminTransactions.service'
 import {
   ADMIN_WITHDRAWAL_LEDGER_TX_TYPES,
   isAdminWithdrawalRevertable,
@@ -45,7 +48,14 @@ type HistoryRow = {
 async function attachCoinRevertFlags<T extends HistoryRow>(
   rows: T[],
   currencyType: WalletCurrencyType,
-): Promise<Array<T & { canRevert: boolean; revertVia: ReturnType<typeof resolveCoinLedgerRevertability>['revertVia'] }>> {
+): Promise<
+  Array<
+    T & {
+      canRevert: boolean
+      revertVia: ReturnType<typeof resolveCoinLedgerRevertability>['revertVia']
+    }
+  >
+> {
   if (rows.length === 0) {
     return rows.map((r) => ({ ...r, canRevert: false as const, revertVia: null }))
   }
@@ -63,9 +73,7 @@ async function attachCoinRevertFlags<T extends HistoryRow>(
       typeof row.transferId === 'string' && row.transferId
         ? { id: row.transferId, reversedAt: linked?.reversedAt ?? null }
         : null
-    const tradingTransfer = linked
-      ? { id: linked.id, reversedAt: linked.reversedAt }
-      : fromTopLevel
+    const tradingTransfer = linked ? { id: linked.id, reversedAt: linked.reversedAt } : fromTopLevel
 
     const { canRevert, revertVia } = resolveCoinLedgerRevertability({
       currencyType,
@@ -84,16 +92,14 @@ async function attachCoinRevertFlags<T extends HistoryRow>(
             id: tradingTransfer.id,
             reversedAt: tradingTransfer.reversedAt?.toISOString?.() ?? tradingTransfer.reversedAt,
           }
-        : (row as { coinTradingTransfer?: unknown }).coinTradingTransfer ?? null,
+        : ((row as { coinTradingTransfer?: unknown }).coinTradingTransfer ?? null),
     }
   })
 }
 
-async function attachPointRevertFlags<T extends HistoryRow & { txType?: string; refId?: string | null }>(
-  rows: T[],
-): Promise<
-  Array<T & { canRevert: boolean; revertVia: AdminCoinRevertVia | null }>
-> {
+async function attachPointRevertFlags<
+  T extends HistoryRow & { txType?: string; refId?: string | null },
+>(rows: T[]): Promise<Array<T & { canRevert: boolean; revertVia: AdminCoinRevertVia | null }>> {
   const withdrawalIds = [
     ...new Set(
       rows

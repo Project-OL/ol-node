@@ -24,10 +24,7 @@ type ServiceAccountFields = {
 export function normalizeFirebasePrivateKey(raw: string): string {
   let key = raw.trim()
   // Strip surrounding single/double quotes if the whole value was quoted in .env
-  if (
-    (key.startsWith('"') && key.endsWith('"')) ||
-    (key.startsWith("'") && key.endsWith("'"))
-  ) {
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
     key = key.slice(1, -1)
   }
   // Handle double-escaped newlines from some process managers: \\n → \n → real newline

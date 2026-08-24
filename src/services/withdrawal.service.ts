@@ -49,11 +49,7 @@ import {
 } from '../utils/payment-method-mask'
 import { formatDuration } from '../utils/withdrawal-formatters'
 import { companyAgencyService } from './companyAgency.service'
-import {
-  CompanyCashDirection,
-  CompanyCashReason,
-  companyCashService,
-} from './companyCash.service'
+import { CompanyCashDirection, CompanyCashReason, companyCashService } from './companyCash.service'
 import {
   defaultPayrollFeeTierDtos,
   formatPayrollFeeTierDto,
@@ -617,18 +613,12 @@ export const withdrawalService = {
           }
 
           // Hard debit at request time — points leave the host wallet immediately.
-          await pointWalletService.debit(
-            userId,
-            params.grossPoints,
-            PointTxType.WITHDRAWAL,
-            tx,
-            {
-              idempotencyKey: `withdrawal-debit:${withdrawalId}`,
-              refId: withdrawalId,
-              description: 'Withdrawal',
-              availabilityCheck: true,
-            },
-          )
+          await pointWalletService.debit(userId, params.grossPoints, PointTxType.WITHDRAWAL, tx, {
+            idempotencyKey: `withdrawal-debit:${withdrawalId}`,
+            refId: withdrawalId,
+            description: 'Withdrawal',
+            availabilityCheck: true,
+          })
 
           await withdrawalRepository.create(
             {
@@ -788,8 +778,7 @@ export const withdrawalService = {
             const paused =
               !!ag?.pausedAt &&
               !(ag.pausedUntil != null && ag.pausedUntil.getTime() <= now.getTime())
-            const payrollOk =
-              !!ag?.payrollEnabled && !!ag?.payrollPrivilegeGranted && !paused
+            const payrollOk = !!ag?.payrollEnabled && !!ag?.payrollPrivilegeGranted && !paused
             const countryOk =
               !!opts.ignoreCountryMatch ||
               (!!hostCountry && countriesMatch(ag?.user.country, hostCountry))
@@ -1655,8 +1644,7 @@ export const withdrawalService = {
     }
 
     const waitingAssignment = w.payrollAssignments[0] ?? null
-    const isPlatformWaiting =
-      w.status === 'WAITING' && isPlatformHandledWithdrawal(w)
+    const isPlatformWaiting = w.status === 'WAITING' && isPlatformHandledWithdrawal(w)
     const isWaitingPeriod =
       ((w.status === 'PENDING' || w.status === 'WAITING') && waitingAssignment != null) ||
       isPlatformWaiting
@@ -2471,7 +2459,8 @@ export const withdrawalService = {
       timeTakenSeconds,
       timeTakenFormatted: timeTakenSeconds != null ? formatDuration(timeTakenSeconds) : null,
       localCurrencyAmount: local?.localCurrencyAmount ?? null,
-      localCurrencyCode: local?.localCurrencyCode ?? resolveLocalFx(hostCountry?.country, config).code,
+      localCurrencyCode:
+        local?.localCurrencyCode ?? resolveLocalFx(hostCountry?.country, config).code,
       paymentMethod: maskedMethod,
       requestedAt: row.requestedAt.toISOString(),
       processedAt: row.processedAt?.toISOString() ?? null,
@@ -2837,9 +2826,10 @@ export const withdrawalService = {
               }
             : null,
           proofS3Key: a?.proofS3Key ?? platformProof,
-          proofImageUrl: (a?.proofS3Key ?? platformProof)
-            ? storageService.getCdnOrS3PublicUrl((a?.proofS3Key ?? platformProof) as string)
-            : null,
+          proofImageUrl:
+            (a?.proofS3Key ?? platformProof)
+              ? storageService.getCdnOrS3PublicUrl((a?.proofS3Key ?? platformProof) as string)
+              : null,
           paymentMethod: w.paymentMethod ? mapPaymentMethodMaskedForAgent(w.paymentMethod) : null,
         }
       }),

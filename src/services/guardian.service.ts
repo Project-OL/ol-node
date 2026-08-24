@@ -29,7 +29,10 @@ import {
   type LevelApplyResult,
 } from './user-level.service'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
-import { publishServerFrameToUser, publishServerFrameToGuardianWatchers } from '../utils/ws-publisher'
+import {
+  publishServerFrameToUser,
+  publishServerFrameToGuardianWatchers,
+} from '../utils/ws-publisher'
 import type { ServerFrame } from '../realtime/types'
 
 const MONTHLY_PRICE: Record<GuardianTier, number> = {
@@ -510,7 +513,9 @@ export const guardianService = {
       guardianUserIds,
     })
 
-    const current = await guardianService.getActiveGuardianSummary(input.targetUserId).catch(() => null)
+    const current = await guardianService
+      .getActiveGuardianSummary(input.targetUserId)
+      .catch(() => null)
     await publishGuardianFrame(input.targetUserId, {
       t: 'GUARDIAN',
       event: 'guardian.purchased',

@@ -121,9 +121,7 @@ export const giftAdminService = {
       if (!cat) throw new AppError(404, 'Category not found', 'NOT_FOUND')
     }
 
-    const code = input.code
-      ? input.code
-      : await ensureUniqueCode(input.name)
+    const code = input.code ? input.code : await ensureUniqueCode(input.name)
 
     if (input.code && (await giftAdminRepository.findByCode(input.code))) {
       throw new AppError(409, 'Gift code already exists', 'GIFT_CODE_EXISTS')
@@ -210,9 +208,7 @@ export const giftCategoryService = {
       throw new AppError(409, 'Category slug already exists', 'CATEGORY_SLUG_EXISTS')
     }
 
-    const displayOrder =
-      input.displayOrder ??
-      (await giftCategoryRepository.maxDisplayOrder()) + 1
+    const displayOrder = input.displayOrder ?? (await giftCategoryRepository.maxDisplayOrder()) + 1
 
     const c = await giftCategoryRepository.create({
       name: input.name,

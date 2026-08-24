@@ -44,8 +44,7 @@ export default async function platformMessageAdminRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Messaging'],
-        description:
-          'Send a NOTIFICATION platform message to one user support chat.',
+        description: 'Send a NOTIFICATION platform message to one user support chat.',
         params: {
           type: 'object',
           required: ['userId'],

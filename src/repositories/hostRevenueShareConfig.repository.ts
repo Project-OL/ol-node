@@ -40,9 +40,7 @@ export const hostRevenueShareConfigRepository = {
       data: {
         ...(data.giftReceiveBp != null ? { giftReceiveBp: data.giftReceiveBp } : {}),
         ...(data.subscriptionBp != null ? { subscriptionBp: data.subscriptionBp } : {}),
-        ...(data.guardianPurchaseBp != null
-          ? { guardianPurchaseBp: data.guardianPurchaseBp }
-          : {}),
+        ...(data.guardianPurchaseBp != null ? { guardianPurchaseBp: data.guardianPurchaseBp } : {}),
         ...(data.videoCallHostShareBp != null
           ? { videoCallHostShareBp: data.videoCallHostShareBp }
           : {}),

@@ -38,10 +38,7 @@ export function effectiveTierWindowTotal(params: {
   lockLevelMinWindowPoints: bigint | null
   now: Date
 }): { effective: bigint; lockActive: boolean } {
-  if (
-    !isAgencyTierLockActive(params.lock, params.now) ||
-    params.lockLevelMinWindowPoints == null
-  ) {
+  if (!isAgencyTierLockActive(params.lock, params.now) || params.lockLevelMinWindowPoints == null) {
     return { effective: params.actual, lockActive: false }
   }
   const withBonus = params.actual + params.lock.tierLockBonusPoints!

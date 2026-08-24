@@ -75,7 +75,12 @@ export const accountDeletionAdminService = {
         qType: query.qType,
       })
       if (userIds.length === 0) {
-        return { page: query.page, limit: query.limit, total: 0, items: [] as ReturnType<typeof serialize>[] }
+        return {
+          page: query.page,
+          limit: query.limit,
+          total: 0,
+          items: [] as ReturnType<typeof serialize>[],
+        }
       }
       where.userId = { in: userIds }
     }

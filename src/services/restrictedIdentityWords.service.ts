@@ -42,11 +42,7 @@ export const restrictedIdentityWordsService = {
 
     const words = await readActiveFromDb()
     try {
-      await redisClient.setex(
-        cacheKey(),
-        RESTRICTED_IDENTITY_WORDS_TTL,
-        JSON.stringify({ words }),
-      )
+      await redisClient.setex(cacheKey(), RESTRICTED_IDENTITY_WORDS_TTL, JSON.stringify({ words }))
     } catch {
       /* ignore */
     }
@@ -63,11 +59,7 @@ export const restrictedIdentityWordsService = {
     await restrictedIdentityWordsRepository.replaceAll(words)
     await this.bustCache()
     try {
-      await redisClient.setex(
-        cacheKey(),
-        RESTRICTED_IDENTITY_WORDS_TTL,
-        JSON.stringify({ words }),
-      )
+      await redisClient.setex(cacheKey(), RESTRICTED_IDENTITY_WORDS_TTL, JSON.stringify({ words }))
     } catch {
       /* ignore */
     }
@@ -78,10 +70,7 @@ export const restrictedIdentityWordsService = {
     await redisClient.del(cacheKey())
   },
 
-  async assertNotRestricted(
-    text: string,
-    opts?: { allowRestricted?: boolean },
-  ): Promise<void> {
+  async assertNotRestricted(text: string, opts?: { allowRestricted?: boolean }): Promise<void> {
     if (opts?.allowRestricted) return
     const words = await this.getActiveWords()
     assertIdentityNotRestricted(text, words, opts)

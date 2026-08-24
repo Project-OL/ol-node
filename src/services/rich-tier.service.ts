@@ -64,7 +64,9 @@ export function defaultRichTierLadder(): RichTierLadderRow[] {
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
 function sortedLadder(ladder: readonly RichTierLadderRow[]): RichTierLadderRow[] {
-  return [...ladder].sort((a, b) => a.tier - b.tier || (a.minRechargeCoins < b.minRechargeCoins ? -1 : 1))
+  return [...ladder].sort(
+    (a, b) => a.tier - b.tier || (a.minRechargeCoins < b.minRechargeCoins ? -1 : 1),
+  )
 }
 
 export function thresholdForTier(
@@ -220,8 +222,7 @@ function buildSnapshotCore(params: {
     params.badgeTier > 0 ? (params.displayMap.get(params.badgeTier) ?? null) : null
   const progressTier = computeTier(params.currentMonthProgressCoins, params.ladder)
   const maxTier = params.ladder.reduce((m, r) => Math.max(m, r.tier), 0)
-  const nextTh =
-    progressTier < maxTier ? thresholdForTier(progressTier + 1, params.ladder) : null
+  const nextTh = progressTier < maxTier ? thresholdForTier(progressTier + 1, params.ladder) : null
   const lacking =
     nextTh != null
       ? nextTh > params.currentMonthProgressCoins

@@ -7,10 +7,7 @@ import { z } from 'zod'
 export const BANNER_STATUSES = ['ACTIVE', 'SCHEDULED', 'COMPLETED', 'STOPPED'] as const
 export type BannerStatus = (typeof BANNER_STATUSES)[number]
 
-const IsoDate = z
-  .string()
-  .datetime({ offset: true })
-  .or(z.string().datetime())
+const IsoDate = z.string().datetime({ offset: true }).or(z.string().datetime())
 
 export const BannerActiveQuerySchema = z.object({
   /** Free-text position filter (exact match, e.g. "home_top"). */

@@ -462,10 +462,7 @@ export const subscriptionService = {
     return map.get(creatorId) === true
   },
 
-  async checkAccessBulk(
-    subscriberId: string,
-    creatorIds: string[],
-  ): Promise<Map<string, boolean>> {
+  async checkAccessBulk(subscriberId: string, creatorIds: string[]): Promise<Map<string, boolean>> {
     const out = new Map<string, boolean>()
     const unique = [...new Set(creatorIds.filter(Boolean))]
     if (unique.length === 0) return out

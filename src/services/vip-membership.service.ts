@@ -119,7 +119,10 @@ async function bustProfileVipCaches(userId: string): Promise<void> {
 function cacheTtlSec(expiresAt: Date, cacheUntil?: Date | null): number {
   const until =
     cacheUntil != null && cacheUntil.getTime() < expiresAt.getTime() ? cacheUntil : expiresAt
-  return Math.min(VIPM_ACTIVE_TTL_MAX, Math.max(1, Math.floor((until.getTime() - Date.now()) / 1000)))
+  return Math.min(
+    VIPM_ACTIVE_TTL_MAX,
+    Math.max(1, Math.floor((until.getTime() - Date.now()) / 1000)),
+  )
 }
 
 async function writeMembershipCache(args: {

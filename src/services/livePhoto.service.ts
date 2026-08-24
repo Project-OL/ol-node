@@ -175,7 +175,10 @@ async function ensureVerifyJob(
       generation,
       requestId,
     })
-    log.info({ userId, generation, requestId, jobId }, 'live_photo_verify_re_enqueued_while_processing')
+    log.info(
+      { userId, generation, requestId, jobId },
+      'live_photo_verify_re_enqueued_while_processing',
+    )
   }
 }
 
@@ -362,11 +365,7 @@ export const livePhotoService = {
       )
     }
 
-    if (
-      row.verificationState === 'VERIFIED' &&
-      isPrimaryKey &&
-      !row.pendingS3Key?.trim()
-    ) {
+    if (row.verificationState === 'VERIFIED' && isPrimaryKey && !row.pendingS3Key?.trim()) {
       return {
         status: 'VERIFIED',
         verifiedAt: row.verifiedAt!.toISOString(),

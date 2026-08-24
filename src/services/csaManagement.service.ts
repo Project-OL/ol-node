@@ -52,7 +52,12 @@ function toCsaDto(admin: SystemAdmin) {
   }
 }
 
-function toIpDto(row: { id: string; ipAddress: string; createdAt: Date; createdByAdminId: string | null }) {
+function toIpDto(row: {
+  id: string
+  ipAddress: string
+  createdAt: Date
+  createdByAdminId: string | null
+}) {
   return {
     id: row.id,
     ipAddress: row.ipAddress,
@@ -233,9 +238,7 @@ export const csaManagementService = {
       ...(input.phone !== undefined ? { phone: input.phone } : {}),
       ...(input.phoneCountryCode !== undefined ? { phoneCountryCode: input.phoneCountryCode } : {}),
       ...(input.gender !== undefined ? { gender: input.gender } : {}),
-      ...(input.country !== undefined
-        ? { country: normalizeCountryOptional(input.country) }
-        : {}),
+      ...(input.country !== undefined ? { country: normalizeCountryOptional(input.country) } : {}),
     })
     return toCsaDto(updated)
   },
@@ -299,7 +302,10 @@ export const csaManagementService = {
     const [byStatus, allCsas, failedLoginAttempts24h, failedLogins] = await Promise.all([
       systemAdminRepository.countByRoleAndStatus('CUSTOMER_SUPPORT'),
       systemAdminRepository.findAllByRole('CUSTOMER_SUPPORT'),
-      adminLoginFailureRepository.countSince(new Date(Date.now() - 24 * 3600_000), 'CUSTOMER_SUPPORT'),
+      adminLoginFailureRepository.countSince(
+        new Date(Date.now() - 24 * 3600_000),
+        'CUSTOMER_SUPPORT',
+      ),
       systemAdminRepository.aggregateFailedLogins(
         'CUSTOMER_SUPPORT',
         new Date(Date.now() - 24 * 3600_000),

@@ -24,7 +24,10 @@ export function reconstructVipExpiresAt(purchases: VipPurchaseReplayRow[]): Date
   return current
 }
 
-export function vipExpiresDisagree(actual: Date | null | undefined, expected: Date | null): boolean {
+export function vipExpiresDisagree(
+  actual: Date | null | undefined,
+  expected: Date | null,
+): boolean {
   if (actual == null && expected == null) return false
   if (actual == null || expected == null) return true
   return Math.abs(actual.getTime() - expected.getTime()) > VIP_EXPIRY_TOLERANCE_MS

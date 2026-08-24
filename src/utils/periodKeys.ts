@@ -78,10 +78,7 @@ export function rankingPeriodDayRange(
 }
 
 /** Exclusive end instant for countdown (`endsAt`). */
-export function rankingPeriodEndsAt(
-  period: PlatformRankingPeriod,
-  periodKey: string,
-): Date | null {
+export function rankingPeriodEndsAt(period: PlatformRankingPeriod, periodKey: string): Date | null {
   const range = rankingPeriodDayRange(period, periodKey)
   return range?.endDayExclusive ?? null
 }

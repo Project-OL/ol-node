@@ -2,7 +2,11 @@ import { FastifyRequest, FastifyReply } from 'fastify'
 import { AppError } from './errorHandler'
 import { lastActiveTracker } from './lastActiveTracker.middleware'
 import type { JwtAccessPayload } from '../models/types'
-import { loadAuthHotPath, resolveUserTokenVersion, sessionService } from '../services/session.service'
+import {
+  loadAuthHotPath,
+  resolveUserTokenVersion,
+  sessionService,
+} from '../services/session.service'
 import { deviceBanService } from '../services/device-ban.service'
 import { userRepository } from '../repositories/user.repository'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
@@ -41,7 +45,9 @@ async function applyVerifiedAccessPayload(
   }).catch(() => ({ tokenVersion: null, sessionRaw: null, deviceBanned: null }))
 
   const userTv =
-    hot.tokenVersion != null ? Number(hot.tokenVersion) : await resolveUserTokenVersion(resolvedUserId)
+    hot.tokenVersion != null
+      ? Number(hot.tokenVersion)
+      : await resolveUserTokenVersion(resolvedUserId)
   if (tvInToken !== userTv) {
     // Ban / suspend / password-reset bump tokenVersion to force logout. Prefer
     // account-status errors when applicable; otherwise SESSION_INVALID so clients

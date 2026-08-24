@@ -137,12 +137,7 @@ const envSchema = z
      */
     FACE_LIVENESS_STS_ROLE_ARN: z.string().optional(),
     /** STS session duration for Face Liveness client credentials (seconds). */
-    FACE_LIVENESS_CREDENTIALS_DURATION_SEC: z.coerce
-      .number()
-      .int()
-      .min(900)
-      .max(3600)
-      .default(900),
+    FACE_LIVENESS_CREDENTIALS_DURATION_SEC: z.coerce.number().int().min(900).max(3600).default(900),
 
     /** Rekognition DetectFaces quality thresholds (0–100 scale). */
     FACE_MIN_BRIGHTNESS: z.coerce.number().min(0).max(100).default(30),
