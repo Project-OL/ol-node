@@ -23,23 +23,36 @@ jobs:
           aws sts get-caller-identity
 
       - name: Send test command to EC2
+        env:
+          INSTANCE_ID: i-0351dd6514d9c3f06
         run: |
+          set -euo pipefail
+
+          # AWS-RunShellScript expects a JSON object: {"commands":["..."]}
+          PARAMS=$(jq -nc --argjson cmds '[
+            "echo ===== HOSTNAME =====",
+            "hostname",
+            "echo ===== USER =====",
+            "whoami",
+            "echo ===== NODE =====",
+            "node --version || true",
+            "echo ===== NPM =====",
+            "npm --version || true",
+            "echo ===== OLAPP =====",
+            "id olapp",
+            "echo ===== OLAPP NODE =====",
+            "runuser -u olapp -- node --version",
+            "echo ===== OLAPP NPM =====",
+            "runuser -u olapp -- npm --version",
+            "echo ===== OLAPP PM2 =====",
+            "runuser -u olapp -- pm2 --version"
+          ]' '{commands: $cmds}')
+
           COMMAND_ID=$(aws ssm send-command \
             --region ap-south-1 \
-            --instance-ids i-0351dd6514d9c3f06 \
+            --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
-            --parameters 'commands=[
-              "echo ===== HOSTNAME =====",
-              "hostname",
-              "echo ===== USER =====",
-              "whoami",
-              "echo ===== NODE =====",
-              "node --version",
-              "echo ===== NPM =====",
-              "npm --version",
-              "echo ===== PM2 =====",
-              "pm2 --version"
-            ]' \
+            --parameters "$PARAMS" \
             --query 'Command.CommandId' \
             --output text)
 
@@ -49,7 +62,7 @@ jobs:
             STATUS=$(aws ssm get-command-invocation \
               --region ap-south-1 \
               --command-id "$COMMAND_ID" \
-              --instance-id i-0351dd6514d9c3f06 \
+              --instance-id "$INSTANCE_ID" \
               --query 'Status' \
               --output text)
 
@@ -60,7 +73,7 @@ jobs:
                 aws ssm get-command-invocation \
                   --region ap-south-1 \
                   --command-id "$COMMAND_ID" \
-                  --instance-id i-0351dd6514d9c3f06 \
+                  --instance-id "$INSTANCE_ID" \
                   --query 'StandardOutputContent' \
                   --output text
                 exit 0
@@ -69,10 +82,15 @@ jobs:
                 aws ssm get-command-invocation \
                   --region ap-south-1 \
                   --command-id "$COMMAND_ID" \
-                  --instance-id i-0351dd6514d9c3f06 \
+                  --instance-id "$INSTANCE_ID" \
                   --query '[Status,StandardOutputContent,StandardErrorContent]' \
                   --output text
                 exit 1
+                ;;
+              InProgress|Pending|Delayed)
+                ;;
+              *)
+                echo "Unexpected SSM status: $STATUS"
                 ;;
             esac
 
