@@ -10,6 +10,9 @@ scripts/
 # Environment files
 .env
 .env.local
+.env.copy
+.env.production.copy
+.env.production.live-server-shared.copy
 
 # Logs
 npm-debug.log*
@@ -26,7 +29,6 @@ Thumbs.db
 Planning/
 .cursor/
 TODO/
-# package-lock.json
 k6-auth-tests/
 CLAUDE.md
 
@@ -39,5 +41,11 @@ CLAUDE.md
 /lab/**/*.html
 lab/
 tests/
-package-lock.json
 .claude/
+
+# Local Docker — staging AWS creds for face-worker smoke tests (copy from .example)
+docker-compose.aws-staging.env
+
+# Firebase Admin service-account JSON — never commit; keep on server only (mode 600)
+*firebase*adminsdk*.json
+offoolive-firebase-adminsdk.json

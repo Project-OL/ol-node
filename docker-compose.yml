@@ -1,0 +1,172 @@
+# LOCAL TESTING ONLY — not production topology.
+# Spins up Postgres + Redis + API + general worker + face worker for Docker smoke tests.
+#
+# Usage (avoids parsing a local `.env` that may contain multiline PEMs):
+#   PowerShell:  $env:COMPOSE_ENV_FILES="docker-compose.env"; docker compose up --build
+#   bash:        COMPOSE_ENV_FILES=docker-compose.env docker compose up --build
+#
+# Face worker + Rekognition (optional — copy docker-compose.aws-staging.env.example):
+#   cp docker-compose.aws-staging.env.example docker-compose.aws-staging.env
+#   # fill staging IAM keys; compose loads it automatically (required: false if missing)
+#
+#   curl http://localhost:3000/health
+#   curl http://localhost:3000/health/ready
+#
+# Do not put production secrets here. Values below are disposable local defaults.
+
+name: ol-node-rest-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ol
+      POSTGRES_PASSWORD: ol_local_dev_only
+      POSTGRES_DB: ol_local
+    ports:
+      - "5433:5432"
+    volumes:
+      - ol_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ol -d ol_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Apply migrations once before app processes start (not run by every replica in prod).
+  # Uses the builder stage so the prisma CLI (devDependency) is available.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    platform: linux/amd64
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment: &app-env
+      NODE_ENV: development
+      PORT: "3000"
+      API_VERSION: v1
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://ol:ol_local_dev_only@postgres:5432/ol_local?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: local-docker-jwt-access-secret-min-32-chars
+      JWT_REFRESH_SECRET: local-docker-jwt-refresh-secret-min-32
+      ADMIN_JWT_SECRET: local-docker-admin-jwt-secret-min-32ch
+      ADMIN_JWT_REFRESH_SECRET: local-docker-admin-refresh-secret-32
+      DEVICE_FINGERPRINT_SECRET: local-docker-device-fingerprint-secret-32
+      LIVE_WEBHOOK_SECRET: local-docker-live-webhook-secret-min-32
+      REKOGNITION_COLLECTION_ID: face-local-docker
+      AWS_REGION: ap-south-1
+      # AWS keys: omit here — supply via docker-compose.aws-staging.env (staging IAM user)
+      # or rely on EC2 instance role in production. Face-worker exits without valid Rekognition auth.
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+      # Target architecture: HTTP + WebSocket in the API process (no separate ws-server).
+      WS_EMBED_IN_API: "true"
+      # Do NOT set OTP_DELIVERY_ENABLED / AGENCY_LEVEL_RECOMPUTE_ENABLED to the string
+      # "false" — Zod z.coerce.boolean() treats any non-empty string as true.
+      # Omit them so schema defaults (false / true as coded) apply.
+      # Omit AGENCY_TIER_INCLUDE_* unless needed — HOST defaults on; COMMISSION defaults off
+      # via string transforms in env.ts (not z.coerce.boolean).
+      STATIC_OTP_DEV: "22222"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  # One reusable runtime image; override command per process (matches production plan).
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    platform: linux/amd64
+    image: ol-node-rest:local
+    command: ["node", "dist/server.js"]
+    env_file:
+      - path: docker-compose.aws-staging.env
+        required: false
+    environment:
+      <<: *app-env
+    ports:
+      - "3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+
+  worker:
+    image: ol-node-rest:local
+    platform: linux/amd64
+    command: ["node", "dist/worker.js"]
+    env_file:
+      - path: docker-compose.aws-staging.env
+        required: false
+    environment:
+      <<: *app-env
+      WORKER_QUEUES: all
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Workers do not serve HTTP; disable image HEALTHCHECK inherited from runner.
+    healthcheck:
+      disable: true
+
+  face-worker:
+    image: ol-node-rest:local
+    platform: linux/amd64
+    command: ["node", "dist/worker-face-index.js"]
+    env_file:
+      - path: docker-compose.aws-staging.env
+        required: false
+    environment:
+      <<: *app-env
+      FACE_REGISTRATION_WORKER_CONCURRENCY: "4"
+      LIVE_PHOTO_WORKER_CONCURRENCY: "8"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    # Requires valid Rekognition auth (docker-compose.aws-staging.env or EC2 IAM role in prod).
+
+volumes:
+  ol_pg_data:
