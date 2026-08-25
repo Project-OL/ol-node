@@ -5,6 +5,7 @@ import { agencyRepository } from '../repositories/agency.repository'
 import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
+import { agencyKycService } from './agencyKyc.service'
 import { agencyHostRepository } from '../repositories/agencyHost.repository'
 import { storageService } from './storage.service'
 import { agencyCommissionService, agencyTierWindowMetricNote } from './agencyCommission.service'
@@ -375,6 +376,24 @@ export const agencyAdminService = {
       status: agencyStatusLabel(agency),
       pausedUntil: agency.pausedUntil?.toISOString() ?? null,
     }
+  },
+
+  async updateKycContact(
+    identifier: string,
+    data: { phone?: string; email?: string },
+  ) {
+    const agency = await resolveAgencyByIdentifier(identifier)
+    return agencyKycService.updateAdminKycContact(agency.userId, data)
+  },
+
+  async getGovtIdUploadUrl(identifier: string, mimeType: string) {
+    const agency = await resolveAgencyByIdentifier(identifier)
+    return agencyKycService.getPresignedGovtIdUrl(agency.userId, mimeType, { admin: true })
+  },
+
+  async confirmGovtIdUpload(identifier: string, s3Key: string) {
+    const agency = await resolveAgencyByIdentifier(identifier)
+    return agencyKycService.confirmAdminGovtIdUpload(agency.userId, s3Key)
   },
 
   async rejectApplication(params: {
