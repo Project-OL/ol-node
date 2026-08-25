@@ -7,6 +7,8 @@ import {
 } from '../repositories/adminUserDetail.repository'
 import { agencyHostRepository } from '../repositories/agencyHost.repository'
 import { agencyRepository } from '../repositories/agency.repository'
+import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
+import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { bannedDeviceRepository } from '../repositories/bannedDevice.repository'
 import { deviceRepository } from '../repositories/device.repository'
 import { sessionRepository, MAX_SESSIONS_PER_USER } from '../repositories/session.repository'
@@ -27,6 +29,7 @@ import { walletService } from './wallet.service'
 import { richTierService } from './rich-tier.service'
 import { walletLevelService } from './user-level.service'
 import { storeAdminService } from './store-admin.service'
+import { storageService } from './storage.service'
 import { adminUserSearchService } from './adminUserSearch.service'
 import { phoneSchema } from '../models/schemas'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
@@ -175,19 +178,33 @@ export const adminUserDetailService = {
     const row = await adminUserDetailRepository.findUser(userId)
     if (!row) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
-    const [session, device, agency, vip, email, phone, levels, devicesBlock, store, faceVerified] =
-      await Promise.all([
-        adminUserDetailRepository.getLatestSession(userId),
-        adminUserDetailRepository.getLatestDevice(userId),
-        buildAgencyBlock(userId, row.isAgent, formatUserName(row)),
-        buildVipBlock(userId, row),
-        Promise.resolve(pickAuth(row, 'email')),
-        Promise.resolve(pickAuth(row, 'phone')),
-        walletLevelService.getDisplayLevelsForUsers([userId]),
-        buildDevicesBlock(userId, row.lastIpAddress),
-        storeAdminService.getUserStoreSummary(userId),
-        faceVerificationRepository.isVerifiedForUser(userId),
-      ])
+    const [
+      session,
+      device,
+      agency,
+      vip,
+      email,
+      phone,
+      levels,
+      devicesBlock,
+      store,
+      faceVerified,
+      kycRow,
+      applicationRow,
+    ] = await Promise.all([
+      adminUserDetailRepository.getLatestSession(userId),
+      adminUserDetailRepository.getLatestDevice(userId),
+      buildAgencyBlock(userId, row.isAgent, formatUserName(row)),
+      buildVipBlock(userId, row),
+      Promise.resolve(pickAuth(row, 'email')),
+      Promise.resolve(pickAuth(row, 'phone')),
+      walletLevelService.getDisplayLevelsForUsers([userId]),
+      buildDevicesBlock(userId, row.lastIpAddress),
+      storeAdminService.getUserStoreSummary(userId),
+      faceVerificationRepository.isVerifiedForUser(userId),
+      agencyApplicationKycRepository.getKycByUserId(userId),
+      agencyAgentApplicationRepository.findByUserId(userId),
+    ])
 
     const deviceInfo = resolveDeviceAndIp(row, session, device)
     const level = levels.get(userId) ?? { wealthLevel: 0, livestreamLevel: 0 }
@@ -222,6 +239,22 @@ export const adminUserDetailService = {
       livestreamLevel: level.livestreamLevel,
       tags: row.adminTags,
       agency,
+      /** Present when the user started agency KYC — phone/email submitted on the application, not login IDs. */
+      kycContact: kycRow
+        ? {
+            phone: kycRow.contactPhone ?? null,
+            email: kycRow.contactEmail ?? null,
+            submittedAt: kycRow.contactSubmittedAt?.toISOString() ?? null,
+            govtIdUrl: kycRow.govtIdS3Key?.trim()
+              ? storageService.getCdnOrS3PublicUrl(kycRow.govtIdS3Key.trim())
+              : null,
+            govtIdSubmittedAt: kycRow.govtIdSubmittedAt?.toISOString() ?? null,
+          }
+        : null,
+      /** Present when an agency agent application row exists (pending/rejected/approved). */
+      agencyApplication: applicationRow
+        ? { id: applicationRow.id, status: applicationRow.status }
+        : null,
       ipAddress: deviceInfo.ipAddress,
       ipAddresses,
       deviceName: deviceInfo.deviceName,

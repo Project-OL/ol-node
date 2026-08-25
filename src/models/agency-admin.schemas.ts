@@ -1,4 +1,32 @@
 import { z } from 'zod'
+import { phoneSchema } from './schemas'
+
+/** Admin PATCH of agency KYC contact (phone and/or email). Distinct from login auth identifiers. */
+export const adminKycContactPatchSchema = z
+  .object({
+    phone: phoneSchema.optional(),
+    email: z.string().trim().email().optional(),
+  })
+  .refine((d) => d.phone != null || d.email != null, {
+    message: 'Provide at least phone or email',
+  })
+
+export type AdminKycContactPatchBody = z.infer<typeof adminKycContactPatchSchema>
+
+const ADMIN_GOVT_ID_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const
+
+/** Admin presign for replacing agency KYC government ID. Allowed even when the application is terminal. */
+export const adminGovtIdUploadUrlSchema = z
+  .object({
+    mimeType: z.enum(ADMIN_GOVT_ID_MIME).default('image/jpeg'),
+  })
+  .strict()
+
+export const adminGovtIdConfirmSchema = z
+  .object({
+    s3Key: z.string().min(1),
+  })
+  .strict()
 
 export const agencyAdminListQuerySchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),

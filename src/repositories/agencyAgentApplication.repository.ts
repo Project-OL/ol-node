@@ -8,6 +8,17 @@ export const agencyAgentApplicationRepository = {
     })
   },
 
+  async findByUserIdWrite(userId: string) {
+    return prisma.agencyAgentApplication.findUnique({
+      where: { userId },
+    })
+  },
+
+  async deleteById(id: string, tx?: Prisma.TransactionClient) {
+    const client = tx ?? prisma
+    return client.agencyAgentApplication.delete({ where: { id } })
+  },
+
   async findById(id: string) {
     return prismaRead.agencyAgentApplication.findUnique({
       where: { id },
