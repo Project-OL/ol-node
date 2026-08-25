@@ -41,6 +41,7 @@ import { agencyService } from './agency.service'
 import { livePhotoService } from './livePhoto.service'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { videoCallSettingsService } from './video-call.service'
+import { avatarModerationService } from './avatar-moderation.service'
 import { singleflight } from '../utils/singleflight'
 
 const displayNameSchema = z
@@ -411,6 +412,7 @@ export const meService = {
       if (!mime) {
         throw new AppError(400, 'Avatar must be JPEG, PNG, or WEBP', 'INVALID_FILE_TYPE')
       }
+      await avatarModerationService.assertAvatarBytesNotNude(avatarBuffer)
       const ext = extensionForImageMime(mime)
       const key = `avatars/${userId}/v${Date.now()}.${ext}`
       try {

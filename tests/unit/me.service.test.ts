@@ -89,6 +89,15 @@ vi.mock('../../src/services/storage.service', () => ({
   },
 }))
 
+const assertAvatarBytesNotNude = vi.fn()
+
+vi.mock('../../src/services/avatar-moderation.service', () => ({
+  avatarModerationService: {
+    assertAvatarBytesNotNude: (...a: unknown[]) => assertAvatarBytesNotNude(...a),
+    assertAvatarUrlNotNude: vi.fn(),
+  },
+}))
+
 const getCompletionSummaryForUser = vi.fn()
 
 vi.mock('../../src/services/gift-gallery.service', () => ({
@@ -134,9 +143,11 @@ vi.mock('../../src/services/vip-membership.service', () => ({
 }))
 
 const buildMeAgencyBlock = vi.fn()
+const onOwnerNameChanged = vi.fn()
 vi.mock('../../src/services/agency.service', () => ({
   agencyService: {
     buildMeAgencyBlock: (...a: unknown[]) => buildMeAgencyBlock(...a),
+    onOwnerNameChanged: (...a: unknown[]) => onOwnerNameChanged(...a),
   },
 }))
 
@@ -148,9 +159,17 @@ vi.mock('../../src/services/livePhoto.service', () => ({
 }))
 
 const isFaceVerifiedForUser = vi.fn()
+const getMeFaceState = vi.fn()
 vi.mock('../../src/repositories/faceVerification.repository', () => ({
   faceVerificationRepository: {
     isVerifiedForUser: (...a: unknown[]) => isFaceVerifiedForUser(...a),
+    getMeFaceState: (...a: unknown[]) => getMeFaceState(...a),
+  },
+}))
+
+vi.mock('../../src/services/restrictedIdentityWords.service', () => ({
+  restrictedIdentityWordsService: {
+    assertNamePartsNotRestricted: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
@@ -225,6 +244,8 @@ describe('meService', () => {
     findOtherByDisplayNameInsensitive.mockResolvedValue(null)
     putObjectBuffer.mockReset()
     deleteObject.mockReset()
+    assertAvatarBytesNotNude.mockReset()
+    assertAvatarBytesNotNude.mockResolvedValue(undefined)
     debitForDisplayNameChange.mockReset()
     getCoinBalance.mockReset()
     getPointBalance.mockReset()
@@ -283,10 +304,18 @@ describe('meService', () => {
       verifiedAt: null,
     })
     isFaceVerifiedForUser.mockResolvedValue(false)
+    getMeFaceState.mockReset()
+    getMeFaceState.mockResolvedValue({
+      faceVerified: false,
+      faceStatus: 'NONE',
+      faceCanReRegister: false,
+    })
     getAcceptVideoCalls.mockReset()
     getAcceptVideoCalls.mockResolvedValue(true)
     buildMeAgencyBlock.mockReset()
     buildMeAgencyBlock.mockResolvedValue({ role: 'NONE' as const })
+    onOwnerNameChanged.mockReset()
+    onOwnerNameChanged.mockResolvedValue(undefined)
     getCoinBalance.mockResolvedValue(20_000n)
     getPointBalance.mockResolvedValue(0n)
     walletUserLevelGetByUser.mockResolvedValue(null)
@@ -353,6 +382,8 @@ describe('meService', () => {
       verifiedAt: null,
     },
     faceVerified: false,
+    faceStatus: 'NONE',
+    faceCanReRegister: false,
     acceptVideoCalls: true,
   }
 
@@ -467,7 +498,11 @@ describe('meService', () => {
   it('getMe returns faceVerified true when indexed face profile exists', async () => {
     cacheGet.mockResolvedValueOnce(null)
     findForMe.mockResolvedValueOnce(baseRow())
-    isFaceVerifiedForUser.mockResolvedValueOnce(true)
+    getMeFaceState.mockResolvedValueOnce({
+      faceVerified: true,
+      faceStatus: 'INDEXED',
+      faceCanReRegister: false,
+    })
     const out = await meService.getMe('user-1')
     expect(out.data.faceVerified).toBe(true)
   })
@@ -633,6 +668,58 @@ describe('meService', () => {
       code: 'INVALID_FILE_TYPE',
     })
     expect(putObjectBuffer).not.toHaveBeenCalled()
+    expect(assertAvatarBytesNotNude).not.toHaveBeenCalled()
+  })
+
+  it('patchMe rejects nude avatar before S3 upload', async () => {
+    findForMe.mockResolvedValueOnce(baseRow())
+    assertAvatarBytesNotNude.mockRejectedValueOnce(
+      new AppError(
+        400,
+        'This photo cannot be used as a profile picture. Please choose a different image.',
+        'AVATAR_NUDITY_DETECTED',
+      ),
+    )
+    const jpeg = Buffer.alloc(32, 0)
+    jpeg[0] = 0xff
+    jpeg[1] = 0xd8
+    jpeg[2] = 0xff
+    await expect(meService.patchMe('user-1', {}, jpeg, {})).rejects.toMatchObject({
+      code: 'AVATAR_NUDITY_DETECTED',
+      statusCode: 400,
+    })
+    expect(putObjectBuffer).not.toHaveBeenCalled()
+  })
+
+  it('patchMe without avatar does not call nudity scan', async () => {
+    findForMe.mockResolvedValueOnce(baseRow({ bio: 'old' }))
+    updateProfile.mockResolvedValue(undefined as never)
+    findForMe.mockResolvedValueOnce(baseRow({ bio: 'hey' }))
+    await meService.patchMe(
+      'user-1',
+      { bio: 'hey' },
+      null,
+      { tokenVersion: 0, sessionId: '550e8400-e29b-41d4-a716-446655440000', sessionTokenVersion: 0 },
+    )
+    expect(assertAvatarBytesNotNude).not.toHaveBeenCalled()
+  })
+
+  it('patchMe uploads avatar after clean nudity scan', async () => {
+    findForMe.mockResolvedValueOnce(baseRow())
+    putObjectBuffer.mockResolvedValue(undefined)
+    updateProfile.mockResolvedValue(undefined as never)
+    findForMe.mockResolvedValueOnce(baseRow({ avatarUrl: 'https://cdn.example/avatars/user-1/v1.jpg' }))
+    const jpeg = Buffer.alloc(32, 0)
+    jpeg[0] = 0xff
+    jpeg[1] = 0xd8
+    jpeg[2] = 0xff
+    await meService.patchMe('user-1', {}, jpeg, {
+      tokenVersion: 0,
+      sessionId: '550e8400-e29b-41d4-a716-446655440000',
+      sessionTokenVersion: 0,
+    })
+    expect(assertAvatarBytesNotNude).toHaveBeenCalled()
+    expect(putObjectBuffer).toHaveBeenCalled()
   })
 
   it('patchMe invalidates and repopulates cache after update', async () => {
