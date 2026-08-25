@@ -1,12 +1,14 @@
 import { Prisma } from '@prisma/client'
 import { s3Bucket } from '../config/s3'
 import { prisma } from '../config/database'
+import { RedisKeys } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { agencyRepository } from '../repositories/agency.repository'
 import { userRepository } from '../repositories/user.repository'
 import { agencyCoinsellerService } from './agencyCoinseller.service'
+import { cacheRedisService } from './cacheRedis.service'
 import { storageService } from './storage.service'
 
 const PRESIGN_TTL_SEC = 600
@@ -17,10 +19,31 @@ function assertApplicationNotTerminal(application: { status: string } | null) {
   }
 }
 
+async function bustAgencyKycCaches(userId: string) {
+  const agency = await agencyRepository.getAgencyByUserId(userId)
+  if (agency) {
+    await cacheRedisService.del(
+      RedisKeys.agencyMe(userId),
+      RedisKeys.agencyByPublicId(agency.defaultPublicId.toString()),
+    )
+  }
+  await cacheRedisService.delByKeyPrefix('agency:ranking:')
+}
+
+function govtIdPublicUrl(s3Key: string | null | undefined) {
+  const key = s3Key?.trim()
+  return key ? storageService.getCdnOrS3PublicUrl(key) : null
+}
+
 export const agencyKycService = {
-  async getPresignedGovtIdUrl(userId: string, mimeType: string) {
-    const application = await agencyAgentApplicationRepository.findByUserId(userId)
-    assertApplicationNotTerminal(application)
+  async getPresignedGovtIdUrl(userId: string, mimeType: string, opts?: { admin?: boolean }) {
+    if (opts?.admin) {
+      const user = await userRepository.findById(userId)
+      if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    } else {
+      const application = await agencyAgentApplicationRepository.findByUserId(userId)
+      assertApplicationNotTerminal(application)
+    }
 
     const s3Key = `agency/kyc/${userId}/govt-id/${Date.now()}`
     const uploadUrl = await storageService.getPresignedPutUrl(s3Key, mimeType, PRESIGN_TTL_SEC)
@@ -30,11 +53,13 @@ export const agencyKycService = {
     return { uploadUrl, s3Key, expiresInSec: PRESIGN_TTL_SEC }
   },
 
-  async confirmGovtIdUpload(userId: string, s3Key: string) {
-    const application = await agencyAgentApplicationRepository.findByUserId(userId)
-    assertApplicationNotTerminal(application)
+  async confirmGovtIdUpload(userId: string, s3Key: string, opts?: { admin?: boolean }) {
+    if (!opts?.admin) {
+      const application = await agencyAgentApplicationRepository.findByUserId(userId)
+      assertApplicationNotTerminal(application)
+    }
 
-    const kyc = await agencyApplicationKycRepository.getKycByUserId(userId)
+    const kyc = await agencyApplicationKycRepository.getKycByUserIdWrite(userId)
     const pendingKey = kyc?.govtIdS3Key?.trim()
     if (!pendingKey) {
       throw new AppError(
@@ -60,6 +85,57 @@ export const agencyKycService = {
       govtIdS3Bucket: bucket,
       govtIdSubmittedAt: new Date(),
     })
+
+    if (opts?.admin) {
+      await bustAgencyKycCaches(userId)
+    }
+  },
+
+  /** Admin replace of government ID — allowed even when the application is APPROVED or REJECTED. */
+  async confirmAdminGovtIdUpload(userId: string, s3Key: string) {
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    await this.confirmGovtIdUpload(userId, s3Key, { admin: true })
+    const updated = await agencyApplicationKycRepository.getKycByUserIdWrite(userId)
+    return {
+      ok: true as const,
+      userId,
+      govtIdUrl: govtIdPublicUrl(updated?.govtIdS3Key),
+      govtIdSubmittedAt: updated?.govtIdSubmittedAt?.toISOString() ?? null,
+    }
+  },
+
+  /**
+   * Drop a REJECTED application so the user can `POST /agency/kyc/apply` again.
+   * Unlinks KYC first (FK is ON DELETE CASCADE) so contact + govt ID are kept.
+   */
+  async reopenRejectedApplication(userId: string) {
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const application = await agencyAgentApplicationRepository.findByUserIdWrite(userId)
+    if (!application) {
+      throw new AppError(404, 'Application not found', 'APPLICATION_NOT_FOUND')
+    }
+    if (application.status !== 'REJECTED') {
+      throw new AppError(
+        400,
+        'Only a rejected application can be reopened',
+        'APPLICATION_NOT_REJECTED',
+      )
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await agencyApplicationKycRepository.upsertKycDetails(userId, { applicationId: null }, tx)
+      await agencyAgentApplicationRepository.deleteById(application.id, tx)
+    })
+
+    return {
+      ok: true as const,
+      userId,
+      reopened: true as const,
+      previousApplicationId: application.id,
+    }
   },
 
   async submitContactInfo(userId: string, payload: { phone: string; email: string }) {
@@ -159,6 +235,37 @@ export const agencyKycService = {
     await agencyApplicationKycRepository.updateContactByAgentUserId(userId, patch)
     if (data.phone) {
       await agencyCoinsellerService.syncWhatsappFromKycPhone(userId, data.phone)
+    }
+  },
+
+  /**
+   * Admin correction of KYC-linked phone/email. Requires an existing KYC row
+   * (user started or submitted agency KYC). Does not change login auth identifiers.
+   */
+  async updateAdminKycContact(userId: string, data: { phone?: string; email?: string }) {
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const existing = await agencyApplicationKycRepository.getKycByUserId(userId)
+    if (!existing) {
+      throw new AppError(404, 'No KYC application found for this user', 'KYC_NOT_FOUND')
+    }
+
+    const email = data.email?.trim().toLowerCase()
+    await this.updateAgentContact(userId, {
+      ...(data.phone ? { phone: data.phone } : {}),
+      ...(email ? { email } : {}),
+    })
+
+    await bustAgencyKycCaches(userId)
+
+    const updated = await agencyApplicationKycRepository.getKycByUserIdWrite(userId)
+    return {
+      ok: true as const,
+      userId,
+      contactPhone: updated?.contactPhone ?? null,
+      contactEmail: updated?.contactEmail ?? null,
+      contactSubmittedAt: updated?.contactSubmittedAt?.toISOString() ?? null,
     }
   },
 

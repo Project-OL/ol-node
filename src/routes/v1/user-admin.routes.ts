@@ -5,6 +5,12 @@ import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { adminUserTagsBodySchema } from '../../models/admin-user-tags.schemas'
 import { adminUserSearchQuerySchema } from '../../models/admin-user-search.schemas'
 import { adminUserPatchBodySchema } from '../../models/admin-user-detail.schemas'
+import {
+  adminGovtIdConfirmSchema,
+  adminGovtIdUploadUrlSchema,
+  adminKycContactPatchSchema,
+} from '../../models/agency-admin.schemas'
+import { agencyKycService } from '../../services/agencyKyc.service'
 import { adminUserTagsService } from '../../services/admin-user-tags.service'
 import { adminUserSearchService } from '../../services/adminUserSearch.service'
 import { adminUserDetailService } from '../../services/adminUserDetail.service'
@@ -85,6 +91,21 @@ export default async function userAdminRoutes(app: FastifyInstance) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       return reply.send(await adminUserSearchService.getHistory(request.adminUser!.id))
+    },
+  )
+
+  app.get(
+    '/users/stats',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users'],
+        description:
+          'User search page stats: total non-deleted users, count registered since UTC midnight, and up to 50 of those accounts (newest first).',
+      },
+    },
+    async (_request: FastifyRequest, reply: FastifyReply) => {
+      return reply.send(await adminUserSearchService.getRegistrationStats())
     },
   )
 
@@ -329,6 +350,138 @@ export default async function userAdminRoutes(app: FastifyInstance) {
           actionDetails: { status: parsed.data.status },
         })
       }
+      return reply.send(result)
+    },
+  )
+
+  app.patch<{ Params: { userId: string } }>(
+    '/users/:userId/kyc-contact',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users'],
+        description:
+          'Update agency KYC-linked phone and/or email. Shown when the user has applied for KYC. Does not change login email/phone.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const parsed = adminKycContactPatchSchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await agencyKycService.updateAdminKycContact(request.params.userId, parsed.data)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_KYC_CONTACT_UPDATED',
+        targetUserId: request.params.userId,
+        actionDetails: { userId: request.params.userId, fields: Object.keys(parsed.data) },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/kyc/govt-id/upload-url',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users'],
+        description:
+          'Presign S3 PUT for replacing agency KYC government ID. Allowed even if the application is approved or rejected.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const parsed = adminGovtIdUploadUrlSchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const data = await agencyKycService.getPresignedGovtIdUrl(
+        request.params.userId,
+        parsed.data.mimeType,
+        { admin: true },
+      )
+      return reply.send(data)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/kyc/govt-id/confirm',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users'],
+        description: 'Confirm government ID upload after PUT to the presigned URL.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const parsed = adminGovtIdConfirmSchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await agencyKycService.confirmAdminGovtIdUpload(
+        request.params.userId,
+        parsed.data.s3Key,
+      )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_KYC_GOVT_ID_UPDATED',
+        targetUserId: request.params.userId,
+        actionDetails: { userId: request.params.userId, s3Key: parsed.data.s3Key },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/agency-application/reopen',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users'],
+        description:
+          'Delete a REJECTED agency application so the user can apply again. KYC contact and government ID are kept.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const result = await agencyKycService.reopenRejectedApplication(request.params.userId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_APPLICATION_REOPENED',
+        targetUserId: request.params.userId,
+        actionDetails: {
+          userId: request.params.userId,
+          previousApplicationId: result.previousApplicationId,
+        },
+      })
       return reply.send(result)
     },
   )

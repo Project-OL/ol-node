@@ -12,6 +12,7 @@ import {
   RedisKeys,
 } from '../config/redis'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import { utcStartOfDay } from '../utils/datetime'
 import {
   ADMIN_USER_SEARCH_UUID_RE,
   resolveAdminUserSearchAutoType,
@@ -90,6 +91,22 @@ function mapRow(
 }
 
 export const adminUserSearchService = {
+  async getRegistrationStats() {
+    const todayStartsAt = utcStartOfDay(new Date())
+    const listLimit = 50
+    const [counts, rows] = await Promise.all([
+      adminUserSearchRepository.countRegistrationStats(todayStartsAt),
+      adminUserSearchRepository.findRegisteredToday(todayStartsAt, listLimit),
+    ])
+    return {
+      totalUsers: counts.totalUsers,
+      registeredToday: counts.registeredToday,
+      todayStartsAt: todayStartsAt.toISOString(),
+      users: rows.map((row) => mapRow(row, 'userId')),
+      usersTruncated: counts.registeredToday > rows.length,
+    }
+  },
+
   /**
    * Push a user to the top of this admin's recent-search history (max 10, per admin).
    * Dedupes by userId. Failures are swallowed — history is best-effort.

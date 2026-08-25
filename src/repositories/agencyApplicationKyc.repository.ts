@@ -73,6 +73,10 @@ export const agencyApplicationKycRepository = {
     return prismaRead.agencyApplicationKyc.findUnique({ where: { userId } })
   },
 
+  async getKycByUserIdWrite(userId: string): Promise<AgencyApplicationKyc | null> {
+    return prisma.agencyApplicationKyc.findUnique({ where: { userId } })
+  },
+
   async getKyc(userId: string) {
     return agencyApplicationKycRepository.getKycByUserId(userId)
   },

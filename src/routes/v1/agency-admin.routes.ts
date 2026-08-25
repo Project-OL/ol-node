@@ -15,6 +15,9 @@ import {
   setAgencyPayrollBodySchema,
   suspendAgencyBodySchema,
   transferHostsBodySchema,
+  adminKycContactPatchSchema,
+  adminGovtIdConfirmSchema,
+  adminGovtIdUploadUrlSchema,
 } from '../../models/agency-admin.schemas'
 import { agencyAgentApplicationRepository } from '../../repositories/agencyAgentApplication.repository'
 import { agencyAgentApplicationService } from '../../services/agencyAgentApplication.service'
@@ -700,6 +703,174 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const status = await agencyKycService.getKycStatusForAdmin(request.params.userId)
       return reply.send(status)
+    },
+  )
+
+  app.patch<{ Params: { userId: string } }>(
+    '/applications/:userId/kyc',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'Update KYC-linked phone and/or email for a pending applicant (or any user with a KYC row). Does not change login auth identifiers.',
+      },
+    },
+    async (request, reply) => {
+      const body = adminKycContactPatchSchema.parse(request.body ?? {})
+      const result = await agencyKycService.updateAdminKycContact(request.params.userId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_KYC_CONTACT_UPDATED',
+        targetUserId: request.params.userId,
+        actionDetails: {
+          userId: request.params.userId,
+          fields: Object.keys(body),
+        },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/applications/:userId/kyc/govt-id/upload-url',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'Presign S3 PUT for replacing an applicant government ID. Allowed even if the application is approved or rejected.',
+      },
+    },
+    async (request, reply) => {
+      const body = adminGovtIdUploadUrlSchema.parse(request.body ?? {})
+      const data = await agencyKycService.getPresignedGovtIdUrl(
+        request.params.userId,
+        body.mimeType,
+        { admin: true },
+      )
+      return reply.send(data)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/applications/:userId/kyc/govt-id/confirm',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description: 'Confirm applicant government ID upload after PUT to the presigned URL.',
+      },
+    },
+    async (request, reply) => {
+      const body = adminGovtIdConfirmSchema.parse(request.body ?? {})
+      const result = await agencyKycService.confirmAdminGovtIdUpload(
+        request.params.userId,
+        body.s3Key,
+      )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_KYC_GOVT_ID_UPDATED',
+        targetUserId: request.params.userId,
+        actionDetails: { userId: request.params.userId, s3Key: body.s3Key },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/applications/:userId/reopen',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'Delete a REJECTED application so the user can apply again. KYC contact and government ID are kept.',
+      },
+    },
+    async (request, reply) => {
+      const result = await agencyKycService.reopenRejectedApplication(request.params.userId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_APPLICATION_REOPENED',
+        targetUserId: request.params.userId,
+        actionDetails: {
+          userId: request.params.userId,
+          previousApplicationId: result.previousApplicationId,
+        },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.patch<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/kyc-contact',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'Update KYC-linked phone and/or email on an approved agency. Does not change login auth identifiers.',
+      },
+    },
+    async (request, reply) => {
+      const body = adminKycContactPatchSchema.parse(request.body ?? {})
+      const result = await agencyAdminService.updateKycContact(request.params.agencyIdentifier, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_KYC_CONTACT_UPDATED',
+        targetUserId: result.userId,
+        actionDetails: {
+          agencyIdentifier: request.params.agencyIdentifier,
+          userId: result.userId,
+          fields: Object.keys(body),
+        },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/kyc/govt-id/upload-url',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'Presign S3 PUT for replacing an approved agency owner government ID.',
+      },
+    },
+    async (request, reply) => {
+      const body = adminGovtIdUploadUrlSchema.parse(request.body ?? {})
+      const data = await agencyAdminService.getGovtIdUploadUrl(
+        request.params.agencyIdentifier,
+        body.mimeType,
+      )
+      return reply.send(data)
+    },
+  )
+
+  app.post<{ Params: { agencyIdentifier: string } }>(
+    '/:agencyIdentifier/kyc/govt-id/confirm',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description: 'Confirm agency owner government ID upload after PUT to the presigned URL.',
+      },
+    },
+    async (request, reply) => {
+      const body = adminGovtIdConfirmSchema.parse(request.body ?? {})
+      const result = await agencyAdminService.confirmGovtIdUpload(
+        request.params.agencyIdentifier,
+        body.s3Key,
+      )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_KYC_GOVT_ID_UPDATED',
+        targetUserId: result.userId,
+        actionDetails: {
+          agencyIdentifier: request.params.agencyIdentifier,
+          userId: result.userId,
+          s3Key: body.s3Key,
+        },
+      })
+      return reply.send(result)
     },
   )
 
