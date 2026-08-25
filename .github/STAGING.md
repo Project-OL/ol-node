@@ -1,24 +1,27 @@
 # Staging deploy (ol-stag)
 
-## Why SSH failed
+Same flow as live-server/admin **production** (`production.yml`): GitHub Actions builds a tarball, SCPs it to `/tmp`, then runs `.github/deploy/ec2-unpack-*.sh` via `ssh … 'bash -s'`.
 
-GitHub Actions never got an SSH banner (`Connection timed out during banner exchange` / port 22). That is **not** a bad PEM. Inbound **TCP 22** from GitHub-hosted runner IPs (and often from your laptop too) is blocked or the host is unreachable on SSH.
+Do not use OIDC / S3 / SSM for staging. Secrets are already configured on Environment **staging**.
 
-ol-node **production** already avoids SSH: OIDC → S3 → **SSM** `AWS-RunShellScript`. Staging now uses that same path.
+| App | Staging dir | PM2 / URL |
+|---|---|---|
+| ol-node | `/home/ec2-user/ol-node` (`LOG_DIR=/home/ec2-user/ol-node/logs`) | `ol-api` / https://api-staging.offoolive.com |
+| live-server | `/home/ec2-user/live-server` | `ol-live` / https://live-staging.offoolive.com |
+| admin | `/var/www/admins3jinyu.offoolive.com` | https://admin-staging.offoolive.com |
 
-## Instance must be SSM-managed
+`.env` stays on the instance (not in the artifact).
 
-ol-stag (`i-04b31dbda6ed0edc4`) needs an **IAM instance profile** with:
+## GitHub (once per repo)
 
-1. `AmazonSSMManagedInstanceCore`
-2. `s3:GetObject` on `arn:aws:s3:::ol-production-deploy-artifacts-465457334877/*`
+**Settings → Environments → `staging`**
 
-Attach it in EC2 → instance → Actions → Security → Modify IAM role. Wait ~1–2 minutes until the instance appears in **Systems Manager → Fleet Manager**.
+| Secret | Value |
+|---|---|
+| `STAGING_EC2_HOST` | `3.110.118.179` |
+| `STAGING_EC2_USER` | `ec2-user` |
+| `STAGING_EC2_SSH_PRIVATE_KEY` | PEM for `ssh ol-stag` |
 
-The GitHub OIDC role `ol-prod-github-deploy-role` must be allowed to `ssm:SendCommand` on this instance (same role as production). If live-server/admin S3 prefixes are denied, allow `live-server/*` and `ol-admin/*` on that bucket (or the whole bucket).
+Inbound TCP 22 on the instance security group must allow GitHub-hosted runners.
 
-Unpack runs as `ec2-user` with `APP_DIR=/home/ec2-user/ol-node` and `LOG_DIR=/home/ec2-user/ol-node/logs` (not `/opt/ol`, which is production and not writable by `ec2-user`).
-
-## Optional SSH alternative
-
-EC2 security group inbound **22** from `0.0.0.0/0` (or GitHub Actions CIDRs) would make SSH workflows work again. SSM does not need that. Do not re-run old **Deploy to EC2** jobs — those still default `LOG_DIR` to `/opt/ol/logs`.
+Deploy **one app at a time** (`npm ci` on this t3.micro saturates CPU).
