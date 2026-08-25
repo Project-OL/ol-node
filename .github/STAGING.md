@@ -17,6 +17,8 @@ Attach it in EC2 → instance → Actions → Security → Modify IAM role. Wait
 
 The GitHub OIDC role `ol-prod-github-deploy-role` must be allowed to `ssm:SendCommand` on this instance (same role as production). If live-server/admin S3 prefixes are denied, allow `live-server/*` and `ol-admin/*` on that bucket (or the whole bucket).
 
+Unpack runs as `ec2-user` with `APP_DIR=/home/ec2-user/ol-node` and `LOG_DIR=/home/ec2-user/ol-node/logs` (not `/opt/ol`, which is production and not writable by `ec2-user`).
+
 ## Optional SSH alternative
 
-EC2 security group inbound **22** from `0.0.0.0/0` (or GitHub Actions CIDRs) would make SSH workflows work again. SSM does not need that.
+EC2 security group inbound **22** from `0.0.0.0/0` (or GitHub Actions CIDRs) would make SSH workflows work again. SSM does not need that. Do not re-run old **Deploy to EC2** jobs — those still default `LOG_DIR` to `/opt/ol/logs`.

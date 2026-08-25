@@ -110,7 +110,7 @@ jobs:
                 \"aws s3 cp s3://${DEPLOY_BUCKET}/${ARTIFACT_KEY} /tmp/ol-node-artifact.tgz\",
                 \"aws s3 cp s3://${DEPLOY_BUCKET}/${DEPLOY_SCRIPT_KEY} /tmp/ec2-unpack-ol-node.sh\",
                 \"chmod 700 /tmp/ec2-unpack-ol-node.sh\",
-                \"APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE=1 RESTART_WORKERS=1 bash /tmp/ec2-unpack-ol-node.sh\"
+                \"APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node LOG_DIR=/home/ec2-user/ol-node/logs ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE=1 RESTART_WORKERS=1 bash /tmp/ec2-unpack-ol-node.sh\"
               ]" \
               --query 'Command.CommandId' \
               --output text
