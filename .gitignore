@@ -13,6 +13,7 @@ scripts/
 .env.copy
 .env.production.copy
 .env.production.live-server-shared.copy
+.env.production.*.record
 
 # Logs
 npm-debug.log*
