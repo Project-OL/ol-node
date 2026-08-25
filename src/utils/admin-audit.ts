@@ -162,11 +162,43 @@ export function resolveAdminActivityDestination(
     }
   }
   if (actionType.startsWith('ADMIN_AGENCY_')) {
+    if (actionType === 'ADMIN_AGENCY_TIER_RECOMPUTED') {
+      const beforeLevel = details.beforeLevel
+      const afterLevel = details.afterLevel
+      const levelLabel =
+        beforeLevel != null && afterLevel != null
+          ? `Tier ${String(beforeLevel)} → ${String(afterLevel)}`
+          : agencyId
+            ? `Agency ${agencyId}`
+            : 'Agency tier recompute'
+      return {
+        label: levelLabel,
+        targetUserId: agencyId ?? targetUserId,
+        resourceType: 'agency',
+        resourceId: agencyId ?? targetUserId,
+      }
+    }
+    if (actionType === 'ADMIN_AGENCY_TIER_RECOMPUTE_MASTER') {
+      return {
+        label: 'All agencies tier recompute',
+        targetUserId: null,
+        resourceType: 'agency',
+        resourceId: null,
+      }
+    }
     return {
       label: agencyId ? `Agency ${agencyId}` : 'Agency',
       targetUserId: agencyId ?? targetUserId,
       resourceType: 'agency',
       resourceId: agencyId ?? targetUserId,
+    }
+  }
+  if (actionType === 'ADMIN_COIN_TRADING_TRANSFER_REVERSED') {
+    return {
+      label: transferId ? `Coin transfer ${transferId}` : 'Coin trading transfer reversed',
+      targetUserId: readStr(details, 'agencyUserId', 'senderAgentUserId') ?? targetUserId,
+      resourceType: 'coin_trading_transfer',
+      resourceId: transferId,
     }
   }
   if (actionType.startsWith('ADMIN_GIFT_GALLERY_')) {
@@ -384,9 +416,16 @@ export const SEEDED_ADMIN_ACTIVITY_ACTION_TYPES = [
   'ADMIN_AGENCY_KYC_CONTACT_UPDATED',
   'ADMIN_AGENCY_KYC_GOVT_ID_UPDATED',
   'ADMIN_AGENCY_APPLICATION_REOPENED',
+  'ADMIN_AGENCY_APPLICATION_STATUS_CHANGED',
+  'ADMIN_AGENCY_TIER_RECOMPUTED',
+  'ADMIN_AGENCY_TIER_RECOMPUTE_MASTER',
+  'ADMIN_AGENCY_HOST_TAG_SET',
+  'ADMIN_AGENCY_HOST_FORCE_EXIT',
+  'ADMIN_COIN_TRADING_TRANSFER_REVERSED',
   'WITHDRAWAL_MANUAL_ASSIGN',
   'WITHDRAWAL_REVERSED',
   'WITHDRAWAL_PLATFORM_PAID_PROOF',
+  'WITHDRAWAL_PAYROLL_TAKEOVER_PROOF',
   'WITHDRAWAL_DISPUTE_RESOLVED_AGENT',
   'WITHDRAWAL_DISPUTE_RESOLVED_HOST',
   'ADMIN_SYSTEM_MESSAGE',

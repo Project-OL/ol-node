@@ -705,7 +705,7 @@ export const agencyHostService = {
       await walletService.adjustPointBalanceCache(params.hostUserId, -params.deductPoints)
     }
     await agencyService.onAgencyMutation(agencyUserId)
-    return { ok: true as const }
+    return { ok: true as const, agencyUserId, hostUserId: params.hostUserId }
   },
 
   async processAutoApproveJob(applicationId: string) {
@@ -831,7 +831,12 @@ export const agencyHostService = {
       throw new AppError(404, 'User is not an agency host', 'HOST_NOT_FOUND')
     }
     const updated = await userRepository.setIsTagged(hostUserId, isTagged)
-    return { ok: true, userId: updated.id, isTagged: updated.isTagged }
+    return {
+      ok: true,
+      userId: updated.id,
+      isTagged: updated.isTagged,
+      agencyUserId: membership.agencyUserId,
+    }
   },
 
   /** Admin bypass: add host to agency without cooldown gates. */
