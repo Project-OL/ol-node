@@ -40,6 +40,10 @@ GitHub-hosted runners need **inbound TCP 22** to this instance. Either:
 
 If deploy fails with `Connection timed out` / `Permission denied`, it is almost always SG or the PEM.
 
+**`ssh-keyscan` / empty deploy logs:** GitHub-hosted runners must reach **TCP 22**. In the instance security group for `i-04b31dbda6ed0edc4`, add inbound SSH (port 22) from `0.0.0.0/0` (or GitHub Actions CIDRs). Without that, the deploy step exits 1 with almost no output.
+
+**PEM paste:** paste the file contents with real line breaks (or a single line using `\n`). Include `BEGIN` / `END` lines. Do not paste the `.pub` file.
+
 ### 4. Branch protection (optional)
 
 **Settings → Branches → Add rule** for `staging`: require PR, or allow direct push if only CI should update it.
