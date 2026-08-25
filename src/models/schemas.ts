@@ -69,7 +69,7 @@ export const completeProfileBodySchema = z
       .optional(),
     country: z.string().min(1).max(100),
     gender: z.enum(['male', 'female', 'other']),
-    /** Optional profile photo URL; omit, null, or empty string when user skips avatar upload. */
+    /** Optional profile photo URL; omit, null, or empty string when user skips avatar. Owned S3 avatars may be rejected with AVATAR_NUDITY_DETECTED. */
     avatarUrl: z.preprocess(
       (val) => (val === null || val === '' || val === undefined ? undefined : val),
       z.string().url().optional(),

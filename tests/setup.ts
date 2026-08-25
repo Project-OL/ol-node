@@ -7,3 +7,5 @@ process.env.LIVE_WEBHOOK_SECRET = process.env.LIVE_WEBHOOK_SECRET ?? 'test-live-
 process.env.NODE_ENV = 'test'
 process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://test:test@localhost:5432/test'
 process.env.REDIS_URL = process.env.REDIS_URL ?? 'redis://127.0.0.1:6379'
+process.env.AVATAR_CONTENT_MODERATION_ENABLED =
+  process.env.AVATAR_CONTENT_MODERATION_ENABLED ?? 'false'

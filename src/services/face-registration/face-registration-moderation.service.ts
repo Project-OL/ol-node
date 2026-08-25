@@ -5,7 +5,21 @@ import { storageService } from '../storage.service'
 
 export type ModerationLabelHit = { label: string; confidence: number }
 
-const NUDITY_LABELS = new Set(['Explicit Nudity', 'Partial Nudity', 'Suggestive'])
+export type NudityCheckResult = {
+  isNudityDetected: boolean
+  labels: ModerationLabelHit[]
+  failureReason?: string
+}
+
+/** Parent + current AWS Rekognition moderation taxonomy. */
+const NUDITY_LABELS = new Set([
+  'Explicit Nudity',
+  'Explicit',
+  'Partial Nudity',
+  'Non-Explicit Nudity',
+  'Suggestive',
+])
+const PARTIAL_NUDITY_LABELS = new Set(['Partial Nudity', 'Non-Explicit Nudity'])
 const CONTENT_POLICY_LABELS = new Set(['Violence', 'Weapons', 'Hate Symbols'])
 
 async function loadImageBytes(s3Key: string): Promise<Uint8Array> {
@@ -34,28 +48,16 @@ function mapLabels(
     .map((l) => ({ label: l.Name!, confidence: Number(l.Confidence) }))
 }
 
-/**
- * Reusable nudity / suggestive content check for registration, verification, and live-photo flows.
- * Pass `forceEnabled: true` for callers with their own feature flag (e.g. live photo).
- */
-export async function checkImageForNudity(
-  s3Key: string,
-  options?: { strictMode?: boolean; forceEnabled?: boolean },
-): Promise<{
-  isNudityDetected: boolean
-  labels: ModerationLabelHit[]
-  failureReason?: string
-}> {
-  if (!options?.forceEnabled && !env.FACE_CONTENT_MODERATION_ENABLED) {
-    return { isNudityDetected: false, labels: [] }
-  }
+/** Pure label evaluation — unit-tested without Rekognition. */
+export function evaluateNudityLabels(
+  labels: ModerationLabelHit[],
+  options?: { strictMode?: boolean; threshold?: number },
+): NudityCheckResult {
   const strict = options?.strictMode ?? env.FACE_MODERATION_STRICT_MODE
-  const res = await fetchModerationLabels(s3Key)
-  const labels = mapLabels(res.ModerationLabels)
-  const threshold = env.FACE_MODERATION_NUDITY_THRESHOLD
+  const threshold = options?.threshold ?? env.FACE_MODERATION_NUDITY_THRESHOLD
   const hits = labels.filter((l) => {
     if (!NUDITY_LABELS.has(l.label)) return false
-    if (l.label === 'Partial Nudity' && !strict) return false
+    if (PARTIAL_NUDITY_LABELS.has(l.label) && !strict) return false
     return l.confidence >= threshold
   })
   if (hits.length > 0) {
@@ -66,6 +68,41 @@ export async function checkImageForNudity(
     }
   }
   return { isNudityDetected: false, labels }
+}
+
+function shouldSkipModeration(forceEnabled?: boolean): boolean {
+  return !forceEnabled && !env.FACE_CONTENT_MODERATION_ENABLED
+}
+
+/**
+ * Reusable nudity / suggestive content check for registration, verification, live-photo, and avatar flows.
+ * Pass `forceEnabled: true` for callers with their own feature flag (e.g. live photo, avatar).
+ */
+export async function checkImageForNudity(
+  s3Key: string,
+  options?: { strictMode?: boolean; forceEnabled?: boolean },
+): Promise<NudityCheckResult> {
+  if (shouldSkipModeration(options?.forceEnabled)) {
+    return { isNudityDetected: false, labels: [] }
+  }
+  const res = await fetchModerationLabels(s3Key)
+  return evaluateNudityLabels(mapLabels(res.ModerationLabels), {
+    strictMode: options?.strictMode,
+  })
+}
+
+/** Same check against in-memory image bytes (PATCH /users/me avatar, before S3 put). */
+export async function checkImageBytesForNudity(
+  imageBytes: Uint8Array,
+  options?: { strictMode?: boolean; forceEnabled?: boolean },
+): Promise<NudityCheckResult> {
+  if (shouldSkipModeration(options?.forceEnabled)) {
+    return { isNudityDetected: false, labels: [] }
+  }
+  const res = await detectModerationLabels(imageBytes)
+  return evaluateNudityLabels(mapLabels(res.ModerationLabels), {
+    strictMode: options?.strictMode,
+  })
 }
 
 export async function checkContentPolicy(

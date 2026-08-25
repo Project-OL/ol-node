@@ -36,6 +36,7 @@ import { deviceService } from './device.service'
 import { formatUserName } from '../utils/user-display'
 import { allocateUniqueUsername, assertDisplayNameAvailable } from '../utils/user-identity-unique'
 import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'
+import { avatarModerationService } from './avatar-moderation.service'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
 const SIGNUP_VERIFIED_TTL = 300
@@ -244,6 +245,9 @@ export const authV2Service = {
     const avatarUrl = data.avatarUrl && data.avatarUrl.trim() !== '' ? data.avatarUrl.trim() : null
     await restrictedIdentityWordsService.assertNamePartsNotRestricted(data.firstName, lastName)
     await assertDisplayNameAvailable(data.firstName, lastName, userId)
+    if (avatarUrl) {
+      await avatarModerationService.assertAvatarUrlNotNude(userId, avatarUrl)
+    }
     await userRepository.updateProfile(userId, {
       firstName: data.firstName,
       lastName,

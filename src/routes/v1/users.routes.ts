@@ -224,7 +224,7 @@ export default async function usersRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Users'],
         description:
-          'Update profile (multipart): optional fields name, dob (YYYY-MM-DD or empty to clear), bio; optional file avatar (JPEG/PNG/WEBP, max 5MB). Returns fresh profile + new access token.',
+          'Update profile (multipart): optional fields name, dob (YYYY-MM-DD or empty to clear), bio; optional file avatar (JPEG/PNG/WEBP, max 5MB). Avatar is scanned for nudity (`AVATAR_NUDITY_DETECTED`). Returns fresh profile + new access token.',
         consumes: ['multipart/form-data'],
         response: {
           200: {
