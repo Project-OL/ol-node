@@ -305,7 +305,15 @@ export const adminTransactionsService = {
     const giftIds = page.map((g) => g.id)
     const existing = await adminTransactionsRepository.findExistingGiftReversals(giftIds)
     const reverted = new Set(existing.map((e) => e.giftTransactionId))
-    const agencyByRef = await platformProfitService.sumAgencyCommissionByRefIds(giftIds)
+    const agencyByGift = await platformProfitService.sumAgencyCommissionForGiftRows(
+      page.map((g) => ({
+        id: g.id,
+        senderUserId: g.senderUserId,
+        receiverUserId: g.receiverUserId,
+        pointsAwarded: g.pointsAwarded,
+        createdAt: g.createdAt,
+      })),
+    )
     return {
       entries: page.map((g) => ({
         id: g.id,
@@ -331,7 +339,7 @@ export const adminTransactionsService = {
         platformProfit: platformProfitService.profitForGiftRow({
           coinCost: g.coinCost,
           pointsAwarded: g.pointsAwarded,
-          agencyCommissionPoints: agencyByRef.get(g.id) ?? 0n,
+          agencyCommissionPoints: agencyByGift.get(g.id) ?? 0n,
         }),
       })),
       nextCursor,
@@ -941,13 +949,10 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
     transferByLedger.set(t.recipientLedgerEntryId, t)
   }
 
-  const giftIdsForProfit = [
-    ...new Set(
-      [
-        ...[...giftTxMap.values()].map((g) => g.id),
-        ...[...giftTxByLedgerId.values()].map((g) => g.id),
-      ].filter(Boolean),
-    ),
+  const giftRowsForAgency = [
+    ...new Map(
+      [...giftTxMap.values(), ...giftTxByLedgerId.values()].map((g) => [g.id, g]),
+    ).values(),
   ]
   const splitRefIds = page
     .filter(
@@ -960,10 +965,22 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
         e.refId,
     )
     .map((e) => e.refId as string)
-  const agencyByRefId = await platformProfitService.sumAgencyCommissionByRefIds([
-    ...giftIdsForProfit,
-    ...splitRefIds,
+  const [giftAgencyById, agencyBySplitRef] = await Promise.all([
+    platformProfitService.sumAgencyCommissionForGiftRows(
+      giftRowsForAgency.map((g) => ({
+        id: g.id,
+        senderUserId: g.senderUserId,
+        receiverUserId: g.receiverUserId,
+        pointsAwarded: g.pointsAwarded,
+        createdAt: g.createdAt,
+      })),
+    ),
+    platformProfitService.sumAgencyCommissionByRefIds(splitRefIds),
   ])
+  const agencyByRefId = new Map(agencyBySplitRef)
+  for (const [giftId, amount] of giftAgencyById) {
+    agencyByRefId.set(giftId, (agencyByRefId.get(giftId) ?? 0n) + amount)
+  }
   const hostPointsByRefId = await platformProfitService.sumHostPointsByRefIds(splitRefIds, [
     PointTxType.VIDEO_CALL,
     PointTxType.SUBSCRIPTION,

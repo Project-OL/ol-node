@@ -8,6 +8,7 @@ export default defineConfig({
     include: [
       'tests/**/*.test.ts',
       'tests/**/*.spec.ts',
+      'src/**/*.test.ts',
       'lab/concurrency/**/*.test.ts',
     ],
     // tests/integration/** are explicit "real service" simulations run via their
