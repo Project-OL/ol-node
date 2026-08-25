@@ -574,6 +574,12 @@ model UserSettings {
   allowMsgFromMutual    Boolean  @default(true) @map("allow_msg_from_mutual")
   allowMsgFromFollowing Boolean  @default(true) @map("allow_msg_from_following")
   allowMsgFromStranger  Boolean  @default(true) @map("allow_msg_from_stranger")
+  /// Live-server effect prefs (shared `user_settings` table).
+  effectTopRunway       Boolean  @default(true) @map("effect_top_runway")
+  effectGift            Boolean  @default(true) @map("effect_gift")
+  effectLuckyGift       Boolean  @default(true) @map("effect_lucky_gift")
+  effectEntry           Boolean  @default(true) @map("effect_entry")
+  effectGlobal          Boolean  @default(true) @map("effect_global")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 

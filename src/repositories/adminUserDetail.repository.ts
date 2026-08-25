@@ -139,4 +139,50 @@ export const adminUserDetailRepository = {
     })
     return agg._sum.amountPoints ?? 0n
   },
+
+  /**
+   * Club effective live seconds for streams that ended in `[start, end)` —
+   * same definition as Live-server `getHostStatsService` (period=this_week).
+   */
+  async sumEffectiveLiveSecondsInRange(
+    userId: string,
+    start: Date,
+    end: Date,
+  ): Promise<number> {
+    const agg = await prismaRead.liveStream.aggregate({
+      where: {
+        userId,
+        endedAt: { gte: start, lt: end },
+      },
+      _sum: { effectiveDurationSeconds: true },
+    })
+    return Number(agg._sum.effectiveDurationSeconds ?? 0)
+  },
+
+  /** POINT wallet credits in `[start, end)` — Live-server host-stats `wonPoints`. */
+  async sumPointCreditsInRange(userId: string, start: Date, end: Date): Promise<bigint> {
+    const wallet = await prismaRead.wallet.findUnique({
+      where: { userId_currencyType: { userId, currencyType: WalletCurrencyType.POINT } },
+      select: { id: true },
+    })
+    if (!wallet) return 0n
+    const agg = await prismaRead.pointLedgerEntry.aggregate({
+      where: {
+        walletId: wallet.id,
+        direction: 'CREDIT',
+        createdAt: { gte: start, lt: end },
+      },
+      _sum: { amount: true },
+    })
+    return agg._sum.amount ?? 0n
+  },
+
+  async countNewFollowersInRange(userId: string, start: Date, end: Date): Promise<number> {
+    return prismaRead.userFollow.count({
+      where: {
+        followingId: userId,
+        createdAt: { gte: start, lt: end },
+      },
+    })
+  },
 }

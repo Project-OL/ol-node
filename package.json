@@ -45,6 +45,7 @@
         "wallet:enqueue-level-backfill": "tsx scripts/enqueue-level-backfill.ts",
         "backfill:vip-public-ids": "tsx scripts/backfill-vip-public-ids.ts",
         "backfill:platform-inbox": "tsx scripts/backfill-platform-inbox-conversations.ts",
+        "backfill:video-call-settings": "tsx src/scripts/backfill-video-call-settings.ts",
         "report:duplicate-directs": "tsx scripts/report-duplicate-direct-conversations.ts",
         "typecheck": "tsc --noEmit -p tsconfig.json",
         "api-contract:lock": "tsx scripts/generate-api-contract-lock.ts && tsx scripts/generate-api-contract-index.ts",

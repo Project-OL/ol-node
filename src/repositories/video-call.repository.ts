@@ -7,6 +7,24 @@ export const videoCallRepository = {
     return prismaRead.videoCallSettings.findUnique({ where: { userId } })
   },
 
+  /**
+   * Ensure a physical `video_call_settings` row exists (Live-server requires it
+   * on initiate). Idempotent — no-op when the row is already present.
+   */
+  async ensureDefaults(userId: string) {
+    return prisma.videoCallSettings.upsert({
+      where: { userId },
+      create: {
+        userId,
+        pricePerMin: 1800,
+        blockLv5: false,
+        blockLv10: false,
+        acceptVideoCalls: true,
+      },
+      update: {},
+    })
+  },
+
   async upsertSettings(
     userId: string,
     data: {
