@@ -21,6 +21,7 @@ import { normalizeCountry } from '../utils/agency-country'
 import { otpAuthService } from './otp-auth.service'
 import { auditService } from './audit.service'
 import { platformConversationsService } from './platformConversations.service'
+import { videoCallSettingsService } from './video-call.service'
 import { cacheService } from './cache.service'
 import { providerService } from './provider.service'
 import {
@@ -187,6 +188,9 @@ export const authV2Service = {
     })
     void platformConversationsService.provisionForNewUser(user.id).catch((err) => {
       console.error(`[platform-inbox] provision failed for ${user.id}`, err)
+    })
+    void videoCallSettingsService.ensureDefaults(user.id).catch((err) => {
+      console.error(`[video-call-settings] ensureDefaults failed for ${user.id}`, err)
     })
     void userPublicIdService.setOriginalPublicId(user.id, publicId).catch((err) => {
       console.error(`[public-id] Failed to store originalPublicId for ${user.id}`, err)

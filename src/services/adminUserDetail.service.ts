@@ -37,6 +37,11 @@ import { assertDisplayNameAvailable, assertUsernameAvailable } from '../utils/us
 import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'
 import { normalizeCountryOptional } from '../utils/agency-country'
 import { normalizeGenderStored } from '../utils/profileDisplay'
+import {
+  calculate1130DateRanges,
+  formatDurationHHMMSS,
+  secondsToLiveHours,
+} from '../utils/ist-1130-date-ranges'
 
 function pickAuth(
   row: AdminUserDetailRow,
@@ -312,6 +317,41 @@ export const adminUserDetailService = {
         tradingCoinsFrozen: row.tradingCoinsFrozen,
         pointsFrozen: row.pointsFrozen,
       },
+    }
+  },
+
+  /**
+   * Weekly live summary for admin User Detail — parity with Live-server
+   * `GET /live-stream/host-stats?period=this_week` (IST Sunday 23:30 week,
+   * sum of `live_streams.effective_duration_seconds`).
+   */
+  async getLiveSummary(userId: string) {
+    const row = await adminUserDetailRepository.findUser(userId)
+    if (!row) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const { thisWeek } = calculate1130DateRanges()
+    const [liveHoursSeconds, wonPoints, newFollowers] = await Promise.all([
+      adminUserDetailRepository.sumEffectiveLiveSecondsInRange(
+        userId,
+        thisWeek.start,
+        thisWeek.end,
+      ),
+      adminUserDetailRepository.sumPointCreditsInRange(userId, thisWeek.start, thisWeek.end),
+      adminUserDetailRepository.countNewFollowersInRange(userId, thisWeek.start, thisWeek.end),
+    ])
+
+    const wonPointsNum = Number(wonPoints)
+    return {
+      userId,
+      liveHours: secondsToLiveHours(liveHoursSeconds),
+      liveHoursSeconds,
+      liveHoursFormatted: formatDurationHHMMSS(liveHoursSeconds),
+      /** Admin card “Receiving Count” — weekly POINT credits (host-stats wonPoints). */
+      receivingCount: Number.isFinite(wonPointsNum) ? wonPointsNum : 0,
+      wonPoints: wonPoints.toString(),
+      newFollowers,
+      weekStart: thisWeek.start.toISOString(),
+      weekEnd: thisWeek.end.toISOString(),
     }
   },
 
