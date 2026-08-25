@@ -160,6 +160,15 @@ const envSchema = z
      * Independent of face-registration; also honored when FACE_CONTENT_MODERATION_ENABLED is true.
      */
     LIVE_PHOTO_CONTENT_MODERATION_ENABLED: z.coerce.boolean().default(true),
+    /**
+     * Profile DP (complete-profile avatarUrl + PATCH /users/me avatar): DetectModerationLabels.
+     * Independent of face-registration; also honored when FACE_CONTENT_MODERATION_ENABLED is true.
+     * String transform so `false` in .env actually disables (z.coerce.boolean treats "false" as true).
+     */
+    AVATAR_CONTENT_MODERATION_ENABLED: z
+      .string()
+      .default('true')
+      .transform((s) => s === 'true' || s === '1'),
     /** HSL saturation in face region above this → garish makeup heuristic. */
     FACE_GARISH_SATURATION_MAX: z.coerce.number().min(0).max(100).default(85),
     /** Image histogram avg saturation below this → monochrome. */
