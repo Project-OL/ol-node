@@ -10,6 +10,14 @@ import {
   ZERO_PLATFORM_PROFIT,
   type PlatformProfitBuckets,
 } from '../utils/platform-profit'
+import {
+  GIFT_AGENCY_NEAR_MS,
+  assignHostCreditsToGiftRows,
+  sumCommissionsByGiftId,
+  type GiftRowForAgency,
+} from '../utils/gift-agency-commission'
+
+export type { GiftRowForAgency }
 
 const log = rootLogger.child({ module: 'platform-profit' })
 
@@ -56,6 +64,127 @@ export async function sumAgencyCommissionByRefIds(refIds: string[]): Promise<Map
     if (r.refId) map.set(r.refId, r._sum.amount ?? 0n)
   }
   return map
+}
+
+const HOST_GIFT_POINT_TX: PointTxType[] = [PointTxType.GIFT_RECEIVE, PointTxType.LIVESTREAM_GIFT]
+
+/**
+ * Gift P&L agency total: tagged hostTxType (message gifts + new live/VC writes)
+ * plus untagged live-server rows whose refId is a GIFT_RECEIVE/LIVESTREAM_GIFT
+ * host ledger id or a gift_transactions.id.
+ */
+export async function sumGiftRelatedAgencyCommission(params: {
+  from?: Date
+  to?: Date
+  /** Master ledger periods are half-open `[from, to)`. Admin profit summary is inclusive `to`. */
+  toExclusive?: boolean
+  excludeUserIds?: string[]
+}): Promise<bigint> {
+  const exclude = [...new Set(params.excludeUserIds ?? [])].filter(Boolean)
+  const houseClause =
+    exclude.length > 0
+      ? Prisma.sql`AND w.user_id NOT IN (${Prisma.join(exclude.map((id) => Prisma.sql`${id}::uuid`))})`
+      : Prisma.empty
+  const toClause = params.to
+    ? params.toExclusive
+      ? Prisma.sql`AND e.created_at < ${params.to}`
+      : Prisma.sql`AND e.created_at <= ${params.to}`
+    : Prisma.empty
+  const rows = await prismaRead.$queryRaw<{ sum: bigint | null }[]>(Prisma.sql`
+    SELECT COALESCE(SUM(e.amount), 0)::bigint AS sum
+    FROM point_ledger_entries e
+    INNER JOIN wallets w ON w.id = e.wallet_id
+    WHERE e.tx_type = 'AGENT_COMMISSION'
+      AND e.direction = 'CREDIT'
+      AND w.currency_type = 'POINT'
+      ${params.from ? Prisma.sql`AND e.created_at >= ${params.from}` : Prisma.empty}
+      ${toClause}
+      ${houseClause}
+      AND (
+        e.metadata->>'hostTxType' IN ('GIFT_RECEIVE', 'LIVESTREAM_GIFT')
+        OR (
+          COALESCE(e.metadata->>'hostTxType', '') = ''
+          AND (
+            EXISTS (
+              SELECT 1
+              FROM point_ledger_entries h
+              WHERE h.id::text = e.ref_id
+                AND h.tx_type IN ('GIFT_RECEIVE', 'LIVESTREAM_GIFT')
+                AND h.direction = 'CREDIT'
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM gift_transactions g
+              WHERE g.id::text = e.ref_id
+            )
+          )
+        )
+      )
+  `)
+  return rows[0]?.sum ?? 0n
+}
+
+/**
+ * Per gift_transactions row: commission on the gift id (message + new live/VC)
+ * or on the matching host ledger id (legacy live-server refId).
+ */
+export async function sumAgencyCommissionForGiftRows(
+  gifts: GiftRowForAgency[],
+): Promise<Map<string, bigint>> {
+  if (gifts.length === 0) return new Map()
+
+  const giftIds = [...new Set(gifts.map((g) => g.id))]
+  const hostSelect = {
+    id: true,
+    refId: true,
+    amount: true,
+    createdAt: true,
+    counterpartyId: true,
+    wallet: { select: { userId: true } },
+  } as const
+
+  const byRef = await prismaRead.pointLedgerEntry.findMany({
+    where: {
+      txType: { in: HOST_GIFT_POINT_TX },
+      direction: LedgerDirection.CREDIT,
+      refId: { in: giftIds },
+    },
+    select: hostSelect,
+  })
+
+  const withPoints = gifts.filter((g) => g.pointsAwarded > 0)
+  const near =
+    withPoints.length === 0
+      ? []
+      : await prismaRead.pointLedgerEntry.findMany({
+          where: {
+            OR: withPoints.map((g) => ({
+              txType: { in: HOST_GIFT_POINT_TX },
+              direction: LedgerDirection.CREDIT,
+              counterpartyId: g.senderUserId,
+              amount: BigInt(g.pointsAwarded),
+              createdAt: {
+                gte: new Date(g.createdAt.getTime() - GIFT_AGENCY_NEAR_MS),
+                lte: new Date(g.createdAt.getTime() + GIFT_AGENCY_NEAR_MS),
+              },
+              wallet: { userId: g.receiverUserId },
+            })),
+          },
+          select: hostSelect,
+        })
+
+  const hostToGift = assignHostCreditsToGiftRows(gifts, byRef, near)
+  const refIds = [...new Set([...giftIds, ...hostToGift.keys()])]
+  const commissions = await prismaRead.pointLedgerEntry.findMany({
+    where: {
+      txType: PointTxType.AGENT_COMMISSION,
+      direction: LedgerDirection.CREDIT,
+      refId: { in: refIds },
+    },
+    select: { refId: true, amount: true },
+  })
+
+  return sumCommissionsByGiftId(giftIds, hostToGift, commissions)
 }
 
 /**
@@ -195,7 +324,8 @@ export async function summarizePlatformProfit(params: {
   const parts: PlatformProfitBuckets[] = []
 
   // Gifts: GIFT_SEND − GIFT_REFUND − host GIFT_RECEIVE/LIVESTREAM_GIFT − AGENT_COMMISSION
-  // (hostTxType meta). Do not use gift_transactions.coinCost — live combos can under-store it.
+  // (tagged hostTxType, plus untagged live/VC gift commissions). Do not use
+  // gift_transactions.coinCost — live combos can under-store it.
   const giftSendAgg = await prismaRead.coinLedgerEntry.aggregate({
     where: {
       direction: LedgerDirection.DEBIT,
@@ -213,23 +343,9 @@ export async function summarizePlatformProfit(params: {
     },
     _sum: { amount: true },
   })
-  const giftAgencyAgg = await prismaRead.pointLedgerEntry.aggregate({
-    where: {
-      direction: LedgerDirection.CREDIT,
-      txType: PointTxType.AGENT_COMMISSION,
-      ...(createdAt ? { createdAt } : {}),
-      metadata: { path: ['hostTxType'], equals: PointTxType.GIFT_RECEIVE },
-    },
-    _sum: { amount: true },
-  })
-  const giftAgencyLiveAgg = await prismaRead.pointLedgerEntry.aggregate({
-    where: {
-      direction: LedgerDirection.CREDIT,
-      txType: PointTxType.AGENT_COMMISSION,
-      ...(createdAt ? { createdAt } : {}),
-      metadata: { path: ['hostTxType'], equals: PointTxType.LIVESTREAM_GIFT },
-    },
-    _sum: { amount: true },
+  const giftAgencyPoints = await sumGiftRelatedAgencyCommission({
+    from: params.from,
+    to: params.to,
   })
   const giftRefundAgg = await prismaRead.coinLedgerEntry.aggregate({
     where: {
@@ -245,8 +361,7 @@ export async function summarizePlatformProfit(params: {
     const { buckets, rawCoins } = profitFromCoinToPointSplit({
       coinsSpent: coinsSpent < 0n ? 0n : coinsSpent,
       hostPoints: giftHostAgg._sum.amount ?? 0n,
-      agencyCommissionPoints:
-        (giftAgencyAgg._sum.amount ?? 0n) + (giftAgencyLiveAgg._sum.amount ?? 0n),
+      agencyCommissionPoints: giftAgencyPoints,
     })
     warnIfNegative(rawCoins, { kind: 'summary_gifts' })
     parts.push(buckets)
@@ -478,6 +593,8 @@ export async function summarizeAdminCurrencySupply(params: { from?: Date; to?: D
 
 export const platformProfitService = {
   sumAgencyCommissionByRefIds,
+  sumAgencyCommissionForGiftRows,
+  sumGiftRelatedAgencyCommission,
   sumHostPointsByRefIds,
   profitForGiftRow,
   profitForFullCoinSpend,
