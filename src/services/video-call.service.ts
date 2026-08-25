@@ -110,6 +110,14 @@ export const videoCallSettingsService = {
     return withAllowedPrices(userId, toPublicSettings(userId, settings))
   },
 
+  /**
+   * Create default settings row if missing. Call on new-user registration so
+   * Live-server initiate does not fail with "Receiver has not enabled video calls."
+   */
+  async ensureDefaults(userId: string): Promise<void> {
+    await videoCallRepository.ensureDefaults(userId)
+  },
+
   /** Whether the user currently wants to receive video calls (default true). */
   async getAcceptVideoCalls(userId: string): Promise<boolean> {
     const settings = await videoCallRepository.getSettings(userId)

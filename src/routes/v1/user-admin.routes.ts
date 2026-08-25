@@ -172,6 +172,26 @@ export default async function userAdminRoutes(app: FastifyInstance) {
   )
 
   app.get<{ Params: { userId: string } }>(
+    '/users/:userId/live-summary',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Live'],
+        description:
+          'This-week live summary for User Detail: sum of effective_duration_seconds for streams ending in the IST Sunday 23:30 week (parity with Live-server host-stats), plus won points and new followers.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', minLength: 1 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      return reply.send(await adminUserDetailService.getLiveSummary(request.params.userId))
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
     '/users/:userId/vip',
     {
       preHandler: preAuth,
