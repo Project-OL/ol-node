@@ -1,3 +1,4 @@
+# SSM smoke test against ol-prod-app-01 (i-0351dd6514d9c3f06). Manual only.
 name: Test SSM Deployment Access
 
 on:
