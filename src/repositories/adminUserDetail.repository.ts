@@ -143,20 +143,28 @@ export const adminUserDetailRepository = {
   /**
    * Club effective live seconds for streams that ended in `[start, end)` —
    * same definition as Live-server `getHostStatsService` (period=this_week).
+   * When `effective_duration_seconds` is still 0 (failed/missing write), use wall-clock.
    */
   async sumEffectiveLiveSecondsInRange(
     userId: string,
     start: Date,
     end: Date,
   ): Promise<number> {
-    const agg = await prismaRead.liveStream.aggregate({
-      where: {
-        userId,
-        endedAt: { gte: start, lt: end },
-      },
-      _sum: { effectiveDurationSeconds: true },
-    })
-    return Number(agg._sum.effectiveDurationSeconds ?? 0)
+    const rows = await prismaRead.$queryRaw<Array<{ total: bigint | number | null }>>`
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN effective_duration_seconds > 0 THEN effective_duration_seconds
+          WHEN started_at IS NOT NULL AND ended_at IS NOT NULL
+            THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (ended_at - started_at)))::int)
+          ELSE 0
+        END
+      ), 0) AS total
+      FROM live_streams
+      WHERE user_id = ${userId}::uuid
+        AND ended_at >= ${start}
+        AND ended_at < ${end}
+    `
+    return Number(rows[0]?.total ?? 0)
   },
 
   /** POINT wallet credits in `[start, end)` — Live-server host-stats `wonPoints`. */

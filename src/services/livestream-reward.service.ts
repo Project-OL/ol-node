@@ -63,15 +63,21 @@ function dayIndexSinceJoin(createdAt: Date, today: Date): number {
 
 /**
  * Effective (billable) seconds for one session — same definition as admin live hours /
- * Live-server host-stats. Ended rows use `effective_duration_seconds`; in-progress
- * sessions compute a provisional value (gross − Redis uncounted / camera-off).
+ * Live-server host-stats. Ended rows use `effective_duration_seconds`; if that column
+ * was left at 0 (legacy / failed write), fall back to wall-clock. In-progress sessions
+ * compute a provisional value (gross − Redis uncounted / camera-off).
  */
 async function effectiveSecondsForSession(s: SessionDurationRow): Promise<number> {
   if (!s.startedAt) return 0
   if (s.isLive && !s.endedAt) {
     return provisionalEffectiveDurationSeconds(s.streamId, s.startedAt)
   }
-  return Math.max(0, s.effectiveDurationSeconds ?? 0)
+  const stored = Math.max(0, s.effectiveDurationSeconds ?? 0)
+  if (stored > 0) return stored
+  if (s.endedAt) {
+    return Math.max(0, Math.floor((s.endedAt.getTime() - s.startedAt.getTime()) / 1000))
+  }
+  return 0
 }
 
 /** Sums effective minutes across all of a user's LiveStream rows for one UTC calendar day. */
