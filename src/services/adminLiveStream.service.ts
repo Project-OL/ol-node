@@ -8,6 +8,10 @@ import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
 import { liveSessionService } from './liveSession.service'
 import { formatUserName } from '../utils/user-display'
+import {
+  computeEffectiveDurationSeconds,
+  readUncountedLiveSeconds,
+} from '../utils/live-stream-effective-duration'
 
 const hostBriefSelect = {
   id: true,
@@ -381,18 +385,16 @@ export const adminLiveStreamService = {
     const startedAt =
       hostSession?.startedAt ?? liveStream?.startedAt ?? liveStream?.createdAt ?? endedAt
 
-    const uncountedRaw = await redisClient.get(`stream:uncounted_seconds:${roomId}`)
-    const cameraOffAt = await redisClient.get(`stream:camera_off_at:${roomId}`)
-    let uncountedSec = parseInt(uncountedRaw ?? '0', 10) || 0
-    if (cameraOffAt) {
-      const offSec = Math.floor((endedAt.getTime() - Number(cameraOffAt)) / 1000)
-      if (offSec > 60) uncountedSec += offSec - 60
-    }
+    const uncountedSec = await readUncountedLiveSeconds(roomId, endedAt)
     const grossDurationSeconds = Math.max(
       0,
       Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
     )
-    const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec)
+    const effectiveDurationSeconds = computeEffectiveDurationSeconds(
+      startedAt,
+      endedAt,
+      uncountedSec,
+    )
 
     try {
       await persistLiveChats(roomId)
