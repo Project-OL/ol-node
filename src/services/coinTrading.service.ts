@@ -27,6 +27,7 @@ import { coinWalletService } from './coin-wallet.service'
 import { richTierService } from './rich-tier.service'
 import { walletService } from './wallet.service'
 import { agencyService } from './agency.service'
+import { auditService } from './audit.service'
 import { userRepository } from '../repositories/user.repository'
 import { epayClient } from '../lib/epay.client'
 import { prisma } from '../config/database'
@@ -973,6 +974,19 @@ export const coinTradingService = {
       transfer.recipientUserId,
       recipientWalletType,
     )
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: transfer.senderAgentUserId,
+      actionType: 'ADMIN_COIN_TRADING_TRANSFER_REVERSED',
+      actionStatus: 'success',
+      actionDetails: {
+        transferId,
+        senderAgentUserId: transfer.senderAgentUserId,
+        recipientUserId: transfer.recipientUserId,
+        agencyUserId: transfer.senderAgentUserId,
+        reason,
+      },
+    })
   },
   async getTradingBalance(agentUserId: string) {
     const key = RedisKeys.ctBalance(agentUserId)

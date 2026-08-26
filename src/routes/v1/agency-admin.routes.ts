@@ -463,11 +463,27 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = agentApplicationStatusPatchSchema.parse(request.body ?? {})
+      const application = await agencyAgentApplicationRepository.findById(
+        request.params.applicationId,
+      )
+      if (!application) {
+        throw new AppError(404, 'Application not found', 'APPLICATION_NOT_FOUND')
+      }
+      const previousStatus = application.status
       await agencyAgentApplicationRepository.updateStatus(request.params.applicationId, {
         status: body.status,
         reviewedBy: adminUserId,
         userNote: body.userNote,
         adminNote: body.adminNote,
+      })
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_APPLICATION_STATUS_CHANGED',
+        targetUserId: application.userId,
+        actionDetails: {
+          applicationId: request.params.applicationId,
+          previousStatus,
+          status: body.status,
+        },
       })
       return reply.send({ ok: true })
     },
@@ -544,6 +560,15 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         request.params.hostUserId,
         parsed.data.isTagged,
       )
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_HOST_TAG_SET',
+        targetUserId: request.params.hostUserId,
+        actionDetails: {
+          agencyUserId: result.agencyUserId,
+          hostUserId: request.params.hostUserId,
+          isTagged: parsed.data.isTagged,
+        },
+      })
       return reply.send(result)
     },
   )
@@ -576,12 +601,23 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
           throw new AppError(400, 'Invalid deductPoints', 'INVALID_REQUEST')
         }
       }
-      await agencyHostService.forceExitFromCS({
+      const result = await agencyHostService.forceExitFromCS({
         hostUserId: request.params.hostUserId,
         ticketId,
         deductPoints,
         pauseAgency: parsed.data.pauseAgency,
         csUserId,
+      })
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_HOST_FORCE_EXIT',
+        targetUserId: request.params.hostUserId,
+        actionDetails: {
+          agencyUserId: result.agencyUserId,
+          hostUserId: result.hostUserId,
+          ticketId: parsed.data.ticketId,
+          deductPoints: parsed.data.deductPoints ?? null,
+          pauseAgency: parsed.data.pauseAgency ?? false,
+        },
       })
       return reply.send({ ok: true })
     },
@@ -598,7 +634,20 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       },
     },
     async (request: FastifyRequest<{ Params: { agencyUserId: string } }>, reply: FastifyReply) => {
-      return reply.send(await agencyAdminService.forceRecomputeLevel(request.params.agencyUserId))
+      const result = await agencyAdminService.forceRecomputeLevel(request.params.agencyUserId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_TIER_RECOMPUTED',
+        targetUserId: result.agencyUserId,
+        actionDetails: {
+          agencyUserId: result.agencyUserId,
+          agencyPublicId: result.agencyPublicId,
+          beforeLevel: result.before.currentLevel,
+          afterLevel: result.after.currentLevel,
+          beforeWindowTotalPoints: result.before.currentWindowTotalPoints,
+          afterWindowTotalPoints: result.after.currentWindowTotalPoints,
+        },
+      })
+      return reply.send(result)
     },
   )
 
@@ -613,7 +662,21 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      return reply.send(await agencyAdminService.forceRecomputeLevel(request.params.identifier))
+      const result = await agencyAdminService.forceRecomputeLevel(request.params.identifier)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_TIER_RECOMPUTED',
+        targetUserId: result.agencyUserId,
+        actionDetails: {
+          agencyUserId: result.agencyUserId,
+          agencyPublicId: result.agencyPublicId,
+          identifier: request.params.identifier,
+          beforeLevel: result.before.currentLevel,
+          afterLevel: result.after.currentLevel,
+          beforeWindowTotalPoints: result.before.currentWindowTotalPoints,
+          afterWindowTotalPoints: result.after.currentWindowTotalPoints,
+        },
+      })
+      return reply.send(result)
     },
   )
 
@@ -692,6 +755,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       await agencyCommissionService.enqueueDailyRecomputeMaster({
         utcDate,
         force: true,
+      })
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_AGENCY_TIER_RECOMPUTE_MASTER',
+        actionDetails: { utcDate: utcDate ?? null, force: true },
       })
       return reply.send({ ok: true, enqueued: true })
     },
@@ -879,8 +946,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const parsed = ReverseSchema.parse(request.body ?? {})
+      const adminUserId = request.adminUser!.id
       await coinTradingService.reverseTransfer(
-        request.adminUser!.id,
+        adminUserId,
         request.params.transferId,
         parsed.reason,
       )

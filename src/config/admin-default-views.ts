@@ -337,6 +337,9 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/support/reports/:reportId',
     'PATCH /admin/support/reports/:reportId/status',
     'POST /admin/support/reports/:reportId/escalate',
+    'GET /admin/activity-logs',
+    'GET /admin/activity-logs/action-types',
+    'POST /admin/agency/cs/host/:hostUserId/force-exit',
   ],
   LiveModerationView: [
     'GET /admin/live-moderation',
