@@ -11,6 +11,7 @@ import {
   type LivestreamRewardEffectiveConfig,
 } from './livestreamRewardConfig.service'
 import { addUtcDays, utcDateString, utcStartOfDay } from '../utils/datetime'
+import { provisionalEffectiveDurationSeconds } from '../utils/live-stream-effective-duration'
 import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
@@ -45,6 +46,14 @@ export type LivestreamRewardStatusDto = {
   previousRewards: LivestreamRewardDayDto[]
 }
 
+type SessionDurationRow = {
+  streamId: string
+  startedAt: Date | null
+  endedAt: Date | null
+  isLive: boolean
+  effectiveDurationSeconds: number
+}
+
 /** 1-indexed day of membership, e.g. join day itself is day 1. */
 function dayIndexSinceJoin(createdAt: Date, today: Date): number {
   const joinDay = utcStartOfDay(createdAt)
@@ -52,7 +61,20 @@ function dayIndexSinceJoin(createdAt: Date, today: Date): number {
   return diffDays + 1
 }
 
-/** Sums elapsed minutes across all of a user's LiveStream rows for one UTC calendar day, capping an in-progress session's elapsed time at "now". */
+/**
+ * Effective (billable) seconds for one session — same definition as admin live hours /
+ * Live-server host-stats. Ended rows use `effective_duration_seconds`; in-progress
+ * sessions compute a provisional value (gross − Redis uncounted / camera-off).
+ */
+async function effectiveSecondsForSession(s: SessionDurationRow): Promise<number> {
+  if (!s.startedAt) return 0
+  if (s.isLive && !s.endedAt) {
+    return provisionalEffectiveDurationSeconds(s.streamId, s.startedAt)
+  }
+  return Math.max(0, s.effectiveDurationSeconds ?? 0)
+}
+
+/** Sums effective minutes across all of a user's LiveStream rows for one UTC calendar day. */
 async function streamedMinutesForUserOnDate(userId: string, dayStartUtc: Date): Promise<number> {
   const dayEndUtc = addUtcDays(dayStartUtc, 1)
   const sessions = await liveStreamRepository.getSessionsForUserOnDate(
@@ -60,15 +82,9 @@ async function streamedMinutesForUserOnDate(userId: string, dayStartUtc: Date): 
     dayStartUtc,
     dayEndUtc,
   )
-  const now = Date.now()
-  let totalMs = 0
-  for (const s of sessions) {
-    if (!s.startedAt) continue
-    const start = s.startedAt.getTime()
-    const end = s.endedAt ? s.endedAt.getTime() : s.isLive ? now : start
-    totalMs += Math.max(0, end - start)
-  }
-  return Math.floor(totalMs / 60_000)
+  const perSession = await Promise.all(sessions.map(effectiveSecondsForSession))
+  const totalSec = perSession.reduce((sum, sec) => sum + sec, 0)
+  return Math.floor(totalSec / 60)
 }
 
 function buildParts(
@@ -99,14 +115,17 @@ async function buildPreviousRewards(
     livestreamRewardRepository.getClaimsForDateRange(userId, joinDay, rangeEnd),
   ])
 
-  const now = Date.now()
-  const streamedMsByDate = new Map<string, number>()
-  for (const s of sessions) {
-    if (!s.startedAt) continue
-    const dateKey = utcDateString(s.startedAt)
-    const start = s.startedAt.getTime()
-    const end = s.endedAt ? s.endedAt.getTime() : s.isLive ? now : start
-    streamedMsByDate.set(dateKey, (streamedMsByDate.get(dateKey) ?? 0) + Math.max(0, end - start))
+  const streamedSecByDate = new Map<string, number>()
+  const sessionSecs = await Promise.all(
+    sessions.map(async (s) => {
+      if (!s.startedAt) return null
+      const sec = await effectiveSecondsForSession(s)
+      return { dateKey: utcDateString(s.startedAt), sec }
+    }),
+  )
+  for (const row of sessionSecs) {
+    if (!row) continue
+    streamedSecByDate.set(row.dateKey, (streamedSecByDate.get(row.dateKey) ?? 0) + row.sec)
   }
 
   const claimsByDate = new Map<string, { part: number }[]>()
@@ -121,7 +140,7 @@ async function buildPreviousRewards(
   for (let dayIndex = 1; dayIndex <= dayCount; dayIndex++) {
     const date = addUtcDays(joinDay, dayIndex - 1)
     const dateKey = utcDateString(date)
-    const streamedMinutes = Math.floor((streamedMsByDate.get(dateKey) ?? 0) / 60_000)
+    const streamedMinutes = Math.floor((streamedSecByDate.get(dateKey) ?? 0) / 60)
     days.push({
       dayIndex,
       date: dateKey,

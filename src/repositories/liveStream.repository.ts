@@ -1,5 +1,14 @@
 import { prismaRead } from '../config/database'
 
+const sessionDurationSelect = {
+  id: true,
+  streamId: true,
+  startedAt: true,
+  endedAt: true,
+  isLive: true,
+  effectiveDurationSeconds: true,
+} as const
+
 export const liveStreamRepository = {
   /** All sessions for `userId` whose `startedAt` falls within `[dayStartUtc, dayEndUtc)`. */
   async getSessionsForUserOnDate(userId: string, dayStartUtc: Date, dayEndUtc: Date) {
@@ -8,7 +17,7 @@ export const liveStreamRepository = {
         userId,
         startedAt: { gte: dayStartUtc, lt: dayEndUtc },
       },
-      select: { id: true, startedAt: true, endedAt: true, isLive: true },
+      select: sessionDurationSelect,
     })
   },
 
@@ -19,7 +28,7 @@ export const liveStreamRepository = {
         userId,
         startedAt: { gte: rangeStartUtc, lt: rangeEndUtc },
       },
-      select: { id: true, startedAt: true, endedAt: true, isLive: true },
+      select: sessionDurationSelect,
     })
   },
 }
