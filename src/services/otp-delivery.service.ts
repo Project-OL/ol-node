@@ -506,10 +506,28 @@ export const otpDeliveryService = {
       target,
       provider: 'msg91_whatsapp',
       result: whatsappResult,
-      routeReason: whatsappResult.success ? undefined : 'fallback_to_sms',
+      routeReason:
+        whatsappResult.success || !env.OTP_WHATSAPP_SMS_FALLBACK_ENABLED
+          ? undefined
+          : 'fallback_to_sms',
     })
     if (whatsappResult.success) {
       return
+    }
+
+    if (!env.OTP_WHATSAPP_SMS_FALLBACK_ENABLED) {
+      logOtpDelivery(
+        'otp_delivery_failed',
+        {
+          purpose: params.purpose,
+          target: target.masked,
+          targetType: target.type,
+          deliveryProvider: 'msg91_whatsapp',
+          error: whatsappResult.error,
+        },
+        'error',
+      )
+      throw new AppError(502, 'OTP delivery failed', 'OTP_DELIVERY_FAILED')
     }
 
     await deliverPhoneOtpViaSms({

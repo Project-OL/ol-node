@@ -213,6 +213,8 @@ const envSchema = z
     STATIC_OTP_DEV: z.string().length(5).optional(), // e.g. "22222" for dev; when set, OTP is fixed and hashed
     SMS_PROVIDER_API_KEY: z.string().optional(),
     OTP_DELIVERY_ENABLED: z.coerce.boolean().default(false),
+    /** When false (default), a failed WhatsApp OTP send does not retry via SMS. Threshold-based direct SMS is unaffected. */
+    OTP_WHATSAPP_SMS_FALLBACK_ENABLED: z.coerce.boolean().default(false),
     MSG91_AUTH_KEY: z.string().optional(),
     MSG91_SMS_TEMPLATE_ID: z.string().optional(),
     MSG91_WHATSAPP_TEMPLATE_ID: z.string().optional(),
