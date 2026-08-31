@@ -1,5 +1,9 @@
 import { randomUUID } from 'crypto'
-import type { FaceRegistrationSessionStatus, FaceVerificationDecision, Prisma } from '@prisma/client'
+import type {
+  FaceRegistrationSessionStatus,
+  FaceVerificationDecision,
+  Prisma,
+} from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import { storageService } from './storage.service'
 import { redisClient, RedisKeys } from '../config/redis'
