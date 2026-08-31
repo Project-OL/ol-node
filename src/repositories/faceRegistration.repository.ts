@@ -28,6 +28,16 @@ export const faceRegistrationRepository = {
     })
   },
 
+  /** Most recent registration attempt for a user, regardless of status — used to
+   * detect an in-flight or recently-failed attempt that a stale/missing
+   * UserFaceProfile row wouldn't otherwise reflect. */
+  findLatestForUser(userId: string) {
+    return prismaRead.faceRegistrationSession.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    })
+  },
+
   async expireOpenSessionsForUser(userId: string, tx?: Prisma.TransactionClient): Promise<void> {
     const db = getDb(tx)
     await db.faceRegistrationSession.updateMany({

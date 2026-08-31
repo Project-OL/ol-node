@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto'
-import type { FaceVerificationDecision, Prisma } from '@prisma/client'
+import type { FaceRegistrationSessionStatus, FaceVerificationDecision, Prisma } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import { storageService } from './storage.service'
 import { redisClient, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
+import { faceRegistrationRepository } from '../repositories/faceRegistration.repository'
 import {
   deleteFaceFromCollection,
   indexUserFace,
@@ -31,6 +32,40 @@ const faceMetrics = {
   indexingQueued: 0,
   indexingCompleted: 0,
   indexingFailed: 0,
+}
+
+/** Registration attempt still in progress — no terminal outcome to reflect on the profile yet. */
+const NON_TERMINAL_SESSION_STATUSES: FaceRegistrationSessionStatus[] = [
+  'PENDING',
+  'UPLOADED',
+  'PROCESSING',
+  'LIVENESS_PASSED',
+  'INDEX_PENDING',
+]
+
+/** Registration attempt ended without ever creating/updating a UserFaceProfile row. */
+const FAILED_SESSION_STATUSES: FaceRegistrationSessionStatus[] = [
+  'LIVENESS_FAILED',
+  'VALIDATION_FAILED',
+  'REJECTED',
+]
+
+const SESSION_FAILURE_MESSAGES: Record<string, string> = {
+  liveness_confidence_below_threshold:
+    'Liveness check did not pass. Please retry in good lighting, facing the camera directly.',
+  missing_reference_image: 'Could not capture a clear reference image. Please try again.',
+  missing_aws_session: 'The liveness session expired before it could complete. Please try again.',
+  liveness_not_completed_in_time: 'The liveness check took too long to complete. Please try again.',
+  worker_error: 'Something went wrong while processing your face registration. Please try again.',
+}
+
+function humanizeSessionFailure(reason: string | null): string {
+  if (reason && SESSION_FAILURE_MESSAGES[reason]) return SESSION_FAILURE_MESSAGES[reason]
+  if (reason?.startsWith('rekognition_'))
+    return 'The liveness check could not be completed. Please try again.'
+  if (reason?.startsWith('antispoof_'))
+    return 'We could not verify this was a live capture. Please try again in good lighting.'
+  return 'Face registration failed. Please try again.'
 }
 
 type RequestCtx = { ip?: string; headers?: Record<string, string | string[] | undefined> }
@@ -348,7 +383,56 @@ export const faceVerificationService = {
   },
 
   async getMyFaceProfile(userId: string) {
-    const profile = await faceVerificationRepository.getProfileByUserId(userId)
+    const [profile, latestSession] = await Promise.all([
+      faceVerificationRepository.getProfileByUserId(userId),
+      faceRegistrationRepository.findLatestForUser(userId),
+    ])
+
+    // A registration attempt newer than the profile's last update carries information
+    // the profile row doesn't reflect yet — e.g. it's still processing, or it failed
+    // without ever touching a profile row. Without this, a missing/stale profile falls
+    // through to the REVOKED default below even while a fresh attempt is in flight or
+    // just failed, which silently strands the caller with no error (see incident notes
+    // in docs/flow-md/face-registration-liveness-flow.md).
+    const sessionIsFresher =
+      latestSession != null && (profile == null || latestSession.createdAt > profile.updatedAt)
+
+    if (sessionIsFresher && latestSession != null) {
+      if (NON_TERMINAL_SESSION_STATUSES.includes(latestSession.status)) {
+        return {
+          status: 'PENDING_INDEX' as const,
+          message: 'Face registration is still processing. Please check back shortly.',
+          faceProfileId: profile?.id ?? null,
+          canReRegister: false,
+          indexedAt: null,
+          lastVerifiedAt: profile?.lastVerifiedAt?.toISOString() ?? null,
+          hasReference: false,
+          referenceImageUrl: null,
+          detectedGender: null,
+          genderAutoUpdatedAt: null,
+          qualityChecksPassed: null,
+          duplicateMatch: null,
+        }
+      }
+
+      if (FAILED_SESSION_STATUSES.includes(latestSession.status)) {
+        return {
+          status: 'FAILED' as const,
+          message: humanizeSessionFailure(latestSession.failureReason),
+          faceProfileId: profile?.id ?? null,
+          canReRegister: true,
+          indexedAt: null,
+          lastVerifiedAt: profile?.lastVerifiedAt?.toISOString() ?? null,
+          hasReference: false,
+          referenceImageUrl: null,
+          detectedGender: null,
+          genderAutoUpdatedAt: null,
+          qualityChecksPassed: null,
+          duplicateMatch: null,
+        }
+      }
+    }
+
     const status = profile?.status ?? 'REVOKED'
     const isDuplicate = String(status) === 'DUPLICATE_FACE'
 
