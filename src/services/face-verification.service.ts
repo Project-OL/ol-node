@@ -416,8 +416,11 @@ export const faceVerificationService = {
       }
 
       if (FAILED_SESSION_STATUSES.includes(latestSession.status)) {
+        // Match the mobile client's poll-break vocabulary (INDEXED / PENDING_INDEX /
+        // LIVENESS_FAILED / REJECTED) so it stops polling immediately instead of
+        // riding out its full ~30s window on an unrecognized "FAILED" string.
         return {
-          status: 'FAILED' as const,
+          status: (latestSession.status === 'REJECTED' ? 'REJECTED' : 'LIVENESS_FAILED') as const,
           message: humanizeSessionFailure(latestSession.failureReason),
           faceProfileId: profile?.id ?? null,
           canReRegister: true,
