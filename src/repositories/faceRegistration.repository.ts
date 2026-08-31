@@ -49,6 +49,38 @@ export const faceRegistrationRepository = {
     })
   },
 
+  /** Every non-terminal session for a user (open early-stage attempts plus ones that
+   * hung after passing liveness or during indexing — a worker outage or a client that
+   * never called /verify can leave one of these stuck indefinitely). */
+  findOpenSessionsForUser(userId: string, tx?: Prisma.TransactionClient) {
+    const db = getDb(tx)
+    return db.faceRegistrationSession.findMany({
+      where: {
+        userId,
+        status: { in: ['PENDING', 'UPLOADED', 'PROCESSING', 'LIVENESS_PASSED', 'INDEX_PENDING'] },
+      },
+      select: { id: true, status: true },
+    })
+  },
+
+  /** Admin-forced terminal EXPIRED on every non-terminal session for a user, so
+   * `GET /face-verification/me` stops preferring a hung session over the profile and
+   * the client's `expireOpenSessionsForUser` re-registration path is unblocked. */
+  async clearStuckSessionsForUser(
+    userId: string,
+    failureReason: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<string[]> {
+    const db = getDb(tx)
+    const open = await this.findOpenSessionsForUser(userId, tx)
+    if (open.length === 0) return []
+    await db.faceRegistrationSession.updateMany({
+      where: { id: { in: open.map((s) => s.id) } },
+      data: { status: 'EXPIRED', failureReason },
+    })
+    return open.map((s) => s.id)
+  },
+
   createSession(input: CreateFaceRegistrationSessionInput, tx?: Prisma.TransactionClient) {
     const db = getDb(tx)
     return db.faceRegistrationSession.create({

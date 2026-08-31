@@ -9,6 +9,8 @@ import {
 } from '../lib/rekognition.client'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
+import { faceRegistrationRepository } from '../repositories/faceRegistration.repository'
+import { redisClient, RedisKeys } from '../config/redis'
 import { auditService } from './audit.service'
 import { afterFaceProfileRevoked } from './face-profile-invalidate'
 
@@ -354,6 +356,50 @@ export const faceVerificationAdminService = {
     return {
       success: true,
       message: 'Face removed from Rekognition collection only; database profile unchanged.',
+    }
+  },
+
+  /**
+   * Force-terminate every non-terminal `face_registration_sessions` row for a user
+   * (PENDING/UPLOADED/PROCESSING/LIVENESS_PASSED/INDEX_PENDING) and clear the liveness
+   * session/verify rate-limit + processing-lock Redis keys tied to those attempts.
+   * For a user whose registration is stuck (worker outage mid-flight, or a client that
+   * abandoned a session without calling /verify) — `GET /face-verification/me` prefers a
+   * hung session's PENDING_INDEX status over the profile, and `POST /face-registration/session`
+   * only auto-expires the earliest-stage statuses, so neither self-heals a session stuck
+   * past LIVENESS_PASSED/INDEX_PENDING without this.
+   */
+  async clearStuckRegistrationSessions(
+    targetUserId: string,
+    adminUserId: string,
+    reason?: string,
+  ): Promise<{ success: true; clearedSessionIds: string[]; message: string }> {
+    const failureReason = reason?.trim() ? `admin_cleared: ${reason.trim()}` : 'admin_cleared_stuck'
+    const clearedSessionIds = await faceRegistrationRepository.clearStuckSessionsForUser(
+      targetUserId,
+      failureReason,
+    )
+
+    await redisClient.del(
+      RedisKeys.faceRegistrationSessionRate(targetUserId),
+      RedisKeys.faceRegistrationVerifyRate(targetUserId),
+      RedisKeys.faceRegistrationLock(targetUserId),
+    )
+
+    auditService.log({
+      userId: targetUserId,
+      actionType: 'face_registration_sessions_admin_cleared',
+      actionStatus: 'success',
+      actionDetails: { adminUserId, reason: reason ?? null, clearedSessionIds },
+    })
+
+    return {
+      success: true,
+      clearedSessionIds,
+      message:
+        clearedSessionIds.length > 0
+          ? `Cleared ${clearedSessionIds.length} stuck session(s) and reset rate limits. User can register again.`
+          : 'No open sessions were stuck; rate limits and lock reset anyway.',
     }
   },
 

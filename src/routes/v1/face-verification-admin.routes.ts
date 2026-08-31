@@ -17,6 +17,10 @@ const resolveDuplicateBodySchema = z.object({
   revokeIndexedOwner: z.boolean().optional(),
 })
 
+const clearStuckSessionsBodySchema = z.object({
+  reason: z.string().max(500).optional(),
+})
+
 export default async function faceVerificationAdminRoutes(app: FastifyInstance) {
   app.get(
     '/face-verification/profiles',
@@ -181,6 +185,45 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
         adminId,
         parsed.data.reason,
         { revokeRelated: parsed.data.revokeRelated },
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/face-verification/:userId/registration-sessions/clear',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Force-expire every non-terminal face_registration_sessions row for a user (stuck PENDING/UPLOADED/PROCESSING/LIVENESS_PASSED/INDEX_PENDING) and reset the liveness session/verify rate limits + processing lock, so the user can start a fresh registration attempt from the app.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          properties: { reason: { type: 'string', maxLength: 500 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const parsed = clearStuckSessionsBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.clearStuckRegistrationSessions(
+        request.params.userId,
+        adminId,
+        parsed.data.reason,
       )
       return reply.send(result)
     },
