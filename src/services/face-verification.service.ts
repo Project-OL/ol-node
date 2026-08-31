@@ -420,7 +420,10 @@ export const faceVerificationService = {
         // LIVENESS_FAILED / REJECTED) so it stops polling immediately instead of
         // riding out its full ~30s window on an unrecognized "FAILED" string.
         return {
-          status: (latestSession.status === 'REJECTED' ? 'REJECTED' : 'LIVENESS_FAILED') as const,
+          status:
+            latestSession.status === 'REJECTED'
+              ? ('REJECTED' as const)
+              : ('LIVENESS_FAILED' as const),
           message: humanizeSessionFailure(latestSession.failureReason),
           faceProfileId: profile?.id ?? null,
           canReRegister: true,
