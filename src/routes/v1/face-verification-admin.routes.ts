@@ -21,6 +21,13 @@ const clearStuckSessionsBodySchema = z.object({
   reason: z.string().max(500).optional(),
 })
 
+const listStuckSessionsQuerySchema = z.object({
+  minAgeSec: z.coerce.number().int().min(0).max(86_400).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  userId: z.string().uuid().optional(),
+})
+
 export default async function faceVerificationAdminRoutes(app: FastifyInstance) {
   app.get(
     '/face-verification/profiles',
@@ -224,6 +231,94 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
         request.params.userId,
         adminId,
         parsed.data.reason,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/face-verification/registration-sessions/stuck',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          "Paginated worklist of non-terminal face_registration_sessions rows (PENDING/UPLOADED/PROCESSING/LIVENESS_PASSED/INDEX_PENDING) older than minAgeSec, across all users (or one, via userId), with the stuck user's name/publicId. Pair with the recheck and clear endpoints.",
+        querystring: {
+          type: 'object',
+          properties: {
+            minAgeSec: { type: 'integer', minimum: 0, maximum: 86400 },
+            page: { type: 'integer', minimum: 1 },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+            userId: { type: 'string', format: 'uuid' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = listStuckSessionsQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await faceVerificationAdminService.listStuckRegistrationSessions(parsed.data)
+      return reply.send(result)
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
+    '/face-verification/:userId/registration-sessions',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description: 'Every open (non-terminal) registration session for one user, with age.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', format: 'uuid' } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const sessions = await faceVerificationAdminService.getOpenRegistrationSessionsForUser(
+        request.params.userId,
+      )
+      return reply.send({ sessions })
+    },
+  )
+
+  app.post<{ Params: { userId: string; sessionId: string } }>(
+    '/face-verification/:userId/registration-sessions/:sessionId/recheck',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          "Non-destructive: re-queues the BullMQ verify job for a PENDING/UPLOADED/PROCESSING session right now instead of waiting for the client or the job's own backoff. Rejects LIVENESS_PASSED/INDEX_PENDING (worker-face-index's domain, not this queue) -- use the clear endpoint for those if genuinely stuck.",
+        params: {
+          type: 'object',
+          required: ['userId', 'sessionId'],
+          properties: {
+            userId: { type: 'string', format: 'uuid' },
+            sessionId: { type: 'string', format: 'uuid' },
+          },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { userId: string; sessionId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.recheckRegistrationSession(
+        request.params.userId,
+        request.params.sessionId,
+        adminId,
       )
       return reply.send(result)
     },

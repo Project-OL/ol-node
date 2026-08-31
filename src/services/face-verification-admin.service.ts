@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import type { FaceProfileStatus } from '@prisma/client'
 import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
@@ -11,6 +12,7 @@ import { agencyApplicationKycRepository } from '../repositories/agencyApplicatio
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { faceRegistrationRepository } from '../repositories/faceRegistration.repository'
 import { redisClient, RedisKeys } from '../config/redis'
+import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
 import { auditService } from './audit.service'
 import { afterFaceProfileRevoked } from './face-profile-invalidate'
 
@@ -400,6 +402,148 @@ export const faceVerificationAdminService = {
         clearedSessionIds.length > 0
           ? `Cleared ${clearedSessionIds.length} stuck session(s) and reset rate limits. User can register again.`
           : 'No open sessions were stuck; rate limits and lock reset anyway.',
+    }
+  },
+
+  /**
+   * Paginated worklist of non-terminal registration sessions older than `minAgeSec`,
+   * across all users (or scoped to one via `userId`) — for admin triage: see what's
+   * stuck, then call `recheckRegistrationSession` (non-destructive) or
+   * `clearStuckRegistrationSessions` (force-expire) on each.
+   */
+  async listStuckRegistrationSessions(input: {
+    minAgeSec?: number
+    page?: number
+    limit?: number
+    userId?: string
+  }) {
+    const minAgeSec = Math.max(0, input.minAgeSec ?? 5)
+    const page = Math.max(1, input.page ?? 1)
+    const limit = Math.min(100, Math.max(1, input.limit ?? 20))
+    const { items, total } = await faceRegistrationRepository.listStuckSessions({
+      minAgeSec,
+      page,
+      limit,
+      userId: input.userId,
+    })
+    const now = Date.now()
+    return {
+      minAgeSec,
+      page,
+      limit,
+      total,
+      sessions: items.map((s) => ({
+        sessionId: s.id,
+        userId: s.user.id,
+        publicId: formatDisplayPublicId({
+          publicId: s.user.publicId,
+          currentVipPublicId: s.user.currentVipPublicId,
+        }),
+        name: formatUserName({
+          firstName: s.user.firstName,
+          lastName: s.user.lastName,
+          username: s.user.username,
+        }),
+        status: s.status,
+        awsSessionId: s.awsSessionId,
+        riskScore: s.riskScore,
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+        stuckForSec: Math.floor((now - s.createdAt.getTime()) / 1000),
+      })),
+    }
+  },
+
+  /** Every open (non-terminal) registration session for one user, with age — the
+   * per-user-detail equivalent of `listStuckRegistrationSessions`. */
+  async getOpenRegistrationSessionsForUser(targetUserId: string) {
+    const open = await faceRegistrationRepository.findOpenSessionsForUser(targetUserId)
+    const now = Date.now()
+    return open.map((s) => ({
+      sessionId: s.id,
+      status: s.status,
+      awsSessionId: s.awsSessionId,
+      riskScore: s.riskScore,
+      failureReason: s.failureReason,
+      createdAt: s.createdAt.toISOString(),
+      updatedAt: s.updatedAt.toISOString(),
+      stuckForSec: Math.floor((now - s.createdAt.getTime()) / 1000),
+    }))
+  },
+
+  /**
+   * Non-destructive alternative to clearing: re-queue the BullMQ verify job for a
+   * session right now instead of waiting for the client's next poll / the job's own
+   * exponential backoff. Works for PENDING/UPLOADED (client finished the liveness SDK
+   * but the app never called `/verify` — AWS already has the result waiting) and
+   * PROCESSING (a job was enqueued but never completed, e.g. during the DB outage this
+   * capability was built in response to). LIVENESS_PASSED/INDEX_PENDING are the
+   * worker-face-index indexing pipeline's domain, not this queue — rejected with a
+   * pointer to `clearStuckRegistrationSessions` instead.
+   */
+  async recheckRegistrationSession(
+    targetUserId: string,
+    sessionId: string,
+    adminUserId: string,
+  ): Promise<{ success: true; sessionId: string; message: string }> {
+    const session = await faceRegistrationRepository.findByIdForUser(sessionId, targetUserId)
+    if (!session) {
+      throw new AppError(404, 'Registration session not found', 'FACE_REG_SESSION_NOT_FOUND')
+    }
+    if (session.status === 'LIVENESS_PASSED' || session.status === 'INDEX_PENDING') {
+      throw new AppError(
+        409,
+        'Session already passed liveness and is awaiting indexing by worker-face-index, not the verify queue. If it is genuinely stuck, use the clear action instead.',
+        'FACE_REG_SESSION_PAST_VERIFY_STAGE',
+        { state: session.status },
+      )
+    }
+    if (
+      session.status !== 'PENDING' &&
+      session.status !== 'UPLOADED' &&
+      session.status !== 'PROCESSING'
+    ) {
+      throw new AppError(
+        409,
+        'Session is not in a re-checkable state',
+        'FACE_REG_SESSION_INVALID_STATE',
+        {
+          state: session.status,
+        },
+      )
+    }
+    if (!session.awsSessionId) {
+      throw new AppError(
+        409,
+        'Session has no AWS liveness session to check',
+        'FACE_REG_SESSION_NO_AWS_SESSION',
+      )
+    }
+
+    const idempotencyKey = randomUUID()
+    await faceRegistrationRepository.updateSession(sessionId, {
+      status: 'PROCESSING',
+      idempotencyKey,
+    })
+    await faceRegistrationRepository.appendAudit({
+      sessionId,
+      userId: targetUserId,
+      action: 'admin_verify_requeued',
+      details: { adminUserId, idempotencyKey, previousStatus: session.status },
+    })
+    await enqueueFaceRegistrationVerification({ sessionId, userId: targetUserId, idempotencyKey })
+
+    auditService.log({
+      userId: targetUserId,
+      actionType: 'face_registration_admin_recheck',
+      actionStatus: 'success',
+      actionDetails: { adminUserId, sessionId },
+    })
+
+    return {
+      success: true,
+      sessionId,
+      message: 'Verify job re-queued. Poll GET /face-verification/me for the result.',
     }
   },
 

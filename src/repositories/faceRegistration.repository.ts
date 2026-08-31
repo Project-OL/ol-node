@@ -59,8 +59,79 @@ export const faceRegistrationRepository = {
         userId,
         status: { in: ['PENDING', 'UPLOADED', 'PROCESSING', 'LIVENESS_PASSED', 'INDEX_PENDING'] },
       },
-      select: { id: true, status: true },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        status: true,
+        awsSessionId: true,
+        riskScore: true,
+        failureReason: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     })
+  },
+
+  /** Paginated, admin-facing view of every non-terminal session across all users (or one,
+   * via `userId`) older than `minAgeSec` — the "stuck registrations" worklist. */
+  async listStuckSessions(input: {
+    minAgeSec: number
+    page: number
+    limit: number
+    userId?: string
+  }): Promise<{
+    items: Array<{
+      id: string
+      status: FaceRegistrationSessionStatus
+      awsSessionId: string | null
+      riskScore: number
+      createdAt: Date
+      updatedAt: Date
+      user: {
+        id: string
+        username: string | null
+        firstName: string | null
+        lastName: string | null
+        publicId: bigint | null
+        currentVipPublicId: bigint | null
+      }
+    }>
+    total: number
+  }> {
+    const where: Prisma.FaceRegistrationSessionWhereInput = {
+      status: { in: ['PENDING', 'UPLOADED', 'PROCESSING', 'LIVENESS_PASSED', 'INDEX_PENDING'] },
+      createdAt: { lte: new Date(Date.now() - input.minAgeSec * 1000) },
+      ...(input.userId ? { userId: input.userId } : {}),
+    }
+    const skip = (input.page - 1) * input.limit
+    const [items, total] = await Promise.all([
+      prismaRead.faceRegistrationSession.findMany({
+        where,
+        skip,
+        take: input.limit,
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          status: true,
+          awsSessionId: true,
+          riskScore: true,
+          createdAt: true,
+          updatedAt: true,
+          user: {
+            select: {
+              id: true,
+              username: true,
+              firstName: true,
+              lastName: true,
+              publicId: true,
+              currentVipPublicId: true,
+            },
+          },
+        },
+      }),
+      prismaRead.faceRegistrationSession.count({ where }),
+    ])
+    return { items, total }
   },
 
   /** Admin-forced terminal EXPIRED on every non-terminal session for a user, so
