@@ -183,9 +183,18 @@ export const faceRegistrationRepository = {
     return { items, total: Number(totalRows[0]?.count ?? 0n) }
   },
 
-  /** Admin-forced terminal EXPIRED on every non-terminal session for a user, so
+  /**
+   * Admin-forced terminal EXPIRED on every non-terminal session for a user, so
    * `GET /face-verification/me` stops preferring a hung session over the profile and
-   * the client's `expireOpenSessionsForUser` re-registration path is unblocked. */
+   * the client's `expireOpenSessionsForUser` re-registration path is unblocked.
+   *
+   * If there's nothing non-terminal to force-expire, but the user's single latest
+   * session already ended in a failure (LIVENESS_FAILED/VALIDATION_FAILED/REJECTED)
+   * they haven't retried past, expire that too. Without this, clearing a user whose
+   * last attempt simply failed does nothing visible: `/me` keeps surfacing that same
+   * old failure (however stale) since it's still their "latest" session, and the
+   * admin action reads as a no-op even though it ran successfully.
+   */
   async clearStuckSessionsForUser(
     userId: string,
     failureReason: string,
@@ -193,12 +202,26 @@ export const faceRegistrationRepository = {
   ): Promise<string[]> {
     const db = getDb(tx)
     const open = await this.findOpenSessionsForUser(userId, tx)
-    if (open.length === 0) return []
+    let toExpire: { id: string }[] = open
+
+    if (toExpire.length === 0) {
+      const latest = await this.findLatestForUser(userId)
+      if (
+        latest &&
+        (
+          ['LIVENESS_FAILED', 'VALIDATION_FAILED', 'REJECTED'] as FaceRegistrationSessionStatus[]
+        ).includes(latest.status)
+      ) {
+        toExpire = [{ id: latest.id }]
+      }
+    }
+
+    if (toExpire.length === 0) return []
     await db.faceRegistrationSession.updateMany({
-      where: { id: { in: open.map((s) => s.id) } },
+      where: { id: { in: toExpire.map((s) => s.id) } },
       data: { status: 'EXPIRED', failureReason },
     })
-    return open.map((s) => s.id)
+    return toExpire.map((s) => s.id)
   },
 
   createSession(input: CreateFaceRegistrationSessionInput, tx?: Prisma.TransactionClient) {
