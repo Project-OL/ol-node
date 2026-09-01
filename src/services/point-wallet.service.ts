@@ -72,6 +72,15 @@ function mapLedgerParticipant(user: LedgerUserRow) {
   }
 }
 
+/** Withdrawal/payroll counterparty (the agency) -- name/publicId only, never userId/username/avatarUrl. */
+function mapAgencyLedgerParticipant(user: LedgerUserRow) {
+  return {
+    name: formatUserName(user),
+    displayName: buildUserDisplayName(user),
+    publicId: user.publicId.toString(),
+  }
+}
+
 type PointLedgerDetailRow = PointLedgerEntry
 
 async function loadWithdrawalPaymentContext(refId: string | null) {
@@ -185,7 +194,13 @@ async function buildPointTransactionDetail(
     earningsCategory:
       entry.direction === LedgerDirection.CREDIT ? earningsCategoryForTxType(entry.txType) : null,
     self: mapLedgerParticipant(selfRow),
-    counterparty: counterpartyRow ? mapLedgerParticipant(counterpartyRow) : null,
+    // Withdrawal/payroll counterparty is the paying agency -- never expose its
+    // userId/username/avatarUrl to the host, only name/publicId.
+    counterparty: counterpartyRow
+      ? POINT_WITHDRAWAL_TX_TYPES.has(entry.txType)
+        ? mapAgencyLedgerParticipant(counterpartyRow)
+        : mapLedgerParticipant(counterpartyRow)
+      : null,
     counterpartyDetails: counterpartyDetailsMap.get(entry.id) ?? null,
   }
 }
