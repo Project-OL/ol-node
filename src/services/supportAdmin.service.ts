@@ -1,6 +1,7 @@
 import { redisClient, RedisKeys } from '../config/redis'
 import { supportRepository } from '../repositories/support.repository'
 import { systemAdminRepository } from '../repositories/systemAdmin.repository'
+import { supportReplyTemplateRepository } from '../repositories/supportReplyTemplate.repository'
 import { storageService } from './storage.service'
 import { csaNotificationService } from './csaNotification.service'
 import {
@@ -375,6 +376,45 @@ export const supportAdminService = {
     )
 
     return toJsonSafe(await ticketDto(updated))
+  },
+
+  /**
+   * Applies a reply template's content as the resolve note to each ticket in
+   * turn (same effect as `resolve`, incl. PENDING_REVIEW + autoclose). Ticket
+   * failures (closed, not assigned to this actor, etc.) are collected instead
+   * of aborting the whole batch.
+   */
+  async bulkResolveWithTemplate(
+    actor: AdminActor,
+    ticketIds: bigint[],
+    templateId: string,
+    resolution: SupportTicketResolution,
+  ) {
+    const template = await supportReplyTemplateRepository.findById(templateId)
+    if (!template) {
+      throw new AppError(404, 'Reply template not found', 'REPLY_TEMPLATE_NOT_FOUND')
+    }
+
+    const results: Array<{ ticketId: string; ok: boolean; error?: string }> = []
+    for (const id of ticketIds) {
+      try {
+        await this.resolve(actor, id, { resolution, note: template.content })
+        results.push({ ticketId: id.toString(), ok: true })
+      } catch (err) {
+        results.push({
+          ticketId: id.toString(),
+          ok: false,
+          error: err instanceof AppError ? (err.code ?? err.message) : 'FAILED',
+        })
+      }
+    }
+
+    return {
+      templateId,
+      succeeded: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    }
   },
 
   async forceClose(actor: AdminActor, ticketId: bigint) {

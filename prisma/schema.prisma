@@ -2744,6 +2744,20 @@ model SupportTicketNote {
   @@map("support_ticket_notes")
 }
 
+/// Canned replies CSAs can send to a ticket; sending one via the resolve flow
+/// also moves the ticket to PENDING_REVIEW. createdByAdminId has no FK, same
+/// as AuditLog.adminUserId, so templates survive admin removal.
+model SupportReplyTemplate {
+  id               String   @id @default(uuid()) @db.Uuid
+  title            String   @db.VarChar(150)
+  content          String   @db.Text
+  createdByAdminId String?  @map("created_by_admin_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("support_reply_templates")
+}
+
 model CsaNotification {
   id        BigInt              @id @default(autoincrement()) @db.BigInt
   adminId   String              @map("admin_id")
