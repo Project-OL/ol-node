@@ -28,6 +28,12 @@ const listStuckSessionsQuerySchema = z.object({
   userId: z.string().uuid().optional(),
 })
 
+const clearAllStuckSessionsBodySchema = z.object({
+  minAgeSec: z.coerce.number().int().min(0).max(86_400).optional(),
+  userId: z.string().uuid().optional(),
+  reason: z.string().max(500).optional(),
+})
+
 export default async function faceVerificationAdminRoutes(app: FastifyInstance) {
   app.get(
     '/face-verification/profiles',
@@ -243,7 +249,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       schema: {
         tags: ['Admin', 'Face verification'],
         description:
-          "Paginated worklist of non-terminal face_registration_sessions rows (PENDING/UPLOADED/PROCESSING/LIVENESS_PASSED/INDEX_PENDING) older than minAgeSec, across all users (or one, via userId), with the stuck user's name/publicId. Pair with the recheck and clear endpoints.",
+          "Paginated worklist of users whose LATEST face_registration_sessions row still needs attention -- hung (PENDING/UPLOADED/PROCESSING/LIVENESS_PASSED/INDEX_PENDING) or a terminal failure they haven't retried past (LIVENESS_FAILED/VALIDATION_FAILED/REJECTED) -- older than minAgeSec, across all users (or one, via userId), with the user's name/publicId and failureReason. Pair with the recheck, clear, and clear-all endpoints.",
         querystring: {
           type: 'object',
           properties: {
@@ -265,6 +271,43 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
         )
       }
       const result = await faceVerificationAdminService.listStuckRegistrationSessions(parsed.data)
+      return reply.send(result)
+    },
+  )
+
+  app.post(
+    '/face-verification/registration-sessions/clear-all',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Bulk version of the per-user clear endpoint: clears every user currently matching the "needs attention" worklist (same minAgeSec/userId filters as the GET above) in one server-side pass instead of the caller looping individual clear calls. Force-expires each matching user\'s stuck/failed session and resets their liveness rate-limit/lock Redis keys.',
+        body: {
+          type: 'object',
+          properties: {
+            minAgeSec: { type: 'integer', minimum: 0, maximum: 86400 },
+            userId: { type: 'string', format: 'uuid' },
+            reason: { type: 'string', maxLength: 500 },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = clearAllStuckSessionsBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.clearAllStuckRegistrationSessions(
+        adminId,
+        parsed.data,
+      )
       return reply.send(result)
     },
   )

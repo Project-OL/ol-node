@@ -16,6 +16,7 @@ import {
 } from '../repositories/faceRegistration.repository'
 import { redisClient, RedisKeys } from '../config/redis'
 import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
+import { mapPool } from '../utils/map-pool'
 import { auditService } from './audit.service'
 import { afterFaceProfileRevoked } from './face-profile-invalidate'
 
@@ -405,6 +406,94 @@ export const faceVerificationAdminService = {
         clearedSessionIds.length > 0
           ? `Cleared ${clearedSessionIds.length} stuck session(s) and reset rate limits. User can register again.`
           : 'No open sessions were stuck; rate limits and lock reset anyway.',
+    }
+  },
+
+  /**
+   * Bulk version of `clearStuckRegistrationSessions`: clears every user currently
+   * matching the "needs attention" worklist (same filters as `listStuckRegistrationSessions`
+   * -- `minAgeSec`/`userId`), not just one. Runs entirely server-side in a single request
+   * rather than the caller looping individual clear calls, which is both far faster (bounded
+   * concurrency via mapPool) and avoids hammering the API with hundreds of separate writes.
+   *
+   * Drains the worklist page-by-page: each successful clear removes that user from the
+   * "needs attention" set, so re-fetching page 1 after each batch converges to empty on
+   * its own. Capped at 200 iterations as a safety net against a pathological case where
+   * something keeps re-qualifying mid-run (not expected in normal operation).
+   */
+  async clearAllStuckRegistrationSessions(
+    adminUserId: string,
+    input: { minAgeSec?: number; userId?: string; reason?: string },
+  ): Promise<{
+    success: true
+    usersCleared: number
+    sessionsCleared: number
+    message: string
+  }> {
+    const minAgeSec = Math.max(0, input.minAgeSec ?? 5)
+    const failureReason = input.reason?.trim()
+      ? `admin_bulk_cleared: ${input.reason.trim()}`
+      : 'admin_bulk_cleared_stuck'
+    const batchSize = 100
+    const concurrency = 10
+
+    let usersCleared = 0
+    let sessionsCleared = 0
+
+    for (let guard = 0; guard < 200; guard++) {
+      const { items } = await faceRegistrationRepository.listStuckSessions({
+        minAgeSec,
+        page: 1,
+        limit: batchSize,
+        userId: input.userId,
+      })
+      if (items.length === 0) break
+
+      const results = await mapPool(items, concurrency, async (row) => {
+        const clearedIds = await faceRegistrationRepository.clearStuckSessionsForUser(
+          row.user_id,
+          failureReason,
+        )
+        await redisClient.del(
+          RedisKeys.faceRegistrationSessionRate(row.user_id),
+          RedisKeys.faceRegistrationVerifyRate(row.user_id),
+          RedisKeys.faceRegistrationLock(row.user_id),
+        )
+        return clearedIds.length
+      })
+
+      for (const clearedCount of results) {
+        if (clearedCount > 0) {
+          usersCleared += 1
+          sessionsCleared += clearedCount
+        }
+      }
+
+      if (items.length < batchSize) break
+    }
+
+    auditService.log({
+      userId: null,
+      actionType: 'face_registration_sessions_admin_bulk_cleared',
+      actionStatus: 'success',
+      actionDetails: {
+        adminUserId,
+        reason: input.reason ?? null,
+        minAgeSec,
+        scopedUserId: input.userId ?? null,
+        usersCleared,
+        sessionsCleared,
+      },
+    })
+
+    return {
+      success: true,
+      usersCleared,
+      sessionsCleared,
+      message:
+        usersCleared > 0
+          ? `Cleared ${sessionsCleared} session(s) across ${usersCleared} user(s).`
+          : 'Nothing matched the current filters.',
     }
   },
 
