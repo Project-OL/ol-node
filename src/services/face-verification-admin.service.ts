@@ -10,7 +10,10 @@ import {
 } from '../lib/rekognition.client'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
-import { faceRegistrationRepository } from '../repositories/faceRegistration.repository'
+import {
+  faceRegistrationRepository,
+  ATTENTION_NEEDED_STATUSES,
+} from '../repositories/faceRegistration.repository'
 import { redisClient, RedisKeys } from '../config/redis'
 import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
 import { auditService } from './audit.service'
@@ -406,10 +409,12 @@ export const faceVerificationAdminService = {
   },
 
   /**
-   * Paginated worklist of non-terminal registration sessions older than `minAgeSec`,
-   * across all users (or scoped to one via `userId`) — for admin triage: see what's
-   * stuck, then call `recheckRegistrationSession` (non-destructive) or
-   * `clearStuckRegistrationSessions` (force-expire) on each.
+   * Paginated worklist of users whose MOST RECENT registration attempt still needs
+   * attention — hung (non-terminal) or ended in a failure they haven't retried past
+   * yet (LIVENESS_FAILED/VALIDATION_FAILED/REJECTED) — older than `minAgeSec`, across
+   * all users (or scoped to one via `userId`). For admin triage: `recheckRegistrationSession`
+   * (non-destructive, only works on hung sessions) or `clearStuckRegistrationSessions`
+   * (force-expire + reset rate limits, safe on both hung and already-failed sessions) on each.
    */
   async listStuckRegistrationSessions(input: {
     minAgeSec?: number
@@ -434,32 +439,47 @@ export const faceVerificationAdminService = {
       total,
       sessions: items.map((s) => ({
         sessionId: s.id,
-        userId: s.user.id,
+        userId: s.user_id,
         publicId: formatDisplayPublicId({
-          publicId: s.user.publicId,
-          currentVipPublicId: s.user.currentVipPublicId,
+          publicId: s.public_id,
+          currentVipPublicId: s.current_vip_public_id,
         }),
         name: formatUserName({
-          firstName: s.user.firstName,
-          lastName: s.user.lastName,
-          username: s.user.username,
+          firstName: s.first_name,
+          lastName: s.last_name,
+          username: s.username,
         }),
         status: s.status,
-        awsSessionId: s.awsSessionId,
-        riskScore: s.riskScore,
-        createdAt: s.createdAt.toISOString(),
-        updatedAt: s.updatedAt.toISOString(),
-        stuckForSec: Math.floor((now - s.createdAt.getTime()) / 1000),
+        awsSessionId: s.aws_session_id,
+        riskScore: s.risk_score,
+        failureReason: s.failure_reason,
+        createdAt: s.created_at.toISOString(),
+        updatedAt: s.updated_at.toISOString(),
+        stuckForSec: Math.floor((now - s.created_at.getTime()) / 1000),
       })),
     }
   },
 
-  /** Every open (non-terminal) registration session for one user, with age — the
-   * per-user-detail equivalent of `listStuckRegistrationSessions`. */
+  /**
+   * Every session for one user that still needs admin attention, with age — the
+   * per-user-detail equivalent of `listStuckRegistrationSessions`. Prefers the open
+   * (non-terminal) sessions; if there are none, falls back to the single latest
+   * session when it ended in a failure the user hasn't retried past yet
+   * (LIVENESS_FAILED/VALIDATION_FAILED/REJECTED) — same "needs attention" definition
+   * as the global worklist, just scoped to one user instead of a DB-wide query.
+   */
   async getOpenRegistrationSessionsForUser(targetUserId: string) {
     const open = await faceRegistrationRepository.findOpenSessionsForUser(targetUserId)
     const now = Date.now()
-    return open.map((s) => ({
+    const toRow = (s: {
+      id: string
+      status: string
+      awsSessionId: string | null
+      riskScore: number
+      failureReason: string | null
+      createdAt: Date
+      updatedAt: Date
+    }) => ({
       sessionId: s.id,
       status: s.status,
       awsSessionId: s.awsSessionId,
@@ -468,7 +488,15 @@ export const faceVerificationAdminService = {
       createdAt: s.createdAt.toISOString(),
       updatedAt: s.updatedAt.toISOString(),
       stuckForSec: Math.floor((now - s.createdAt.getTime()) / 1000),
-    }))
+    })
+
+    if (open.length > 0) return open.map(toRow)
+
+    const latest = await faceRegistrationRepository.findLatestForUser(targetUserId)
+    if (latest && (ATTENTION_NEEDED_STATUSES as string[]).includes(latest.status)) {
+      return [toRow(latest)]
+    }
+    return []
   },
 
   /**

@@ -1,5 +1,37 @@
-import type { FaceRegistrationSessionStatus, Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
+import type { FaceRegistrationSessionStatus } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+
+/** A user's most-recent registration attempt landed here -> still needs admin
+ * attention (hung, or ended in a failure the user hasn't successfully retried
+ * past yet). Excludes EXPIRED (cleanly superseded by the user's own retry) and
+ * INDEXED (succeeded). */
+export const ATTENTION_NEEDED_STATUSES: FaceRegistrationSessionStatus[] = [
+  'PENDING',
+  'UPLOADED',
+  'PROCESSING',
+  'LIVENESS_PASSED',
+  'INDEX_PENDING',
+  'LIVENESS_FAILED',
+  'VALIDATION_FAILED',
+  'REJECTED',
+]
+
+export type AttentionNeededSessionRow = {
+  id: string
+  status: FaceRegistrationSessionStatus
+  aws_session_id: string | null
+  risk_score: number
+  failure_reason: string | null
+  created_at: Date
+  updated_at: Date
+  user_id: string
+  username: string | null
+  first_name: string | null
+  last_name: string | null
+  public_id: bigint
+  current_vip_public_id: bigint | null
+}
 
 function getDb(tx?: Prisma.TransactionClient) {
   return tx ?? prisma
@@ -72,66 +104,64 @@ export const faceRegistrationRepository = {
     })
   },
 
-  /** Paginated, admin-facing view of every non-terminal session across all users (or one,
-   * via `userId`) older than `minAgeSec` — the "stuck registrations" worklist. */
+  /**
+   * Paginated, admin-facing worklist of users whose MOST RECENT registration
+   * attempt still needs attention — either hung (non-terminal) or ended in a
+   * failure they haven't successfully retried past (LIVENESS_FAILED/
+   * VALIDATION_FAILED/REJECTED). A user whose latest session is EXPIRED
+   * (cleanly superseded by their own retry) or INDEXED (succeeded) never
+   * appears here, even if an OLDER session of theirs once failed — only the
+   * latest attempt per user is considered. Requires `DISTINCT ON` (per-user
+   * latest row), which Prisma's query builder can't express, hence raw SQL.
+   */
   async listStuckSessions(input: {
     minAgeSec: number
     page: number
     limit: number
     userId?: string
-  }): Promise<{
-    items: Array<{
-      id: string
-      status: FaceRegistrationSessionStatus
-      awsSessionId: string | null
-      riskScore: number
-      createdAt: Date
-      updatedAt: Date
-      user: {
-        id: string
-        username: string | null
-        firstName: string | null
-        lastName: string | null
-        publicId: bigint | null
-        currentVipPublicId: bigint | null
-      }
-    }>
-    total: number
-  }> {
-    const where: Prisma.FaceRegistrationSessionWhereInput = {
-      status: { in: ['PENDING', 'UPLOADED', 'PROCESSING', 'LIVENESS_PASSED', 'INDEX_PENDING'] },
-      createdAt: { lte: new Date(Date.now() - input.minAgeSec * 1000) },
-      ...(input.userId ? { userId: input.userId } : {}),
-    }
+  }): Promise<{ items: AttentionNeededSessionRow[]; total: number }> {
+    const cutoff = new Date(Date.now() - input.minAgeSec * 1000)
     const skip = (input.page - 1) * input.limit
-    const [items, total] = await Promise.all([
-      prismaRead.faceRegistrationSession.findMany({
-        where,
-        skip,
-        take: input.limit,
-        orderBy: { createdAt: 'asc' },
-        select: {
-          id: true,
-          status: true,
-          awsSessionId: true,
-          riskScore: true,
-          createdAt: true,
-          updatedAt: true,
-          user: {
-            select: {
-              id: true,
-              username: true,
-              firstName: true,
-              lastName: true,
-              publicId: true,
-              currentVipPublicId: true,
-            },
-          },
-        },
-      }),
-      prismaRead.faceRegistrationSession.count({ where }),
+    const statusList = Prisma.join(
+      ATTENTION_NEEDED_STATUSES.map((s) => Prisma.sql`${s}::"FaceRegistrationSessionStatus"`),
+    )
+    const userFilter = input.userId
+      ? Prisma.sql`AND ls.user_id = ${input.userId}::uuid`
+      : Prisma.empty
+
+    const [items, totalRows] = await Promise.all([
+      prismaRead.$queryRaw<AttentionNeededSessionRow[]>(Prisma.sql`
+        WITH latest_sessions AS (
+          SELECT DISTINCT ON (user_id) *
+          FROM face_registration_sessions
+          ORDER BY user_id, created_at DESC
+        )
+        SELECT
+          ls.id, ls.status, ls.aws_session_id, ls.risk_score, ls.failure_reason,
+          ls.created_at, ls.updated_at, ls.user_id,
+          u.username, u.first_name, u.last_name, u.public_id, u.current_vip_public_id
+        FROM latest_sessions ls
+        JOIN users u ON u.id = ls.user_id
+        WHERE ls.status IN (${statusList})
+          AND ls.created_at <= ${cutoff}
+          ${userFilter}
+        ORDER BY ls.created_at ASC
+        LIMIT ${input.limit} OFFSET ${skip}
+      `),
+      prismaRead.$queryRaw<{ count: bigint }[]>(Prisma.sql`
+        WITH latest_sessions AS (
+          SELECT DISTINCT ON (user_id) *
+          FROM face_registration_sessions
+          ORDER BY user_id, created_at DESC
+        )
+        SELECT COUNT(*)::bigint AS count
+        FROM latest_sessions ls
+        WHERE ls.status IN (${statusList})
+          AND ls.created_at <= ${cutoff}
+          ${userFilter}
+      `),
     ])
-    return { items, total }
+    return { items, total: Number(totalRows[0]?.count ?? 0n) }
   },
 
   /** Admin-forced terminal EXPIRED on every non-terminal session for a user, so
