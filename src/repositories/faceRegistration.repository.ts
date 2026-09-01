@@ -81,6 +81,25 @@ export const faceRegistrationRepository = {
     })
   },
 
+  /**
+   * Auto-EXPIRE every non-terminal session older than `olderThanMinutes` across all
+   * users, regardless of who owns it -- the periodic self-healing counterpart to the
+   * admin `clear` action. Catches a client that hung mid-flow (e.g. the native liveness
+   * SDK never calling back) without needing anyone to notice and intervene. Returns how
+   * many rows were expired, for the job's own logging.
+   */
+  async expireStaleSessions(olderThanMinutes: number): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanMinutes * 60_000)
+    const result = await prisma.faceRegistrationSession.updateMany({
+      where: {
+        status: { in: ['PENDING', 'UPLOADED', 'PROCESSING', 'LIVENESS_PASSED', 'INDEX_PENDING'] },
+        createdAt: { lte: cutoff },
+      },
+      data: { status: 'EXPIRED', failureReason: 'auto_expired_stale' },
+    })
+    return result.count
+  },
+
   /** Every non-terminal session for a user (open early-stage attempts plus ones that
    * hung after passing liveness or during indexing — a worker outage or a client that
    * never called /verify can leave one of these stuck indefinitely). */

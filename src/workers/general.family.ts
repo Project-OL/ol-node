@@ -4,6 +4,7 @@ import { env } from '../config/env'
 import { mapPool } from '../utils/map-pool'
 import { prisma } from '../config/database'
 import { runAccountDeletionJob } from '../jobs/account-deletion.job'
+import { runFaceRegistrationSweepJob } from '../jobs/face-registration-sweep.job'
 import { WALLET_WITHDRAWAL_QUEUE } from '../queues/wallet-withdrawal.constants'
 import { WALLET_LEVEL_BACKFILL_QUEUE } from '../queues/wallet-level-backfill.constants'
 import { runWalletLevelBackfillForUser } from '../jobs/wallet-level-backfill.job'
@@ -82,6 +83,7 @@ import { processRankingBackfillJob } from '../jobs/ranking-backfill.job'
 import type { WorkerFamily } from './family'
 
 const ACCOUNT_DELETION_QUEUE = 'account-deletion'
+const FACE_REGISTRATION_SWEEP_QUEUE = 'face-registration-sweep'
 
 /**
  * Payroll, expiry, agency, live-session, and other non-chat workers.
@@ -108,6 +110,20 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
     {
       jobId: 'account-deletion-sweep-5min',
       repeat: { every: 5 * 60 * 1000 },
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 30_000 },
+      removeOnComplete: true,
+      removeOnFail: false,
+    },
+  )
+
+  const faceRegistrationSweepQueue = new Queue(FACE_REGISTRATION_SWEEP_QUEUE, { connection })
+  await faceRegistrationSweepQueue.add(
+    'sweep',
+    {},
+    {
+      jobId: 'face-registration-sweep-10min',
+      repeat: { every: 10 * 60 * 1000 },
       attempts: 3,
       backoff: { type: 'exponential', delay: 30_000 },
       removeOnComplete: true,
@@ -163,6 +179,14 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await runAccountDeletionJob()
     },
     { connection, concurrency: 3 },
+  )
+
+  const faceRegistrationSweepWorker = new Worker(
+    FACE_REGISTRATION_SWEEP_QUEUE,
+    async (_job: Job) => {
+      await runFaceRegistrationSweepJob()
+    },
+    { connection, concurrency: 1 },
   )
 
   const withdrawalWorker = new Worker(
@@ -459,6 +483,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
     }
 
   accountDeletionWorker.on('failed', onFail('Account Deletion'))
+  faceRegistrationSweepWorker.on('failed', onFail('Face Registration Sweep'))
   withdrawalWorker.on('failed', onFail('Wallet Withdrawal'))
   levelBackfillWorker.on('failed', onFail('Wallet Level Backfill'))
   subscriptionRenewalWorker.on('failed', onFail('Subscription renewal'))
@@ -508,6 +533,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await withdrawalWorker.close()
       await accountDeletionWorker.close()
       await accountDeletionQueue.close()
+      await faceRegistrationSweepWorker.close()
+      await faceRegistrationSweepQueue.close()
     },
   }
 }

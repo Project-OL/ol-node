@@ -121,6 +121,10 @@ const envSchema = z
     FACE_REGISTRATION_RATE_SESSION_PER_HOUR: z.coerce.number().int().positive().default(10),
     FACE_REGISTRATION_RATE_VERIFY_PER_HOUR: z.coerce.number().int().positive().default(20),
     FACE_REGISTRATION_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+    /** A non-terminal face_registration_sessions row older than this self-heals via a
+     * periodic sweep (auto-EXPIRED) instead of requiring admin intervention -- covers a
+     * client that hung mid-flow (e.g. the native liveness SDK never calling back). */
+    FACE_REGISTRATION_SESSION_STALE_MINUTES: z.coerce.number().int().positive().default(30),
     /** When true, `POST …/verify` requires supplemental video uploaded first. */
     FACE_REGISTRATION_SUPPLEMENTAL_VIDEO_REQUIRED: z.coerce.boolean().default(false),
     FACE_REGISTRATION_VIDEO_MAX_BYTES: z.coerce.number().int().positive().default(40_000_000),
