@@ -2985,6 +2985,8 @@ model FaceRegistrationSession {
   deviceMetadata         Json?                         @map("device_metadata")
   ipAddress              String?                       @map("ip_address") @db.VarChar(64)
   failureReason          String?                       @map("failure_reason") @db.Text
+  /// Rekognition liveness reference image saved on a failed/rejected attempt (LIVENESS_FAILED/VALIDATION_FAILED), for admin review. Null when no image was captured (e.g. session never reached liveness, or expired before completion).
+  failureImageS3Key      String?                       @map("failure_image_s3_key") @db.Text
   livenessConfidence     Float?                        @map("liveness_confidence")
   rekognitionRawStatus   String?                       @map("rekognition_raw_status") @db.VarChar(32)
   idempotencyKey         String?                       @map("idempotency_key") @db.Uuid

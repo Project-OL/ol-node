@@ -17,6 +17,7 @@ import {
 import { redisClient, RedisKeys } from '../config/redis'
 import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
 import { mapPool } from '../utils/map-pool'
+import { storageService } from './storage.service'
 import { auditService } from './audit.service'
 import { afterFaceProfileRevoked } from './face-profile-invalidate'
 
@@ -44,6 +45,15 @@ function formatUserName(input: {
 }): string {
   const name = [input.firstName, input.lastName].filter(Boolean).join(' ').trim()
   return name || input.username || 'Unknown'
+}
+
+function toFailureImageUrl(key: string | null | undefined): string | null {
+  if (!key?.trim()) return null
+  try {
+    return storageService.getCdnOrS3PublicUrl(key)
+  } catch {
+    return null
+  }
 }
 
 function formatDisplayPublicId(input: {
@@ -542,6 +552,7 @@ export const faceVerificationAdminService = {
         awsSessionId: s.aws_session_id,
         riskScore: s.risk_score,
         failureReason: s.failure_reason,
+        failureImageUrl: toFailureImageUrl(s.failure_image_s3_key),
         createdAt: s.created_at.toISOString(),
         updatedAt: s.updated_at.toISOString(),
         stuckForSec: Math.floor((now - s.created_at.getTime()) / 1000),
@@ -566,6 +577,7 @@ export const faceVerificationAdminService = {
       awsSessionId: string | null
       riskScore: number
       failureReason: string | null
+      failureImageS3Key?: string | null
       createdAt: Date
       updatedAt: Date
     }) => ({
@@ -574,6 +586,7 @@ export const faceVerificationAdminService = {
       awsSessionId: s.awsSessionId,
       riskScore: s.riskScore,
       failureReason: s.failureReason,
+      failureImageUrl: toFailureImageUrl(s.failureImageS3Key),
       createdAt: s.createdAt.toISOString(),
       updatedAt: s.updatedAt.toISOString(),
       stuckForSec: Math.floor((now - s.createdAt.getTime()) / 1000),

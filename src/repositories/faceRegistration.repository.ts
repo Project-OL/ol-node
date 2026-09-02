@@ -23,6 +23,7 @@ export type AttentionNeededSessionRow = {
   aws_session_id: string | null
   risk_score: number
   failure_reason: string | null
+  failure_image_s3_key: string | null
   created_at: Date
   updated_at: Date
   user_id: string
@@ -117,6 +118,7 @@ export const faceRegistrationRepository = {
         awsSessionId: true,
         riskScore: true,
         failureReason: true,
+        failureImageS3Key: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -157,6 +159,7 @@ export const faceRegistrationRepository = {
         )
         SELECT
           ls.id, ls.status, ls.aws_session_id, ls.risk_score, ls.failure_reason,
+          ls.failure_image_s3_key,
           ls.created_at, ls.updated_at, ls.user_id,
           u.username, u.first_name, u.last_name, u.public_id, u.current_vip_public_id
         FROM latest_sessions ls
@@ -248,6 +251,7 @@ export const faceRegistrationRepository = {
       status?: FaceRegistrationSessionStatus
       supplementalVideoS3Key?: string | null
       failureReason?: string | null
+      failureImageS3Key?: string | null
       livenessConfidence?: number | null
       rekognitionRawStatus?: string | null
       idempotencyKey?: string | null

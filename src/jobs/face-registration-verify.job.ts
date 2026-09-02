@@ -64,6 +64,25 @@ async function extractReferenceBytes(res: {
   return null
 }
 
+/** Saves a failed/rejected attempt's reference image for admin review, keyed apart
+ * from the success path (`face/register/...`) so it's obvious at a glance which
+ * images are live profile references vs. rejected capture evidence. */
+async function persistFailureImage(userId: string, bytes: Uint8Array): Promise<string | null> {
+  try {
+    const key = `face/register-failed/${userId}/${randomUUID()}.jpg`
+    await storageService.putObjectBuffer({
+      key,
+      body: Buffer.from(bytes),
+      contentType: 'image/jpeg',
+      cacheControl: 'private, max-age=0, no-transform',
+    })
+    return key
+  } catch (err) {
+    log.warn({ err, userId }, 'face_registration_failure_image_persist_failed')
+    return null
+  }
+}
+
 async function failTerminal(
   sessionId: string,
   userId: string,
@@ -72,6 +91,7 @@ async function failTerminal(
     rekognitionRawStatus?: string | null
     awsRequestId?: string | null
     status?: 'LIVENESS_FAILED' | 'VALIDATION_FAILED' | 'REJECTED'
+    imageBytes?: Uint8Array | null
     audit?: {
       qualityCheckFailures?: string[]
       detectedGender?: string | null
@@ -83,9 +103,14 @@ async function failTerminal(
   },
 ): Promise<void> {
   const status = extra?.status ?? 'LIVENESS_FAILED'
+  const failureImageS3Key =
+    extra?.imageBytes && extra.imageBytes.byteLength > 0
+      ? await persistFailureImage(userId, extra.imageBytes)
+      : null
   await faceRegistrationRepository.updateSession(sessionId, {
     status,
     failureReason: reason,
+    failureImageS3Key,
     rekognitionRawStatus: extra?.rekognitionRawStatus ?? null,
     awsRequestId: extra?.awsRequestId ?? null,
   })
@@ -206,15 +231,20 @@ export async function processFaceRegistrationVerifyJob(
     session.riskScore >= env.FACE_REGISTRATION_RISK_SCORE_STRICT
       ? env.FACE_LIVENESS_CONFIDENCE_MIN + env.FACE_LIVENESS_RISK_CONFIDENCE_DELTA
       : env.FACE_LIVENESS_CONFIDENCE_MIN
+
+  // Extracted before the confidence gate: Rekognition returns ReferenceImage
+  // regardless of Confidence, and we want it saved even on a confidence-failed attempt.
+  const refBytes = await extractReferenceBytes(res)
+
   if (confidence < minConf) {
     await failTerminal(sessionId, userId, 'liveness_confidence_below_threshold', {
       rekognitionRawStatus: rawStatus,
       awsRequestId,
+      imageBytes: refBytes,
     })
     return
   }
 
-  const refBytes = await extractReferenceBytes(res)
   if (!refBytes || refBytes.byteLength < 1024) {
     await failTerminal(sessionId, userId, 'missing_reference_image', {
       rekognitionRawStatus: rawStatus,
@@ -243,6 +273,7 @@ export async function processFaceRegistrationVerifyJob(
     await failTerminal(sessionId, userId, `antispoof_${antispoof.reason}`, {
       rekognitionRawStatus: rawStatus,
       awsRequestId,
+      imageBytes: refBytes,
     })
     return
   }
@@ -309,6 +340,7 @@ export async function processFaceRegistrationVerifyJob(
       rekognitionRawStatus: rawStatus,
       awsRequestId,
       status: 'VALIDATION_FAILED',
+      imageBytes: refBytes,
       audit: {
         qualityCheckFailures: validation.details?.failedChecks,
         contentPolicyViolation: errorCode === FACE_REGISTRATION_ERRORS.FACE_QUALITY_CONTENT_POLICY,
