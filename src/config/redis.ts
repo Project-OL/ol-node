@@ -99,6 +99,8 @@ export const RedisKeys = {
   otpPhoneRequestCount: (providerPhone: string) => `otp:phone-request-count:${providerPhone}`,
   /** Cached OTP delivery routing config (interval for SMS trigger). */
   otpDeliveryConfig: () => 'otp:delivery-config',
+  /** Cached OTP per-country cost rate overrides (whatsapp/sms). */
+  otpCostRates: () => 'otp:cost-rates',
   /** Per-user social endpoint rate limit. */
   socialRateLimit: (endpoint: string, userId: string) => `ratelimit:social:${endpoint}:${userId}`,
   /** User level cache. */
@@ -477,6 +479,8 @@ export const OTP_SMS_TRIGGER_INTERVAL_SEC_DEFAULT = 120
 export const OTP_SMS_TRIGGER_AFTER_COUNT = 3
 /** Cached OTP delivery config TTL (5 minutes). */
 export const OTP_DELIVERY_CONFIG_TTL = 300
+/** Cached OTP per-country cost rate overrides TTL (5 minutes). */
+export const OTP_COST_RATES_TTL = 300
 
 /** Wallet: cached balance TTL (5 minutes). */
 /** Broadcast progress/pending keys — safety ceiling; normal completion deletes them explicitly. */

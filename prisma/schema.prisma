@@ -1983,6 +1983,24 @@ model OtpDeliveryAudit {
   @@map("otp_delivery_audits")
 }
 
+/// Per-country OTP cost override (WhatsApp conversation pricing and SMS termination
+/// rates both vary by destination country). No row for a (means, country) pair falls
+/// back to the global OTP_COST_WHATSAPP_MINOR / OTP_COST_SMS_MINOR env default.
+model OtpCostRate {
+  id              String   @id @default(uuid()) @db.Uuid
+  /// whatsapp | sms — email cost stays flat (OTP_COST_EMAIL_MINOR), not country-priced.
+  means           String   @db.VarChar(20)
+  /// ISO-3166-1 alpha-2, upper-case (e.g. IN, US, AE).
+  country         String   @db.VarChar(2)
+  rateMinor       Int      @map("rate_minor")
+  currency        String   @default("INR") @db.VarChar(3)
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+
+  @@unique([means, country])
+  @@map("otp_cost_rates")
+}
+
 model WalletIdempotencyLog {
   key              String   @id @db.VarChar(200)
   requestHash      String   @map("request_hash") @db.VarChar(128)

@@ -84,6 +84,28 @@ export const adminOtpMonthlyCostQuerySchema = z
     }
   })
 
+/** WhatsApp/SMS pricing varies by destination country — email stays flat. */
+export const adminOtpCountryRateUpsertSchema = z.object({
+  means: z.enum(['whatsapp', 'sms']),
+  country: z
+    .string()
+    .trim()
+    .length(2)
+    .regex(/^[A-Za-z]{2}$/, 'country must be an ISO-3166-1 alpha-2 code')
+    .transform((v) => v.toUpperCase()),
+  rateMinor: z.coerce.number().int().min(0),
+})
+
+export const adminOtpCountryRateDeleteQuerySchema = z.object({
+  means: z.enum(['whatsapp', 'sms']),
+  country: z
+    .string()
+    .trim()
+    .length(2)
+    .regex(/^[A-Za-z]{2}$/, 'country must be an ISO-3166-1 alpha-2 code')
+    .transform((v) => v.toUpperCase()),
+})
+
 export type AdminListOtpDeliveryAuditsQuery = z.infer<typeof adminListOtpDeliveryAuditsQuerySchema>
 export type AdminOtpDeliveryAuditSummaryQuery = z.infer<
   typeof adminOtpDeliveryAuditSummaryQuerySchema

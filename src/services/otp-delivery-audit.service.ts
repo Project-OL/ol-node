@@ -1,8 +1,10 @@
 import { env } from '../config/env'
 import { prisma } from '../config/database'
+import { OTP_COST_RATES_TTL, RedisKeys, redisClient } from '../config/redis'
 import type { OtpDeliveryAuditStatus, OtpDeliveryMeans } from '../models/otp-delivery-audit.schemas'
 import type { OtpPurpose } from '../models/types'
 import { otpDeliveryAuditRepository } from '../repositories/otpDeliveryAudit.repository'
+import { otpCostRateRepository, type OtpCostRateRow } from '../repositories/otpCostRate.repository'
 import type { OtpProviderName } from './providers/provider.types'
 import { rootLogger } from '../utils/rootLogger'
 
@@ -27,12 +29,67 @@ export function otpDeliveryCostRates() {
   }
 }
 
-export function chargeMinorForMeans(means: OtpDeliveryMeans): number {
+/** means -> country (upper-case ISO alpha-2) -> rate row */
+type CountryRateMap = Map<string, Map<string, { rateMinor: number; currency: string }>>
+
+function buildCountryRateMap(rows: OtpCostRateRow[]): CountryRateMap {
+  const map: CountryRateMap = new Map()
+  for (const row of rows) {
+    const byCountry = map.get(row.means) ?? new Map()
+    byCountry.set(row.country.toUpperCase(), { rateMinor: row.rateMinor, currency: row.currency })
+    map.set(row.means, byCountry)
+  }
+  return map
+}
+
+async function getCountryRateMap(): Promise<CountryRateMap> {
+  const key = RedisKeys.otpCostRates()
+  try {
+    const hit = await redisClient.get(key)
+    if (hit) return buildCountryRateMap(JSON.parse(hit) as OtpCostRateRow[])
+  } catch {
+    /* miss */
+  }
+
+  const rows = await otpCostRateRepository.findAll()
+  try {
+    await redisClient.setex(key, OTP_COST_RATES_TTL, JSON.stringify(rows))
+  } catch {
+    /* ignore */
+  }
+  return buildCountryRateMap(rows)
+}
+
+async function bustCountryRateCache() {
+  await redisClient.del(RedisKeys.otpCostRates())
+}
+
+/**
+ * Resolve the charge for one delivery. WhatsApp/SMS pricing varies by destination
+ * country (Meta conversation pricing, carrier termination rates), so a country-specific
+ * `otp_cost_rates` override wins; falling back to the flat env default (`OTP_COST_*`)
+ * when no override is configured for that country. Email stays flat — SES pricing does
+ * not vary by recipient country in this integration.
+ */
+export async function resolveOtpCharge(
+  means: OtpDeliveryMeans,
+  country?: string | null,
+): Promise<{ chargeMinor: number; currency: string }> {
   const rates = otpDeliveryCostRates()
-  if (means === 'email') return rates.emailMinor
-  if (means === 'whatsapp') return rates.whatsappMinor
-  if (means === 'sms') return rates.smsMinor
-  return 0
+  if (means === 'email') return { chargeMinor: rates.emailMinor, currency: rates.currency }
+  if (means === 'none') return { chargeMinor: 0, currency: rates.currency }
+
+  const normalizedCountry = country?.trim().toUpperCase() || null
+  if (normalizedCountry) {
+    const map = await getCountryRateMap()
+    const override = map.get(means)?.get(normalizedCountry)
+    if (override) return override
+  }
+
+  return {
+    chargeMinor: means === 'whatsapp' ? rates.whatsappMinor : rates.smsMinor,
+    currency: rates.currency,
+  }
 }
 
 /** UTC calendar month window: [start, end). Defaults to current UTC month. */
@@ -163,8 +220,6 @@ export const otpDeliveryAuditService = {
     routeReason?: string
     error?: string
   }) {
-    const charged = params.status === 'success' ? chargeMinorForMeans(params.means) : 0
-    const rates = otpDeliveryCostRates()
     void (async () => {
       let country = params.country?.trim() || null
       if (!country && params.userId) {
@@ -178,6 +233,10 @@ export const otpDeliveryAuditService = {
           /* keep null */
         }
       }
+      const { chargeMinor, currency } =
+        params.status === 'success'
+          ? await resolveOtpCharge(params.means, country)
+          : { chargeMinor: 0, currency: otpDeliveryCostRates().currency }
       await otpDeliveryAuditRepository.create({
         userId: params.userId,
         purpose: params.purpose,
@@ -187,8 +246,8 @@ export const otpDeliveryAuditService = {
         targetType: params.targetType,
         targetMasked: params.targetMasked,
         country: country ? country.slice(0, 100) : null,
-        chargeMinor: charged,
-        chargeCurrency: rates.currency,
+        chargeMinor,
+        chargeCurrency: currency,
         providerMessageId: params.providerMessageId ?? null,
         fallbackFrom: params.fallbackFrom ?? null,
         routeReason: params.routeReason ?? null,
@@ -197,8 +256,9 @@ export const otpDeliveryAuditService = {
     })().catch((err) => log.error({ err }, 'OTP delivery audit persist failed'))
   },
 
-  getCostRates() {
+  async getCostRates() {
     const rates = otpDeliveryCostRates()
+    const countryOverrides = await otpCostRateRepository.findAll()
     return {
       currency: rates.currency,
       rates: {
@@ -207,8 +267,50 @@ export const otpDeliveryAuditService = {
         sms: rates.smsMinor,
         none: 0,
       },
-      note: 'Amounts are minor currency units (e.g. paise when currency is INR). Charged only on successful delivery.',
+      countryRates: countryOverrides.map((row) => ({
+        means: row.means,
+        country: row.country,
+        rateMinor: row.rateMinor,
+        currency: row.currency,
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+      note: 'Amounts are minor currency units (e.g. paise when currency is INR). Charged only on successful delivery. A countryRates entry overrides the flat rates.whatsapp/rates.sms default for that (means, country) — WhatsApp/SMS pricing varies by destination country; email stays flat.',
     }
+  },
+
+  /**
+   * Upsert a per-country WhatsApp/SMS rate override. Busts the cached rate map.
+   * Always stored in the global OTP_COST_CURRENCY — this system tracks one currency
+   * at a time, so a mixed-currency override would break the summed monthly/by-country
+   * totals the same way the old flat rate broke per-country totals.
+   */
+  async setCountryRate(params: {
+    means: 'whatsapp' | 'sms'
+    country: string
+    rateMinor: number
+    updatedByUserId?: string | null
+  }) {
+    const row = await otpCostRateRepository.upsert({
+      means: params.means,
+      country: params.country.trim().toUpperCase(),
+      rateMinor: params.rateMinor,
+      currency: otpDeliveryCostRates().currency,
+      updatedByUserId: params.updatedByUserId,
+    })
+    await bustCountryRateCache()
+    return {
+      means: row.means,
+      country: row.country,
+      rateMinor: row.rateMinor,
+      currency: row.currency,
+      updatedAt: row.updatedAt.toISOString(),
+    }
+  },
+
+  /** Remove a per-country override, reverting that country to the flat env default. */
+  async deleteCountryRate(means: 'whatsapp' | 'sms', country: string) {
+    await otpCostRateRepository.delete(means, country.trim().toUpperCase())
+    await bustCountryRateCache()
   },
 
   async list(filters: {
@@ -362,10 +464,27 @@ export const otpDeliveryAuditService = {
       entry.totalChargeMinor += chargeMinor
     }
 
-    const countries = [...map.values()].sort((a, b) => {
-      if (b.totalChargeMinor !== a.totalChargeMinor) return b.totalChargeMinor - a.totalChargeMinor
-      return a.country.localeCompare(b.country)
-    })
+    const rateMap = await getCountryRateMap()
+    const defaults = otpDeliveryCostRates()
+    const currentRateFor = (means: 'whatsapp' | 'sms', country: string): number =>
+      rateMap.get(means)?.get(country)?.rateMinor ??
+      (means === 'whatsapp' ? defaults.whatsappMinor : defaults.smsMinor)
+
+    const countries = [...map.values()]
+      .map((entry) => ({
+        ...entry,
+        // Rate that WOULD apply to a send today — for comparing against the historical
+        // chargeMinor above (which stays whatever was true when each OTP was sent).
+        // UNKNOWN has no country to look up, so it always reflects the flat env default.
+        currentRates:
+          entry.country === 'UNKNOWN'
+            ? { whatsapp: defaults.whatsappMinor, sms: defaults.smsMinor }
+            : { whatsapp: currentRateFor('whatsapp', entry.country), sms: currentRateFor('sms', entry.country) },
+      }))
+      .sort((a, b) => {
+        if (b.totalChargeMinor !== a.totalChargeMinor) return b.totalChargeMinor - a.totalChargeMinor
+        return a.country.localeCompare(b.country)
+      })
 
     const monthTotals = fillMeansBuckets(rows)
 

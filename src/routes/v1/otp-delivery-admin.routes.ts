@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import {
   adminListOtpDeliveryAuditsQuerySchema,
+  adminOtpCountryRateDeleteQuerySchema,
+  adminOtpCountryRateUpsertSchema,
   adminOtpDeliveryAuditSummaryQuerySchema,
   adminOtpMonthlyCostQuerySchema,
 } from '../../models/otp-delivery-audit.schemas'
@@ -19,6 +21,8 @@ import { parseRequest } from '../../utils/zod-request'
  * GET /v1/admin/otp-delivery/costs/monthly
  * GET /v1/admin/otp-delivery/costs/by-country
  * GET /v1/admin/otp-delivery/cost-rates
+ * PUT /v1/admin/otp-delivery/cost-rates
+ * DELETE /v1/admin/otp-delivery/cost-rates
  */
 export default async function otpDeliveryAdminRoutes(app: FastifyInstance) {
   app.get('/otp-delivery/config', { preHandler: [authenticateAdmin] }, async (_request, reply) => {
@@ -45,7 +49,60 @@ export default async function otpDeliveryAdminRoutes(app: FastifyInstance) {
       },
     },
     async (_request, reply) => {
-      return reply.send(otpDeliveryAuditService.getCostRates())
+      return reply.send(await otpDeliveryAuditService.getCostRates())
+    },
+  )
+
+  app.put(
+    '/otp-delivery/cost-rates',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'OTP delivery'],
+        description:
+          'Set or update a per-country WhatsApp/SMS cost override (minor units of the global OTP_COST_CURRENCY). Overrides the flat rates.whatsapp/rates.sms default for that country. Email is not country-priced.',
+        body: {
+          type: 'object',
+          required: ['means', 'country', 'rateMinor'],
+          properties: {
+            means: { type: 'string', enum: ['whatsapp', 'sms'] },
+            country: { type: 'string', minLength: 2, maxLength: 2 },
+            rateMinor: { type: 'integer', minimum: 0 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = parseRequest(adminOtpCountryRateUpsertSchema, request.body ?? {})
+      const rate = await otpDeliveryAuditService.setCountryRate({ ...body, updatedByUserId: adminUserId })
+      return reply.send(rate)
+    },
+  )
+
+  app.delete(
+    '/otp-delivery/cost-rates',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'OTP delivery'],
+        description:
+          'Remove a per-country WhatsApp/SMS cost override, reverting that country to the flat env default.',
+        querystring: {
+          type: 'object',
+          required: ['means', 'country'],
+          properties: {
+            means: { type: 'string', enum: ['whatsapp', 'sms'] },
+            country: { type: 'string', minLength: 2, maxLength: 2 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const query = parseRequest(adminOtpCountryRateDeleteQuerySchema, request.query ?? {})
+      await otpDeliveryAuditService.deleteCountryRate(query.means, query.country)
+      return reply.send({ success: true })
     },
   )
 
