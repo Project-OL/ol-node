@@ -101,6 +101,10 @@ export const RedisKeys = {
   otpDeliveryConfig: () => 'otp:delivery-config',
   /** Cached OTP per-country cost rate overrides (whatsapp/sms). */
   otpCostRates: () => 'otp:cost-rates',
+  /** Cached running EC2/RDS/ElastiCache inventory (admin infra-cost dashboard). */
+  infraCostInventory: () => 'infra-cost:inventory',
+  /** Cached AWS Cost Explorer spend-by-service for one UTC month. */
+  infraCostByService: (year: number, month: number) => `infra-cost:by-service:${year}-${month}`,
   /** Per-user social endpoint rate limit. */
   socialRateLimit: (endpoint: string, userId: string) => `ratelimit:social:${endpoint}:${userId}`,
   /** User level cache. */
@@ -481,6 +485,14 @@ export const OTP_SMS_TRIGGER_AFTER_COUNT = 3
 export const OTP_DELIVERY_CONFIG_TTL = 300
 /** Cached OTP per-country cost rate overrides TTL (5 minutes). */
 export const OTP_COST_RATES_TTL = 300
+/** Cached EC2/RDS/ElastiCache inventory TTL (15 minutes) — cheap AWS calls, but no need to refetch every page load. */
+export const INFRA_COST_INVENTORY_TTL = 900
+/**
+ * Cached Cost Explorer spend-by-service TTL (1 hour). GetCostAndUsage is billed per API
+ * call (not free) and Cost Explorer data itself lags ~24h, so there's no benefit to
+ * fetching more often than this even for the current, still-forming month.
+ */
+export const INFRA_COST_BY_SERVICE_TTL = 3600
 
 /** Wallet: cached balance TTL (5 minutes). */
 /** Broadcast progress/pending keys — safety ceiling; normal completion deletes them explicitly. */

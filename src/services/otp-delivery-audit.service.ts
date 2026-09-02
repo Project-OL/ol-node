@@ -7,6 +7,7 @@ import { otpDeliveryAuditRepository } from '../repositories/otpDeliveryAudit.rep
 import { otpCostRateRepository, type OtpCostRateRow } from '../repositories/otpCostRate.repository'
 import type { OtpProviderName } from './providers/provider.types'
 import { rootLogger } from '../utils/rootLogger'
+import { utcMonthRange } from '../utils/utc-month-range'
 
 const log = rootLogger.child({ module: 'otp-delivery-audit' })
 
@@ -90,24 +91,6 @@ export async function resolveOtpCharge(
     chargeMinor: means === 'whatsapp' ? rates.whatsappMinor : rates.smsMinor,
     currency: rates.currency,
   }
-}
-
-/** UTC calendar month window: [start, end). Defaults to current UTC month. */
-export function utcMonthRange(
-  year?: number,
-  month?: number,
-): {
-  year: number
-  month: number
-  from: Date
-  to: Date
-} {
-  const now = new Date()
-  const y = year ?? now.getUTCFullYear()
-  const m = month ?? now.getUTCMonth() + 1
-  const from = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0, 0))
-  const to = new Date(Date.UTC(y, m, 1, 0, 0, 0, 0))
-  return { year: y, month: m, from, to }
 }
 
 type MeansCostBucket = { count: number; chargeMinor: number }
