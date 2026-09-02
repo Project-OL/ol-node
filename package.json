@@ -63,6 +63,7 @@
         "seed:coin-trading-rates": "tsx scripts/seed-coin-trading-rates.ts",
         "seed:coin-trading-topup-packages": "tsx scripts/seed-coin-trading-topup-packages.ts",
         "seed:otp-cost-rates": "tsx scripts/seed-otp-cost-rates.ts",
+        "aws:cost-inventory": "tsx scripts/aws-cost-inventory.ts",
         "ledger:flush-sandbox": "tsx scripts/flush-ledger-sandbox.ts",
         "lab:seed": "tsx lab/fixtures/seed.ts",
         "lab:concurrency": "vitest run lab/concurrency --fileParallelism=false",
@@ -118,6 +119,10 @@
         "zod": "^3.23.8"
     },
     "devDependencies": {
+        "@aws-sdk/client-cost-explorer": "^3.1103.0",
+        "@aws-sdk/client-ec2": "^3.1103.0",
+        "@aws-sdk/client-elasticache": "^3.1103.0",
+        "@aws-sdk/client-rds": "^3.1103.0",
         "@types/bcrypt": "^5.0.2",
         "@types/jsonwebtoken": "^9.0.10",
         "@types/node": "^20.14.11",
