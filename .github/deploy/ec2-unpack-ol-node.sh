@@ -17,7 +17,13 @@ set -euo pipefail
 
 APP_USER="${APP_USER:-olapp}"
 APP_DIR="${APP_DIR:-/opt/ol/apps/ol-node-rest}"
-LOG_DIR="${LOG_DIR:-/opt/ol/logs}"
+# Production: /opt/ol/logs. Staging APP_DIR is under /home/ec2-user (ec2-user cannot mkdir /opt/ol).
+if [ -z "${LOG_DIR:-}" ]; then
+  case "$APP_DIR" in
+    /opt/ol/*) LOG_DIR=/opt/ol/logs ;;
+    *) LOG_DIR="$APP_DIR/logs" ;;
+  esac
+fi
 ARTIFACT="${ARTIFACT:-/tmp/ol-node-artifact.tgz}"
 RUN_MIGRATE="${RUN_MIGRATE:-1}"
 RESTART_WORKERS="${RESTART_WORKERS:-1}"

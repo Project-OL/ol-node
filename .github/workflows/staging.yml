@@ -1,0 +1,108 @@
+name: Staging build and deploy
+
+# Same build + unpack as production.yml. Deploy is SSH (secrets already on
+# Environment "staging"). Unpack invocation matches production:
+#   RUN_MIGRATE=1 RESTART_WORKERS=1 bash ec2-unpack-ol-node.sh
+# Paths differ: APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+concurrency:
+  group: staging-ec2-ol-node
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack artifact
+        run: |
+          tar -czf ol-node-artifact.tgz \
+            dist \
+            prisma \
+            package.json \
+            package-lock.json
+          ls -lh ol-node-artifact.tgz
+
+      - name: Upload GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ol-node-${{ github.sha }}
+          path: ol-node-artifact.tgz
+          retention-days: 14
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ol-node-${{ github.sha }}
+
+      - name: Check staging EC2 secrets
+        env:
+          KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.STAGING_EC2_HOST }}
+          USER: ${{ secrets.STAGING_EC2_USER }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
+            echo "Set Environment staging secrets: STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY"
+            exit 1
+          fi
+
+      - name: Deploy to EC2
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.STAGING_EC2_HOST }}
+          EC2_USER: ${{ secrets.STAGING_EC2_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts || true
+          scp -i ~/.ssh/id_deploy \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 \
+            ol-node-artifact.tgz "$EC2_USER@$EC2_HOST:/tmp/ol-node-artifact.tgz"
+          ssh -i ~/.ssh/id_deploy \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=120 \
+            -o TCPKeepAlive=yes \
+            "$EC2_USER@$EC2_HOST" \
+            'APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node LOG_DIR=/home/ec2-user/ol-node/logs ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE=1 RESTART_WORKERS=1 bash -s' \
+            < .github/deploy/ec2-unpack-ol-node.sh
+# Same unpack script as production. Staging host layout:
+#   APP_DIR=/home/ec2-user/ol-node  APP_USER=ec2-user  LOG_DIR=/home/ec2-user/ol-node/logs
+# Secrets (Environment "staging"): STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY
