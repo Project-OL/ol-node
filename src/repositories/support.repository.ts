@@ -56,7 +56,9 @@ const lastMessagePreviewSelect = {
  */
 async function findOpenThenClosed<T extends Prisma.SupportTicketInclude | undefined>(params: {
   baseWhere: Prisma.SupportTicketWhereInput
-  orderBy: Prisma.SupportTicketOrderByWithRelationInput | Prisma.SupportTicketOrderByWithRelationInput[]
+  orderBy:
+    | Prisma.SupportTicketOrderByWithRelationInput
+    | Prisma.SupportTicketOrderByWithRelationInput[]
   skip: number
   take: number
   include?: T
@@ -334,7 +336,13 @@ export const supportRepository = {
         ...(resolvedAtFilter ? { resolvedAt: resolvedAtFilter } : {}),
       }
       const [tickets, total] = await Promise.all([
-        prismaRead.supportTicket.findMany({ where, orderBy, skip: opts.skip, take: opts.take, include }),
+        prismaRead.supportTicket.findMany({
+          where,
+          orderBy,
+          skip: opts.skip,
+          take: opts.take,
+          include,
+        }),
         prismaRead.supportTicket.count({ where }),
       ])
       return { tickets, total }
