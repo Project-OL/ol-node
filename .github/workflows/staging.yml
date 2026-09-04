@@ -1,9 +1,9 @@
 name: Staging build and deploy
 
-# Same build + unpack as production.yml. Deploy is SSH (secrets already on
-# Environment "staging"). Unpack invocation matches production:
+# Deploy is SSH (secrets already on Environment "staging"). Unpack invocation:
 #   RUN_MIGRATE=1 RESTART_WORKERS=1 bash ec2-unpack-ol-node.sh
-# Paths differ: APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node
+# Paths: APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node
+# Verified working end-to-end 2026-09-04 (real npm ci + prisma migrate + pm2 restart).
 
 on:
   push:
