@@ -1,6 +1,6 @@
 import { CoinTxType, LedgerDirection, PointTxType } from '@prisma/client'
 
-export type LedgerWalletContext = 'POINT' | 'COIN' | 'TRADING_COIN'
+export type LedgerWalletContext = 'POINT' | 'COIN' | 'TRADING_COIN' | 'DIAMOND'
 
 type DirectionKey = 'CREDIT' | 'DEBIT'
 
@@ -63,6 +63,17 @@ const COIN_NAMES: Partial<Record<CoinTxType, Partial<Record<DirectionKey, string
   DAILY_LOGIN: { CREDIT: 'Daily login reward' },
   WEEKLY_TOPUP: { CREDIT: 'Weekly topup bonus' },
   EXPIRE: { DEBIT: 'Coin expiry' },
+  DIAMOND_PURCHASE_OUT: { DEBIT: 'Diamonds purchased' },
+  DIAMOND_PURCHASE_IN: { CREDIT: 'Diamonds purchased' },
+  DIAMOND_REDEEM_OUT: { DEBIT: 'Diamonds redeemed' },
+  DIAMOND_REDEEM_IN: { CREDIT: 'Diamonds redeemed' },
+  GAME_WAGER_OUT: { DEBIT: 'Game bet' },
+  GAME_WAGER_IN: { CREDIT: 'Game bet received' },
+  GAME_RESULT_OUT: { DEBIT: 'Game payout' },
+  GAME_RESULT_IN: { CREDIT: 'Game winnings' },
+  GAME_REFUND_OUT: { DEBIT: 'Game bet refund' },
+  GAME_REFUND_IN: { CREDIT: 'Game bet refund' },
+  GAME_ADJUSTMENT: { CREDIT: 'Admin diamond credit', DEBIT: 'Admin diamond debit' },
 }
 
 export function getTransactionName(

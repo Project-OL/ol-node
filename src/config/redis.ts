@@ -206,6 +206,7 @@ export const RedisKeys = {
   // Wallet Redis keys
   walletCoinBalance: (userId: string) => `wallet:coins:${userId}`,
   walletPointBalance: (userId: string) => `wallet:points:${userId}`,
+  walletDiamondBalance: (userId: string) => `wallet:diamonds:${userId}`,
   /** Cached unconfirmed (in-flight escrow) points for a POINT wallet. */
   walletPointsUnconfirmed: (userId: string) => `wallet:points:unconfirmed:${userId}`,
   ctBalance: (userId: string) => `ct:balance:${userId}`,
@@ -429,8 +430,15 @@ export const RedisKeys = {
   adminViewAccess: (adminId: string) => `admin:views:access:${adminId}`,
   /** Per-admin last searched/viewed users (Redis LIST of userIds; max 10). */
   adminUserSearchHistory: (adminId: string) => `admin:user-search-history:${adminId}`,
-  /** Master ledger: active house (treasury / company-agency) account ids. */
+  /** Master ledger: active house (treasury / company-agency / game-house) account ids. */
   ledgerHouseAccounts: () => 'ledger:house-accounts',
+  /** Cached active game-provider catalog (`GameProvider.id`); Redis-fronted mirror of the provider's game list. */
+  gameCatalog: (providerId: string) => `game:catalog:${providerId}`,
+  /** One-time launch code issued by `POST /games/:gameId/launch`; GETDEL on first BAISHUN `get_sstoken` call. */
+  gameLaunchCode: (code: string) => `game:launch-code:${code}`,
+  /** Inbound webhook signature replay guard: `SET NX EX` on the provider's signature_nonce. */
+  gameProviderNonce: (providerCode: string, nonce: string) =>
+    `game:nonce:${providerCode}:${nonce}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */

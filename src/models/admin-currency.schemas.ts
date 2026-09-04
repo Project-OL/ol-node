@@ -113,7 +113,7 @@ export type AdminHouseAccountsQuery = z.infer<typeof adminHouseAccountsQuerySche
 
 export const adminHouseAccountUpsertBodySchema = z.object({
   userId: z.string().uuid(),
-  role: z.enum(['TREASURY', 'COMPANY_AGENCY']),
+  role: z.enum(['TREASURY', 'COMPANY_AGENCY', 'GAME_HOUSE']),
   label: z.string().max(120).optional(),
   note: z.string().max(500).optional(),
   effectiveFrom: z.string().datetime().optional(),

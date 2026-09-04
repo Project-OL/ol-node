@@ -18,22 +18,27 @@ import { unitsToUsd } from '../utils/points-currency'
 export type HouseAccounts = {
   treasuryIds: Set<string>
   companyAgencyIds: Set<string>
-  /** Union of both — the set excluded from customer float. */
+  /** DIAMOND-wallet counterparty for game wager/payout/refund settlement. */
+  gameHouseIds: Set<string>
+  /** Union of all roles — the set excluded from customer float. */
   allIds: Set<string>
 }
 
 type CachedHouseAccounts = {
   treasury: string[]
   companyAgency: string[]
+  gameHouse: string[]
 }
 
 function buildSets(dto: CachedHouseAccounts): HouseAccounts {
   const treasuryIds = new Set(dto.treasury)
   const companyAgencyIds = new Set(dto.companyAgency)
+  const gameHouseIds = new Set(dto.gameHouse ?? [])
   return {
     treasuryIds,
     companyAgencyIds,
-    allIds: new Set([...treasuryIds, ...companyAgencyIds]),
+    gameHouseIds,
+    allIds: new Set([...treasuryIds, ...companyAgencyIds, ...gameHouseIds]),
   }
 }
 
@@ -50,9 +55,10 @@ function withEnvFallback(dto: CachedHouseAccounts): CachedHouseAccounts {
 
 async function loadFromDb(): Promise<CachedHouseAccounts> {
   const rows = await ledgerAccountRoleRepository.listActiveRoles()
-  const dto: CachedHouseAccounts = { treasury: [], companyAgency: [] }
+  const dto: CachedHouseAccounts = { treasury: [], companyAgency: [], gameHouse: [] }
   for (const r of rows) {
     if (r.role === LedgerAccountRoleType.TREASURY) dto.treasury.push(r.userId)
+    else if (r.role === LedgerAccountRoleType.GAME_HOUSE) dto.gameHouse.push(r.userId)
     else dto.companyAgency.push(r.userId)
   }
   return withEnvFallback(dto)
@@ -119,6 +125,25 @@ export const ledgerAccountRoleService = {
     return buildSets(dto)
   },
 
+  /**
+   * The single active GAME_HOUSE account id — the counterparty for every diamond
+   * wager/payout/refund. Throws a config error rather than silently settling
+   * against no one; an admin must provision this via `POST /admin/system-settings/
+   * ledger-account-roles` (role=GAME_HOUSE) before any game can go live.
+   */
+  async requireGameHouseUserId(): Promise<string> {
+    const { gameHouseIds } = await this.getHouseAccounts()
+    const [first] = gameHouseIds
+    if (!first) {
+      throw new AppError(
+        500,
+        'No active GAME_HOUSE ledger account configured',
+        'GAME_HOUSE_NOT_CONFIGURED',
+      )
+    }
+    return first
+  },
+
   async bustCache(): Promise<void> {
     try {
       await redisClient.del(RedisKeys.ledgerHouseAccounts())
@@ -153,8 +178,10 @@ export const ledgerAccountRoleService = {
     if (!user || user.status === 'deleted') {
       throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     }
-    // Treasury sells via the agent trading-transfer rail, which requires is_agent.
-    if (!user.isAgent) {
+    // Treasury/company-agency sell via the agent trading-transfer rail, which requires
+    // is_agent. GAME_HOUSE only settles DIAMOND wallets internally — no peer coin rail,
+    // so it's exempt.
+    if (params.role !== LedgerAccountRoleType.GAME_HOUSE && !user.isAgent) {
       throw new AppError(
         400,
         'House accounts must be agency agents so they can send trading coins',

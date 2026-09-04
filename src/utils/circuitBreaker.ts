@@ -135,6 +135,14 @@ export const epayCircuitBreaker = new CircuitBreaker({
   halfOpenTimeoutMs: 5_000,
 })
 
+/** Third-party game provider outbound calls (catalog/session fetch). Independent from
+ * inbound merchant-server settlement, which never calls out and so never trips this. */
+export const gameProviderCircuitBreaker = new CircuitBreaker({
+  failureThreshold: 4,
+  openDurationMs: 20_000,
+  halfOpenTimeoutMs: 5_000,
+})
+
 export const msg91CircuitBreaker = new CircuitBreaker({
   failureThreshold: 5,
   openDurationMs: 15_000,

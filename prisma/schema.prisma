@@ -177,6 +177,9 @@ model User {
   tradingCoinTransfersSent     CoinTradingTransfer[]         @relation("TradingCoinTransferSender")
   tradingCoinTransfersReceived CoinTradingTransfer[]         @relation("TradingCoinTransferRecipient")
   ledgerAccountRole            LedgerAccountRole?            @relation("LedgerAccountRoleUser")
+  diamondConversions           DiamondConversion[]
+  gameSessions                 GameSession[]
+  gameRoundLedgerLinks         GameRoundLedgerLink[]
   paymentMethods               UserPaymentMethod[]
   withdrawals                  Withdrawal[]
   locationSamples              UserLocationSample[]
@@ -1111,6 +1114,8 @@ enum WalletCurrencyType {
   COIN
   POINT
   TRADING_COIN
+  /// Third-party game currency; users buy in with COIN 1:1 and redeem back 1:1.
+  DIAMOND
 }
 
 enum LedgerDirection {
@@ -1146,6 +1151,19 @@ enum CoinTxType {
   POINT_EXCHANGE_TO_COINS
   CUSTOM_GIFT_REQUEST
   CUSTOM_GIFT_REFUND
+  // Diamond wallet — Coin↔Diamond conversion (1:1, both pegged 10,000 = $1 USD).
+  DIAMOND_PURCHASE_OUT // COIN wallet debit
+  DIAMOND_PURCHASE_IN // DIAMOND wallet credit
+  DIAMOND_REDEEM_OUT // DIAMOND wallet debit
+  DIAMOND_REDEEM_IN // COIN wallet credit
+  // Diamond wallet — third-party game settlement (user leg + GAME_HOUSE counterparty leg).
+  GAME_WAGER_OUT // user DIAMOND debit (bet)
+  GAME_WAGER_IN // house DIAMOND credit (bet)
+  GAME_RESULT_OUT // house DIAMOND debit (win payout)
+  GAME_RESULT_IN // user DIAMOND credit (win payout)
+  GAME_REFUND_OUT // house DIAMOND debit (bet refund)
+  GAME_REFUND_IN // user DIAMOND credit (bet refund)
+  GAME_ADJUSTMENT // admin manual correction
 }
 
 enum PointTxType {
@@ -1246,6 +1264,10 @@ model CoinLedgerEntry {
   vipDailyClaims           VipDailyClaim[]
   customGiftRequestDebits  CustomGiftRequest[]     @relation("CustomGiftRequestDebit")
   customGiftRequestRefunds CustomGiftRequest[]     @relation("CustomGiftRequestRefund")
+  diamondConversionCoinLegs    DiamondConversion[]   @relation("DiamondConversionCoinLeg")
+  diamondConversionDiamondLegs DiamondConversion[]   @relation("DiamondConversionDiamondLeg")
+  gameRoundUserLegs             GameRoundLedgerLink[] @relation("GameRoundUserLeg")
+  gameRoundHouseLegs            GameRoundLedgerLink[] @relation("GameRoundHouseLeg")
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([walletId, txType, createdAt(sort: Desc)])
@@ -1666,6 +1688,9 @@ enum LedgerAccountRoleType {
   TREASURY
   /// Agency account that absorbs BANK payroll takeover inventory.
   COMPANY_AGENCY
+  /// Counterparty for every third-party game diamond wager/payout/refund; its DIAMOND
+  /// wallet balance growth over a period IS the platform's imputed game revenue.
+  GAME_HOUSE
 }
 
 /// Marks app users as house (non-liability) accounts for master-ledger reporting.
@@ -1745,6 +1770,142 @@ model LedgerFloatSnapshot {
 
   @@index([snapshotAt(sort: Desc)])
   @@map("ledger_float_snapshots")
+}
+
+// ── Diamonds & third-party game integration ─────────────────────────────────
+// Diamonds ride the existing Wallet/CoinLedgerEntry machinery (WalletCurrencyType.DIAMOND)
+// — no bespoke ledger table. These models are the explicit pairing/audit rows on top,
+// mirroring CoinTradingTransfer's pattern of FK'ing both ledger legs from one header row.
+
+enum DiamondConversionDirection {
+  BUY
+  REDEEM
+}
+
+/// Pairs the COIN leg + DIAMOND leg of a single Coin↔Diamond conversion (1:1).
+model DiamondConversion {
+  id                   String                     @id @default(uuid()) @db.Uuid
+  userId               String                     @map("user_id") @db.Uuid
+  direction            DiamondConversionDirection
+  coinAmount           BigInt                     @map("coin_amount")
+  diamondAmount        BigInt                     @map("diamond_amount")
+  coinLedgerEntryId    String                     @map("coin_ledger_entry_id") @db.Uuid
+  diamondLedgerEntryId String                     @map("diamond_ledger_entry_id") @db.Uuid
+  idempotencyKey       String                     @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt            DateTime                   @default(now()) @map("created_at")
+
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coinLedgerEntry    CoinLedgerEntry @relation("DiamondConversionCoinLeg", fields: [coinLedgerEntryId], references: [id], onDelete: Restrict)
+  diamondLedgerEntry CoinLedgerEntry @relation("DiamondConversionDiamondLeg", fields: [diamondLedgerEntryId], references: [id], onDelete: Restrict)
+
+  @@unique([coinLedgerEntryId])
+  @@unique([diamondLedgerEntryId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("diamond_conversions")
+}
+
+/// One row per (provider, channel) credential set the app is configured to launch games
+/// against. `code` is a free-text provider key (e.g. "BAISHUN"), not an enum, so a new
+/// provider can be onboarded via a DB row + a new adapter class — no schema migration.
+/// The real API secret (BAISHUN's appKey) is never stored here — env-only, see GameProvider docs.
+model GameProvider {
+  id         String   @id @default(uuid()) @db.Uuid
+  code       String   @db.VarChar(30)
+  channel    String   @db.VarChar(100)
+  appId      String   @map("app_id") @db.VarChar(100)
+  appChannel String   @map("app_channel") @db.VarChar(100)
+  baseUrl    String   @map("base_url") @db.VarChar(255)
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  catalogEntries   GameCatalogEntry[]
+  sessions         GameSession[]
+  roundLedgerLinks GameRoundLedgerLink[]
+
+  @@unique([code, channel])
+  @@index([isActive])
+  @@map("game_providers")
+}
+
+/// Cached mirror of a provider's game list (e.g. BAISHUN `/v1/api/gamelist`), Redis-fronted.
+model GameCatalogEntry {
+  id          String   @id @default(uuid()) @db.Uuid
+  providerId  String   @map("provider_id") @db.Uuid
+  gameId      Int      @map("game_id")
+  name        String   @db.VarChar(150)
+  previewUrl  String?  @map("preview_url") @db.VarChar(500)
+  downloadUrl String?  @map("download_url") @db.VarChar(500)
+  gameVersion String?  @map("game_version") @db.VarChar(30)
+  gameMode    Int[]    @map("game_mode")
+  orientation Int?     @map("orientation")
+  safeHeight  Int?     @map("safe_height")
+  venueLevel  Int[]    @map("venue_level")
+  isActive    Boolean  @default(true) @map("is_active")
+  syncedAt    DateTime @default(now()) @map("synced_at")
+
+  provider GameProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, gameId])
+  @@index([providerId, isActive])
+  @@map("game_catalog_entries")
+}
+
+enum GameSessionStatus {
+  ISSUED
+  ACTIVE
+  EXPIRED
+}
+
+/// Backs a provider's session lifecycle (BAISHUN: temp `code` → `get_sstoken` → `ss_token`).
+model GameSession {
+  id               String            @id @default(uuid()) @db.Uuid
+  userId           String            @map("user_id") @db.Uuid
+  providerId       String            @map("provider_id") @db.Uuid
+  gameId           Int               @map("game_id")
+  code             String            @unique @db.VarChar(64)
+  codeUsedAt       DateTime?         @map("code_used_at")
+  ssToken          String?           @unique @map("ss_token") @db.VarChar(255)
+  ssTokenExpiresAt DateTime?         @map("ss_token_expires_at")
+  roomId           String?           @map("room_id") @db.VarChar(100)
+  status           GameSessionStatus @default(ISSUED)
+  createdAt        DateTime          @default(now()) @map("created_at")
+  lastActivityAt   DateTime          @updatedAt @map("last_activity_at")
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider GameProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, ssTokenExpiresAt])
+  @@map("game_sessions")
+}
+
+/// Pairs the user DIAMOND leg + GAME_HOUSE DIAMOND leg of one BAISHUN `change_balance`
+/// settlement. Unique on (providerId, orderId) is the idempotency anchor for settlement
+/// retries — BAISHUN reuses the same order_id on retry and requires no double-settlement.
+model GameRoundLedgerLink {
+  id                 String   @id @default(uuid()) @db.Uuid
+  providerId         String   @map("provider_id") @db.Uuid
+  orderId            String   @map("order_id") @db.VarChar(255)
+  gameId             Int      @map("game_id")
+  roomId             String?  @map("room_id") @db.VarChar(100)
+  diffMsg            String   @map("diff_msg") @db.VarChar(20)
+  userId             String   @map("user_id") @db.Uuid
+  currencyDiff       BigInt   @map("currency_diff")
+  userLedgerEntryId  String   @map("user_ledger_entry_id") @db.Uuid
+  houseLedgerEntryId String   @map("house_ledger_entry_id") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  provider         GameProvider    @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userLedgerEntry  CoinLedgerEntry @relation("GameRoundUserLeg", fields: [userLedgerEntryId], references: [id], onDelete: Restrict)
+  houseLedgerEntry CoinLedgerEntry @relation("GameRoundHouseLeg", fields: [houseLedgerEntryId], references: [id], onDelete: Restrict)
+
+  @@unique([providerId, orderId])
+  @@unique([userLedgerEntryId])
+  @@unique([houseLedgerEntryId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("game_round_ledger_links")
 }
 
 model UserPaymentMethod {

@@ -107,6 +107,23 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
   )
 
   app.get(
+    '/transactions/game-diamonds',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Transactions'],
+        description:
+          'Global DIAMOND ledger history (purchases, redemptions, game wagers/results/refunds). Includes the GAME_HOUSE counterparty wallet — its net balance growth over a period is the imputed game revenue line. Filter with `direction=credit|debit`.',
+      },
+    },
+    async (request, reply) => {
+      return reply.send(
+        await adminTransactionsService.listDiamondLedger(parseListQuery(request.query)),
+      )
+    },
+  )
+
+  app.get(
     '/transactions/coin-trading-transfers',
     {
       preHandler: preAuth,

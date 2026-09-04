@@ -296,6 +296,17 @@ const envSchema = z
     EPAY_API_KEY: z.string().min(1).default('epay-test-key'),
     EPAY_WEBHOOK_SECRET: z.string().min(1).default('epay-test-secret'),
 
+    // Game provider — BAISHUN (first concrete adapter of the generic game-provider
+    // abstraction). All optional: the BAISHUN adapter is disabled (games hidden from the
+    // catalog) until these are set. See docs/flow-md/game-integration-flow.md.
+    GAME_PROVIDER_BAISHUN_BASE_URL: z.string().url().optional(),
+    GAME_PROVIDER_BAISHUN_APP_ID: z.string().min(1).optional(),
+    GAME_PROVIDER_BAISHUN_APP_CHANNEL: z.string().min(1).optional(),
+    /** BAISHUN merchant appKey — signs outbound calls, verifies inbound signatures. Secret; never logged. */
+    GAME_PROVIDER_BAISHUN_APP_KEY: z.string().min(1).optional(),
+    /** Publicly accessible 60x60 diamond icon URL sent in getConfig()'s gameConfig.currencyIcon. */
+    GAME_DIAMOND_ICON_URL: z.string().url().optional(),
+
     /** Shared secret for LiveKit backend → ol-node-rest live session webhooks (must match LiveKit server). */
     LIVE_WEBHOOK_SECRET: z.string().min(32),
     LIVE_SESSION_TIMEOUT_HOURS: z.coerce.number().int().positive().default(6),

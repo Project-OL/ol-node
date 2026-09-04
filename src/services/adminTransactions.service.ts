@@ -232,6 +232,31 @@ export const adminTransactionsService = {
     }
   },
 
+  /** DIAMOND wallet ledger — same `coin_ledger_entries` table as COIN/TRADING_COIN, scoped
+   * by currency. Includes both user wallets and the GAME_HOUSE counterparty's own wallet
+   * (no `userId` filter excludes it — the house account is a normal `Wallet` row). */
+  async listDiamondLedger(query: AdminTransactionsListQuery) {
+    const parties = await resolvePartyFilters(query)
+    const rows = await adminTransactionsRepository.listCoinLedger({
+      id: parties.id,
+      userId: parties.userId,
+      counterpartyId: parties.counterpartyId ?? parties.receiverUserId ?? parties.senderUserId,
+      types: query.types,
+      direction: query.direction,
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+      cursor: query.cursor,
+      limit: query.limit,
+      currencyType: WalletCurrencyType.DIAMOND,
+    })
+    const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
+    return {
+      entries: await enrichCoinLedgerRows(page),
+      nextCursor,
+      hasMore,
+    }
+  },
+
   async listPointTransactions(query: AdminTransactionsListQuery) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listPointLedger({
@@ -875,8 +900,12 @@ type PointLedgerRow = Awaited<
   ReturnType<typeof adminTransactionsRepository.listPointLedger>
 >[number]
 
-function walletContextForCoinRow(currencyType: WalletCurrencyType): 'COIN' | 'TRADING_COIN' {
-  return currencyType === WalletCurrencyType.TRADING_COIN ? 'TRADING_COIN' : 'COIN'
+function walletContextForCoinRow(
+  currencyType: WalletCurrencyType,
+): 'COIN' | 'TRADING_COIN' | 'DIAMOND' {
+  if (currencyType === WalletCurrencyType.TRADING_COIN) return 'TRADING_COIN'
+  if (currencyType === WalletCurrencyType.DIAMOND) return 'DIAMOND'
+  return 'COIN'
 }
 
 async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
