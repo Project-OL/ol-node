@@ -49,6 +49,54 @@ const lastMessagePreviewSelect = {
   isAutoReply: true,
 } as const
 
+/**
+ * Runs a paginated ticket query as two groups — everything not CLOSED, then CLOSED — so closed
+ * tickets always sort to the end of a list without needing an enum-order migration. Skip/take
+ * are resolved across the combined (open + closed) result so pagination stays correct.
+ */
+async function findOpenThenClosed(params: {
+  baseWhere: Prisma.SupportTicketWhereInput
+  orderBy: Prisma.SupportTicketOrderByWithRelationInput | Prisma.SupportTicketOrderByWithRelationInput[]
+  skip: number
+  take: number
+  include?: Prisma.SupportTicketInclude
+}) {
+  const { baseWhere, orderBy, skip, take, include } = params
+  const openWhere: Prisma.SupportTicketWhereInput = { ...baseWhere, status: { not: 'CLOSED' } }
+  const closedWhere: Prisma.SupportTicketWhereInput = { ...baseWhere, status: 'CLOSED' }
+
+  const [openTotal, closedTotal] = await Promise.all([
+    prismaRead.supportTicket.count({ where: openWhere }),
+    prismaRead.supportTicket.count({ where: closedWhere }),
+  ])
+
+  const tickets: Awaited<ReturnType<typeof prismaRead.supportTicket.findMany>> = []
+  if (skip < openTotal) {
+    tickets.push(
+      ...(await prismaRead.supportTicket.findMany({
+        where: openWhere,
+        orderBy,
+        skip,
+        take,
+        include,
+      })),
+    )
+  }
+  const remaining = take - tickets.length
+  if (remaining > 0) {
+    tickets.push(
+      ...(await prismaRead.supportTicket.findMany({
+        where: closedWhere,
+        orderBy,
+        skip: Math.max(0, skip - openTotal),
+        take: remaining,
+        include,
+      })),
+    )
+  }
+  return { tickets, total: openTotal + closedTotal }
+}
+
 export const supportRepository = {
   async createTicket(data: {
     userId: string
@@ -76,49 +124,66 @@ export const supportRepository = {
     userId: string,
     opts: { status?: SupportTicketStatus; skip: number; take: number },
   ) {
-    const where = {
-      userId,
-      ...(opts.status ? { status: opts.status } : {}),
+    const include = {
+      messages: {
+        orderBy: { createdAt: 'desc' as const },
+        take: 1,
+        select: lastMessagePreviewSelect,
+      },
     }
-    const [tickets, total] = await Promise.all([
-      prismaRead.supportTicket.findMany({
-        where,
-        orderBy: { updatedAt: 'desc' },
-        skip: opts.skip,
-        take: opts.take,
-        include: {
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-            select: lastMessagePreviewSelect,
-          },
-        },
-      }),
-      prismaRead.supportTicket.count({ where }),
-    ])
-    return { tickets, total }
+    if (opts.status) {
+      const where = { userId, status: opts.status }
+      const [tickets, total] = await Promise.all([
+        prismaRead.supportTicket.findMany({
+          where,
+          orderBy: { updatedAt: 'desc' },
+          skip: opts.skip,
+          take: opts.take,
+          include,
+        }),
+        prismaRead.supportTicket.count({ where }),
+      ])
+      return { tickets, total }
+    }
+    return findOpenThenClosed({
+      baseWhere: { userId },
+      orderBy: { updatedAt: 'desc' },
+      skip: opts.skip,
+      take: opts.take,
+      include,
+    })
   },
 
   async findAllTickets(opts: { status?: SupportTicketStatus; skip: number; take: number }) {
-    const where = opts.status ? { status: opts.status } : {}
-    const [tickets, total] = await Promise.all([
-      prismaRead.supportTicket.findMany({
-        where,
-        orderBy: { updatedAt: 'desc' },
-        skip: opts.skip,
-        take: opts.take,
-        include: {
-          user: { select: ticketOwnerSelect },
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-            select: lastMessagePreviewSelect,
-          },
-        },
-      }),
-      prismaRead.supportTicket.count({ where }),
-    ])
-    return { tickets, total }
+    const include = {
+      user: { select: ticketOwnerSelect },
+      messages: {
+        orderBy: { createdAt: 'desc' as const },
+        take: 1,
+        select: lastMessagePreviewSelect,
+      },
+    }
+    if (opts.status) {
+      const where = { status: opts.status }
+      const [tickets, total] = await Promise.all([
+        prismaRead.supportTicket.findMany({
+          where,
+          orderBy: { updatedAt: 'desc' },
+          skip: opts.skip,
+          take: opts.take,
+          include,
+        }),
+        prismaRead.supportTicket.count({ where }),
+      ])
+      return { tickets, total }
+    }
+    return findOpenThenClosed({
+      baseWhere: {},
+      orderBy: { updatedAt: 'desc' },
+      skip: opts.skip,
+      take: opts.take,
+      include,
+    })
   },
 
   async updateTicketStatus(
@@ -241,34 +306,52 @@ export const supportRepository = {
       return filter
     })()
 
-    const where: Prisma.SupportTicketWhereInput = {
-      ...(opts.status ? { status: opts.status } : {}),
+    const include = {
+      user: { select: ticketOwnerSelect },
+      assignedAdmin: { select: noteAdminSelect },
+      messages: {
+        orderBy: { createdAt: 'desc' as const },
+        take: 1,
+        select: lastMessagePreviewSelect,
+      },
+    }
+    const orderBy: Prisma.SupportTicketOrderByWithRelationInput[] = [
+      { priority: 'desc' },
+      { updatedAt: 'desc' },
+    ]
+
+    if (opts.status) {
+      const where: Prisma.SupportTicketWhereInput = {
+        status: opts.status,
+        ...(opts.priority ? { priority: opts.priority } : {}),
+        ...(opts.type ? { type: opts.type } : {}),
+        ...(opts.assignedAdminId ? { assignedAdminId: opts.assignedAdminId } : {}),
+        ...(opts.unassigned ? { assignedAdminId: null } : {}),
+        ...(opts.ratedOnly ? { rating: { not: null } } : {}),
+        ...(resolvedAtFilter ? { resolvedAt: resolvedAtFilter } : {}),
+      }
+      const [tickets, total] = await Promise.all([
+        prismaRead.supportTicket.findMany({ where, orderBy, skip: opts.skip, take: opts.take, include }),
+        prismaRead.supportTicket.count({ where }),
+      ])
+      return { tickets, total }
+    }
+
+    const baseWhere: Prisma.SupportTicketWhereInput = {
       ...(opts.priority ? { priority: opts.priority } : {}),
       ...(opts.type ? { type: opts.type } : {}),
       ...(opts.assignedAdminId ? { assignedAdminId: opts.assignedAdminId } : {}),
-      ...(opts.unassigned ? { assignedAdminId: null, status: { not: 'CLOSED' } } : {}),
+      ...(opts.unassigned ? { assignedAdminId: null } : {}),
       ...(opts.ratedOnly ? { rating: { not: null } } : {}),
       ...(resolvedAtFilter ? { resolvedAt: resolvedAtFilter } : {}),
     }
-    const [tickets, total] = await Promise.all([
-      prismaRead.supportTicket.findMany({
-        where,
-        orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }],
-        skip: opts.skip,
-        take: opts.take,
-        include: {
-          user: { select: ticketOwnerSelect },
-          assignedAdmin: { select: noteAdminSelect },
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-            select: lastMessagePreviewSelect,
-          },
-        },
-      }),
-      prismaRead.supportTicket.count({ where }),
-    ])
-    return { tickets, total }
+    return findOpenThenClosed({
+      baseWhere,
+      orderBy,
+      skip: opts.skip,
+      take: opts.take,
+      include,
+    })
   },
 
   async findTicketByIdForAdmin(ticketId: bigint) {

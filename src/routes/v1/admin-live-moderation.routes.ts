@@ -1,18 +1,20 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { AppError } from '../../middlewares/errorHandler'
-import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
+import { authenticateAdmin, requireAdminRole } from '../../middlewares/adminAuth.middleware'
 import {
   adminLiveModerationListQuerySchema,
   adminUserLiveModerationQuerySchema,
 } from '../../models/admin-live-moderation.schemas'
 import {
   adminListActiveLiveStreamsQuerySchema,
+  adminStopAllLiveStreamsBodySchema,
   adminStopLiveStreamBodySchema,
 } from '../../models/admin-user-restriction.schemas'
 import { adminLiveModerationService } from '../../services/adminLiveModeration.service'
 import { adminLiveStreamService } from '../../services/adminLiveStream.service'
 
 const preAuth = [authenticateAdmin]
+const preAuthSuperAdmin = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 
 export default async function adminLiveModerationRoutes(app: FastifyInstance) {
   app.get(
@@ -89,7 +91,8 @@ export default async function adminLiveModerationRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Live', 'Moderation'],
-        description: 'List all currently open live streams (optional hostUserId filter).',
+        description:
+          'List all currently open live streams (optional hostUserId and/or country filter).',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -129,6 +132,35 @@ export default async function adminLiveModerationRoutes(app: FastifyInstance) {
           streamRef: request.params.streamRef,
           adminUserId: request.adminUser!.id,
           reason: parsed.data.reason,
+        }),
+      )
+    },
+  )
+
+  app.post(
+    '/live-streams/stop-all',
+    {
+      preHandler: preAuthSuperAdmin,
+      schema: {
+        tags: ['Admin', 'Live', 'Moderation'],
+        description:
+          'Stop every currently open live stream. Provide `country` in the body to scope the close to one country only; omit it to close all streams globally.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminStopAllLiveStreamsBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await adminLiveStreamService.stopAllActive({
+          adminUserId: request.adminUser!.id,
+          reason: parsed.data.reason,
+          country: parsed.data.country,
         }),
       )
     },

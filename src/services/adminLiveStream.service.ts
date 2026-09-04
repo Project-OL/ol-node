@@ -230,16 +230,23 @@ export const adminLiveStreamService = {
     return { userId, streams }
   },
 
-  async listActiveGlobal(query: { page: number; limit: number; hostUserId?: string }) {
+  async listActiveGlobal(query: {
+    page: number
+    limit: number
+    hostUserId?: string
+    country?: string
+  }) {
     const skip = (query.page - 1) * query.limit
     const take = query.limit
     const liveWhere = {
       isLive: true,
       ...(query.hostUserId ? { userId: query.hostUserId } : {}),
+      ...(query.country ? { user: { country: query.country } } : {}),
     }
     const sessionWhere = {
       status: 'ACTIVE' as const,
       ...(query.hostUserId ? { hostUserId: query.hostUserId } : {}),
+      ...(query.country ? { host: { country: query.country } } : {}),
     }
 
     const [liveStreams, liveTotal, hostSessions] = await Promise.all([
@@ -490,5 +497,55 @@ export const adminLiveStreamService = {
       }
     }
     return { stopped }
+  },
+
+  /**
+   * Stops every currently open live stream, optionally scoped to one country. Drains
+   * `listActiveGlobal` page 1 repeatedly (stopped streams fall out of the active set) until a
+   * pass makes no progress, so a `LIVE_STREAM_NOT_FOUND` race (already stopped elsewhere) still
+   * lets the loop continue instead of retrying forever.
+   */
+  async stopAllActive(params: {
+    adminUserId: string
+    reason?: string
+    country?: string
+  }): Promise<{ stopped: number; failed: number }> {
+    const PAGE_SIZE = 50
+    let stopped = 0
+    let failed = 0
+    for (;;) {
+      const { items } = await this.listActiveGlobal({
+        page: 1,
+        limit: PAGE_SIZE,
+        country: params.country,
+      })
+      if (items.length === 0) break
+
+      let progressed = false
+      for (const stream of items) {
+        try {
+          await this.requestStop({
+            userId: stream.hostUserId,
+            streamRef: stream.id,
+            adminUserId: params.adminUserId,
+            reason: params.reason,
+          })
+          stopped += 1
+          progressed = true
+        } catch (err) {
+          if (err instanceof AppError && err.code === 'LIVE_STREAM_NOT_FOUND') {
+            progressed = true
+            continue
+          }
+          failed += 1
+          rootLogger.warn(
+            { err, streamRef: stream.id, hostUserId: stream.hostUserId, country: params.country },
+            'admin live stop-all: one stream failed',
+          )
+        }
+      }
+      if (!progressed) break
+    }
+    return { stopped, failed }
   },
 }

@@ -73,8 +73,15 @@ export const adminListGlobalRestrictionsQuerySchema = z.object({
 
 export const adminListActiveLiveStreamsQuerySchema = z.object({
   hostUserId: z.string().uuid().optional(),
+  country: z.string().min(1).max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+
+export const adminStopAllLiveStreamsBodySchema = z.object({
+  /** Omit to close every currently open live stream; provide to scope the close to one country. */
+  country: z.string().min(1).max(100).optional(),
+  reason: z.string().max(2000).optional(),
 })
 
 export type AdminApplyRestrictionBody = z.infer<typeof adminApplyRestrictionBodySchema>
