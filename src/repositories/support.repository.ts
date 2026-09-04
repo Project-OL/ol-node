@@ -54,12 +54,12 @@ const lastMessagePreviewSelect = {
  * tickets always sort to the end of a list without needing an enum-order migration. Skip/take
  * are resolved across the combined (open + closed) result so pagination stays correct.
  */
-async function findOpenThenClosed(params: {
+async function findOpenThenClosed<T extends Prisma.SupportTicketInclude | undefined>(params: {
   baseWhere: Prisma.SupportTicketWhereInput
   orderBy: Prisma.SupportTicketOrderByWithRelationInput | Prisma.SupportTicketOrderByWithRelationInput[]
   skip: number
   take: number
-  include?: Prisma.SupportTicketInclude
+  include?: T
 }) {
   const { baseWhere, orderBy, skip, take, include } = params
   const openWhere: Prisma.SupportTicketWhereInput = { ...baseWhere, status: { not: 'CLOSED' } }
@@ -70,29 +70,32 @@ async function findOpenThenClosed(params: {
     prismaRead.supportTicket.count({ where: closedWhere }),
   ])
 
-  const tickets: Awaited<ReturnType<typeof prismaRead.supportTicket.findMany>> = []
+  // Prisma's payload-inference conditional types don't resolve through a generic `include`
+  // passed across a function boundary, so the two findMany results are cast to the payload
+  // shape computed from that same generic below — the actual runtime shape is whatever each
+  // caller's `include` literal produces, which is what both sides describe.
+  type Row = Prisma.SupportTicketGetPayload<{ include: T }>
+  const tickets: Row[] = []
   if (skip < openTotal) {
-    tickets.push(
-      ...(await prismaRead.supportTicket.findMany({
-        where: openWhere,
-        orderBy,
-        skip,
-        take,
-        include,
-      })),
-    )
+    const rows = await prismaRead.supportTicket.findMany({
+      where: openWhere,
+      orderBy,
+      skip,
+      take,
+      include,
+    })
+    tickets.push(...(rows as unknown as Row[]))
   }
   const remaining = take - tickets.length
   if (remaining > 0) {
-    tickets.push(
-      ...(await prismaRead.supportTicket.findMany({
-        where: closedWhere,
-        orderBy,
-        skip: Math.max(0, skip - openTotal),
-        take: remaining,
-        include,
-      })),
-    )
+    const rows = await prismaRead.supportTicket.findMany({
+      where: closedWhere,
+      orderBy,
+      skip: Math.max(0, skip - openTotal),
+      take: remaining,
+      include,
+    })
+    tickets.push(...(rows as unknown as Row[]))
   }
   return { tickets, total: openTotal + closedTotal }
 }
