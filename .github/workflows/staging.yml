@@ -1,18 +1,9 @@
-# SSM-based deploy (no SSH) for the staging EC2 (ol-stag).
-#
-# Staging previously tried SSM once (see git history: "Switch staging deploy to SSM like
-# production") and reverted back to SSH because it wasn't working at the time — this version
-# supersedes that attempt. PREREQUISITES before enabling:
-#   1. SSM Agent installed + running on ol-stag, with an IAM instance profile granting the
-#      standard SSM managed-instance permissions.
-#   2. The GitHub OIDC deploy role (AWS_ROLE_ARN below) trusts `ref:refs/heads/staging` and its
-#      permissions policy allows `ssm:SendCommand`/`ssm:GetCommandInvocation` on this instance.
-#   3. Repo/environment secret `STAGING_EC2_INSTANCE_ID` is set to ol-stag's real instance id
-#      (`i-...`), and AWS_REGION below matches its actual region.
-# Host layout (known from the previous SSH workflow, passed explicitly below since it differs
-# from the shared script's /opt/ol/... defaults):
-#   APP_USER=ec2-user  APP_DIR=/home/ec2-user/ol-node  LOG_DIR=/home/ec2-user/ol-node/logs
-name: Staging build and deploy (SSM)
+name: Staging build and deploy
+
+# Same build + unpack as production.yml. Deploy is SSH (secrets already on
+# Environment "staging"). Unpack invocation matches production:
+#   RUN_MIGRATE=1 RESTART_WORKERS=1 bash ec2-unpack-ol-node.sh
+# Paths differ: APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node
 
 on:
   push:
@@ -25,12 +16,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
-
-env:
-  AWS_REGION: ap-south-1
-  AWS_ROLE_ARN: arn:aws:iam::465457334877:role/ol-prod-github-deploy-role
-  DEPLOY_BUCKET: ol-production-deploy-artifacts-465457334877
 
 jobs:
   build:
@@ -82,137 +67,42 @@ jobs:
         with:
           name: ol-node-${{ github.sha }}
 
-      - name: Check required secrets
+      - name: Check staging EC2 secrets
         env:
-          INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
+          KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.STAGING_EC2_HOST }}
+          USER: ${{ secrets.STAGING_EC2_USER }}
         run: |
-          if [ -z "$INSTANCE_ID" ]; then
-            echo "Set Environment staging secret STAGING_EC2_INSTANCE_ID to ol-stag's instance id (i-...)." >&2
+          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
+            echo "Set Environment staging secrets: STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY"
             exit 1
           fi
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Verify AWS identity
-        run: |
-          aws sts get-caller-identity
-
-      - name: Upload deployment artifact to S3
-        run: |
-          aws s3 cp \
-            ol-node-artifact.tgz \
-            "s3://${DEPLOY_BUCKET}/ol-node-staging/ol-node-${GITHUB_SHA}.tgz"
-
-      # Upload the existing EC2 unpack script separately. It is NOT part of the application artifact.
-      - name: Upload deployment script to S3
-        run: |
-          aws s3 cp \
-            .github/deploy/ec2-unpack-ol-node.sh \
-            "s3://${DEPLOY_BUCKET}/ol-node-staging/ec2-unpack-ol-node-${GITHUB_SHA}.sh"
-
-      - name: Send deployment command to EC2
+      - name: Deploy to EC2
         env:
-          INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
-          ARTIFACT_KEY: ol-node-staging/ol-node-${{ github.sha }}.tgz
-          DEPLOY_SCRIPT_KEY: ol-node-staging/ec2-unpack-ol-node-${{ github.sha }}.sh
+          SSH_PRIVATE_KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.STAGING_EC2_HOST }}
+          EC2_USER: ${{ secrets.STAGING_EC2_USER }}
         run: |
-          COMMAND_ID=$(
-            aws ssm send-command \
-              --region "$AWS_REGION" \
-              --instance-ids "$INSTANCE_ID" \
-              --document-name "AWS-RunShellScript" \
-              --comment "OL Node staging deployment ${GITHUB_SHA}" \
-              --parameters commands="[
-                \"set -e\",
-                \"rm -f /tmp/ol-node-artifact.tgz /tmp/ec2-unpack-ol-node.sh\",
-                \"aws s3 cp s3://${DEPLOY_BUCKET}/${ARTIFACT_KEY} /tmp/ol-node-artifact.tgz\",
-                \"aws s3 cp s3://${DEPLOY_BUCKET}/${DEPLOY_SCRIPT_KEY} /tmp/ec2-unpack-ol-node.sh\",
-                \"chmod 700 /tmp/ec2-unpack-ol-node.sh\",
-                \"APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node LOG_DIR=/home/ec2-user/ol-node/logs RUN_MIGRATE=1 RESTART_WORKERS=1 bash /tmp/ec2-unpack-ol-node.sh\"
-              ]" \
-              --query 'Command.CommandId' \
-              --output text
-          )
-
-          echo "SSM Command ID: $COMMAND_ID"
-          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
-
-      - name: Wait for deployment
-        env:
-          INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
-        run: |
-          echo "Waiting for SSM deployment..."
-
-          for i in {1..60}; do
-            STATUS=$(
-              aws ssm get-command-invocation \
-                --region "$AWS_REGION" \
-                --command-id "$COMMAND_ID" \
-                --instance-id "$INSTANCE_ID" \
-                --query 'Status' \
-                --output text
-            )
-
-            echo "Attempt $i: SSM status = $STATUS"
-
-            case "$STATUS" in
-              Success)
-                echo "Deployment completed successfully."
-                break
-                ;;
-
-              Failed|Cancelled|TimedOut|Cancelling)
-                echo "Deployment failed with status: $STATUS"
-
-                aws ssm get-command-invocation \
-                  --region "$AWS_REGION" \
-                  --command-id "$COMMAND_ID" \
-                  --instance-id "$INSTANCE_ID" \
-                  --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-                  --output yaml
-
-                exit 1
-                ;;
-
-              Pending|InProgress|Delayed)
-                sleep 5
-                ;;
-
-              *)
-                echo "Unknown SSM status: $STATUS"
-                sleep 5
-                ;;
-            esac
-
-            if [ "$i" -eq 60 ]; then
-              echo "Deployment timed out waiting for SSM."
-
-              aws ssm get-command-invocation \
-                --region "$AWS_REGION" \
-                --command-id "$COMMAND_ID" \
-                --instance-id "$INSTANCE_ID" \
-                --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-                --output yaml
-
-              exit 1
-            fi
-          done
-
-      - name: Show deployment output
-        env:
-          INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
-        run: |
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-            --output yaml
-# Required GitHub Actions secrets (Environment "staging"):
-#   STAGING_EC2_INSTANCE_ID   ol-stag's instance id (i-...) — see prerequisites above
-# Old SSH secrets (STAGING_EC2_HOST/STAGING_EC2_USER/STAGING_EC2_SSH_PRIVATE_KEY) can be retired
-# once this is proven working — not before.
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts || true
+          scp -i ~/.ssh/id_deploy \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 \
+            ol-node-artifact.tgz "$EC2_USER@$EC2_HOST:/tmp/ol-node-artifact.tgz"
+          ssh -i ~/.ssh/id_deploy \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=120 \
+            -o TCPKeepAlive=yes \
+            "$EC2_USER@$EC2_HOST" \
+            'APP_USER=ec2-user APP_DIR=/home/ec2-user/ol-node LOG_DIR=/home/ec2-user/ol-node/logs ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE=1 RESTART_WORKERS=1 bash -s' \
+            < .github/deploy/ec2-unpack-ol-node.sh
+# Same unpack script as production. Staging host layout:
+#   APP_DIR=/home/ec2-user/ol-node  APP_USER=ec2-user  LOG_DIR=/home/ec2-user/ol-node/logs
+# Secrets (Environment "staging"): STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY
