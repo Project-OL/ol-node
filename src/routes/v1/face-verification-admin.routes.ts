@@ -17,6 +17,23 @@ const resolveDuplicateBodySchema = z.object({
   revokeIndexedOwner: z.boolean().optional(),
 })
 
+const clearStuckSessionsBodySchema = z.object({
+  reason: z.string().max(500).optional(),
+})
+
+const listStuckSessionsQuerySchema = z.object({
+  minAgeSec: z.coerce.number().int().min(0).max(86_400).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  userId: z.string().uuid().optional(),
+})
+
+const clearAllStuckSessionsBodySchema = z.object({
+  minAgeSec: z.coerce.number().int().min(0).max(86_400).optional(),
+  userId: z.string().uuid().optional(),
+  reason: z.string().max(500).optional(),
+})
+
 export default async function faceVerificationAdminRoutes(app: FastifyInstance) {
   app.get(
     '/face-verification/profiles',
@@ -181,6 +198,170 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
         adminId,
         parsed.data.reason,
         { revokeRelated: parsed.data.revokeRelated },
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/face-verification/:userId/registration-sessions/clear',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Force-expire every non-terminal face_registration_sessions row for a user (stuck PENDING/UPLOADED/PROCESSING/LIVENESS_PASSED/INDEX_PENDING) and reset the liveness session/verify rate limits + processing lock, so the user can start a fresh registration attempt from the app.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          properties: { reason: { type: 'string', maxLength: 500 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const parsed = clearStuckSessionsBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.clearStuckRegistrationSessions(
+        request.params.userId,
+        adminId,
+        parsed.data.reason,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/face-verification/registration-sessions/stuck',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          "Paginated worklist of users whose LATEST face_registration_sessions row still needs attention -- hung (PENDING/UPLOADED/PROCESSING/LIVENESS_PASSED/INDEX_PENDING) or a terminal failure they haven't retried past (LIVENESS_FAILED/VALIDATION_FAILED/REJECTED) -- older than minAgeSec, across all users (or one, via userId), with the user's name/publicId and failureReason. Pair with the recheck, clear, and clear-all endpoints.",
+        querystring: {
+          type: 'object',
+          properties: {
+            minAgeSec: { type: 'integer', minimum: 0, maximum: 86400 },
+            page: { type: 'integer', minimum: 1 },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+            userId: { type: 'string', format: 'uuid' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = listStuckSessionsQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await faceVerificationAdminService.listStuckRegistrationSessions(parsed.data)
+      return reply.send(result)
+    },
+  )
+
+  app.post(
+    '/face-verification/registration-sessions/clear-all',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Bulk version of the per-user clear endpoint: clears every user currently matching the "needs attention" worklist (same minAgeSec/userId filters as the GET above) in one server-side pass instead of the caller looping individual clear calls. Force-expires each matching user\'s stuck/failed session and resets their liveness rate-limit/lock Redis keys.',
+        body: {
+          type: 'object',
+          properties: {
+            minAgeSec: { type: 'integer', minimum: 0, maximum: 86400 },
+            userId: { type: 'string', format: 'uuid' },
+            reason: { type: 'string', maxLength: 500 },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = clearAllStuckSessionsBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.clearAllStuckRegistrationSessions(
+        adminId,
+        parsed.data,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
+    '/face-verification/:userId/registration-sessions',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description: 'Every open (non-terminal) registration session for one user, with age.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', format: 'uuid' } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const sessions = await faceVerificationAdminService.getOpenRegistrationSessionsForUser(
+        request.params.userId,
+      )
+      return reply.send({ sessions })
+    },
+  )
+
+  app.post<{ Params: { userId: string; sessionId: string } }>(
+    '/face-verification/:userId/registration-sessions/:sessionId/recheck',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          "Non-destructive: re-queues the BullMQ verify job for a PENDING/UPLOADED/PROCESSING session right now instead of waiting for the client or the job's own backoff. Rejects LIVENESS_PASSED/INDEX_PENDING (worker-face-index's domain, not this queue) -- use the clear endpoint for those if genuinely stuck.",
+        params: {
+          type: 'object',
+          required: ['userId', 'sessionId'],
+          properties: {
+            userId: { type: 'string', format: 'uuid' },
+            sessionId: { type: 'string', format: 'uuid' },
+          },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { userId: string; sessionId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.recheckRegistrationSession(
+        request.params.userId,
+        request.params.sessionId,
+        adminId,
       )
       return reply.send(result)
     },

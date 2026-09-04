@@ -147,10 +147,11 @@ export const adminUserModerationService = {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
 
-    const [profile, kyc, isFaceVerified] = await Promise.all([
+    const [profile, kyc, isFaceVerified, pendingRegistrationSessions] = await Promise.all([
       faceVerificationRepository.getProfileByUserId(userId),
       agencyApplicationKycRepository.getKycByUserId(userId),
       faceVerificationRepository.isVerifiedForUser(userId),
+      faceVerificationAdminService.getOpenRegistrationSessionsForUser(userId),
     ])
 
     let referenceImageUrl: string | null = null
@@ -215,6 +216,7 @@ export const adminUserModerationService = {
       statusLabel: explanation.statusLabel,
       statusDetail: explanation.statusDetail,
       notIndexedReason: explanation.notIndexedReason,
+      pendingRegistrationSessions,
       profile: profile
         ? {
             faceProfileId: profile.id,

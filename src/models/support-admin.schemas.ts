@@ -68,6 +68,30 @@ export const AdminUploadUrlSchema = z.object({
   mimeType: z.string().min(1).max(100),
 })
 
+export const ReplyTemplateParamsSchema = z.object({
+  templateId: z.string().uuid(),
+})
+
+export const CreateReplyTemplateSchema = z.object({
+  title: z.string().min(1).max(150),
+  content: z.string().min(1).max(2000),
+})
+
+export const UpdateReplyTemplateSchema = z
+  .object({
+    title: z.string().min(1).max(150).optional(),
+    content: z.string().min(1).max(2000).optional(),
+  })
+  .refine((v) => v.title !== undefined || v.content !== undefined, {
+    message: 'At least one of title or content is required',
+  })
+
+export const BulkResolveWithTemplateSchema = z.object({
+  ticketIds: z.array(z.coerce.bigint()).min(1).max(50),
+  templateId: z.string().uuid(),
+  resolution: z.enum(['RESOLVED', 'REJECTED']).default('RESOLVED'),
+})
+
 export const NotificationListQuerySchema = z.object({
   unreadOnly: z.coerce.boolean().default(false),
   page: z.coerce.number().int().min(1).default(1),

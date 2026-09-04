@@ -4,6 +4,7 @@ import { AppError } from '../../middlewares/errorHandler'
 import { adminAuditMetaFromRequest } from '../../utils/admin-audit'
 import { parseRequest } from '../../utils/zod-request'
 import { supportAdminService } from '../../services/supportAdmin.service'
+import { supportReplyTemplateService } from '../../services/supportReplyTemplate.service'
 import { csaNotificationService } from '../../services/csaNotification.service'
 import { reportAdminService } from '../../services/reportAdmin.service'
 import {
@@ -16,6 +17,10 @@ import {
   SetPrioritySchema,
   CreateNoteSchema,
   AdminUploadUrlSchema,
+  ReplyTemplateParamsSchema,
+  CreateReplyTemplateSchema,
+  UpdateReplyTemplateSchema,
+  BulkResolveWithTemplateSchema,
   NotificationListQuerySchema,
   MarkNotificationsReadSchema,
   AdminReportListQuerySchema,
@@ -103,6 +108,42 @@ export default async function supportAdminRoutes(app: FastifyInstance) {
     const body = parseRequest(CreateNoteSchema, req.body)
     const note = await supportAdminService.addNote(actorOf(req), ticketId, body.content)
     return reply.code(201).send({ note })
+  })
+
+  app.post('/tickets/bulk-resolve-with-template', { preHandler: csAuth }, async (req, reply) => {
+    const body = parseRequest(BulkResolveWithTemplateSchema, req.body)
+    const result = await supportAdminService.bulkResolveWithTemplate(
+      actorOf(req),
+      body.ticketIds,
+      body.templateId,
+      body.resolution,
+    )
+    return reply.send(result)
+  })
+
+  // --- Reply templates ---
+  app.get('/reply-templates', { preHandler: csAuth }, async (_req, reply) => {
+    const result = await supportReplyTemplateService.list()
+    return reply.send(result)
+  })
+
+  app.post('/reply-templates', { preHandler: csAuth }, async (req, reply) => {
+    const body = parseRequest(CreateReplyTemplateSchema, req.body)
+    const template = await supportReplyTemplateService.create(actorOf(req), body)
+    return reply.code(201).send({ template })
+  })
+
+  app.patch('/reply-templates/:templateId', { preHandler: csAuth }, async (req, reply) => {
+    const { templateId } = parseRequest(ReplyTemplateParamsSchema, req.params)
+    const body = parseRequest(UpdateReplyTemplateSchema, req.body)
+    const template = await supportReplyTemplateService.update(actorOf(req), templateId, body)
+    return reply.send({ template })
+  })
+
+  app.delete('/reply-templates/:templateId', { preHandler: csAuth }, async (req, reply) => {
+    const { templateId } = parseRequest(ReplyTemplateParamsSchema, req.params)
+    const result = await supportReplyTemplateService.remove(actorOf(req), templateId)
+    return reply.send(result)
   })
 
   app.post('/upload-url', { preHandler: csAuth }, async (req, reply) => {

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { POINT_HISTORY_FILTER_VALUES } from '../config/point-earnings-categories'
 import { COIN_HISTORY_FILTER_VALUES } from '../config/coin-earnings-categories'
+import { GAME_DIAMOND_HISTORY_FILTER_VALUES } from '../config/game-diamond-transaction-filters'
 
 function queryStringArray<T extends z.ZodTypeAny>(itemSchema: T) {
   return z.preprocess((v) => {
@@ -63,6 +64,26 @@ export const TopupInitiateSchema = z.object({
 export const TopupConfirmSchema = z.object({
   orderId: z.string().uuid(),
   gatewayRef: z.string().max(256),
+  idempotencyKey: z.string().min(8).max(128),
+})
+
+// ── Diamonds ───────────────────────────────────────────────────────────────
+
+export const DiamondHistoryFilterEnum = z.enum(
+  GAME_DIAMOND_HISTORY_FILTER_VALUES as unknown as [string, ...string[]],
+)
+
+export const DiamondHistoryQuerySchema = DateRangeSchema.merge(CursorPaginationSchema).extend({
+  types: queryStringArray(DiamondHistoryFilterEnum),
+})
+
+export const DiamondBuySchema = z.object({
+  coinAmount: z.coerce.bigint().positive(),
+  idempotencyKey: z.string().min(8).max(128),
+})
+
+export const DiamondRedeemSchema = z.object({
+  diamondAmount: z.coerce.bigint().positive(),
   idempotencyKey: z.string().min(8).max(128),
 })
 

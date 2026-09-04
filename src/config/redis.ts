@@ -99,6 +99,12 @@ export const RedisKeys = {
   otpPhoneRequestCount: (providerPhone: string) => `otp:phone-request-count:${providerPhone}`,
   /** Cached OTP delivery routing config (interval for SMS trigger). */
   otpDeliveryConfig: () => 'otp:delivery-config',
+  /** Cached OTP per-country cost rate overrides (whatsapp/sms). */
+  otpCostRates: () => 'otp:cost-rates',
+  /** Cached running EC2/RDS/ElastiCache inventory (admin infra-cost dashboard). */
+  infraCostInventory: () => 'infra-cost:inventory',
+  /** Cached AWS Cost Explorer spend-by-service for one UTC month. */
+  infraCostByService: (year: number, month: number) => `infra-cost:by-service:${year}-${month}`,
   /** Per-user social endpoint rate limit. */
   socialRateLimit: (endpoint: string, userId: string) => `ratelimit:social:${endpoint}:${userId}`,
   /** User level cache. */
@@ -200,6 +206,7 @@ export const RedisKeys = {
   // Wallet Redis keys
   walletCoinBalance: (userId: string) => `wallet:coins:${userId}`,
   walletPointBalance: (userId: string) => `wallet:points:${userId}`,
+  walletDiamondBalance: (userId: string) => `wallet:diamonds:${userId}`,
   /** Cached unconfirmed (in-flight escrow) points for a POINT wallet. */
   walletPointsUnconfirmed: (userId: string) => `wallet:points:unconfirmed:${userId}`,
   ctBalance: (userId: string) => `ct:balance:${userId}`,
@@ -423,8 +430,15 @@ export const RedisKeys = {
   adminViewAccess: (adminId: string) => `admin:views:access:${adminId}`,
   /** Per-admin last searched/viewed users (Redis LIST of userIds; max 10). */
   adminUserSearchHistory: (adminId: string) => `admin:user-search-history:${adminId}`,
-  /** Master ledger: active house (treasury / company-agency) account ids. */
+  /** Master ledger: active house (treasury / company-agency / game-house) account ids. */
   ledgerHouseAccounts: () => 'ledger:house-accounts',
+  /** Cached active game-provider catalog (`GameProvider.id`); Redis-fronted mirror of the provider's game list. */
+  gameCatalog: (providerId: string) => `game:catalog:${providerId}`,
+  /** One-time launch code issued by `POST /games/:gameId/launch`; GETDEL on first BAISHUN `get_sstoken` call. */
+  gameLaunchCode: (code: string) => `game:launch-code:${code}`,
+  /** Inbound webhook signature replay guard: `SET NX EX` on the provider's signature_nonce. */
+  gameProviderNonce: (providerCode: string, nonce: string) =>
+    `game:nonce:${providerCode}:${nonce}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */
@@ -477,6 +491,16 @@ export const OTP_SMS_TRIGGER_INTERVAL_SEC_DEFAULT = 120
 export const OTP_SMS_TRIGGER_AFTER_COUNT = 3
 /** Cached OTP delivery config TTL (5 minutes). */
 export const OTP_DELIVERY_CONFIG_TTL = 300
+/** Cached OTP per-country cost rate overrides TTL (5 minutes). */
+export const OTP_COST_RATES_TTL = 300
+/** Cached EC2/RDS/ElastiCache inventory TTL (15 minutes) — cheap AWS calls, but no need to refetch every page load. */
+export const INFRA_COST_INVENTORY_TTL = 900
+/**
+ * Cached Cost Explorer spend-by-service TTL (1 hour). GetCostAndUsage is billed per API
+ * call (not free) and Cost Explorer data itself lags ~24h, so there's no benefit to
+ * fetching more often than this even for the current, still-forming month.
+ */
+export const INFRA_COST_BY_SERVICE_TTL = 3600
 
 /** Wallet: cached balance TTL (5 minutes). */
 /** Broadcast progress/pending keys — safety ceiling; normal completion deletes them explicitly. */

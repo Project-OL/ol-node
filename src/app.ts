@@ -40,6 +40,9 @@ import blockRoutes from './routes/v1/block.routes'
 import reportRoutes from './routes/v1/report.routes'
 import reminderRoutes from './routes/v1/reminder.routes'
 import { walletCoinsRoutes } from './routes/v1/wallet-coins.routes'
+import { walletDiamondsRoutes } from './routes/v1/wallet-diamonds.routes'
+import { gamesRoutes } from './routes/v1/games.routes'
+import { gameWebhooksRoutes } from './routes/v1/game-webhooks.routes'
 import { walletPointsRoutes } from './routes/v1/wallet-points.routes'
 import { walletLevelsRoutes } from './routes/v1/wallet-levels.routes'
 import callRoutes from './routes/v1/call.routes'
@@ -51,6 +54,7 @@ import subscriptionRoutes from './routes/v1/subscription.routes'
 import guardianRoutes from './routes/v1/guardian.routes'
 import { registerAdminAuthRoutes } from './routes/v1/admin-auth.routes'
 import otpDeliveryAdminRoutes from './routes/v1/otp-delivery-admin.routes'
+import infraCostAdminRoutes from './routes/v1/infra-cost-admin.routes'
 import superHostRoutes from './routes/v1/super-host.routes'
 import { supportRoutes } from './routes/v1/support.routes'
 import storeRoutes from './routes/v1/store.routes'
@@ -243,8 +247,14 @@ export async function buildApp() {
   await app.register(reportRoutes, { prefix: `${prefix}/reports` })
   await app.register(reminderRoutes, { prefix: `${prefix}/reminders` })
   await app.register(walletCoinsRoutes, { prefix: `${prefix}/wallet/coins` })
+  await app.register(walletDiamondsRoutes, { prefix: `${prefix}/wallet/diamonds` })
   await app.register(walletPointsRoutes, { prefix: `${prefix}/wallet/points` })
   await app.register(walletLevelsRoutes, { prefix: `${prefix}/wallet/levels` })
+  await app.register(gamesRoutes, { prefix: `${prefix}/games` })
+  // Inbound merchant-server webhooks called BY game providers (e.g. BAISHUN) — not under
+  // JWT auth, gated by gameProviderWebhookAuth instead. Kept out of /webhooks (Epay/live)
+  // since the envelope/signature scheme is provider-specific, not shared.
+  await app.register(gameWebhooksRoutes, { prefix: `${prefix}/game-webhooks` })
   await app.register(callRoutes, { prefix: `${prefix}/call` })
   await app.register(giftRoutes, { prefix: `${prefix}/gifts` })
   await app.register(giftGalleryRoutes, { prefix: `${prefix}/gift-gallery` })
@@ -256,6 +266,7 @@ export async function buildApp() {
     async (adminApp) => {
       await registerAdminAuthRoutes(adminApp)
       await adminApp.register(otpDeliveryAdminRoutes)
+      await adminApp.register(infraCostAdminRoutes)
       await adminApp.register(systemSettingsAdminRoutes)
       await adminApp.register(superHostRoutes)
       await adminApp.register(storeAdminRoutes)

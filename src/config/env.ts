@@ -121,6 +121,10 @@ const envSchema = z
     FACE_REGISTRATION_RATE_SESSION_PER_HOUR: z.coerce.number().int().positive().default(10),
     FACE_REGISTRATION_RATE_VERIFY_PER_HOUR: z.coerce.number().int().positive().default(20),
     FACE_REGISTRATION_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+    /** A non-terminal face_registration_sessions row older than this self-heals via a
+     * periodic sweep (auto-EXPIRED) instead of requiring admin intervention -- covers a
+     * client that hung mid-flow (e.g. the native liveness SDK never calling back). */
+    FACE_REGISTRATION_SESSION_STALE_MINUTES: z.coerce.number().int().positive().default(30),
     /** When true, `POST …/verify` requires supplemental video uploaded first. */
     FACE_REGISTRATION_SUPPLEMENTAL_VIDEO_REQUIRED: z.coerce.boolean().default(false),
     FACE_REGISTRATION_VIDEO_MAX_BYTES: z.coerce.number().int().positive().default(40_000_000),
@@ -213,6 +217,8 @@ const envSchema = z
     STATIC_OTP_DEV: z.string().length(5).optional(), // e.g. "22222" for dev; when set, OTP is fixed and hashed
     SMS_PROVIDER_API_KEY: z.string().optional(),
     OTP_DELIVERY_ENABLED: z.coerce.boolean().default(false),
+    /** When false (default), a failed WhatsApp OTP send does not retry via SMS. Threshold-based direct SMS is unaffected. */
+    OTP_WHATSAPP_SMS_FALLBACK_ENABLED: z.coerce.boolean().default(false),
     MSG91_AUTH_KEY: z.string().optional(),
     MSG91_SMS_TEMPLATE_ID: z.string().optional(),
     MSG91_WHATSAPP_TEMPLATE_ID: z.string().optional(),
@@ -289,6 +295,17 @@ const envSchema = z
     EPAY_BASE_URL: z.string().url().default('https://epay.invalid'),
     EPAY_API_KEY: z.string().min(1).default('epay-test-key'),
     EPAY_WEBHOOK_SECRET: z.string().min(1).default('epay-test-secret'),
+
+    // Game provider — BAISHUN (first concrete adapter of the generic game-provider
+    // abstraction). All optional: the BAISHUN adapter is disabled (games hidden from the
+    // catalog) until these are set. See docs/flow-md/game-integration-flow.md.
+    GAME_PROVIDER_BAISHUN_BASE_URL: z.string().url().optional(),
+    GAME_PROVIDER_BAISHUN_APP_ID: z.string().min(1).optional(),
+    GAME_PROVIDER_BAISHUN_APP_CHANNEL: z.string().min(1).optional(),
+    /** BAISHUN merchant appKey — signs outbound calls, verifies inbound signatures. Secret; never logged. */
+    GAME_PROVIDER_BAISHUN_APP_KEY: z.string().min(1).optional(),
+    /** Publicly accessible 60x60 diamond icon URL sent in getConfig()'s gameConfig.currencyIcon. */
+    GAME_DIAMOND_ICON_URL: z.string().url().optional(),
 
     /** Shared secret for LiveKit backend → ol-node-rest live session webhooks (must match LiveKit server). */
     LIVE_WEBHOOK_SECRET: z.string().min(32),

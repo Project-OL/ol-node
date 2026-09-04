@@ -2,6 +2,7 @@ import { CoinTxType, LedgerDirection, PointTxType, Prisma } from '@prisma/client
 import { prismaRead } from '../config/database'
 import { getTransactionName, type LedgerWalletContext } from '../config/transaction-display-names'
 import { formatUserName } from './user-display'
+import { POINT_WITHDRAWAL_TX_TYPES } from './point-transaction-detail'
 
 export const COUNTERPARTY_USER_SELECT = {
   id: true,
@@ -57,6 +58,14 @@ export function mapUserCounterpartyDetails(
     name: formatUserName(user),
     publicId: user.publicId.toString(),
     avatarUrl: user.avatarUrl,
+  }
+}
+
+/** Withdrawal/payroll counterparty (the agency) — name/publicId only, never userId or avatarUrl. */
+function mapAgencyCounterpartyDetails(user: CounterpartyUserRow): NonNullable<CounterpartyDetails> {
+  return {
+    name: formatUserName(user),
+    publicId: user.publicId.toString(),
   }
 }
 
@@ -251,7 +260,7 @@ export async function buildCounterpartyDetailsMap(
       const agent = agentId ? userMap.get(agentId) : undefined
       details = agent
         ? {
-            ...mapUserCounterpartyDetails(agent),
+            ...mapAgencyCounterpartyDetails(agent),
             transactionId: entry.refId ?? undefined,
           }
         : entry.refId
@@ -266,7 +275,13 @@ export async function buildCounterpartyDetailsMap(
       details = owner ? mapUserCounterpartyDetails(owner) : null
     } else if (usesUserCounterparty(walletContext, entry.txType) && entry.counterpartyId) {
       const user = userMap.get(entry.counterpartyId)
-      details = user ? mapUserCounterpartyDetails(user) : null
+      // Withdrawal/payroll counterparty is the paying agency -- never expose its
+      // userId or avatarUrl to the host, only name/publicId.
+      details = user
+        ? walletContext === 'POINT' && POINT_WITHDRAWAL_TX_TYPES.has(entry.txType as PointTxType)
+          ? mapAgencyCounterpartyDetails(user)
+          : mapUserCounterpartyDetails(user)
+        : null
     }
 
     if (options?.alwaysIncludeUserCounterparty && entry.counterpartyId) {

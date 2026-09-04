@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import type { FaceProfileStatus } from '@prisma/client'
 import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
@@ -9,6 +10,14 @@ import {
 } from '../lib/rekognition.client'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
+import {
+  faceRegistrationRepository,
+  ATTENTION_NEEDED_STATUSES,
+} from '../repositories/faceRegistration.repository'
+import { redisClient, RedisKeys } from '../config/redis'
+import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
+import { mapPool } from '../utils/map-pool'
+import { storageService } from './storage.service'
 import { auditService } from './audit.service'
 import { afterFaceProfileRevoked } from './face-profile-invalidate'
 
@@ -36,6 +45,15 @@ function formatUserName(input: {
 }): string {
   const name = [input.firstName, input.lastName].filter(Boolean).join(' ').trim()
   return name || input.username || 'Unknown'
+}
+
+function toFailureImageUrl(key: string | null | undefined): string | null {
+  if (!key?.trim()) return null
+  try {
+    return storageService.getCdnOrS3PublicUrl(key)
+  } catch {
+    return null
+  }
 }
 
 function formatDisplayPublicId(input: {
@@ -354,6 +372,308 @@ export const faceVerificationAdminService = {
     return {
       success: true,
       message: 'Face removed from Rekognition collection only; database profile unchanged.',
+    }
+  },
+
+  /**
+   * Force-terminate every non-terminal `face_registration_sessions` row for a user
+   * (PENDING/UPLOADED/PROCESSING/LIVENESS_PASSED/INDEX_PENDING) and clear the liveness
+   * session/verify rate-limit + processing-lock Redis keys tied to those attempts.
+   * For a user whose registration is stuck (worker outage mid-flight, or a client that
+   * abandoned a session without calling /verify) — `GET /face-verification/me` prefers a
+   * hung session's PENDING_INDEX status over the profile, and `POST /face-registration/session`
+   * only auto-expires the earliest-stage statuses, so neither self-heals a session stuck
+   * past LIVENESS_PASSED/INDEX_PENDING without this.
+   */
+  async clearStuckRegistrationSessions(
+    targetUserId: string,
+    adminUserId: string,
+    reason?: string,
+  ): Promise<{ success: true; clearedSessionIds: string[]; message: string }> {
+    const failureReason = reason?.trim() ? `admin_cleared: ${reason.trim()}` : 'admin_cleared_stuck'
+    const clearedSessionIds = await faceRegistrationRepository.clearStuckSessionsForUser(
+      targetUserId,
+      failureReason,
+    )
+
+    await redisClient.del(
+      RedisKeys.faceRegistrationSessionRate(targetUserId),
+      RedisKeys.faceRegistrationVerifyRate(targetUserId),
+      RedisKeys.faceRegistrationLock(targetUserId),
+    )
+
+    auditService.log({
+      userId: targetUserId,
+      actionType: 'face_registration_sessions_admin_cleared',
+      actionStatus: 'success',
+      actionDetails: { adminUserId, reason: reason ?? null, clearedSessionIds },
+    })
+
+    return {
+      success: true,
+      clearedSessionIds,
+      message:
+        clearedSessionIds.length > 0
+          ? `Cleared ${clearedSessionIds.length} stuck session(s) and reset rate limits. User can register again.`
+          : 'No open sessions were stuck; rate limits and lock reset anyway.',
+    }
+  },
+
+  /**
+   * Bulk version of `clearStuckRegistrationSessions`: clears every user currently
+   * matching the "needs attention" worklist (same filters as `listStuckRegistrationSessions`
+   * -- `minAgeSec`/`userId`), not just one. Runs entirely server-side in a single request
+   * rather than the caller looping individual clear calls, which is both far faster (bounded
+   * concurrency via mapPool) and avoids hammering the API with hundreds of separate writes.
+   *
+   * Drains the worklist page-by-page: each successful clear removes that user from the
+   * "needs attention" set, so re-fetching page 1 after each batch converges to empty on
+   * its own. Capped at 200 iterations as a safety net against a pathological case where
+   * something keeps re-qualifying mid-run (not expected in normal operation).
+   */
+  async clearAllStuckRegistrationSessions(
+    adminUserId: string,
+    input: { minAgeSec?: number; userId?: string; reason?: string },
+  ): Promise<{
+    success: true
+    usersCleared: number
+    sessionsCleared: number
+    message: string
+  }> {
+    const minAgeSec = Math.max(0, input.minAgeSec ?? 5)
+    const failureReason = input.reason?.trim()
+      ? `admin_bulk_cleared: ${input.reason.trim()}`
+      : 'admin_bulk_cleared_stuck'
+    const batchSize = 100
+    const concurrency = 10
+
+    let usersCleared = 0
+    let sessionsCleared = 0
+
+    for (let guard = 0; guard < 200; guard++) {
+      const { items } = await faceRegistrationRepository.listStuckSessions({
+        minAgeSec,
+        page: 1,
+        limit: batchSize,
+        userId: input.userId,
+      })
+      if (items.length === 0) break
+
+      const results = await mapPool(items, concurrency, async (row) => {
+        const clearedIds = await faceRegistrationRepository.clearStuckSessionsForUser(
+          row.user_id,
+          failureReason,
+        )
+        await redisClient.del(
+          RedisKeys.faceRegistrationSessionRate(row.user_id),
+          RedisKeys.faceRegistrationVerifyRate(row.user_id),
+          RedisKeys.faceRegistrationLock(row.user_id),
+        )
+        return clearedIds.length
+      })
+
+      for (const clearedCount of results) {
+        if (clearedCount > 0) {
+          usersCleared += 1
+          sessionsCleared += clearedCount
+        }
+      }
+
+      if (items.length < batchSize) break
+    }
+
+    auditService.log({
+      userId: null,
+      actionType: 'face_registration_sessions_admin_bulk_cleared',
+      actionStatus: 'success',
+      actionDetails: {
+        adminUserId,
+        reason: input.reason ?? null,
+        minAgeSec,
+        scopedUserId: input.userId ?? null,
+        usersCleared,
+        sessionsCleared,
+      },
+    })
+
+    return {
+      success: true,
+      usersCleared,
+      sessionsCleared,
+      message:
+        usersCleared > 0
+          ? `Cleared ${sessionsCleared} session(s) across ${usersCleared} user(s).`
+          : 'Nothing matched the current filters.',
+    }
+  },
+
+  /**
+   * Paginated worklist of users whose MOST RECENT registration attempt still needs
+   * attention — hung (non-terminal) or ended in a failure they haven't retried past
+   * yet (LIVENESS_FAILED/VALIDATION_FAILED/REJECTED) — older than `minAgeSec`, across
+   * all users (or scoped to one via `userId`). For admin triage: `recheckRegistrationSession`
+   * (non-destructive, only works on hung sessions) or `clearStuckRegistrationSessions`
+   * (force-expire + reset rate limits, safe on both hung and already-failed sessions) on each.
+   */
+  async listStuckRegistrationSessions(input: {
+    minAgeSec?: number
+    page?: number
+    limit?: number
+    userId?: string
+  }) {
+    const minAgeSec = Math.max(0, input.minAgeSec ?? 5)
+    const page = Math.max(1, input.page ?? 1)
+    const limit = Math.min(100, Math.max(1, input.limit ?? 20))
+    const { items, total } = await faceRegistrationRepository.listStuckSessions({
+      minAgeSec,
+      page,
+      limit,
+      userId: input.userId,
+    })
+    const now = Date.now()
+    return {
+      minAgeSec,
+      page,
+      limit,
+      total,
+      sessions: items.map((s) => ({
+        sessionId: s.id,
+        userId: s.user_id,
+        publicId: formatDisplayPublicId({
+          publicId: s.public_id,
+          currentVipPublicId: s.current_vip_public_id,
+        }),
+        name: formatUserName({
+          firstName: s.first_name,
+          lastName: s.last_name,
+          username: s.username,
+        }),
+        status: s.status,
+        awsSessionId: s.aws_session_id,
+        riskScore: s.risk_score,
+        failureReason: s.failure_reason,
+        failureImageUrl: toFailureImageUrl(s.failure_image_s3_key),
+        createdAt: s.created_at.toISOString(),
+        updatedAt: s.updated_at.toISOString(),
+        stuckForSec: Math.floor((now - s.created_at.getTime()) / 1000),
+      })),
+    }
+  },
+
+  /**
+   * Every session for one user that still needs admin attention, with age — the
+   * per-user-detail equivalent of `listStuckRegistrationSessions`. Prefers the open
+   * (non-terminal) sessions; if there are none, falls back to the single latest
+   * session when it ended in a failure the user hasn't retried past yet
+   * (LIVENESS_FAILED/VALIDATION_FAILED/REJECTED) — same "needs attention" definition
+   * as the global worklist, just scoped to one user instead of a DB-wide query.
+   */
+  async getOpenRegistrationSessionsForUser(targetUserId: string) {
+    const open = await faceRegistrationRepository.findOpenSessionsForUser(targetUserId)
+    const now = Date.now()
+    const toRow = (s: {
+      id: string
+      status: string
+      awsSessionId: string | null
+      riskScore: number
+      failureReason: string | null
+      failureImageS3Key?: string | null
+      createdAt: Date
+      updatedAt: Date
+    }) => ({
+      sessionId: s.id,
+      status: s.status,
+      awsSessionId: s.awsSessionId,
+      riskScore: s.riskScore,
+      failureReason: s.failureReason,
+      failureImageUrl: toFailureImageUrl(s.failureImageS3Key),
+      createdAt: s.createdAt.toISOString(),
+      updatedAt: s.updatedAt.toISOString(),
+      stuckForSec: Math.floor((now - s.createdAt.getTime()) / 1000),
+    })
+
+    if (open.length > 0) return open.map(toRow)
+
+    const latest = await faceRegistrationRepository.findLatestForUser(targetUserId)
+    if (latest && (ATTENTION_NEEDED_STATUSES as string[]).includes(latest.status)) {
+      return [toRow(latest)]
+    }
+    return []
+  },
+
+  /**
+   * Non-destructive alternative to clearing: re-queue the BullMQ verify job for a
+   * session right now instead of waiting for the client's next poll / the job's own
+   * exponential backoff. Works for PENDING/UPLOADED (client finished the liveness SDK
+   * but the app never called `/verify` — AWS already has the result waiting) and
+   * PROCESSING (a job was enqueued but never completed, e.g. during the DB outage this
+   * capability was built in response to). LIVENESS_PASSED/INDEX_PENDING are the
+   * worker-face-index indexing pipeline's domain, not this queue — rejected with a
+   * pointer to `clearStuckRegistrationSessions` instead.
+   */
+  async recheckRegistrationSession(
+    targetUserId: string,
+    sessionId: string,
+    adminUserId: string,
+  ): Promise<{ success: true; sessionId: string; message: string }> {
+    const session = await faceRegistrationRepository.findByIdForUser(sessionId, targetUserId)
+    if (!session) {
+      throw new AppError(404, 'Registration session not found', 'FACE_REG_SESSION_NOT_FOUND')
+    }
+    if (session.status === 'LIVENESS_PASSED' || session.status === 'INDEX_PENDING') {
+      throw new AppError(
+        409,
+        'Session already passed liveness and is awaiting indexing by worker-face-index, not the verify queue. If it is genuinely stuck, use the clear action instead.',
+        'FACE_REG_SESSION_PAST_VERIFY_STAGE',
+        { state: session.status },
+      )
+    }
+    if (
+      session.status !== 'PENDING' &&
+      session.status !== 'UPLOADED' &&
+      session.status !== 'PROCESSING'
+    ) {
+      throw new AppError(
+        409,
+        'Session is not in a re-checkable state',
+        'FACE_REG_SESSION_INVALID_STATE',
+        {
+          state: session.status,
+        },
+      )
+    }
+    if (!session.awsSessionId) {
+      throw new AppError(
+        409,
+        'Session has no AWS liveness session to check',
+        'FACE_REG_SESSION_NO_AWS_SESSION',
+      )
+    }
+
+    const idempotencyKey = randomUUID()
+    await faceRegistrationRepository.updateSession(sessionId, {
+      status: 'PROCESSING',
+      idempotencyKey,
+    })
+    await faceRegistrationRepository.appendAudit({
+      sessionId,
+      userId: targetUserId,
+      action: 'admin_verify_requeued',
+      details: { adminUserId, idempotencyKey, previousStatus: session.status },
+    })
+    await enqueueFaceRegistrationVerification({ sessionId, userId: targetUserId, idempotencyKey })
+
+    auditService.log({
+      userId: targetUserId,
+      actionType: 'face_registration_admin_recheck',
+      actionStatus: 'success',
+      actionDetails: { adminUserId, sessionId },
+    })
+
+    return {
+      success: true,
+      sessionId,
+      message: 'Verify job re-queued. Poll GET /face-verification/me for the result.',
     }
   },
 
