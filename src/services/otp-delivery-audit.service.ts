@@ -84,7 +84,7 @@ export async function resolveOtpCharge(
   if (normalizedCountry) {
     const map = await getCountryRateMap()
     const override = map.get(means)?.get(normalizedCountry)
-    if (override) return override
+    if (override) return { chargeMinor: override.rateMinor, currency: override.currency }
   }
 
   return {
