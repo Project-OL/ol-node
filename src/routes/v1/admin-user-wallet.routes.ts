@@ -40,7 +40,7 @@ export default async function adminUserWalletRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users', 'Wallet'],
         description:
-          'Filter type values for admin user transaction history (personal coins, points, trading coins).',
+          'Filter type values for admin user transaction history (personal coins, points, trading coins, diamonds).',
       },
     },
     async (_request, reply) => {
@@ -101,6 +101,24 @@ export default async function adminUserWalletRoutes(app: FastifyInstance) {
           request.params.userId,
           filter,
         ),
+      )
+    },
+  )
+
+  app.get<{ Params: { userId: string } }>(
+    '/users/:userId/transactions/diamonds',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Wallet'],
+        description:
+          'DIAMOND transaction history for a user — game wagers/results/refunds, Coin↔Diamond conversions, and admin diamond adjustments. Rows are never revertable (game settlement is paired against the GAME_HOUSE account on BAISHUN\'s order_id); correct a balance with POST /admin/currency/adjust instead.',
+      },
+    },
+    async (request, reply) => {
+      const filter = parseTxQuery(request.query)
+      return reply.send(
+        await adminUserTransactionsService.listDiamondTransactions(request.params.userId, filter),
       )
     },
   )
