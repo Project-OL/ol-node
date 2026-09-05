@@ -202,12 +202,24 @@ export const ledgerAccountRoleService = {
   },
 
   /**
-   * Deactivate a role. Refused while the account still holds units, because the
-   * balance would silently reappear as a customer liability and break the
-   * float-reconciliation identity.
+   * Deactivate one role held by a user. Refused while the account still holds
+   * units, because the balance would silently reappear as a customer liability
+   * and break the float-reconciliation identity. A user can hold more than one
+   * role (e.g. TREASURY + GAME_HOUSE) — `role` says which one to remove; if
+   * omitted it only works when the user holds exactly one.
    */
-  async deactivate(params: { userId: string; force?: boolean }) {
-    const existing = await ledgerAccountRoleRepository.findByUserId(params.userId)
+  async deactivate(params: { userId: string; role?: LedgerAccountRoleType; force?: boolean }) {
+    const roles = await ledgerAccountRoleRepository.findAllByUserId(params.userId)
+    if (!params.role && roles.length > 1) {
+      throw new AppError(
+        400,
+        'User holds more than one role — specify which one to remove',
+        'MULTIPLE_ROLES_SPECIFY_ONE',
+      )
+    }
+    const existing = params.role
+      ? roles.find((r) => r.role === params.role)
+      : roles[0]
     if (!existing) throw new AppError(404, 'House account role not found', 'ROLE_NOT_FOUND')
 
     if (!params.force) {
@@ -223,8 +235,8 @@ export const ledgerAccountRoleService = {
       }
     }
 
-    await ledgerAccountRoleRepository.deactivate(params.userId)
+    await ledgerAccountRoleRepository.deactivate(params.userId, existing.role)
     await this.bustCache()
-    return { ok: true as const, userId: params.userId }
+    return { ok: true as const, userId: params.userId, role: existing.role }
   },
 }

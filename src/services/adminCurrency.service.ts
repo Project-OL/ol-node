@@ -39,7 +39,7 @@ type AdjustmentUser = {
   avatarUrl: string | null
 }
 
-type AdjustmentSource = 'COIN' | 'POINT' | 'TRADING_COIN'
+type AdjustmentSource = 'COIN' | 'POINT' | 'TRADING_COIN' | 'DIAMOND'
 
 type AdjustmentRow = {
   id: string
@@ -69,7 +69,9 @@ function decodeCursor(cursor: string): { t: Date; id: string; s: AdjustmentSourc
     if (!raw.t || !raw.id || !raw.s) return null
     const t = new Date(raw.t)
     if (Number.isNaN(t.getTime())) return null
-    if (raw.s !== 'COIN' && raw.s !== 'POINT' && raw.s !== 'TRADING_COIN') return null
+    if (raw.s !== 'COIN' && raw.s !== 'POINT' && raw.s !== 'TRADING_COIN' && raw.s !== 'DIAMOND') {
+      return null
+    }
     return { t, id: raw.id, s: raw.s }
   } catch {
     return null
@@ -122,6 +124,17 @@ export const adminCurrencyService = {
           auditMeta: params.auditMeta,
         })
       }
+      if (currency === 'DIAMOND') {
+        return adminWalletService.creditUserWallets({
+          adminUserId: params.adminUserId,
+          targetUserId: userId,
+          diamonds: amount,
+          description,
+          idempotencyKey,
+          promotional,
+          auditMeta: params.auditMeta,
+        })
+      }
       // No cash-in row is written any more. Under the treasury imputed-ledger
       // model, revenue comes from units leaving a house account at 10,000 = $1;
       // pairing a USD figure to the mint as well would double count.
@@ -149,6 +162,16 @@ export const adminCurrencyService = {
     }
     if (currency === 'POINT') {
       return adminWalletService.debitPoints({
+        adminUserId: params.adminUserId,
+        targetUserId: userId,
+        amount,
+        description,
+        idempotencyKey,
+        auditMeta: params.auditMeta,
+      })
+    }
+    if (currency === 'DIAMOND') {
+      return adminWalletService.debitDiamonds({
         adminUserId: params.adminUserId,
         targetUserId: userId,
         amount,
@@ -186,7 +209,7 @@ export const adminCurrencyService = {
 
     const sources: AdjustmentSource[] = query.currency
       ? [query.currency]
-      : ['COIN', 'POINT', 'TRADING_COIN']
+      : ['COIN', 'POINT', 'TRADING_COIN', 'DIAMOND']
 
     const fetchLimit = limit + 1
     const rows: AdjustmentRow[] = []
@@ -249,9 +272,16 @@ export const adminCurrencyService = {
       }
 
       const currencyType =
-        source === 'TRADING_COIN' ? WalletCurrencyType.TRADING_COIN : WalletCurrencyType.COIN
+        source === 'TRADING_COIN'
+          ? WalletCurrencyType.TRADING_COIN
+          : source === 'DIAMOND'
+            ? WalletCurrencyType.DIAMOND
+            : WalletCurrencyType.COIN
+      // Admin diamond adjustments use the dedicated GAME_ADJUSTMENT tx type (shared with
+      // no other flow), so they don't collide with real settlement rows on the same wallet.
+      const txType = source === 'DIAMOND' ? CoinTxType.GAME_ADJUSTMENT : CoinTxType.ADJUSTMENT
       const coinWhere: Prisma.CoinLedgerEntryWhereInput = {
-        txType: CoinTxType.ADJUSTMENT,
+        txType,
         wallet: {
           currencyType,
           ...(query.userId ? { userId: query.userId } : {}),
