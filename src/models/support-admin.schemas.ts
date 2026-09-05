@@ -96,7 +96,8 @@ export const UpdateReplyTemplateSchema = z
   })
 
 export const BulkResolveWithTemplateSchema = z.object({
-  ticketIds: z.array(z.coerce.bigint()).min(1).max(50),
+  /** No upper bound — the admin portal lets a CSA select tickets across pages. */
+  ticketIds: z.array(z.coerce.bigint()).min(1),
   templateId: z.string().uuid(),
   resolution: z.enum(['RESOLVED', 'REJECTED']).default('RESOLVED'),
 })
