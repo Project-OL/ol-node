@@ -32,10 +32,18 @@ export const ledgerAccountRoleRepository = {
     })
   },
 
-  async findByUserId(userId: string) {
-    return prismaRead.ledgerAccountRole.findUnique({ where: { userId } })
+  /** All roles held by a user (usually one; a TREASURY account can also be GAME_HOUSE). */
+  async findAllByUserId(userId: string) {
+    return prismaRead.ledgerAccountRole.findMany({ where: { userId } })
   },
 
+  async findByUserIdAndRole(userId: string, role: LedgerAccountRoleType) {
+    return prismaRead.ledgerAccountRole.findUnique({
+      where: { userId_role: { userId, role } },
+    })
+  },
+
+  /** Upserts one (user, role) row — does not touch any other role the same user holds. */
   async upsert(data: {
     userId: string
     role: LedgerAccountRoleType
@@ -45,7 +53,7 @@ export const ledgerAccountRoleRepository = {
     createdByAdminId?: string | null
   }): Promise<LedgerAccountRoleRow> {
     return prisma.ledgerAccountRole.upsert({
-      where: { userId: data.userId },
+      where: { userId_role: { userId: data.userId, role: data.role } },
       create: {
         userId: data.userId,
         role: data.role,
@@ -56,7 +64,6 @@ export const ledgerAccountRoleRepository = {
         createdByAdminId: data.createdByAdminId ?? null,
       },
       update: {
-        role: data.role,
         label: data.label ?? null,
         note: data.note ?? null,
         isActive: true,
@@ -66,9 +73,9 @@ export const ledgerAccountRoleRepository = {
     })
   },
 
-  async deactivate(userId: string): Promise<void> {
+  async deactivate(userId: string, role: LedgerAccountRoleType): Promise<void> {
     await prisma.ledgerAccountRole.update({
-      where: { userId },
+      where: { userId_role: { userId, role } },
       data: { isActive: false },
     })
   },

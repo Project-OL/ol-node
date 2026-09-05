@@ -42,7 +42,7 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Currency'],
         description:
-          'Unified mint/burn: credit or debit COIN, POINT, or TRADING_COIN for a user in one request.',
+          'Unified mint/burn: credit or debit COIN, POINT, TRADING_COIN, or DIAMOND for a user in one request.',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -248,7 +248,7 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Currency'],
         description:
-          'Register or update a house account. The user must be an agency agent so it can send trading coins.',
+          'Register or update a house account role (TREASURY, COMPANY_AGENCY, or GAME_HOUSE). A user can hold more than one role — e.g. an existing TREASURY account can also be registered as GAME_HOUSE. TREASURY/COMPANY_AGENCY require the user to be an agency agent so it can send trading coins; GAME_HOUSE does not.',
       },
     },
     async (request, reply) => {
@@ -304,6 +304,7 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser!.id
       const result = await ledgerAccountRoleService.deactivate({
         userId,
+        role: parsed.data.role,
         force: parsed.data.force,
       })
       auditService.logAdmin({
@@ -311,7 +312,7 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
         targetUserId: userId,
         actionType: 'ADMIN_LEDGER_HOUSE_ACCOUNT_REMOVE',
         actionStatus: 'success',
-        actionDetails: { force: parsed.data.force === true },
+        actionDetails: { role: result.role, force: parsed.data.force === true },
         request: adminAuditMetaFromRequest(request),
       })
       return reply.send(result)
