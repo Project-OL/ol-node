@@ -13,6 +13,7 @@ import {
   AdminTicketMessagesQuerySchema,
   AdminReplySchema,
   ResolveTicketSchema,
+  ReopenTicketSchema,
   AssignTicketSchema,
   SetPrioritySchema,
   CreateNoteSchema,
@@ -35,6 +36,8 @@ const reportAuth = [
   authenticateAdmin,
   requireAdminRole('CUSTOMER_SUPPORT', 'SUPER_ADMIN', 'MODERATOR'),
 ]
+/** Reopen is SUPER_ADMIN-only; the service re-checks, since a view grant can widen this. */
+const superAdminAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 
 function actorOf(req: FastifyRequest) {
   if (!req.adminUser) throw new AppError(401, 'Not authenticated as admin', 'ADMIN_TOKEN_MISSING')
@@ -68,6 +71,14 @@ export default async function supportAdminRoutes(app: FastifyInstance) {
     const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
     const body = parseRequest(ResolveTicketSchema, req.body)
     const ticket = await supportAdminService.resolve(actorOf(req), ticketId, body)
+    return reply.send({ ticket })
+  })
+
+  // SUPER_ADMIN only: undo a resolve/reject while the ticket is still PENDING_REVIEW.
+  app.post('/tickets/:ticketId/reopen', { preHandler: superAdminAuth }, async (req, reply) => {
+    const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
+    const body = parseRequest(ReopenTicketSchema, req.body ?? {})
+    const ticket = await supportAdminService.reopen(actorOf(req), ticketId, body)
     return reply.send({ ticket })
   })
 
