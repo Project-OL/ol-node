@@ -683,11 +683,19 @@ export const faceVerificationAdminService = {
    * Resolve a duplicate registration: clear the blocked user's DUPLICATE_FACE row and
    * revoke the indexed owner's Rekognition face so both accounts can register again.
    */
-  /** Paginated worklist of pending duplicate-face cases, both accounts + both images per row. */
-  async listPendingDuplicates(input: { page?: number; limit?: number }) {
+  /**
+   * Paginated worklist of pending duplicate-face cases, both accounts + both images per row.
+   * `search` filters to rows where either side matches a user id, public id, username or
+   * (partial) name.
+   */
+  async listPendingDuplicates(input: { page?: number; limit?: number; search?: string }) {
     const page = Math.max(1, input.page ?? 1)
     const limit = Math.min(50, Math.max(1, input.limit ?? 20))
-    const result = await faceVerificationRepository.listDuplicatePairsForAdmin({ page, limit })
+    const result = await faceVerificationRepository.listDuplicatePairsForAdmin({
+      page,
+      limit,
+      search: input.search,
+    })
 
     return {
       page: result.page,
@@ -711,8 +719,49 @@ export const faceVerificationAdminService = {
             }
           : null,
         faceMatchSimilarity: blocked.faceMatchSimilarity,
+        /** True when an admin parked this row at the bottom of the worklist. */
+        deprioritized: blocked.adminSortWeight > 0,
       })),
     }
+  },
+
+  /** Move a pending duplicate case below every other row in the admin worklist. */
+  async sendDuplicateToBottom(blockedUserId: string, adminUserId: string) {
+    const profile = await faceVerificationRepository.getProfileByUserId(blockedUserId)
+    if (!profile) {
+      throw new AppError(404, 'No face profile found for user', 'FACE_PROFILE_NOT_FOUND')
+    }
+    if (profile.status !== 'DUPLICATE_FACE') {
+      throw new AppError(
+        409,
+        'User is not currently blocked as a duplicate',
+        'FACE_PROFILE_NOT_DUPLICATE',
+      )
+    }
+    const updated = await faceVerificationRepository.sendDuplicateToBottom(blockedUserId)
+    auditService.log({
+      userId: blockedUserId,
+      actionType: 'face_duplicate_admin_deprioritize',
+      actionStatus: 'success',
+      actionDetails: { adminUserId, adminSortWeight: updated.adminSortWeight },
+    })
+    return { success: true as const, userId: blockedUserId, deprioritized: true as const }
+  },
+
+  /** Undo `sendDuplicateToBottom` and restore the default newest-first position. */
+  async restoreDuplicateOrder(blockedUserId: string, adminUserId: string) {
+    const profile = await faceVerificationRepository.getProfileByUserId(blockedUserId)
+    if (!profile) {
+      throw new AppError(404, 'No face profile found for user', 'FACE_PROFILE_NOT_FOUND')
+    }
+    await faceVerificationRepository.restoreDuplicateOrder(blockedUserId)
+    auditService.log({
+      userId: blockedUserId,
+      actionType: 'face_duplicate_admin_restore_order',
+      actionStatus: 'success',
+      actionDetails: { adminUserId },
+    })
+    return { success: true as const, userId: blockedUserId, deprioritized: false as const }
   },
 
   /**
