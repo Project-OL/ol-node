@@ -50,12 +50,16 @@ const lastMessagePreviewSelect = {
 } as const
 
 /**
- * Runs a paginated ticket query as two groups — everything not CLOSED, then CLOSED — so closed
- * tickets always sort to the end of a list without needing an enum-order migration. Skip/take
- * are resolved across the combined (open + closed) result so pagination stays correct.
+ * Runs a paginated ticket query across ordered status tiers — open/in-progress first, pending
+ * review next, closed last — so the list sorts by lifecycle stage without needing an enum-order
+ * migration (Postgres enum declaration order doesn't match the desired display order: OPEN,
+ * AWAITING_REPLY, CLOSED, ASSIGNED, PENDING_REVIEW). `tierStatusFilters` partitions every ticket
+ * matching `baseWhere` into disjoint groups, highest-priority (shown first) to lowest; skip/take
+ * are resolved across the combined tiers so pagination stays correct at tier boundaries.
  */
-async function findOpenThenClosed<T extends Prisma.SupportTicketInclude | undefined>(params: {
+async function findByStatusTiers<T extends Prisma.SupportTicketInclude | undefined>(params: {
   baseWhere: Prisma.SupportTicketWhereInput
+  tierStatusFilters: Array<NonNullable<Prisma.SupportTicketWhereInput['status']>>
   orderBy:
     | Prisma.SupportTicketOrderByWithRelationInput
     | Prisma.SupportTicketOrderByWithRelationInput[]
@@ -63,44 +67,47 @@ async function findOpenThenClosed<T extends Prisma.SupportTicketInclude | undefi
   take: number
   include?: T
 }) {
-  const { baseWhere, orderBy, skip, take, include } = params
-  const openWhere: Prisma.SupportTicketWhereInput = { ...baseWhere, status: { not: 'CLOSED' } }
-  const closedWhere: Prisma.SupportTicketWhereInput = { ...baseWhere, status: 'CLOSED' }
-
-  const [openTotal, closedTotal] = await Promise.all([
-    prismaRead.supportTicket.count({ where: openWhere }),
-    prismaRead.supportTicket.count({ where: closedWhere }),
-  ])
+  const { baseWhere, tierStatusFilters, orderBy, skip, take, include } = params
+  const tierWheres = tierStatusFilters.map(
+    (status): Prisma.SupportTicketWhereInput => ({ ...baseWhere, status }),
+  )
+  const tierTotals = await Promise.all(
+    tierWheres.map((where) => prismaRead.supportTicket.count({ where })),
+  )
 
   // Prisma's payload-inference conditional types don't resolve through a generic `include`
-  // passed across a function boundary, so the two findMany results are cast to the payload
-  // shape computed from that same generic below — the actual runtime shape is whatever each
-  // caller's `include` literal produces, which is what both sides describe.
+  // passed across a function boundary, so each findMany result is cast to the payload shape
+  // computed from that same generic below — the actual runtime shape is whatever each caller's
+  // `include` literal produces, which is what both sides describe.
   type Row = Prisma.SupportTicketGetPayload<{ include: T }>
   const tickets: Row[] = []
-  if (skip < openTotal) {
+  let skipRemaining = skip
+  for (let i = 0; i < tierWheres.length && tickets.length < take; i++) {
+    const tierTotal = tierTotals[i]
+    if (skipRemaining >= tierTotal) {
+      skipRemaining -= tierTotal
+      continue
+    }
     const rows = await prismaRead.supportTicket.findMany({
-      where: openWhere,
+      where: tierWheres[i],
       orderBy,
-      skip,
-      take,
+      skip: skipRemaining,
+      take: take - tickets.length,
       include,
     })
     tickets.push(...(rows as unknown as Row[]))
+    skipRemaining = 0
   }
-  const remaining = take - tickets.length
-  if (remaining > 0) {
-    const rows = await prismaRead.supportTicket.findMany({
-      where: closedWhere,
-      orderBy,
-      skip: Math.max(0, skip - openTotal),
-      take: remaining,
-      include,
-    })
-    tickets.push(...(rows as unknown as Row[]))
-  }
-  return { tickets, total: openTotal + closedTotal }
+
+  return { tickets, total: tierTotals.reduce((sum, n) => sum + n, 0) }
 }
+
+/** Shared tier order for every default (no explicit status filter) ticket list. */
+const TICKET_STAGE_TIER_FILTERS: Array<NonNullable<Prisma.SupportTicketWhereInput['status']>> = [
+  { notIn: ['PENDING_REVIEW', 'CLOSED'] },
+  'PENDING_REVIEW',
+  'CLOSED',
+]
 
 export const supportRepository = {
   async createTicket(data: {
@@ -150,8 +157,9 @@ export const supportRepository = {
       ])
       return { tickets, total }
     }
-    return findOpenThenClosed({
+    return findByStatusTiers({
       baseWhere: { userId },
+      tierStatusFilters: TICKET_STAGE_TIER_FILTERS,
       orderBy: { updatedAt: 'desc' },
       skip: opts.skip,
       take: opts.take,
@@ -182,8 +190,9 @@ export const supportRepository = {
       ])
       return { tickets, total }
     }
-    return findOpenThenClosed({
+    return findByStatusTiers({
       baseWhere: {},
+      tierStatusFilters: TICKET_STAGE_TIER_FILTERS,
       orderBy: { updatedAt: 'desc' },
       skip: opts.skip,
       take: opts.take,
@@ -356,8 +365,9 @@ export const supportRepository = {
       ...(opts.ratedOnly ? { rating: { not: null } } : {}),
       ...(resolvedAtFilter ? { resolvedAt: resolvedAtFilter } : {}),
     }
-    return findOpenThenClosed({
+    return findByStatusTiers({
       baseWhere,
+      tierStatusFilters: TICKET_STAGE_TIER_FILTERS,
       orderBy,
       skip: opts.skip,
       take: opts.take,
