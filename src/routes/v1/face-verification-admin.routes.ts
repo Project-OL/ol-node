@@ -2,8 +2,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { AppError } from '../../middlewares/errorHandler'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import {
+  adminAcceptDuplicateBodySchema,
   adminListCollectionFacesQuerySchema,
   adminListFaceProfilesQuerySchema,
+  adminListPendingDuplicatesQuerySchema,
   adminRevokeFaceBodySchema,
 } from '../../models/face-verification.schemas'
 import { faceVerificationAdminService } from '../../services/face-verification-admin.service'
@@ -362,6 +364,76 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
         request.params.userId,
         request.params.sessionId,
         adminId,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/face-verification/duplicates/pending',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          "Paginated worklist of pending duplicate-face cases (status DUPLICATE_FACE), each row pairing the blocked user with the matched/owner account — both users' names, public ids, and reference images — for a single review-and-decide view.",
+        querystring: {
+          type: 'object',
+          properties: {
+            page: { type: 'integer', minimum: 1 },
+            limit: { type: 'integer', minimum: 1, maximum: 50 },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = adminListPendingDuplicatesQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      const result = await faceVerificationAdminService.listPendingDuplicates(parsed.data)
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/face-verification/:userId/accept-duplicate',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          "Accept both accounts despite the duplicate match: indexes the blocked user's stored image in Rekognition anyway and marks their profile INDEXED. The matched/owner account is left untouched. Use resolve-duplicate instead if the match was real and one side should re-register.",
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          properties: { reason: { type: 'string', maxLength: 500 } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const parsed = adminAcceptDuplicateBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.acceptDuplicateBothAccounts(
+        request.params.userId,
+        adminId,
+        parsed.data.reason,
       )
       return reply.send(result)
     },
