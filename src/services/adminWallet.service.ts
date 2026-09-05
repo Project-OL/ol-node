@@ -7,6 +7,7 @@ import { agencyRepository } from '../repositories/agency.repository'
 import { auditService } from './audit.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
+import { diamondWalletService } from './diamond-wallet.service'
 import { richTierService } from './rich-tier.service'
 import { walletService } from './wallet.service'
 import { getUserWalletFreezeFlags } from './wallet-freeze.service'
@@ -23,6 +24,7 @@ export type AdminWalletCreditResult = {
     coins?: string
     points?: string
     tradingCoins?: string
+    diamonds?: string
   }
   skipped?: {
     tradingCoins?: 'NO_AGENCY'
@@ -31,6 +33,7 @@ export type AdminWalletCreditResult = {
     coins?: { ledgerEntryId: string; balanceAfter: string }
     points?: { ledgerEntryId: string; balanceAfter: string }
     tradingCoins?: { ledgerEntryId: string; balanceAfter: string }
+    diamonds?: { ledgerEntryId: string; balanceAfter: string }
   }
 }
 
@@ -41,6 +44,7 @@ export const adminWalletService = {
     coins?: bigint
     points?: bigint
     tradingCoins?: bigint
+    diamonds?: bigint
     description?: string
     idempotencyKey?: string
     /** When true, credits trading coins even if the user is not an agency agent. */
@@ -52,7 +56,8 @@ export const adminWalletService = {
     const hasCoins = params.coins != null && params.coins > 0n
     const hasPoints = params.points != null && params.points > 0n
     const hasTrading = params.tradingCoins != null && params.tradingCoins > 0n
-    if (!hasCoins && !hasPoints && !hasTrading) {
+    const hasDiamonds = params.diamonds != null && params.diamonds > 0n
+    if (!hasCoins && !hasPoints && !hasTrading && !hasDiamonds) {
       throw new AppError(400, 'At least one positive amount is required', 'INVALID_REQUEST')
     }
 
@@ -150,6 +155,25 @@ export const adminWalletService = {
           ledgerEntryId,
           balanceAfter: balanceAfter.toString(),
         }
+      }
+    }
+
+    if (hasDiamonds) {
+      const diamonds = params.diamonds!
+      const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
+        async (tx) =>
+          diamondWalletService.credit(params.targetUserId, diamonds, CoinTxType.GAME_ADJUSTMENT, tx, {
+            idempotencyKey: `${baseKey}:diamonds`,
+            description: description || 'Admin diamond credit',
+            metadata,
+          }),
+        { timeout: TX_TIMEOUT_MS },
+      )
+      await diamondWalletService.bustBalanceCache(params.targetUserId)
+      credited.diamonds = diamonds.toString()
+      balances.diamonds = {
+        ledgerEntryId,
+        balanceAfter: balanceAfter.toString(),
       }
     }
 
@@ -281,6 +305,59 @@ export const adminWalletService = {
       ok: true as const,
       userId: params.targetUserId,
       debited: { tradingCoins: params.amount.toString() },
+      balance: { ledgerEntryId, balanceAfter: balanceAfter.toString() },
+    }
+  },
+
+  async debitDiamonds(params: {
+    adminUserId: string
+    targetUserId: string
+    amount: bigint
+    description?: string
+    idempotencyKey?: string
+    auditMeta?: AdminAuditRequestMeta
+  }) {
+    if (params.amount <= 0n) {
+      throw new AppError(400, 'Amount must be positive', 'INVALID_REQUEST')
+    }
+    const user = await userRepository.findById(params.targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const baseKey =
+      params.idempotencyKey?.trim() ||
+      `admin-wallet-debit-diamonds:${params.adminUserId}:${randomUUID()}`
+    const description = params.description?.trim() || 'Admin diamond deduction'
+    const metadata = { adminUserId: params.adminUserId, source: 'admin_wallet_debit' }
+
+    const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
+      async (tx) =>
+        diamondWalletService.debit(params.targetUserId, params.amount, CoinTxType.GAME_ADJUSTMENT, tx, {
+          idempotencyKey: baseKey,
+          description,
+          metadata,
+        }),
+      { timeout: TX_TIMEOUT_MS },
+    )
+    await diamondWalletService.bustBalanceCache(params.targetUserId)
+
+    auditService.logAdmin({
+      adminUserId: params.adminUserId,
+      targetUserId: params.targetUserId,
+      actionType: 'ADMIN_WALLET_DEBIT_DIAMONDS',
+      actionStatus: 'success',
+      actionDetails: {
+        amount: params.amount.toString(),
+        description,
+        idempotencyKey: baseKey,
+      },
+      destination: `Diamond debit for user ${params.targetUserId}`,
+      request: params.auditMeta,
+    })
+
+    return {
+      ok: true as const,
+      userId: params.targetUserId,
+      debited: { diamonds: params.amount.toString() },
       balance: { ledgerEntryId, balanceAfter: balanceAfter.toString() },
     }
   },

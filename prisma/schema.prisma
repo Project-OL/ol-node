@@ -176,7 +176,7 @@ model User {
   tradingCoinTopupOrders       CoinTradingTopupOrder[]       @relation("TradingCoinTopupsByAgent")
   tradingCoinTransfersSent     CoinTradingTransfer[]         @relation("TradingCoinTransferSender")
   tradingCoinTransfersReceived CoinTradingTransfer[]         @relation("TradingCoinTransferRecipient")
-  ledgerAccountRole            LedgerAccountRole?            @relation("LedgerAccountRoleUser")
+  ledgerAccountRoles           LedgerAccountRole[]           @relation("LedgerAccountRoleUser")
   diamondConversions           DiamondConversion[]
   gameSessions                 GameSession[]
   gameRoundLedgerLinks         GameRoundLedgerLink[]
@@ -1697,7 +1697,7 @@ enum LedgerAccountRoleType {
 /// Balances on these accounts are unsold inventory; their outflows are imputed sales.
 model LedgerAccountRole {
   id            String                @id @default(uuid()) @db.Uuid
-  userId        String                @unique @map("user_id") @db.Uuid
+  userId        String                @map("user_id") @db.Uuid
   role          LedgerAccountRoleType
   label         String?               @db.VarChar(120)
   isActive      Boolean               @default(true) @map("is_active")
@@ -1710,6 +1710,10 @@ model LedgerAccountRole {
 
   user User @relation("LedgerAccountRoleUser", fields: [userId], references: [id], onDelete: Cascade)
 
+  /// One row per (user, role) — a single account (e.g. an existing TREASURY
+  /// account) can now also hold GAME_HOUSE, since they settle different wallets
+  /// (TRADING_COIN vs DIAMOND) and are not mutually exclusive.
+  @@unique([userId, role])
   @@index([role, isActive])
   @@map("ledger_account_roles")
 }

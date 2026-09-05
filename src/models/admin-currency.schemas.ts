@@ -7,7 +7,7 @@ const positiveAmountSchema = z
 
 export const adminCurrencyAdjustBodySchema = z.object({
   userId: z.string().uuid(),
-  currency: z.enum(['COIN', 'POINT', 'TRADING_COIN']),
+  currency: z.enum(['COIN', 'POINT', 'TRADING_COIN', 'DIAMOND']),
   direction: z.enum(['credit', 'debit']),
   amount: positiveAmountSchema,
   description: z.string().max(500).optional(),
@@ -38,7 +38,7 @@ export const adminCurrencySupplySummaryQuerySchema = z.object({
 export type AdminCurrencySupplySummaryQuery = z.infer<typeof adminCurrencySupplySummaryQuerySchema>
 
 export const adminCurrencyAdjustmentsQuerySchema = z.object({
-  currency: z.enum(['COIN', 'POINT', 'TRADING_COIN']).optional(),
+  currency: z.enum(['COIN', 'POINT', 'TRADING_COIN', 'DIAMOND']).optional(),
   direction: z.enum(['credit', 'debit']).optional(),
   userId: z.string().uuid().optional(),
   from: z.string().datetime().optional(),
@@ -122,6 +122,8 @@ export const adminHouseAccountUpsertBodySchema = z.object({
 export type AdminHouseAccountUpsertBody = z.infer<typeof adminHouseAccountUpsertBodySchema>
 
 export const adminHouseAccountDeleteBodySchema = z.object({
+  /** Which role to remove — required if the user holds more than one. */
+  role: z.enum(['TREASURY', 'COMPANY_AGENCY', 'GAME_HOUSE']).optional(),
   /** Deactivate even though the account still holds units. */
   force: z.boolean().optional(),
 })

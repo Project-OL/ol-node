@@ -106,7 +106,7 @@ export async function gameWebhooksRoutes(app: FastifyInstance) {
         currencyDiff: body.currency_diff,
         diffMsg: body.diff_msg,
         gameId: body.game_id,
-        roomId: body.room_id,
+        roomId: body.room_id || undefined,
         orderId: body.order_id,
       })
       return sendBaishunSuccess(reply, { currency_balance: Number(result.currencyBalance) })

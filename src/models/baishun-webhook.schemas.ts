@@ -38,7 +38,7 @@ export const BaishunChangeBalanceSchema = CommonFieldsSchema.extend({
   diff_msg: z.enum(['bet', 'result', 'refund']),
   game_id: z.number(),
   game_round_id: z.string().optional(),
-  room_id: z.string().min(1),
+  room_id: z.string().optional(),
   change_time_at: z.number(),
   order_id: z.string().min(1),
   extend: z.string().optional(),
