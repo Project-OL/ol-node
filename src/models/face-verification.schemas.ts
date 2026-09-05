@@ -52,3 +52,12 @@ export const adminRevokeFaceBodySchema = z.object({
   /** Default true — also revokes DUPLICATE_FACE rows linked to this user. */
   revokeRelated: z.boolean().optional(),
 })
+
+export const adminListPendingDuplicatesQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20).optional(),
+})
+
+export const adminAcceptDuplicateBodySchema = z.object({
+  reason: z.string().max(500).optional(),
+})

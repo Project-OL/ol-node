@@ -227,6 +227,56 @@ export const faceVerificationRepository = {
     return { items, total, page: input.page, limit: input.limit }
   },
 
+  /**
+   * Paired duplicate-face cases for admin review: each blocked (`DUPLICATE_FACE`) profile plus
+   * the owner's own `UserFaceProfile` row (for their image/status), so a single view can render
+   * both sides of the match without a separate "flagged pairs" table.
+   */
+  async listDuplicatePairsForAdmin(input: { page: number; limit: number }) {
+    const userSelect = {
+      id: true,
+      username: true,
+      firstName: true,
+      lastName: true,
+      publicId: true,
+      currentVipPublicId: true,
+    } as const
+
+    const where: Prisma.UserFaceProfileWhereInput = { status: 'DUPLICATE_FACE' }
+    const skip = (input.page - 1) * input.limit
+    const [blocked, total] = await Promise.all([
+      prismaRead.userFaceProfile.findMany({
+        where,
+        skip,
+        take: input.limit,
+        orderBy: { updatedAt: 'desc' },
+        include: { user: { select: userSelect } },
+      }),
+      prismaRead.userFaceProfile.count({ where }),
+    ])
+
+    const ownerIds = [
+      ...new Set(blocked.map((p) => p.matchedUserId).filter((id): id is string => Boolean(id))),
+    ]
+    const ownerProfiles = ownerIds.length
+      ? await prismaRead.userFaceProfile.findMany({
+          where: { userId: { in: ownerIds } },
+          include: { user: { select: userSelect } },
+        })
+      : []
+    const ownerByUserId = new Map(ownerProfiles.map((p) => [p.userId, p]))
+
+    return {
+      items: blocked.map((profile) => ({
+        blocked: profile,
+        owner: profile.matchedUserId ? (ownerByUserId.get(profile.matchedUserId) ?? null) : null,
+      })),
+      total,
+      page: input.page,
+      limit: input.limit,
+    }
+  },
+
   countProfilesByStatus() {
     return prismaRead.userFaceProfile.groupBy({
       by: ['status'],
@@ -288,6 +338,29 @@ export const faceVerificationRepository = {
         rekognitionFaceId: input.rekognitionFaceId,
         indexedAt: new Date(),
         failureReason: null,
+      },
+    })
+  },
+
+  /**
+   * Admin override: index a DUPLICATE_FACE profile anyway ("accept both accounts"). Unlike
+   * `markProfileIndexed`, this also clears the duplicate-linkage fields so an accepted profile
+   * doesn't keep stale `duplicateOfUserId`/`matchedUserId`/`faceMatchSimilarity` around.
+   */
+  acceptDuplicateAsIndexed(
+    input: { userId: string; rekognitionFaceId: string },
+    tx?: Prisma.TransactionClient,
+  ) {
+    return getDb(tx).userFaceProfile.update({
+      where: { userId: input.userId },
+      data: {
+        status: 'INDEXED',
+        rekognitionFaceId: input.rekognitionFaceId,
+        indexedAt: new Date(),
+        failureReason: null,
+        duplicateOfUserId: null,
+        matchedUserId: null,
+        faceMatchSimilarity: null,
       },
     })
   },

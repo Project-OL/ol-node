@@ -6,6 +6,7 @@ import {
   deleteFaceFromCollection,
   describeFaceCollection,
   externalImageIdToUserId,
+  indexUserFace,
   listFacesInCollection,
 } from '../lib/rekognition.client'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
@@ -20,6 +21,7 @@ import { mapPool } from '../utils/map-pool'
 import { storageService } from './storage.service'
 import { auditService } from './audit.service'
 import { afterFaceProfileRevoked } from './face-profile-invalidate'
+import { faceRegistrationService } from './faceRegistration.service'
 
 async function deleteRekognitionFaceSafe(
   faceId: string | null | undefined,
@@ -681,6 +683,107 @@ export const faceVerificationAdminService = {
    * Resolve a duplicate registration: clear the blocked user's DUPLICATE_FACE row and
    * revoke the indexed owner's Rekognition face so both accounts can register again.
    */
+  /** Paginated worklist of pending duplicate-face cases, both accounts + both images per row. */
+  async listPendingDuplicates(input: { page?: number; limit?: number }) {
+    const page = Math.max(1, input.page ?? 1)
+    const limit = Math.min(50, Math.max(1, input.limit ?? 20))
+    const result = await faceVerificationRepository.listDuplicatePairsForAdmin({ page, limit })
+
+    return {
+      page: result.page,
+      limit: result.limit,
+      total: result.total,
+      pairs: result.items.map(({ blocked, owner }) => ({
+        blockedUser: {
+          userId: blocked.userId,
+          userName: formatUserName(blocked.user),
+          displayPublicId: formatDisplayPublicId(blocked.user),
+          imageUrl: toFailureImageUrl(blocked.s3KeyReference),
+          flaggedAt: blocked.updatedAt.toISOString(),
+        },
+        ownerUser: owner
+          ? {
+              userId: owner.userId,
+              userName: formatUserName(owner.user),
+              displayPublicId: formatDisplayPublicId(owner.user),
+              imageUrl: toFailureImageUrl(owner.s3KeyReference),
+              status: owner.status,
+            }
+          : null,
+        faceMatchSimilarity: blocked.faceMatchSimilarity,
+      })),
+    }
+  },
+
+  /**
+   * Admin override for a false-positive duplicate match: indexes the blocked user's stored
+   * image in Rekognition anyway (same call `processIndexingJob` makes for a normal PENDING_INDEX
+   * profile) and flips their profile to INDEXED. The owner/matched account is left untouched —
+   * both accounts end up verified. Use `resolveDuplicateIdentity` instead if the duplicate was a
+   * real match and one side should re-register.
+   */
+  async acceptDuplicateBothAccounts(
+    blockedUserId: string,
+    adminUserId: string,
+    reason?: string,
+  ): Promise<{
+    success: true
+    userId: string
+    ownerUserId: string | null
+    rekognitionFaceId: string
+    message: string
+  }> {
+    const profile = await faceVerificationRepository.getProfileByUserId(blockedUserId)
+    if (!profile) {
+      throw new AppError(404, 'No face profile found for user', 'FACE_PROFILE_NOT_FOUND')
+    }
+    if (profile.status !== 'DUPLICATE_FACE') {
+      throw new AppError(
+        409,
+        'User is not currently blocked as a duplicate',
+        'FACE_PROFILE_NOT_DUPLICATE',
+      )
+    }
+    const ownerUserId = profile.matchedUserId ?? profile.duplicateOfUserId ?? null
+
+    const imageBytes = await storageService.getObjectBuffer(profile.s3KeyReference)
+    const indexRes = await indexUserFace({ userId: blockedUserId, imageBytes })
+    const faceId = indexRes.FaceRecords?.[0]?.Face?.FaceId
+    if (!faceId) {
+      throw new AppError(422, 'Rekognition could not index the stored image', 'FACE_INDEX_FAILED')
+    }
+
+    await faceVerificationRepository.acceptDuplicateAsIndexed({
+      userId: blockedUserId,
+      rekognitionFaceId: faceId,
+    })
+
+    await faceRegistrationService.onFaceProfileIndexed(blockedUserId).catch(() => {
+      /* non-fatal: registration session may not exist */
+    })
+
+    auditService.log({
+      userId: blockedUserId,
+      actionType: 'face_duplicate_identity_admin_accepted_both',
+      actionStatus: 'success',
+      actionDetails: {
+        adminUserId,
+        ownerUserId,
+        rekognitionFaceId: faceId,
+        previousSimilarity: profile.faceMatchSimilarity,
+        reason: reason ?? null,
+      },
+    })
+
+    return {
+      success: true,
+      userId: blockedUserId,
+      ownerUserId,
+      rekognitionFaceId: faceId,
+      message: 'Both accounts accepted; this user is now indexed alongside the matched account.',
+    }
+  },
+
   async resolveDuplicateIdentity(
     blockedUserId: string,
     adminUserId: string,
