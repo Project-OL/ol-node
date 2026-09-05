@@ -8,7 +8,8 @@ const WATCH_TTL_SEC = 86_400
 export type SupportTicketStatusChangedInput = {
   ticketId: bigint
   ticketPublicId: string
-  status: 'PENDING_REVIEW' | 'CLOSED'
+  /** `AWAITING_REPLY` is a SUPER_ADMIN reopen (resolution cleared). */
+  status: 'PENDING_REVIEW' | 'CLOSED' | 'AWAITING_REPLY'
   resolution: 'RESOLVED' | 'REJECTED' | null
   assignedAdminId: string | null
 }

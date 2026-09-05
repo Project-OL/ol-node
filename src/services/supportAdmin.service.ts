@@ -470,6 +470,105 @@ export const supportAdminService = {
     }
   },
 
+  /**
+   * SUPER_ADMIN-only: pull a resolved/rejected ticket back into the active queue
+   * while it is still `PENDING_REVIEW` — i.e. before the contest window closes it
+   * automatically or someone force-closes it. `CLOSED` is terminal: a closed
+   * ticket is never reopened (its rating is already attributed to the assignee).
+   *
+   * Mirrors the user-contest path: `resolution`/`resolvedAt` are cleared and the
+   * status returns to `AWAITING_REPLY` ("CS action needed"), which also lifts the
+   * pending-review hand-off freeze. The queued auto-close job re-checks status and
+   * becomes a no-op, so nothing needs to be cancelled.
+   */
+  async reopen(actor: AdminActor, ticketId: bigint, input: { note?: string }) {
+    // Enforced here as well as by requireAdminRole, since an assigned view can
+    // grant a CSA an endpoint their role alone would not allow.
+    if (!isSuperAdmin(actor)) {
+      throw new AppError(403, 'Only SUPER_ADMIN can reopen a ticket', 'ADMIN_FORBIDDEN')
+    }
+
+    const ticket = await findTicketOrThrow(ticketId)
+    if (ticket.status === 'CLOSED') {
+      throw new AppError(409, 'Closed tickets cannot be reopened', 'TICKET_CLOSED')
+    }
+    if (ticket.status !== 'PENDING_REVIEW') {
+      throw new AppError(
+        409,
+        'Only a ticket pending user review can be reopened',
+        'TICKET_NOT_PENDING_REVIEW',
+      )
+    }
+
+    const previousResolution = ticket.resolution
+    const content =
+      input.note?.trim() ||
+      'Your ticket has been reopened by our support team and is being reviewed again.'
+    const message = await supportRepository.createMessage({
+      ticketId,
+      senderType: 'SUPPORT',
+      content,
+    })
+
+    const updated = await supportRepository.updateTicketStatus(ticketId, 'AWAITING_REPLY', {
+      resolution: null,
+      resolvedAt: null,
+    })
+    await invalidateUserCaches(ticket.userId, ticketId)
+
+    const assignedAdminId = ticket.assignedAdminId ?? actor.id
+    void notifySupportTicketMessage({
+      ticketId,
+      ticketPublicId: ticket.publicId,
+      ownerUserId: ticket.userId,
+      assignedAdminId,
+      message: {
+        id: message.id,
+        publicId: message.publicId,
+        senderType: message.senderType,
+        senderUserId: message.senderUserId,
+        content: message.content,
+        imageUrl: message.imageUrl,
+        isAutoReply: message.isAutoReply,
+        createdAt: message.createdAt,
+      },
+    }).catch((err) => {
+      console.warn('[support-admin] reopen realtime notify failed', {
+        ticketId: ticketId.toString(),
+        err,
+      })
+    })
+
+    void notifySupportTicketStatusChanged({
+      ticketId,
+      ticketPublicId: ticket.publicId,
+      status: 'AWAITING_REPLY',
+      resolution: null,
+      assignedAdminId,
+    }).catch((err) => {
+      console.warn('[support-admin] reopen status-changed notify failed', {
+        ticketId: ticketId.toString(),
+        err,
+      })
+    })
+
+    if (ticket.assignedAdminId && ticket.assignedAdminId !== actor.id) {
+      await csaNotificationService.notify(
+        ticket.assignedAdminId,
+        'TICKET_REPLY',
+        `Ticket ${ticket.publicId} was reopened by a super admin`,
+        { ticketId },
+      )
+    }
+
+    logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_REOPEN', {
+      previousResolution,
+      hasNote: Boolean(input.note?.trim()),
+    })
+
+    return toJsonSafe(await ticketDto(updated))
+  },
+
   async forceClose(actor: AdminActor, ticketId: bigint) {
     const ticket = await findTicketOrThrow(ticketId)
     if (ticket.status === 'CLOSED') {

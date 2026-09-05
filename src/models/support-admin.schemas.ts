@@ -54,6 +54,15 @@ export const ResolveTicketSchema = z.object({
   note: z.string().max(2000).optional(),
 })
 
+export const ReopenTicketSchema = z.object({
+  /**
+   * Optional message posted into the ticket chat as a SUPPORT message. The user
+   * was previously told the ticket would auto-close, so a default notice is
+   * posted when this is omitted.
+   */
+  note: z.string().max(2000).optional(),
+})
+
 export const AssignTicketSchema = z.object({
   adminId: z.string().min(1),
 })
