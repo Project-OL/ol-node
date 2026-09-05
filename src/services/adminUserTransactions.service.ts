@@ -12,10 +12,12 @@ import {
   resolvePointHistoryTxTypes,
 } from '../config/point-earnings-categories'
 import { TRADING_COIN_HISTORY_FILTER_VALUES } from '../config/trading-coin-transaction-filters'
+import { GAME_DIAMOND_HISTORY_FILTER_VALUES } from '../config/game-diamond-transaction-filters'
 import { userRepository } from '../repositories/user.repository'
 import { coinTradingRepository } from '../repositories/coinTrading.repository'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
+import { diamondWalletService } from './diamond-wallet.service'
 import { coinTradingService } from './coinTrading.service'
 import {
   resolveCoinLedgerRevertability,
@@ -168,6 +170,9 @@ export const adminUserTransactionsService = {
       tradingCoins: {
         filterValues: TRADING_COIN_HISTORY_FILTER_VALUES,
       },
+      diamonds: {
+        filterValues: GAME_DIAMOND_HISTORY_FILTER_VALUES,
+      },
     }
   },
 
@@ -236,6 +241,34 @@ export const adminUserTransactionsService = {
       items,
       // Explorer-shaped alias so admin clients can use either key.
       entries: items,
+    }
+  },
+
+  /**
+   * DIAMOND ledger history for one user — game wagers/results/refunds plus
+   * Coin↔Diamond conversions and admin adjustments.
+   *
+   * Deliberately NOT revertable: every game row is one leg of a double-entry pair
+   * settled against the GAME_HOUSE account and anchored on BAISHUN's `order_id`
+   * (`game_round_ledger_links`). Reverting a single leg would break both the
+   * pairing and the idempotency anchor BAISHUN retries against. Correct a
+   * diamond balance with an admin adjustment (`POST /admin/currency/adjust`,
+   * currency DIAMOND) instead, which writes its own `GAME_ADJUSTMENT` row.
+   */
+  async listDiamondTransactions(
+    userId: string,
+    filter: { types?: string[]; from?: string; to?: string; cursor?: string; limit: number },
+  ) {
+    const user = await userRepository.findById(userId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+    const history = await diamondWalletService.getHistory(userId, filter)
+    return {
+      ...history,
+      entries: (history.entries ?? []).map((entry) => ({
+        ...entry,
+        canRevert: false as const,
+        revertVia: null,
+      })),
     }
   },
 }
