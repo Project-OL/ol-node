@@ -187,12 +187,20 @@ export const supportAdminService = {
       unassigned,
       minDaysSinceReviewed: query.minDaysSinceReviewed,
       maxDaysSinceReviewed: query.maxDaysSinceReviewed,
+      ...(query.starredOnly ? { starredByAdminId: actor.id } : {}),
       skip,
       take: query.limit,
     })
 
+    const starred = await supportRepository.findStarredTicketIds(
+      tickets.map((t) => t.id),
+      actor.id,
+    )
+
     return toJsonSafe({
-      tickets: await Promise.all(tickets.map((t) => ticketDto(t))),
+      tickets: await Promise.all(
+        tickets.map(async (t) => ({ ...(await ticketDto(t)), isStarred: starred.has(t.id) })),
+      ),
       pagination: {
         page: query.page,
         limit: query.limit,
@@ -203,18 +211,19 @@ export const supportAdminService = {
   },
 
   async getTicketDetail(
-    _actor: AdminActor,
+    actor: AdminActor,
     ticketId: bigint,
     messageQuery: z.infer<typeof AdminTicketMessagesQuerySchema>,
   ) {
     const ticket = await findTicketOrThrow(ticketId)
 
-    const [messages, notes] = await Promise.all([
+    const [messages, notes, isStarred] = await Promise.all([
       supportRepository.findMessages(ticketId, {
         cursor: messageQuery.cursor,
         take: messageQuery.limit,
       }),
       supportRepository.findNotes(ticketId),
+      supportRepository.isTicketStarred(ticketId, actor.id),
     ])
 
     const latestMessage = messages[0]
@@ -223,7 +232,7 @@ export const supportAdminService = {
     }
 
     return toJsonSafe({
-      ticket: await ticketDto(ticket),
+      ticket: { ...(await ticketDto(ticket)), isStarred },
       messages: [...messages].reverse().map((m) => ({
         ...m,
         sender: withName(m.sender),
@@ -235,11 +244,15 @@ export const supportAdminService = {
     })
   },
 
+  /**
+   * A CSA reply is itself the resolution: the ticket moves to PENDING_REVIEW
+   * with resolution RESOLVED (an existing REJECTED outcome is kept) and the
+   * contest window / auto-close restarts from this message, so the user can
+   * reply to contest it. A CLOSED ticket accepts follow-up messages but stays
+   * closed — support can always keep talking to the user.
+   */
   async reply(actor: AdminActor, ticketId: bigint, input: z.infer<typeof AdminReplySchema>) {
     const ticket = await findTicketOrThrow(ticketId)
-    if (ticket.status === 'CLOSED') {
-      throw new AppError(409, 'Ticket is closed and no longer accepts messages', 'TICKET_CLOSED')
-    }
     assertCanAct(actor, ticket)
 
     const message = await supportRepository.createMessage({
@@ -249,11 +262,22 @@ export const supportAdminService = {
       imageUrl: input.imageUrl,
     })
 
-    await supportRepository.updateTicketStatus(ticketId, 'ASSIGNED', {
-      ...(ticket.firstResponseAt ? {} : { firstResponseAt: new Date() }),
-      // A SUPER_ADMIN replying to an unassigned ticket implicitly claims it.
-      ...(ticket.assignedAdminId ? {} : { assignedAdminId: actor.id, assignedAt: new Date() }),
-    })
+    const now = new Date()
+    // A SUPER_ADMIN replying to an unassigned ticket implicitly claims it.
+    const claim = ticket.assignedAdminId ? {} : { assignedAdminId: actor.id, assignedAt: now }
+    const wasClosed = ticket.status === 'CLOSED'
+    const resolution: SupportTicketResolution = ticket.resolution ?? 'RESOLVED'
+
+    if (wasClosed) {
+      await supportRepository.updateTicketStatus(ticketId, 'CLOSED', claim)
+    } else {
+      await supportRepository.updateTicketStatus(ticketId, 'PENDING_REVIEW', {
+        resolution,
+        resolvedAt: now,
+        ...(ticket.firstResponseAt ? {} : { firstResponseAt: now }),
+        ...claim,
+      })
+    }
     await supportRepository.updateReadPointer(ticketId, 'SUPPORT', message.id)
     await invalidateUserCaches(ticket.userId, ticketId)
 
@@ -277,8 +301,34 @@ export const supportAdminService = {
       console.warn('[support-admin] realtime notify failed', { ticketId: ticketId.toString(), err })
     })
 
+    if (!wasClosed) {
+      void notifySupportTicketStatusChanged({
+        ticketId,
+        ticketPublicId: ticket.publicId,
+        status: 'PENDING_REVIEW',
+        resolution,
+        assignedAdminId,
+      }).catch((err) => {
+        console.warn('[support-admin] status-changed notify failed (reply)', {
+          ticketId: ticketId.toString(),
+          err,
+        })
+      })
+
+      try {
+        await enqueueSupportTicketAutoclose(ticketId, now)
+      } catch (err) {
+        console.warn('[support-admin] autoclose enqueue failed (ticket stays PENDING_REVIEW)', {
+          ticketId: ticketId.toString(),
+          err,
+        })
+      }
+    }
+
     logTicketActivity(actor, ticket, 'ADMIN_SUPPORT_TICKET_REPLY', {
       hasImage: Boolean(input.imageUrl),
+      autoResolved: !wasClosed,
+      ...(wasClosed ? {} : { resolution }),
     })
 
     return toJsonSafe({
@@ -290,7 +340,7 @@ export const supportAdminService = {
   async resolve(
     actor: AdminActor,
     ticketId: bigint,
-    input: { resolution: SupportTicketResolution; note: string },
+    input: { resolution: SupportTicketResolution; note?: string },
   ) {
     const ticket = await findTicketOrThrow(ticketId)
     if (ticket.status === 'CLOSED') {
@@ -305,7 +355,10 @@ export const supportAdminService = {
     const label = input.resolution === 'RESOLVED' ? 'resolved' : 'rejected'
     const windowMs = await supportConfigService.getReviewWindowMs()
     const windowLabel = formatSupportReviewWindowLabel(windowMs)
-    const closingContent = `${input.note.trim()}\n\n(This ticket was marked ${label}. It will close automatically in ${windowLabel} unless you reply.)`
+    // The note is optional (one-click resolve); fall back to a generic notice so
+    // the user always sees why the ticket changed state.
+    const reason = input.note?.trim() || `Your ticket has been marked ${label} by our support team.`
+    const closingContent = `${reason}\n\n(This ticket was marked ${label}. It will close automatically in ${windowLabel} unless you reply.)`
 
     const closingMessage = await supportRepository.createMessage({
       ticketId,
@@ -544,6 +597,21 @@ export const supportAdminService = {
     return toJsonSafe(await ticketDto(updated))
   },
 
+  /**
+   * Star/un-star a ticket for the calling admin. Stars are a private bookmark —
+   * any ticket can be starred regardless of stage or assignment, so no
+   * `assertCanAct` here.
+   */
+  async setStar(actor: AdminActor, ticketId: bigint, starred: boolean) {
+    await findTicketOrThrow(ticketId)
+    if (starred) {
+      await supportRepository.starTicket(ticketId, actor.id)
+    } else {
+      await supportRepository.unstarTicket(ticketId, actor.id)
+    }
+    return { ticketId: ticketId.toString(), isStarred: starred }
+  },
+
   async addNote(actor: AdminActor, ticketId: bigint, content: string) {
     const ticket = await findTicketOrThrow(ticketId)
     const note = await supportRepository.createNote({ ticketId, adminId: actor.id, content })
@@ -559,11 +627,10 @@ export const supportAdminService = {
     return toJsonSafe({ notes })
   },
 
+  // Closed tickets still accept attachments — support can follow up on a closed
+  // ticket the same way it can post a message to one (see `reply`).
   async getUploadUrl(actor: AdminActor, input: z.infer<typeof AdminUploadUrlSchema>) {
     const ticket = await findTicketOrThrow(input.ticketId)
-    if (ticket.status === 'CLOSED') {
-      throw new AppError(409, 'Cannot upload to a closed ticket', 'TICKET_CLOSED')
-    }
     assertCanAct(actor, ticket)
 
     const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, '_')

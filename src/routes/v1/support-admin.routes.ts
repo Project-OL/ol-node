@@ -97,6 +97,18 @@ export default async function supportAdminRoutes(app: FastifyInstance) {
     return reply.send({ ticket })
   })
 
+  app.post('/tickets/:ticketId/star', { preHandler: csAuth }, async (req, reply) => {
+    const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
+    const result = await supportAdminService.setStar(actorOf(req), ticketId, true)
+    return reply.send(result)
+  })
+
+  app.delete('/tickets/:ticketId/star', { preHandler: csAuth }, async (req, reply) => {
+    const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
+    const result = await supportAdminService.setStar(actorOf(req), ticketId, false)
+    return reply.send(result)
+  })
+
   app.get('/tickets/:ticketId/notes', { preHandler: csAuth }, async (req, reply) => {
     const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
     const result = await supportAdminService.listNotes(actorOf(req), ticketId)

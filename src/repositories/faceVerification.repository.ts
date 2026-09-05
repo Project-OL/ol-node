@@ -5,6 +5,8 @@ function getDb(tx?: Prisma.TransactionClient) {
   return tx ?? prisma
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export const faceVerificationRepository = {
   getProfileByUserId(userId: string) {
     return prismaRead.userFaceProfile.findUnique({ where: { userId } })
@@ -232,7 +234,53 @@ export const faceVerificationRepository = {
    * the owner's own `UserFaceProfile` row (for their image/status), so a single view can render
    * both sides of the match without a separate "flagged pairs" table.
    */
-  async listDuplicatePairsForAdmin(input: { page: number; limit: number }) {
+  /**
+   * Users matching a free-text admin search — exact user id / public id, or a
+   * partial match on public id, username or name. Capped because the ids feed an
+   * `in` filter on the duplicate worklist.
+   */
+  async findUserIdsBySearch(search: string, take = 500): Promise<string[]> {
+    const q = search.trim()
+    if (!q) return []
+    const or: Prisma.UserWhereInput[] = [
+      { username: { contains: q, mode: 'insensitive' } },
+      { firstName: { contains: q, mode: 'insensitive' } },
+      { lastName: { contains: q, mode: 'insensitive' } },
+    ]
+    if (UUID_RE.test(q)) or.push({ id: q })
+    // publicId / currentVipPublicId are BigInt columns — exact match only.
+    if (/^\d{1,18}$/.test(q)) {
+      const publicId = BigInt(q)
+      or.push({ publicId }, { currentVipPublicId: publicId })
+    }
+    const spaceIdx = q.indexOf(' ')
+    // "Jane Doe" → firstName contains Jane AND lastName contains Doe.
+    if (spaceIdx > 0) {
+      const first = q.slice(0, spaceIdx).trim()
+      const last = q.slice(spaceIdx + 1).trim()
+      if (first && last) {
+        or.push({
+          AND: [
+            { firstName: { contains: first, mode: 'insensitive' } },
+            { lastName: { contains: last, mode: 'insensitive' } },
+          ],
+        })
+      }
+    }
+    const rows = await prismaRead.user.findMany({
+      where: { OR: or },
+      select: { id: true },
+      take,
+    })
+    return rows.map((r) => r.id)
+  },
+
+  /**
+   * `search` matches either side of the pair (blocked user or matched owner), so
+   * searching an owner surfaces every duplicate case pointing at them. Rows sent
+   * to the bottom by an admin (`adminSortWeight` > 0) sort after everything else.
+   */
+  async listDuplicatePairsForAdmin(input: { page: number; limit: number; search?: string }) {
     const userSelect = {
       id: true,
       username: true,
@@ -242,14 +290,26 @@ export const faceVerificationRepository = {
       currentVipPublicId: true,
     } as const
 
-    const where: Prisma.UserFaceProfileWhereInput = { status: 'DUPLICATE_FACE' }
+    let where: Prisma.UserFaceProfileWhereInput = { status: 'DUPLICATE_FACE' }
+    const search = input.search?.trim()
+    if (search) {
+      const matchedUserIds = await this.findUserIdsBySearch(search)
+      if (matchedUserIds.length === 0) {
+        return { items: [], total: 0, page: input.page, limit: input.limit }
+      }
+      where = {
+        ...where,
+        OR: [{ userId: { in: matchedUserIds } }, { matchedUserId: { in: matchedUserIds } }],
+      }
+    }
+
     const skip = (input.page - 1) * input.limit
     const [blocked, total] = await Promise.all([
       prismaRead.userFaceProfile.findMany({
         where,
         skip,
         take: input.limit,
-        orderBy: { updatedAt: 'desc' },
+        orderBy: [{ adminSortWeight: 'asc' }, { updatedAt: 'desc' }],
         include: { user: { select: userSelect } },
       }),
       prismaRead.userFaceProfile.count({ where }),
@@ -275,6 +335,33 @@ export const faceVerificationRepository = {
       page: input.page,
       limit: input.limit,
     }
+  },
+
+  /**
+   * Park a duplicate case at the bottom of the admin worklist: one past the
+   * heaviest weight currently in the queue, so repeated calls keep their
+   * relative order instead of collapsing into one bucket.
+   */
+  async sendDuplicateToBottom(userId: string) {
+    const heaviest = await prismaRead.userFaceProfile.findFirst({
+      where: { status: 'DUPLICATE_FACE' },
+      orderBy: { adminSortWeight: 'desc' },
+      select: { adminSortWeight: true },
+    })
+    return prisma.userFaceProfile.update({
+      where: { userId },
+      data: { adminSortWeight: (heaviest?.adminSortWeight ?? 0) + 1 },
+      select: { userId: true, adminSortWeight: true },
+    })
+  },
+
+  /** Undo `sendDuplicateToBottom` — back to the default newest-first position. */
+  restoreDuplicateOrder(userId: string) {
+    return prisma.userFaceProfile.update({
+      where: { userId },
+      data: { adminSortWeight: 0 },
+      select: { userId: true, adminSortWeight: true },
+    })
   },
 
   countProfilesByStatus() {
