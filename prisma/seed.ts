@@ -74,25 +74,33 @@ async function main() {
     skipDuplicates: true,
   });
 
-  await prisma.coinTradingTopupRate.createMany({
-    data: DEFAULT_COIN_TRADING_TOPUP_RATES.map((tier, i) => ({
-      minUsd: String(tier.minUsd),
-      maxUsd: tier.maxUsd == null ? null : String(tier.maxUsd),
-      coinsPerUsd: tier.coinsPerUsd,
-      sortOrder: i + 1,
-    })),
-    skipDuplicates: true,
-  });
+  // These two tables have no unique constraint, so `skipDuplicates` cannot
+  // dedupe them (every row gets a fresh uuid PK and nothing conflicts). Seed
+  // them only when there is no active ladder, so re-running the seed against a
+  // configured DB is a no-op instead of appending another full set of tiers.
+  // Rates are edited via admin (`systemRatesAdminService.replaceTopupRates` /
+  // `replaceAgentExchangeRates`) or reset via `npm run seed:coin-trading-rates`.
+  if ((await prisma.coinTradingTopupRate.count({ where: { isActive: true } })) === 0) {
+    await prisma.coinTradingTopupRate.createMany({
+      data: DEFAULT_COIN_TRADING_TOPUP_RATES.map((tier, i) => ({
+        minUsd: String(tier.minUsd),
+        maxUsd: tier.maxUsd == null ? null : String(tier.maxUsd),
+        coinsPerUsd: tier.coinsPerUsd,
+        sortOrder: i + 1,
+      })),
+    });
+  }
 
-  await prisma.agentExchangeRate.createMany({
-    data: DEFAULT_AGENT_EXCHANGE_RATES.map((tier, i) => ({
-      minUsdEquiv: String(tier.minUsd),
-      maxUsdEquiv: tier.maxUsd == null ? null : String(tier.maxUsd),
-      coinsPerUsd: tier.coinsPerUsd,
-      sortOrder: i + 1,
-    })),
-    skipDuplicates: true,
-  });
+  if ((await prisma.agentExchangeRate.count({ where: { isActive: true } })) === 0) {
+    await prisma.agentExchangeRate.createMany({
+      data: DEFAULT_AGENT_EXCHANGE_RATES.map((tier, i) => ({
+        minUsdEquiv: String(tier.minUsd),
+        maxUsdEquiv: tier.maxUsd == null ? null : String(tier.maxUsd),
+        coinsPerUsd: tier.coinsPerUsd,
+        sortOrder: i + 1,
+      })),
+    });
+  }
 
   await prisma.coinTradingTopupPackage.createMany({
     data: DEFAULT_COIN_TRADING_TOPUP_PACKAGES.map((pkg) => ({

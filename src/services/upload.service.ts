@@ -3,7 +3,6 @@ import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { s3Client, s3Bucket } from '../config/s3'
 import { AppError } from '../middlewares/errorHandler'
-import { env } from '../config/env'
 import { storageService } from './storage.service'
 import type { GetUploadUrlsInput } from '../models/messaging.schemas'
 import {
@@ -22,10 +21,6 @@ const ALLOWED_CONTENT_TYPES: Record<string, string> = {
 }
 
 const PRESIGNED_URL_EXPIRES_IN = 300
-
-function buildPublicUrl(key: string): string {
-  return `https://${s3Bucket}.s3.${env.AWS_REGION}.amazonaws.com/${key}`
-}
 
 export const uploadService = {
   async generatePresignedAvatarUrl(userId: string, contentType: string) {
@@ -57,7 +52,8 @@ export const uploadService = {
     return {
       uploadUrl,
       key,
-      publicUrl: buildPublicUrl(key),
+      // Single source of truth for the public origin (honors S3_PUBLIC_BASE_URL on R2).
+      publicUrl: storageService.getPublicUrl(key),
       expiresIn: PRESIGNED_URL_EXPIRES_IN,
     }
   },

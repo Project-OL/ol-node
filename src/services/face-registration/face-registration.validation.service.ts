@@ -1,7 +1,7 @@
 import type { FaceDetail } from '@aws-sdk/client-rekognition'
 import { AppError } from '../../middlewares/errorHandler'
 import { env } from '../../config/env'
-import { s3Bucket } from '../../config/s3'
+import { s3Bucket, isAwsS3 } from '../../config/s3'
 import {
   detectFacesQuality,
   detectModerationLabels,
@@ -399,7 +399,9 @@ export const faceRegistrationValidationService = {
     let moderationLabels: { label: string; confidence: number }[] | undefined
     if (env.FACE_CONTENT_MODERATION_ENABLED) {
       try {
-        const bucket = s3Bucket?.trim()
+        // S3Object shortcut is AWS-only; off AWS it fails on every image, so
+        // skip straight to the bytes path rather than burning a doomed call.
+        const bucket = isAwsS3 ? s3Bucket?.trim() : undefined
         let modRes
         if (bucket && s3Key) {
           try {

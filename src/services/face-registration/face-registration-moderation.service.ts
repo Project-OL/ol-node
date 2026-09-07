@@ -1,5 +1,5 @@
 import { env } from '../../config/env'
-import { s3Bucket } from '../../config/s3'
+import { s3Bucket, isAwsS3 } from '../../config/s3'
 import { detectModerationLabels, detectModerationLabelsFromS3 } from '../../lib/rekognition.client'
 import { storageService } from '../storage.service'
 
@@ -28,7 +28,10 @@ async function loadImageBytes(s3Key: string): Promise<Uint8Array> {
 }
 
 async function fetchModerationLabels(s3Key: string) {
-  const bucket = s3Bucket?.trim()
+  // S3Object is only a shortcut that saves downloading the object. It cannot
+  // work off AWS, where it would fail on every image before falling through, so
+  // go straight to bytes there.
+  const bucket = isAwsS3 ? s3Bucket?.trim() : undefined
   if (bucket) {
     try {
       return await detectModerationLabelsFromS3(bucket, s3Key)

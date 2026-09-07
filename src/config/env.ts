@@ -82,6 +82,33 @@ const envSchema = z
     AWS_SECRET_ACCESS_KEY: z.string().optional(),
     AWS_REGION: z.string().default('ap-south-1'),
     AWS_S3_BUCKET: z.string().optional(),
+
+    /**
+     * Object-storage overrides for S3-compatible providers (Cloudflare R2 on GCP).
+     * All optional — when unset the storage layer behaves exactly as before
+     * (AWS S3 in `AWS_REGION` with `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
+     * These affect the object-storage client only; Rekognition, SES and STS keep
+     * using `AWS_REGION` and the AWS credentials.
+     */
+    S3_ENDPOINT_URL: z.string().url().optional(),
+    /** R2 (and most non-AWS S3 APIs) require path-style addressing. */
+    S3_FORCE_PATH_STYLE: z
+      .string()
+      .default('false')
+      .transform((s) => s === 'true' || s === '1'),
+    /** Signing region for the storage client. R2 expects `auto`. Defaults to `AWS_REGION`. */
+    S3_REGION: z.string().optional(),
+    /** Storage bucket for the S3-compatible provider. Falls back to `AWS_S3_BUCKET`. */
+    S3_BUCKET: z.string().optional(),
+    /** Separate credentials for the storage client (R2 tokens). Falls back to the AWS pair. */
+    S3_ACCESS_KEY_ID: z.string().optional(),
+    S3_SECRET_ACCESS_KEY: z.string().optional(),
+    /**
+     * Public base URL objects are served from (R2 custom domain / r2.dev).
+     * Required whenever `S3_ENDPOINT_URL` is set — the bucket-hosted AWS URL is
+     * not reachable for a non-AWS provider.
+     */
+    S3_PUBLIC_BASE_URL: z.string().optional(),
     REKOGNITION_COLLECTION_ID: z.string().min(3),
     REKOGNITION_QUALITY_FILTER: z.enum(['NONE', 'AUTO', 'LOW', 'MEDIUM', 'HIGH']).default('AUTO'),
     FACE_MATCH_THRESHOLD_PASS: z.coerce.number().min(50).max(100).default(90),
@@ -402,6 +429,14 @@ const envSchema = z
         path: ['JWT_REFRESH_SECRET'],
         message:
           'JWT_REFRESH_SECRET is required in production and must be different from JWT_ACCESS_SECRET',
+      })
+    }
+    if (val.S3_ENDPOINT_URL && !val.S3_PUBLIC_BASE_URL?.trim() && !val.CLOUDFRONT_DOMAIN?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['S3_PUBLIC_BASE_URL'],
+        message:
+          'S3_PUBLIC_BASE_URL (or CLOUDFRONT_DOMAIN) is required when S3_ENDPOINT_URL is set — the AWS bucket-hosted URL is unreachable for a non-AWS provider',
       })
     }
     if (val.NODE_ENV === 'production' && !val.DEVICE_FINGERPRINT_SECRET) {

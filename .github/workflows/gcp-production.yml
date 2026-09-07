@@ -1,0 +1,188 @@
+# Deploys to the GCE VM on GCP. Triggered by pushes to `production`.
+#
+# Branch split (same convention across ol-node-rest, live-server and admin):
+#   production -> GCP  (this file)
+#   prodv2     -> AWS  (.github/workflows/production.yml, unchanged)
+#   staging    -> AWS  (.github/workflows/staging.yml, unchanged)
+#
+# The `production` branch was retired on 2026-09-04 when its old SSH-deployed
+# EC2 became unreachable, and `production.yml` triggers only on `prodv2`. So
+# this pipeline reclaims a free branch name and cannot collide with the live
+# AWS deploy.
+#
+# Reuses .github/deploy/ec2-unpack-ol-node.sh verbatim — that script is
+# provider-agnostic (tar + npm ci + prisma generate/migrate + pm2) and is piped
+# over stdin exactly the way staging.yml does it over plain ssh.
+#
+# Required repository (or Environment "gcp-production") configuration:
+#   vars.GCP_PROJECT_ID    e.g. offoo-prod
+#   vars.GCP_ZONE          e.g. asia-south1-a
+#   vars.GCE_INSTANCE      defaults to ol-prod-app-01 when unset
+#   Auth, either:
+#     secrets.GCP_WORKLOAD_IDENTITY_PROVIDER + secrets.GCP_DEPLOY_SERVICE_ACCOUNT  (preferred)
+#     secrets.GCP_SA_KEY                                                           (service-account JSON fallback)
+#
+# The deploy service account needs: roles/compute.osAdminLogin (the unpack script
+# runs under sudo), roles/iap.tunnelResourceAccessor (the VM has no public IP),
+# and roles/compute.viewer.
+#
+# Secrets are NOT shipped by this pipeline. $APP_DIR/.env on the VM is placed by
+# hand from .env.gcp — see docs/flow-md/gcp-deployment-flow.md.
+name: GCP production build and deploy
+
+on:
+  push:
+    branches: [production]
+  workflow_dispatch:
+
+concurrency:
+  group: gcp-production-gce-ol-node
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack artifact
+        run: |
+          tar -czf ol-node-artifact.tgz \
+            dist \
+            prisma \
+            package.json \
+            package-lock.json
+
+          ls -lh ol-node-artifact.tgz
+
+      - name: Upload GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ol-node-gcp-${{ github.sha }}
+          path: ol-node-artifact.tgz
+          retention-days: 30
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_ZONE: ${{ vars.GCP_ZONE }}
+      GCE_INSTANCE: ${{ vars.GCE_INSTANCE || 'ol-prod-app-01' }}
+      APP_USER: olapp
+      APP_DIR: /opt/ol/apps/ol-node-rest
+      RUN_MIGRATE: '1'
+      RESTART_WORKERS: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ol-node-gcp-${{ github.sha }}
+
+      # Fail with a readable message rather than a confusing gcloud error,
+      # mirroring staging.yml's "Check staging EC2 secrets" step.
+      - name: Check GCP deploy configuration
+        env:
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          WIF_SA: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          missing=0
+          if [ -z "$GCP_PROJECT_ID" ]; then
+            echo "::error::Set repository variable GCP_PROJECT_ID"
+            missing=1
+          fi
+          if [ -z "$GCP_ZONE" ]; then
+            echo "::error::Set repository variable GCP_ZONE (e.g. asia-south1-a)"
+            missing=1
+          fi
+          if [ -z "$SA_KEY" ] && { [ -z "$WIF_PROVIDER" ] || [ -z "$WIF_SA" ]; }; then
+            echo "::error::Set either secret GCP_SA_KEY, or both GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_DEPLOY_SERVICE_ACCOUNT"
+            missing=1
+          fi
+          if [ "$missing" != "0" ]; then
+            exit 1
+          fi
+          echo "project=$GCP_PROJECT_ID zone=$GCP_ZONE instance=$GCE_INSTANCE"
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        if: ${{ secrets.GCP_SA_KEY == '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Authenticate to GCP (service-account key)
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify GCP identity
+        run: |
+          gcloud auth list --filter=status:ACTIVE --format="value(account)"
+          gcloud compute instances describe "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_ZONE" \
+            --format="value(name,status)"
+
+      # The VM has no public IP -> IAP tunnel for both scp and ssh.
+      - name: Upload artifact to the VM
+        run: |
+          gcloud compute scp \
+            ol-node-artifact.tgz \
+            "${GCE_INSTANCE}:/tmp/ol-node-artifact.tgz" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_ZONE" \
+            --tunnel-through-iap \
+            --quiet
+
+      - name: Unpack and restart on the VM
+        run: |
+          gcloud compute ssh "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_ZONE" \
+            --tunnel-through-iap \
+            --quiet \
+            --command "sudo APP_USER='${APP_USER}' APP_DIR='${APP_DIR}' ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE='${RUN_MIGRATE}' RESTART_WORKERS='${RESTART_WORKERS}' bash -s" \
+            < .github/deploy/ec2-unpack-ol-node.sh
+
+      - name: Health check
+        run: |
+          gcloud compute ssh "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_ZONE" \
+            --tunnel-through-iap \
+            --quiet \
+            --command "for i in \$(seq 1 20); do if curl -fsS http://127.0.0.1:3000/health/ready >/dev/null; then echo 'ready'; exit 0; fi; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; pm2 list; exit 1"
