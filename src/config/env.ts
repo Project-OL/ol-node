@@ -111,9 +111,19 @@ const envSchema = z
     S3_PUBLIC_BASE_URL: z.string().optional(),
     REKOGNITION_COLLECTION_ID: z.string().min(3),
     REKOGNITION_QUALITY_FILTER: z.enum(['NONE', 'AUTO', 'LOW', 'MEDIUM', 'HIGH']).default('AUTO'),
-    FACE_MATCH_THRESHOLD_PASS: z.coerce.number().min(50).max(100).default(90),
-    FACE_MATCH_THRESHOLD_REJECT: z.coerce.number().min(0).max(100).default(70),
-    FACE_MIN_DETECT_CONFIDENCE: z.coerce.number().min(0).max(100).default(98),
+    // Face thresholds below are the values tuned on GCP production (2026-09-08) and are
+    // now the defaults everywhere, so an environment that sets nothing behaves like prod.
+    // Net effect vs the old defaults: stricter about declaring two faces a duplicate,
+    // looser on image quality, so ordinary phone photos are rejected far less often.
+    /** 1:N duplicate-match verdict in `checkDuplicateFace`. Raised 90 -> 98. */
+    FACE_MATCH_THRESHOLD_PASS: z.coerce.number().min(50).max(100).default(98),
+    /**
+     * Retrieval floor for `SearchFacesByImage`. INERT: its only reader,
+     * `searchFaceByImage()`, has no call sites, so changing this affects nothing today.
+     */
+    FACE_MATCH_THRESHOLD_REJECT: z.coerce.number().min(0).max(100).default(85),
+    /** `DetectFaces` "is this a face" confidence. Lowered 98 -> 90. */
+    FACE_MIN_DETECT_CONFIDENCE: z.coerce.number().min(0).max(100).default(90),
     FACE_VERIFY_TIMEOUT_MS: z.coerce.number().int().positive().default(4000),
     FACE_INDEX_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
     /**
@@ -141,10 +151,19 @@ const envSchema = z
     /** Face Liveness + registration session TTL (minutes). */
     FACE_REGISTRATION_SESSION_TTL_MIN: z.coerce.number().int().positive().default(15),
     /** Minimum Rekognition Face Liveness confidence (0–100) before accepting reference image. */
-    FACE_LIVENESS_CONFIDENCE_MIN: z.coerce.number().min(0).max(100).default(90),
+    FACE_LIVENESS_CONFIDENCE_MIN: z.coerce.number().min(0).max(100).default(80),
     /** Risk score above this tightens liveness threshold by `FACE_LIVENESS_RISK_CONFIDENCE_DELTA`. */
-    FACE_REGISTRATION_RISK_SCORE_STRICT: z.coerce.number().min(0).max(100).default(40),
-    FACE_LIVENESS_RISK_CONFIDENCE_DELTA: z.coerce.number().min(0).max(30).default(5),
+    FACE_REGISTRATION_RISK_SCORE_STRICT: z.coerce.number().min(0).max(100).default(55),
+    /**
+     * Extra liveness confidence demanded of high-risk sessions.
+     *
+     * `face-registration-verify.job.ts` computes
+     * `minConf = risk >= RISK_SCORE_STRICT ? CONFIDENCE_MIN + DELTA : CONFIDENCE_MIN`.
+     * At the default **0 both branches are identical**, so risk-based tightening is OFF
+     * and `FACE_REGISTRATION_RISK_SCORE_STRICT` has no effect at all. Raise this above 0
+     * to switch it back on; the strict score is kept at 55 for when that happens.
+     */
+    FACE_LIVENESS_RISK_CONFIDENCE_DELTA: z.coerce.number().min(0).max(30).default(0),
     FACE_REGISTRATION_RATE_SESSION_PER_HOUR: z.coerce.number().int().positive().default(10),
     FACE_REGISTRATION_RATE_VERIFY_PER_HOUR: z.coerce.number().int().positive().default(20),
     FACE_REGISTRATION_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
@@ -171,12 +190,12 @@ const envSchema = z
     FACE_LIVENESS_CREDENTIALS_DURATION_SEC: z.coerce.number().int().min(900).max(3600).default(900),
 
     /** Rekognition DetectFaces quality thresholds (0–100 scale). */
-    FACE_MIN_BRIGHTNESS: z.coerce.number().min(0).max(100).default(30),
-    FACE_MIN_SHARPNESS: z.coerce.number().min(0).max(100).default(30),
+    FACE_MIN_BRIGHTNESS: z.coerce.number().min(0).max(100).default(20),
+    FACE_MIN_SHARPNESS: z.coerce.number().min(0).max(100).default(25),
     /** Missing key landmark count before half-covered rejection. */
     FACE_MAX_LANDMARKS_MISSING: z.coerce.number().int().min(0).max(10).default(2),
     /** Landmark confidence floor (0–100). */
-    FACE_LANDMARK_MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(85),
+    FACE_LANDMARK_MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(75),
     /** DetectModerationLabels nudity confidence % to reject. */
     FACE_MODERATION_NUDITY_THRESHOLD: z.coerce.number().min(0).max(100).default(50),
     /** When true, reject PARTIAL_NUDITY; else only EXPLICIT_NUDITY. */
@@ -201,7 +220,7 @@ const envSchema = z
       .default('true')
       .transform((s) => s === 'true' || s === '1'),
     /** HSL saturation in face region above this → garish makeup heuristic. */
-    FACE_GARISH_SATURATION_MAX: z.coerce.number().min(0).max(100).default(85),
+    FACE_GARISH_SATURATION_MAX: z.coerce.number().min(0).max(100).default(75),
     /** Image histogram avg saturation below this → monochrome. */
     FACE_MONOCHROME_SATURATION_MAX: z.coerce.number().min(0).max(100).default(10),
 
