@@ -3,9 +3,16 @@ import { env } from './config/env'
 import { prisma, prismaRead, connectDatabases } from './config/database'
 import { redisClient, redisReadClient } from './config/redis'
 import { ensureCollectionExists } from './lib/rekognition.client'
+import { describeStorageTarget } from './config/s3'
 import { withShutdownTimeout } from './utils/shutdownTimeout'
 
 async function start() {
+  // Log the resolved object-storage target first. Which store a process talks to is
+  // decided by .env, never by the code, so a host whose env does not match its
+  // environment - a GCP box missing S3_ENDPOINT_URL quietly writing uploads into the
+  // AWS bucket - is otherwise invisible until objects turn up missing.
+  console.log(`[storage] ${describeStorageTarget()}`)
+
   try {
     await connectDatabases()
   } catch (error) {
