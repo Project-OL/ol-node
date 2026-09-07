@@ -302,6 +302,8 @@ export const supportRepository = {
     minDaysSinceReviewed?: number
     /** Only tickets whose resolvedAt is within this many days (inclusive). */
     maxDaysSinceReviewed?: number
+    /** When set, only tickets this admin has starred (per-admin bookmark). */
+    starredByAdminId?: string
     skip: number
     take: number
   }) {
@@ -334,6 +336,10 @@ export const supportRepository = {
       { updatedAt: 'desc' },
     ]
 
+    const starFilter: Prisma.SupportTicketWhereInput = opts.starredByAdminId
+      ? { stars: { some: { adminId: opts.starredByAdminId } } }
+      : {}
+
     if (opts.status) {
       const where: Prisma.SupportTicketWhereInput = {
         status: opts.status,
@@ -343,6 +349,7 @@ export const supportRepository = {
         ...(opts.unassigned ? { assignedAdminId: null } : {}),
         ...(opts.ratedOnly ? { rating: { not: null } } : {}),
         ...(resolvedAtFilter ? { resolvedAt: resolvedAtFilter } : {}),
+        ...starFilter,
       }
       const [tickets, total] = await Promise.all([
         prismaRead.supportTicket.findMany({
@@ -364,6 +371,7 @@ export const supportRepository = {
       ...(opts.unassigned ? { assignedAdminId: null } : {}),
       ...(opts.ratedOnly ? { rating: { not: null } } : {}),
       ...(resolvedAtFilter ? { resolvedAt: resolvedAtFilter } : {}),
+      ...starFilter,
     }
     return findByStatusTiers({
       baseWhere,
@@ -383,6 +391,41 @@ export const supportRepository = {
         assignedAdmin: { select: noteAdminSelect },
       },
     })
+  },
+
+  /** Idempotent per-admin star; re-starring an already-starred ticket is a no-op. */
+  async starTicket(ticketId: bigint, adminId: string) {
+    return prisma.supportTicketStar.upsert({
+      where: { ticketId_adminId: { ticketId, adminId } },
+      create: { ticketId, adminId },
+      update: {},
+    })
+  },
+
+  /** Idempotent un-star; returns the number of rows actually removed. */
+  async unstarTicket(ticketId: bigint, adminId: string) {
+    const { count } = await prisma.supportTicketStar.deleteMany({
+      where: { ticketId, adminId },
+    })
+    return count
+  },
+
+  async isTicketStarred(ticketId: bigint, adminId: string) {
+    const star = await prismaRead.supportTicketStar.findUnique({
+      where: { ticketId_adminId: { ticketId, adminId } },
+      select: { ticketId: true },
+    })
+    return star != null
+  },
+
+  /** Subset of `ticketIds` that `adminId` has starred — one query per list page. */
+  async findStarredTicketIds(ticketIds: bigint[], adminId: string) {
+    if (ticketIds.length === 0) return new Set<bigint>()
+    const rows = await prismaRead.supportTicketStar.findMany({
+      where: { adminId, ticketId: { in: ticketIds } },
+      select: { ticketId: true },
+    })
+    return new Set(rows.map((r) => r.ticketId))
   },
 
   async createNote(data: { ticketId: bigint; adminId: string; content: string }) {

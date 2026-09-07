@@ -13,6 +13,7 @@ import {
   AdminTicketMessagesQuerySchema,
   AdminReplySchema,
   ResolveTicketSchema,
+  ReopenTicketSchema,
   AssignTicketSchema,
   SetPrioritySchema,
   CreateNoteSchema,
@@ -35,6 +36,8 @@ const reportAuth = [
   authenticateAdmin,
   requireAdminRole('CUSTOMER_SUPPORT', 'SUPER_ADMIN', 'MODERATOR'),
 ]
+/** Reopen is SUPER_ADMIN-only; the service re-checks, since a view grant can widen this. */
+const superAdminAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 
 function actorOf(req: FastifyRequest) {
   if (!req.adminUser) throw new AppError(401, 'Not authenticated as admin', 'ADMIN_TOKEN_MISSING')
@@ -71,6 +74,14 @@ export default async function supportAdminRoutes(app: FastifyInstance) {
     return reply.send({ ticket })
   })
 
+  // SUPER_ADMIN only: undo a resolve/reject while the ticket is still PENDING_REVIEW.
+  app.post('/tickets/:ticketId/reopen', { preHandler: superAdminAuth }, async (req, reply) => {
+    const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
+    const body = parseRequest(ReopenTicketSchema, req.body ?? {})
+    const ticket = await supportAdminService.reopen(actorOf(req), ticketId, body)
+    return reply.send({ ticket })
+  })
+
   app.post('/tickets/:ticketId/close', { preHandler: csAuth }, async (req, reply) => {
     const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
     const ticket = await supportAdminService.forceClose(actorOf(req), ticketId)
@@ -95,6 +106,18 @@ export default async function supportAdminRoutes(app: FastifyInstance) {
     const body = parseRequest(SetPrioritySchema, req.body)
     const ticket = await supportAdminService.setPriority(actorOf(req), ticketId, body.priority)
     return reply.send({ ticket })
+  })
+
+  app.post('/tickets/:ticketId/star', { preHandler: csAuth }, async (req, reply) => {
+    const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
+    const result = await supportAdminService.setStar(actorOf(req), ticketId, true)
+    return reply.send(result)
+  })
+
+  app.delete('/tickets/:ticketId/star', { preHandler: csAuth }, async (req, reply) => {
+    const { ticketId } = parseRequest(AdminTicketParamsSchema, req.params)
+    const result = await supportAdminService.setStar(actorOf(req), ticketId, false)
+    return reply.send(result)
   })
 
   app.get('/tickets/:ticketId/notes', { preHandler: csAuth }, async (req, reply) => {

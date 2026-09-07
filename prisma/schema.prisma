@@ -2905,6 +2905,7 @@ model SupportTicket {
   messages         SupportMessage[]
   notes            SupportTicketNote[]
   csaNotifications CsaNotification[]
+  stars            SupportTicketStar[]
 
   @@index([userId, status, updatedAt])
   @@index([status, updatedAt])
@@ -2925,6 +2926,22 @@ model SupportTicketNote {
 
   @@index([ticketId, createdAt])
   @@map("support_ticket_notes")
+}
+
+/// Per-admin bookmark on a ticket. Starring is private to the admin who starred
+/// it (each CSA curates their own follow-up list), so the list/detail DTOs expose
+/// `isStarred` relative to the calling admin, never a global flag.
+model SupportTicketStar {
+  ticketId  BigInt   @map("ticket_id") @db.BigInt
+  adminId   String   @map("admin_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  admin  SystemAdmin   @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, adminId])
+  @@index([adminId, createdAt])
+  @@map("support_ticket_stars")
 }
 
 /// Canned replies CSAs can send to a ticket; sending one via the resolve flow
@@ -3054,6 +3071,11 @@ model UserFaceProfile {
   moderationLabels    Json?             @map("moderation_labels") @db.JsonB
   faceMatchSimilarity Float?            @map("face_match_similarity")
   matchedUserId       String?           @map("matched_user_id") @db.Uuid
+  /// Admin worklist ordering for the duplicate-review queue: 0 keeps a row in the
+  /// default (newest-first) position, a higher value sinks it below every 0-weight
+  /// row. Set by "send to bottom" so reviewers can park a hard case without
+  /// resolving it. Not used anywhere outside the admin duplicates list.
+  adminSortWeight     Int               @default(0) @map("admin_sort_weight")
   createdAt           DateTime          @default(now()) @map("created_at")
   updatedAt           DateTime          @updatedAt @map("updated_at")
 
@@ -3064,6 +3086,7 @@ model UserFaceProfile {
 
   @@index([status])
   @@index([matchedUserId])
+  @@index([status, adminSortWeight, updatedAt])
   @@map("user_face_profiles")
 }
 
@@ -3358,6 +3381,7 @@ model SystemAdmin {
   sessions        AdminSession[]
   assignedTickets SupportTicket[]       @relation("TicketAssignee")
   ticketNotes     SupportTicketNote[]
+  ticketStars     SupportTicketStar[]
   notifications   CsaNotification[]
   reviewedReports MessageReport[]       @relation("ReportReviewer")
   viewAssignments AdminViewAssignment[]

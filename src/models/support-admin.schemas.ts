@@ -25,6 +25,11 @@ export const AdminTicketListQuerySchema = z.object({
   minDaysSinceReviewed: z.coerce.number().int().min(0).max(365).optional(),
   /** Tickets resolved/rejected within the last N full days (uses resolvedAt). */
   maxDaysSinceReviewed: z.coerce.number().int().min(0).max(365).optional(),
+  /** Only tickets the calling admin has starred. */
+  starredOnly: z
+    .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
+    .transform((v) => v === true || v === 'true' || v === '1')
+    .optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
@@ -41,8 +46,21 @@ export const AdminReplySchema = z.object({
 
 export const ResolveTicketSchema = z.object({
   resolution: z.enum(['RESOLVED', 'REJECTED']),
-  /** Required reason posted into the ticket chat as a SUPPORT message. */
-  note: z.string().min(1).max(2000),
+  /**
+   * Optional reason posted into the ticket chat as a SUPPORT message. When
+   * omitted the service posts a generic resolved/rejected notice instead, so
+   * the admin UI can resolve in one click without a note.
+   */
+  note: z.string().max(2000).optional(),
+})
+
+export const ReopenTicketSchema = z.object({
+  /**
+   * Optional message posted into the ticket chat as a SUPPORT message. The user
+   * was previously told the ticket would auto-close, so a default notice is
+   * posted when this is omitted.
+   */
+  note: z.string().max(2000).optional(),
 })
 
 export const AssignTicketSchema = z.object({
@@ -87,7 +105,8 @@ export const UpdateReplyTemplateSchema = z
   })
 
 export const BulkResolveWithTemplateSchema = z.object({
-  ticketIds: z.array(z.coerce.bigint()).min(1).max(50),
+  /** No upper bound — the admin portal lets a CSA select tickets across pages. */
+  ticketIds: z.array(z.coerce.bigint()).min(1),
   templateId: z.string().uuid(),
   resolution: z.enum(['RESOLVED', 'REJECTED']).default('RESOLVED'),
 })
