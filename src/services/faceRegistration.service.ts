@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import { env } from '../config/env'
 import { prisma } from '../config/database'
-import { s3Bucket } from '../config/s3'
+import { s3Bucket, isAwsS3 } from '../config/s3'
 import { redisClient, RedisKeys } from '../config/redis'
 import { storageService } from './storage.service'
 import { faceRegistrationRepository } from '../repositories/faceRegistration.repository'
@@ -116,7 +116,13 @@ export const faceRegistrationService = {
 
     await ensureCollectionExists()
 
-    const bucket = s3Bucket?.trim()
+    // OutputConfig makes AWS write the reference + audit images into the bucket
+    // itself, which only works for a real AWS S3 bucket. On an S3-compatible
+    // provider omit it entirely: Rekognition then returns those images inline as
+    // bytes on GetFaceLivenessSessionResults, which the verify job already
+    // prefers over the S3Object branch. Audit images are unaffected —
+    // AuditImagesLimit still applies and they come back inline too.
+    const bucket = isAwsS3 ? s3Bucket?.trim() : undefined
     const aws = await createFaceLivenessSession({
       clientRequestToken,
       auditImagesLimit: env.FACE_LIVENESS_AUDIT_IMAGES_LIMIT,

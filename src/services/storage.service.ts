@@ -11,7 +11,19 @@ import { AppError } from '../middlewares/errorHandler'
 import { rootLogger } from '../utils/rootLogger'
 import { s3CircuitBreaker } from '../utils/circuitBreaker'
 
+/** Normalize a configured host/URL into a scheme-qualified origin with no trailing slash. */
+function normalizeBase(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '')
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
 function buildPublicUrl(key: string): string {
+  // Non-AWS provider (R2): objects are served from their own public domain, not
+  // the bucket-hosted AWS URL. Falls through to AWS when S3_PUBLIC_BASE_URL is unset.
+  const base = env.S3_PUBLIC_BASE_URL?.trim()
+  if (base) {
+    return `${normalizeBase(base)}/${key}`
+  }
   if (!s3Bucket) {
     throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
   }
@@ -21,8 +33,7 @@ function buildPublicUrl(key: string): string {
 function buildObjectPublicUrl(key: string): string {
   const domain = env.CLOUDFRONT_DOMAIN?.trim()
   if (domain) {
-    const host = domain.replace(/^https?:\/\//i, '').replace(/\/$/, '')
-    return `https://${host}/${key}`
+    return `${normalizeBase(domain)}/${key}`
   }
   return buildPublicUrl(key)
 }

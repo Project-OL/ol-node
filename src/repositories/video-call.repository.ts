@@ -85,4 +85,30 @@ export const videoCallRepository = {
       data: { status, endedAt: new Date(), endReason: reason ?? null },
     })
   },
+
+  /**
+   * Every session still in a non-terminal state, oldest first.
+   * `RINGING` is included alongside `ACTIVE`: a call that never connected is
+   * exactly the kind of row the stale-session sweep exists to close.
+   * Used by `src/scripts/cleanup-stale-video-call-sessions.ts`.
+   */
+  async findOpenSessions() {
+    return prismaRead.videoCallSession.findMany({
+      where: { status: { in: ['ACTIVE', 'RINGING'] } },
+      orderBy: { startedAt: 'asc' },
+    })
+  },
+
+  /**
+   * Terminal close used by the cleanup sweep. Deliberately wider than
+   * `endSession`: that one is the typed call-lifecycle path, whereas the sweep
+   * also writes `MISSED` for a session that died while still `RINGING`.
+   * `video_call_sessions.status` is a free `VarChar(50)`, not an enum.
+   */
+  async closeSession(sessionId: string, status: string, reason?: string) {
+    return prisma.videoCallSession.update({
+      where: { id: sessionId },
+      data: { status, endedAt: new Date(), endReason: reason ?? null },
+    })
+  },
 }
