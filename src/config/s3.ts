@@ -30,3 +30,35 @@ export const s3Bucket = env.S3_BUCKET ?? env.AWS_S3_BUCKET ?? ''
  * plus Face Liveness `OutputConfig`, which has AWS write into the bucket itself.
  */
 export const isAwsS3 = !env.S3_ENDPOINT_URL
+
+/**
+ * Which object store this process actually resolved, for logging and health output.
+ *
+ * The provider is chosen entirely at runtime from `.env` - the code is identical on
+ * every branch - so the one failure mode nothing else catches is a host whose env
+ * does not match its environment. A GCP box missing `S3_ENDPOINT_URL` boots happily
+ * and writes uploads into the AWS bucket. Surfacing the resolved target at boot and
+ * on `/health/ready` makes that visible in one line instead of being discovered when
+ * objects turn up missing.
+ *
+ * Contains no credentials - bucket names and the public origin are not secrets.
+ */
+export const storageTarget = {
+  provider: isAwsS3 ? ('aws-s3' as const) : ('s3-compatible' as const),
+  bucket: s3Bucket || null,
+  region: env.S3_REGION ?? env.AWS_REGION,
+  endpoint: env.S3_ENDPOINT_URL ?? null,
+  forcePathStyle: env.S3_FORCE_PATH_STYLE,
+  publicBaseUrl: env.S3_PUBLIC_BASE_URL ?? env.CLOUDFRONT_DOMAIN ?? null,
+}
+
+/** One-line, secret-free summary for the startup log. */
+export function describeStorageTarget(): string {
+  return [
+    `provider=${storageTarget.provider}`,
+    `bucket=${storageTarget.bucket ?? '<unset>'}`,
+    `region=${storageTarget.region}`,
+    `endpoint=${storageTarget.endpoint ?? '<aws-default>'}`,
+    `publicBaseUrl=${storageTarget.publicBaseUrl ?? '<bucket-hosted>'}`,
+  ].join(' ')
+}

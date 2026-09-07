@@ -103,6 +103,9 @@ jobs:
           aws s3 cp \
             .github/deploy/ec2-unpack-ol-node.sh \
             "s3://${DEPLOY_BUCKET}/ol-node/ec2-unpack-ol-node-${GITHUB_SHA}.sh"
+          aws s3 cp \
+            .github/deploy/verify-storage-target.sh \
+            "s3://${DEPLOY_BUCKET}/ol-node/verify-storage-target-${GITHUB_SHA}.sh"
 
       # ------------------------------------------------------------
       # Deploy through AWS Systems Manager
@@ -111,6 +114,7 @@ jobs:
         env:
           ARTIFACT_KEY: ol-node/ol-node-${{ github.sha }}.tgz
           DEPLOY_SCRIPT_KEY: ol-node/ec2-unpack-ol-node-${{ github.sha }}.sh
+          VERIFY_SCRIPT_KEY: ol-node/verify-storage-target-${{ github.sha }}.sh
         run: |
           COMMAND_ID=$(
             aws ssm send-command \
@@ -123,7 +127,9 @@ jobs:
                 \"rm -f /tmp/ol-node-artifact.tgz /tmp/ec2-unpack-ol-node.sh\",
                 \"aws s3 cp s3://${DEPLOY_BUCKET}/${ARTIFACT_KEY} /tmp/ol-node-artifact.tgz\",
                 \"aws s3 cp s3://${DEPLOY_BUCKET}/${DEPLOY_SCRIPT_KEY} /tmp/ec2-unpack-ol-node.sh\",
-                \"chmod 700 /tmp/ec2-unpack-ol-node.sh\",
+                \"aws s3 cp s3://${DEPLOY_BUCKET}/${VERIFY_SCRIPT_KEY} /tmp/verify-storage-target.sh\",
+                \"chmod 700 /tmp/ec2-unpack-ol-node.sh /tmp/verify-storage-target.sh\",
+                \"EXPECT_STORAGE=aws-s3 bash /tmp/verify-storage-target.sh\",
                 \"RUN_MIGRATE=1 RESTART_WORKERS=1 bash /tmp/ec2-unpack-ol-node.sh\"
               ]" \
               --query 'Command.CommandId' \
