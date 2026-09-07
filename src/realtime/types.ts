@@ -191,16 +191,17 @@ export type ServerFrame =
       createdAt: string
     }
   /**
-   * Emitted to the ticket room when a CSA/SUPER_ADMIN resolves, rejects, or force-closes a ticket.
-   * Both the user (via ticket room) and any admin watching the same room receive this frame.
+   * Emitted to the ticket room when a CSA/SUPER_ADMIN resolves, rejects, force-closes, or
+   * reopens a ticket. Both the user (via ticket room) and any admin watching the same room
+   * receive this frame.
    */
   | {
       t: 'SUPPORT_TICKET_STATUS_CHANGED'
       ticketId: string
       ticketPublicId: string
-      /** New ticket status after the action. */
-      status: 'PENDING_REVIEW' | 'CLOSED'
-      /** CSA resolution outcome (set on resolve/reject; null on plain force-close). */
+      /** New ticket status after the action. `AWAITING_REPLY` means a SUPER_ADMIN reopened it. */
+      status: 'PENDING_REVIEW' | 'CLOSED' | 'AWAITING_REPLY'
+      /** CSA resolution outcome (set on resolve/reject; null on plain force-close or reopen). */
       resolution: 'RESOLVED' | 'REJECTED' | null
       assignedAdminId: string | null
       /** ISO timestamp of the status change. */

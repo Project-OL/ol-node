@@ -382,6 +382,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
           properties: {
             page: { type: 'integer', minimum: 1 },
             limit: { type: 'integer', minimum: 1, maximum: 50 },
+            search: { type: 'string', minLength: 1, maxLength: 120 },
           },
         },
       },
@@ -396,6 +397,58 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
         )
       }
       const result = await faceVerificationAdminService.listPendingDuplicates(parsed.data)
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/face-verification/duplicates/:userId/send-to-bottom',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Park a pending duplicate case at the bottom of the admin worklist so reviewers can skip it without resolving it. Ordering only — no account state changes.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', format: 'uuid' } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.sendDuplicateToBottom(
+        request.params.userId,
+        adminId,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/face-verification/duplicates/:userId/restore-order',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Undo send-to-bottom: restores the duplicate case to its default newest-first position in the admin worklist.',
+        params: {
+          type: 'object',
+          required: ['userId'],
+          properties: { userId: { type: 'string', format: 'uuid' } },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.restoreDuplicateOrder(
+        request.params.userId,
+        adminId,
+      )
       return reply.send(result)
     },
   )
