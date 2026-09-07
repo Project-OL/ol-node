@@ -18,6 +18,7 @@ import { agencyLeaveApplicationRepository } from '../repositories/agencyLeaveApp
 import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApplication.repository'
 import { supportRepository } from '../repositories/support.repository'
 import { rootLogger } from '../utils/rootLogger'
+import { agencyApplicationNotifier } from './agencyApplicationNotifier.service'
 import { displayNameFromUser } from '../utils/profileDisplay'
 import { formatUserName } from '../utils/user-display'
 import { agencyCommissionService } from './agencyCommission.service'
@@ -337,6 +338,14 @@ export const agencyService = {
     await agencyService.bustRankingCache()
     await agencyCommissionService.bustAgentCommissionCaches(agency.userId)
     await meServiceInvalidateSafe(params.applicantUserId)
+
+    // After the transaction and cache busts: the approval is already durable, so a
+    // messaging failure must not surface here. notifyDecision swallows its own errors.
+    await agencyApplicationNotifier.notifyDecision({
+      applicantUserId: params.applicantUserId,
+      applicationId: params.applicationId,
+      decision: 'APPROVED',
+    })
 
     return { agency, created: true as const }
   },

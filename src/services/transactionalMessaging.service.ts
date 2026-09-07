@@ -23,13 +23,29 @@ const SKIP_POINT_TX_TYPES = new Set<PointTxType>([
 
 const SKIP_COIN_TX_TYPES = new Set<CoinTxType>([CoinTxType.TRADING_TRANSFER_REVERSAL])
 
-function walletCurrencyLabel(currency: 'COIN' | 'POINT' | 'TRADING_COIN'): string {
+/** Mirrors `WalletCurrencyType`. DIAMOND was missing here and fell through to COIN. */
+type TxWalletCurrency = 'COIN' | 'POINT' | 'TRADING_COIN' | 'DIAMOND'
+
+/**
+ * Push notifications are sent for credits only.
+ *
+ * Debits of coins, points, trading coins and diamonds are the routine cost of using the
+ * app — sending, gifting, betting — and notifying a user about money they just chose to
+ * spend is noise. The platform message is still written either way, so the ledger trail
+ * and in-app transaction history are unchanged; only the FCM push is suppressed.
+ */
+function shouldPushForDirection(direction: 'CREDIT' | 'DEBIT'): boolean {
+  return direction === 'CREDIT'
+}
+
+function walletCurrencyLabel(currency: TxWalletCurrency): string {
   if (currency === 'POINT') return 'points'
   if (currency === 'TRADING_COIN') return 'trading coins'
+  if (currency === 'DIAMOND') return 'diamonds'
   return 'coins'
 }
 
-function formatAmount(amount: bigint, currency: 'COIN' | 'POINT' | 'TRADING_COIN'): string {
+function formatAmount(amount: bigint, currency: TxWalletCurrency): string {
   return `${amount.toString()} ${walletCurrencyLabel(currency)}`
 }
 
@@ -54,12 +70,15 @@ function buildLedgerClientMessageId(kind: 'coin' | 'point', entryId: string): st
   return `txn:${kind}:${entryId}`
 }
 
-function transactionPushTitle(
-  currency: 'COIN' | 'POINT' | 'TRADING_COIN',
-  direction: 'CREDIT' | 'DEBIT',
-): string {
+function transactionPushTitle(currency: TxWalletCurrency, direction: 'CREDIT' | 'DEBIT'): string {
   const label =
-    currency === 'POINT' ? 'Points' : currency === 'TRADING_COIN' ? 'Trading coins' : 'Coins'
+    currency === 'POINT'
+      ? 'Points'
+      : currency === 'TRADING_COIN'
+        ? 'Trading coins'
+        : currency === 'DIAMOND'
+          ? 'Diamonds'
+          : 'Coins'
   return direction === 'CREDIT' ? `${label} credited` : `${label} debited`
 }
 
@@ -115,12 +134,14 @@ export const transactionalMessagingService = {
     if (SKIP_COIN_TX_TYPES.has(entry.txType)) return
 
     const currencyType = entry.wallet.currencyType
-    const walletCurrency =
+    const walletCurrency: TxWalletCurrency =
       currencyType === WalletCurrencyType.TRADING_COIN
         ? 'TRADING_COIN'
         : currencyType === WalletCurrencyType.POINT
           ? 'POINT'
-          : 'COIN'
+          : currencyType === WalletCurrencyType.DIAMOND
+            ? 'DIAMOND'
+            : 'COIN'
 
     const selfUserId = entry.wallet.userId
     const counterpartyDetailsMap = await buildCounterpartyDetailsMap(
@@ -171,7 +192,7 @@ export const transactionalMessagingService = {
       metadata,
       clientMessageId: buildLedgerClientMessageId('coin', entry.id),
     })
-    if (sent.created) {
+    if (sent.created && shouldPushForDirection(direction)) {
       await pushTransactionalNotification({
         userId: selfUserId,
         title: transactionPushTitle(walletCurrency, direction),
@@ -239,7 +260,7 @@ export const transactionalMessagingService = {
       metadata,
       clientMessageId: buildLedgerClientMessageId('point', entry.id),
     })
-    if (sent.created) {
+    if (sent.created && shouldPushForDirection(direction)) {
       await pushTransactionalNotification({
         userId: selfUserId,
         title: transactionPushTitle('POINT', direction),

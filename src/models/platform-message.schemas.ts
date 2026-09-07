@@ -26,7 +26,12 @@ export type PlatformPostRefSnapshot = {
 
 export type PlatformMessageMetadata = {
   category: 'transactional' | 'system' | 'notification'
-  walletCurrency?: 'COIN' | 'POINT' | 'TRADING_COIN'
+  /**
+   * DIAMOND was added 2026-09-08. Diamond ledger entries previously fell through to
+   * 'COIN' here, so their transactional messages and push payloads were labelled as
+   * coins. Clients switching on this value must treat DIAMOND as a new case.
+   */
+  walletCurrency?: 'COIN' | 'POINT' | 'TRADING_COIN' | 'DIAMOND'
   direction?: 'CREDIT' | 'DEBIT'
   txType?: string
   txLabel?: string

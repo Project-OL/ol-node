@@ -468,7 +468,8 @@ describe('meService', () => {
     })
     const out = await meService.getMe('user-1')
     expect(out.data.adminTags).toEqual([
-      'coinseller',
+      // Agencies derive `agency`, not `coinseller` — coinseller is admin-applied only.
+      'agency',
       'gift collection',
       'VIP Diamond',
       'RICH I',

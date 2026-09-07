@@ -6,6 +6,7 @@ import { agencyAgentApplicationRepository } from '../repositories/agencyAgentApp
 import { agencyCommissionRepository } from '../repositories/agencyCommission.repository'
 import { agencyApplicationKycRepository } from '../repositories/agencyApplicationKyc.repository'
 import { agencyKycService } from './agencyKyc.service'
+import { agencyApplicationNotifier } from './agencyApplicationNotifier.service'
 import { agencyHostRepository } from '../repositories/agencyHost.repository'
 import { storageService } from './storage.service'
 import { agencyCommissionService, agencyTierWindowMetricNote } from './agencyCommission.service'
@@ -417,6 +418,15 @@ export const agencyAdminService = {
       status: 'REJECTED',
       reviewedBy: params.adminUserId,
       adminNote: params.adminNote,
+      userNote: params.userNote,
+    })
+
+    // `userNote` is the admin-authored, user-facing reason, so it becomes the message body.
+    // `adminNote` is internal and deliberately not sent.
+    await agencyApplicationNotifier.notifyDecision({
+      applicantUserId: params.applicantUserId,
+      applicationId: application.id,
+      decision: 'REJECTED',
       userNote: params.userNote,
     })
 
