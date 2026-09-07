@@ -98,9 +98,13 @@ if [ -z "${RESOLVED_BUCKET}" ]; then
   FAILED=1
 fi
 
-# env.ts fails startup on this, but failing here names the problem before pm2 restarts.
-if [ "$ACTUAL" = "r2" ] && [ -z "$RESOLVED_PUBLIC" ]; then
-  echo "::error::S3_ENDPOINT_URL is set without S3_PUBLIC_BASE_URL or CLOUDFRONT_DOMAIN - the app will refuse to boot."
+# Opt-in, because it is an ol-node-rest rule, not a universal one. Its env.ts refuses
+# to boot when S3_ENDPOINT_URL is set without a public origin, since every avatar/gift
+# URL it returns would otherwise point at an unreachable AWS bucket host. Live-server
+# only uploads flagged frames and returns {bucket, key} - it never builds a public URL
+# and never reads S3_PUBLIC_BASE_URL, so enforcing it there would block a valid deploy.
+if [ "${REQUIRE_PUBLIC_BASE_URL:-0}" = "1" ] && [ "$ACTUAL" = "r2" ] && [ -z "$RESOLVED_PUBLIC" ]; then
+  echo "::error::S3_ENDPOINT_URL is set without S3_PUBLIC_BASE_URL or CLOUDFRONT_DOMAIN - this app will refuse to boot."
   FAILED=1
 fi
 

@@ -191,7 +191,7 @@ jobs:
             --zone "$GCP_ZONE" \
             --tunnel-through-iap \
             --quiet \
-            --command "sudo APP_DIR='${APP_DIR}' EXPECT_STORAGE=r2 bash -s" \
+            --command "sudo APP_DIR='${APP_DIR}' EXPECT_STORAGE=r2 REQUIRE_PUBLIC_BASE_URL=1 bash -s" \
             < .github/deploy/verify-storage-target.sh 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           status=${PIPESTATUS[0]}
           set -e
