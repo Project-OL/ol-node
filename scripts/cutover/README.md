@@ -21,7 +21,22 @@ Measured 2026-09-08, not assumed:
 ## Before the day (zero downtime)
 
 1. **Deploy the code** so `dist/scripts/{rewrite-media-urls,reindex-face-collection}.js` exist on the VM (push `production`).
-2. **Custom domain on R2.** `S3_PUBLIC_BASE_URL` is `pub-….r2.dev`, Cloudflare's *development* origin — rate-limited and not CDN-cached. 48k cover images plus every avatar will route through it. One env line; do it before real traffic.
+2. **R2 custom domain — DEFERRED, and that is a deliberate decision.** The cutover runs fine on `pub-….r2.dev`: objects serve (verified 200) and nothing in these scripts depends on the hostname. What you accept is that r2.dev is Cloudflare's *development* origin — **rate-limited, and not CDN-cached at all** (verified: no `cf-cache-status` header on repeat requests, served via SIN rather than a local edge). Every avatar and all 48k live-stream covers hit the R2 origin on every request.
+
+   Blocked for now because Cloudflare only accepts **root domains** as zones — `cdn.offoolive.com` is rejected (subdomain zones are Enterprise-only), and `offoolive.com` sits on Vercel DNS with the website, both prod and staging API records, LiveKit and email. Moving that zone is its own project.
+
+   **Switching later is cheap** — that is why deferring is reasonable:
+
+   ```bash
+   # 1. new secret version with S3_PUBLIC_BASE_URL=https://<new-host>
+   # 2. refresh .env on the VM, restart with a sourced shell
+   # 3. repoint the URLs already stored in the database:
+   node dist/scripts/rewrite-media-urls.js \
+     --from=https://pub-db89b578921f4ce3b6f95f9ebc6a83c4.r2.dev \
+     --to=https://<new-host> --dry-run     # then without --dry-run
+   ```
+
+   The script is idempotent and verifies no old-origin URL survives, so this is a low-risk change on any ordinary day. Watch for `429`s on media requests in the meantime — that is what hitting the r2.dev limit looks like.
 3. **Pre-pass the objects:** `03-rclone-delta.sh` unfrozen. Catches nearly all drift for free.
 4. **Rehearse:** `01` without `FREEZE=1`, then `02`, then `04 --dry-run`.
 5. Confirm `pg_dump` ≥ 16 exists on the EC2 — `01` checks and fails early if not. `pg_restore 16.15` is already installed on the GCE VM.
