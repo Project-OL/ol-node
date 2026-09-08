@@ -352,6 +352,18 @@ const envSchema = z
     GAME_PROVIDER_BAISHUN_APP_KEY: z.string().min(1).optional(),
     /** Publicly accessible 60x60 diamond icon URL sent in getConfig()'s gameConfig.currencyIcon. */
     GAME_DIAMOND_ICON_URL: z.string().url().optional(),
+    /**
+     * BAISHUN production game-server node the H5 client connects to, sent as
+     * `gsp` in getConfig(). Documented values: 101 Singapore, 201 Dubai,
+     * 301 Silicon Valley, 401 Frankfurt — newer nodes exist that the 1.3.2 doc
+     * does not list, so BAISHUN must confirm the right one per merchant.
+     *
+     * Getting this wrong is not a routing inefficiency: the client asks a
+     * cluster that has never heard of the channel and the game fails to load
+     * with `1012 Channel game not found`, while the catalog API keeps working
+     * because that call goes to the merchant's API host directly.
+     */
+    GAME_PROVIDER_BAISHUN_GSP: z.coerce.number().int().positive().default(101),
 
     /** Shared secret for LiveKit backend → ol-node-rest live session webhooks (must match LiveKit server). */
     LIVE_WEBHOOK_SECRET: z.string().min(32),

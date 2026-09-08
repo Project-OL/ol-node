@@ -179,7 +179,7 @@ export const gameProviderService = {
         sceneMode: 0,
         currencyIcon: env.GAME_DIAMOND_ICON_URL ?? '',
       },
-      gsp: 101,
+      gsp: env.GAME_PROVIDER_BAISHUN_GSP,
     }
   },
 }
