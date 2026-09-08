@@ -37,15 +37,19 @@ else
   run_as_app "npx prisma migrate deploy"
 fi
 
-log "2/6 seed admin views"
-# The only seeded table the dump did not carry: admin_views was 0 rows on the
-# restored GCP copy while the code defines ~26 views. The seed creates missing
-# views and MERGES endpoints into existing ones — it never removes, so it is
-# safe whether prodv2 had them or not.
+log "2/6 reconcile seed data + admin views"
+# Verifies every seeded reference table against the defaults the code ships
+# with, and repairs admin_views (25 views, found empty on the restored copy).
+#
+# NOT `npm run seed:admin-views`: that seeder lives in the root `scripts/` dir
+# and runs under tsx, and NEITHER is shipped to the server — only `src/**` is
+# compiled into dist/. This reconciler lives in src/scripts precisely so it can
+# run here. Repair is additive-only and never overwrites admin-tuned values.
+# Read-only is this script's default, so a dry run passes no flag at all.
 if [ -n "$DRY" ]; then
-  run_as_app "node -e \"const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.adminView.count().then(n=>{console.log('admin_views rows now:',n);return p.\\\$disconnect()})\""
+  run_as_app "node dist/scripts/verify-seed-data.js" || true
 else
-  run_as_app "npx tsx scripts/seed-admin-views.ts 2>/dev/null || npm run seed:admin-views"
+  run_as_app "node dist/scripts/verify-seed-data.js --repair"
 fi
 
 log "3/6 rewrite stored media URLs (S3 origin -> R2)"

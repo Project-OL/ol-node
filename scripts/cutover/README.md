@@ -87,7 +87,13 @@ Verified against the restored GCP copy, not assumed:
 | `game_providers` | 0 | none — created on demand by `getOrCreateBaishunProvider()` |
 | **`admin_views`** | **0** | **`seed:admin-views` — step 4 does this** |
 
-`admin_views` is the one gap: zero rows on the restored copy while the code defines ~26 views. The seed **creates missing views and merges endpoints into existing ones — it never removes**, so it is safe whichever state prodv2 is in.
+`admin_views` is the one gap: **0 rows** on the restored copy while the code defines **25 views**.
+
+Step 4 runs **`verify-seed-data.js --repair`**, which reconciles all of the above against the defaults the code ships with and repairs `admin_views` — creating missing views and merging missing endpoints into existing ones. It never removes, so a custom endpoint an operator added survives.
+
+> It deliberately does **not** shell out to `npm run seed:admin-views`. That seeder lives in the root `scripts/` directory and runs under `tsx`, and **neither is shipped to the servers** — only `src/**` is compiled into `dist/`. A cutover step that cannot run on the box it is needed on is worse than no step at all.
+
+Everything other than `admin_views` is **reported, never auto-filled**. A non-empty rates or fee-tier table means an admin has tuned those values, and silently overwriting them mid-cutover would be a financial change nobody asked for. The reconciler prints the seeder to run if a table is genuinely empty.
 
 **Never run `npm run db:seed` after a restore.** It is a fresh-database script using `createMany`; the data is already in the dump, and re-running it against populated tables is exactly how the duplicated topup/agent-exchange ladders happened on 2026-09-06.
 
