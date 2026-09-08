@@ -556,67 +556,67 @@ export async function summarizeAdminCurrencySupply(params: { from?: Date; to?: D
     diamondCredit,
     diamondDebit,
   ] = await Promise.all([
-      prismaRead.coinLedgerEntry.aggregate({
-        where: {
-          txType: CoinTxType.ADJUSTMENT,
-          direction: LedgerDirection.CREDIT,
-          wallet: { currencyType: 'COIN' },
-          ...(createdAt ? { createdAt } : {}),
-        },
-        _sum: { amount: true },
-      }),
-      prismaRead.coinLedgerEntry.aggregate({
-        where: {
-          txType: CoinTxType.ADJUSTMENT,
-          direction: LedgerDirection.DEBIT,
-          wallet: { currencyType: 'COIN' },
-          ...(createdAt ? { createdAt } : {}),
-        },
-        _sum: { amount: true },
-      }),
-      prismaRead.coinLedgerEntry.aggregate({
-        where: {
-          txType: CoinTxType.ADJUSTMENT,
-          direction: LedgerDirection.CREDIT,
-          wallet: { currencyType: 'TRADING_COIN' },
-          ...(createdAt ? { createdAt } : {}),
-        },
-        _sum: { amount: true },
-      }),
-      prismaRead.coinLedgerEntry.aggregate({
-        where: {
-          txType: CoinTxType.ADJUSTMENT,
-          direction: LedgerDirection.DEBIT,
-          wallet: { currencyType: 'TRADING_COIN' },
-          ...(createdAt ? { createdAt } : {}),
-        },
-        _sum: { amount: true },
-      }),
-      prismaRead.pointLedgerEntry.aggregate({
-        where: {
-          txType: PointTxType.ADJUSTMENT,
-          direction: LedgerDirection.CREDIT,
-          ...(createdAt ? { createdAt } : {}),
-        },
-        _sum: { amount: true },
-      }),
-      prismaRead.pointLedgerEntry.aggregate({
-        where: {
-          txType: PointTxType.ADJUSTMENT,
-          direction: LedgerDirection.DEBIT,
-          ...(createdAt ? { createdAt } : {}),
-        },
-        _sum: { amount: true },
-      }),
-      prismaRead.coinLedgerEntry.aggregate({
-        where: diamondWhere(LedgerDirection.CREDIT),
-        _sum: { amount: true },
-      }),
-      prismaRead.coinLedgerEntry.aggregate({
-        where: diamondWhere(LedgerDirection.DEBIT),
-        _sum: { amount: true },
-      }),
-    ])
+    prismaRead.coinLedgerEntry.aggregate({
+      where: {
+        txType: CoinTxType.ADJUSTMENT,
+        direction: LedgerDirection.CREDIT,
+        wallet: { currencyType: 'COIN' },
+        ...(createdAt ? { createdAt } : {}),
+      },
+      _sum: { amount: true },
+    }),
+    prismaRead.coinLedgerEntry.aggregate({
+      where: {
+        txType: CoinTxType.ADJUSTMENT,
+        direction: LedgerDirection.DEBIT,
+        wallet: { currencyType: 'COIN' },
+        ...(createdAt ? { createdAt } : {}),
+      },
+      _sum: { amount: true },
+    }),
+    prismaRead.coinLedgerEntry.aggregate({
+      where: {
+        txType: CoinTxType.ADJUSTMENT,
+        direction: LedgerDirection.CREDIT,
+        wallet: { currencyType: 'TRADING_COIN' },
+        ...(createdAt ? { createdAt } : {}),
+      },
+      _sum: { amount: true },
+    }),
+    prismaRead.coinLedgerEntry.aggregate({
+      where: {
+        txType: CoinTxType.ADJUSTMENT,
+        direction: LedgerDirection.DEBIT,
+        wallet: { currencyType: 'TRADING_COIN' },
+        ...(createdAt ? { createdAt } : {}),
+      },
+      _sum: { amount: true },
+    }),
+    prismaRead.pointLedgerEntry.aggregate({
+      where: {
+        txType: PointTxType.ADJUSTMENT,
+        direction: LedgerDirection.CREDIT,
+        ...(createdAt ? { createdAt } : {}),
+      },
+      _sum: { amount: true },
+    }),
+    prismaRead.pointLedgerEntry.aggregate({
+      where: {
+        txType: PointTxType.ADJUSTMENT,
+        direction: LedgerDirection.DEBIT,
+        ...(createdAt ? { createdAt } : {}),
+      },
+      _sum: { amount: true },
+    }),
+    prismaRead.coinLedgerEntry.aggregate({
+      where: diamondWhere(LedgerDirection.CREDIT),
+      _sum: { amount: true },
+    }),
+    prismaRead.coinLedgerEntry.aggregate({
+      where: diamondWhere(LedgerDirection.DEBIT),
+      _sum: { amount: true },
+    }),
+  ])
 
   return {
     created: {

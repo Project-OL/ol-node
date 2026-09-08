@@ -314,10 +314,7 @@ export const masterLedgerDiamondsService = {
         adminMintedUnits: totals.adminMinted.toString(),
         adminBurnedUnits: totals.adminBurned.toString(),
         roundLegCount: totals.roundLegCount,
-        holdRateBp:
-          totals.wagered === 0n
-            ? null
-            : Number((totalProfit * 10000n) / totals.wagered),
+        holdRateBp: totals.wagered === 0n ? null : Number((totalProfit * 10000n) / totals.wagered),
       },
       openingUserHeldUnits: openingUserHeld.toString(),
       openingHouseHeldUnits: openingHouseHeld.toString(),
