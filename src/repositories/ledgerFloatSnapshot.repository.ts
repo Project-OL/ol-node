@@ -6,10 +6,12 @@ export type LedgerFloatSnapshotInput = {
   customerTradingCoins: bigint
   customerHostPoints: bigint
   customerAgencyPoints: bigint
+  customerDiamonds: bigint
   customerTotal: bigint
   houseCoins: bigint
   houseTradingCoins: bigint
   housePoints: bigint
+  houseDiamonds: bigint
   houseTotal: bigint
   ledgerNet: bigint
   identityDelta: bigint

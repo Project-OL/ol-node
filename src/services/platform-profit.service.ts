@@ -1,4 +1,11 @@
-import { CoinTxType, LedgerDirection, PointTxType, Prisma, WithdrawalStatus } from '@prisma/client'
+import {
+  CoinTxType,
+  LedgerDirection,
+  PointTxType,
+  Prisma,
+  WalletCurrencyType,
+  WithdrawalStatus,
+} from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { rootLogger } from '../utils/rootLogger'
 import {
@@ -513,16 +520,42 @@ export async function summarizePlatformProfit(params: {
 }
 
 /**
+ * Supply buckets for the admin currency page. Superset of {@link PlatformProfitBuckets}
+ * — per-transaction profit attribution has no diamond leg (diamonds are bought with
+ * coins, so the coin sale is where profit is recognised), but minted supply does.
+ */
+export type AdminSupplyBuckets = PlatformProfitBuckets & { diamonds: string }
+
+/**
  * Admin ADJUSTMENT created (credit) vs returned (debit) supply totals.
+ *
+ * Diamond adjustments are written as `GAME_ADJUSTMENT` (see `adminCurrency.service`),
+ * so both tx types are counted on DIAMOND wallets — otherwise admin-minted diamonds
+ * are invisible to `netMinted` and turn up as phantom destroyed units.
  */
 export async function summarizeAdminCurrencySupply(params: { from?: Date; to?: Date }): Promise<{
-  created: PlatformProfitBuckets
-  returned: PlatformProfitBuckets
+  created: AdminSupplyBuckets
+  returned: AdminSupplyBuckets
 }> {
   const createdAt = dateFilter(params.from, params.to)
 
-  const [coinCredit, coinDebit, tradingCredit, tradingDebit, pointCredit, pointDebit] =
-    await Promise.all([
+  const diamondWhere = (direction: LedgerDirection) => ({
+    txType: { in: [CoinTxType.ADJUSTMENT, CoinTxType.GAME_ADJUSTMENT] },
+    direction,
+    wallet: { currencyType: WalletCurrencyType.DIAMOND },
+    ...(createdAt ? { createdAt } : {}),
+  })
+
+  const [
+    coinCredit,
+    coinDebit,
+    tradingCredit,
+    tradingDebit,
+    pointCredit,
+    pointDebit,
+    diamondCredit,
+    diamondDebit,
+  ] = await Promise.all([
       prismaRead.coinLedgerEntry.aggregate({
         where: {
           txType: CoinTxType.ADJUSTMENT,
@@ -573,6 +606,14 @@ export async function summarizeAdminCurrencySupply(params: { from?: Date; to?: D
           direction: LedgerDirection.DEBIT,
           ...(createdAt ? { createdAt } : {}),
         },
+        _sum: { amount: true },
+      }),
+      prismaRead.coinLedgerEntry.aggregate({
+        where: diamondWhere(LedgerDirection.CREDIT),
+        _sum: { amount: true },
+      }),
+      prismaRead.coinLedgerEntry.aggregate({
+        where: diamondWhere(LedgerDirection.DEBIT),
         _sum: { amount: true },
       }),
     ])
@@ -582,11 +623,13 @@ export async function summarizeAdminCurrencySupply(params: { from?: Date; to?: D
       coins: (coinCredit._sum.amount ?? 0n).toString(),
       points: (pointCredit._sum.amount ?? 0n).toString(),
       tradingCoins: (tradingCredit._sum.amount ?? 0n).toString(),
+      diamonds: (diamondCredit._sum.amount ?? 0n).toString(),
     },
     returned: {
       coins: (coinDebit._sum.amount ?? 0n).toString(),
       points: (pointDebit._sum.amount ?? 0n).toString(),
       tradingCoins: (tradingDebit._sum.amount ?? 0n).toString(),
+      diamonds: (diamondDebit._sum.amount ?? 0n).toString(),
     },
   }
 }

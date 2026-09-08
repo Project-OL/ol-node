@@ -91,7 +91,7 @@ async function loadWalletGaps(at: Date): Promise<WalletGapRow[]> {
                0
              ) AS balance
       FROM wallets w
-      WHERE w.currency_type IN ('COIN', 'TRADING_COIN')
+      WHERE w.currency_type IN ('COIN', 'TRADING_COIN', 'DIAMOND')
     ),
     nets AS (
       SELECT e.wallet_id,

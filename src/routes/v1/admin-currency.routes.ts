@@ -28,6 +28,7 @@ import { adminAuditMetaFromRequest } from '../../utils/admin-audit'
 import { companyCashService } from '../../services/companyCash.service'
 import { masterLedgerService } from '../../services/masterLedger.service'
 import { masterLedgerInvestigateService } from '../../services/masterLedgerInvestigate.service'
+import { masterLedgerDiamondsService } from '../../services/masterLedgerDiamonds.service'
 import { ledgerAccountRoleService } from '../../services/ledgerAccountRole.service'
 import { treasuryFlowService } from '../../services/treasuryFlow.service'
 import { auditService } from '../../services/audit.service'
@@ -157,6 +158,35 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
           to: parsed.data.to ? new Date(parsed.data.to) : undefined,
           grain: parsed.data.grain,
           at: parsed.data.at ? new Date(parsed.data.at) : undefined,
+        }),
+      )
+    },
+  )
+
+  app.get(
+    '/ledger/diamond-daily',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Currency'],
+        description:
+          'Per-UTC-day diamond report for the period: diamonds wagered (consumption), won by users, refunded, bought and redeemed, admin mints, company profit in units and USD, USD spent on user wins, and closing user/house stock. Quiet days are returned as zero rows.',
+      },
+    },
+    async (request, reply) => {
+      const parsed = adminLedgerPeriodQuerySchema.safeParse(request.query ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid query',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await masterLedgerDiamondsService.dailyReport({
+          from: parsed.data.from ? new Date(parsed.data.from) : undefined,
+          to: parsed.data.to ? new Date(parsed.data.to) : undefined,
+          grain: parsed.data.grain,
         }),
       )
     },

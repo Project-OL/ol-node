@@ -139,6 +139,12 @@ function ownerFilter(owner: Owner, house: HouseAccounts): { userId?: Prisma.Uuid
   return owner === 'house' ? { userId: { in: ids } } : { userId: { notIn: ids } }
 }
 
+/**
+ * Admin diamond adjustments. `adminCurrency.service` writes `GAME_ADJUSTMENT` on the
+ * DIAMOND wallet; plain `ADJUSTMENT` is matched too so hand-written corrections count.
+ */
+const ADMIN_DIAMOND_TX = [CoinTxType.ADJUSTMENT, CoinTxType.GAME_ADJUSTMENT]
+
 async function sumCoin(params: {
   direction: LedgerDirection
   txTypes: CoinTxType[]
@@ -190,26 +196,53 @@ async function sumPoint(params: {
   return agg._sum.amount ?? 0n
 }
 
-/** Agency commission credited to customer agencies for one host tx type. */
+/**
+ * Agency commission credited to customer agencies for one host tx type.
+ *
+ * Live-server mints video-call commission with no metadata at all, pointing `ref_id`
+ * at the host's point ledger entry. Matching on the `hostTxType` tag alone silently
+ * dropped those rows, so the agency cut never reduced video-call revenue and the
+ * reconciliation identity broke by exactly that amount. Untagged rows are therefore
+ * resolved through `ref_id`, the same fallback {@link sumGiftRelatedAgencyCommission}
+ * already applies to gifts — and the two are disjoint, since a row resolves to one
+ * host tx type only.
+ */
 async function sumAgencyCommission(params: {
   hostTxType: PointTxType
   from?: Date
   to?: Date
   house: HouseAccounts
 }): Promise<bigint> {
-  const createdAt = dateFilter(params.from, params.to)
-  const ownerWhere = ownerFilter('customer', params.house)
-  const agg = await prismaRead.pointLedgerEntry.aggregate({
-    where: {
-      direction: LedgerDirection.CREDIT,
-      txType: PointTxType.AGENT_COMMISSION,
-      ...(createdAt ? { createdAt } : {}),
-      ...(Object.keys(ownerWhere).length > 0 ? { wallet: ownerWhere } : {}),
-      metadata: { path: ['hostTxType'], equals: params.hostTxType },
-    },
-    _sum: { amount: true },
-  })
-  return agg._sum.amount ?? 0n
+  const ids = [...params.house.allIds]
+  const houseClause =
+    ids.length > 0
+      ? Prisma.sql`AND w.user_id NOT IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})`
+      : Prisma.empty
+  const rows = await prismaRead.$queryRaw<{ sum: bigint | null }[]>(Prisma.sql`
+    SELECT COALESCE(SUM(e.amount), 0)::bigint AS sum
+    FROM point_ledger_entries e
+    INNER JOIN wallets w ON w.id = e.wallet_id
+    WHERE e.tx_type = 'AGENT_COMMISSION'
+      AND e.direction = 'CREDIT'
+      AND w.currency_type = 'POINT'
+      ${params.from ? Prisma.sql`AND e.created_at >= ${params.from}` : Prisma.empty}
+      ${params.to ? Prisma.sql`AND e.created_at < ${params.to}` : Prisma.empty}
+      ${houseClause}
+      AND (
+        e.metadata->>'hostTxType' = ${params.hostTxType}
+        OR (
+          COALESCE(e.metadata->>'hostTxType', '') = ''
+          AND EXISTS (
+            SELECT 1
+            FROM point_ledger_entries h
+            WHERE h.id::text = e.ref_id
+              AND h.tx_type = ${params.hostTxType}::"PointTxType"
+              AND h.direction = 'CREDIT'
+          )
+        )
+      )
+  `)
+  return rows[0]?.sum ?? 0n
 }
 
 type WalletBalRow = {
@@ -234,7 +267,7 @@ async function loadWalletBalancesAt(at: Date): Promise<WalletBalRow[]> {
       ORDER BY created_at DESC, id DESC
       LIMIT 1
     ) e ON true
-    WHERE w.currency_type IN ('COIN', 'TRADING_COIN')
+    WHERE w.currency_type IN ('COIN', 'TRADING_COIN', 'DIAMOND')
   `)
   const pointRows = await prismaRead.$queryRaw<WalletBalRow[]>(Prisma.sql`
     SELECT w.currency_type::text AS currency,
@@ -288,10 +321,14 @@ export type FloatBuckets = {
   customerTradingCoins: bigint
   customerHostPoints: bigint
   customerAgencyPoints: bigint
+  /** Diamonds a user still holds — redeemable 1:1 back to coins, so a liability. */
+  customerDiamonds: bigint
   customerTotal: bigint
   houseCoins: bigint
   houseTradingCoins: bigint
   housePoints: bigint
+  /** GAME_HOUSE diamond stock — wagers absorbed plus any admin-seeded inventory. */
+  houseDiamonds: bigint
   houseTotal: bigint
   ledgerNet: bigint
   identityDelta: bigint
@@ -302,10 +339,12 @@ export const ZERO_FLOAT: FloatBuckets = {
   customerTradingCoins: 0n,
   customerHostPoints: 0n,
   customerAgencyPoints: 0n,
+  customerDiamonds: 0n,
   customerTotal: 0n,
   houseCoins: 0n,
   houseTradingCoins: 0n,
   housePoints: 0n,
+  houseDiamonds: 0n,
   houseTotal: 0n,
   ledgerNet: 0n,
   identityDelta: 0n,
@@ -325,6 +364,9 @@ export async function computeFloatAt(at: Date, house: HouseAccounts): Promise<Fl
     } else if (r.currency === 'TRADING_COIN') {
       if (isHouse) b.houseTradingCoins += bal
       else b.customerTradingCoins += bal
+    } else if (r.currency === 'DIAMOND') {
+      if (isHouse) b.houseDiamonds += bal
+      else b.customerDiamonds += bal
     } else if (r.currency === 'POINT') {
       if (isHouse) b.housePoints += bal
       else if (r.is_agent) b.customerAgencyPoints += bal
@@ -333,8 +375,12 @@ export async function computeFloatAt(at: Date, house: HouseAccounts): Promise<Fl
   }
 
   b.customerTotal =
-    b.customerCoins + b.customerTradingCoins + b.customerHostPoints + b.customerAgencyPoints
-  b.houseTotal = b.houseCoins + b.houseTradingCoins + b.housePoints
+    b.customerCoins +
+    b.customerTradingCoins +
+    b.customerHostPoints +
+    b.customerAgencyPoints +
+    b.customerDiamonds
+  b.houseTotal = b.houseCoins + b.houseTradingCoins + b.housePoints + b.houseDiamonds
   // Identity spans every wallet: house + customer must equal global credit − debit.
   b.identityDelta = b.customerTotal + b.houseTotal - b.ledgerNet
   return b
@@ -360,10 +406,12 @@ export async function floatAt(
           customerTradingCoins: snap.customerTradingCoins,
           customerHostPoints: snap.customerHostPoints,
           customerAgencyPoints: snap.customerAgencyPoints,
+          customerDiamonds: snap.customerDiamonds,
           customerTotal: snap.customerTotal,
           houseCoins: snap.houseCoins,
           houseTradingCoins: snap.houseTradingCoins,
           housePoints: snap.housePoints,
+          houseDiamonds: snap.houseDiamonds,
           houseTotal: snap.houseTotal,
           ledgerNet: snap.ledgerNet,
           identityDelta: snap.identityDelta,
@@ -416,6 +464,42 @@ async function returnsToHouseUnits(house: HouseAccounts, from?: Date, to?: Date)
   return BigInt(coin[0]?.units ?? 0) + BigInt(point[0]?.units ?? 0)
 }
 
+/**
+ * Net diamonds the game house won over a period — the platform's game revenue.
+ *
+ * Measured from the settlement legs, never from the house balance delta, so seeding the
+ * GAME_HOUSE account with admin-minted diamonds never reads as profit:
+ *
+ *   wagers absorbed − winnings paid out − bets refunded
+ *
+ * This is the operating counterpart to a wager leaving customer float: float drops by
+ * the wager and rises by the payout, and this line moves by the same amounts with the
+ * opposite sign, which is what keeps the reconciliation identity closed.
+ */
+async function gameHouseEdgeUnits(
+  house: HouseAccounts,
+  from?: Date,
+  to?: Date,
+): Promise<{ wagers: bigint; payouts: bigint; refunds: bigint; edge: bigint }> {
+  if (house.allIds.size === 0) return { wagers: 0n, payouts: 0n, refunds: 0n, edge: 0n }
+  const leg = (direction: LedgerDirection, txType: CoinTxType) =>
+    sumCoin({
+      direction,
+      txTypes: [txType],
+      currency: WalletCurrencyType.DIAMOND,
+      from,
+      to,
+      owner: 'house',
+      house,
+    })
+  const [wagers, payouts, refunds] = await Promise.all([
+    leg(LedgerDirection.CREDIT, CoinTxType.GAME_WAGER_IN),
+    leg(LedgerDirection.DEBIT, CoinTxType.GAME_RESULT_OUT),
+    leg(LedgerDirection.DEBIT, CoinTxType.GAME_REFUND_OUT),
+  ])
+  return { wagers, payouts, refunds, edge: wagers - payouts - refunds }
+}
+
 export const masterLedgerService = {
   unitsToUsd,
 
@@ -433,7 +517,7 @@ export const masterLedgerService = {
       house.allIds.size === 0
         ? Promise.resolve(0n)
         : (async () => {
-            const [coinC, coinD, tradeC, tradeD, pointC, pointD] = await Promise.all([
+            const [coinC, coinD, tradeC, tradeD, pointC, pointD, diaC, diaD] = await Promise.all([
               sumCoin({
                 direction: LedgerDirection.CREDIT,
                 txTypes: [CoinTxType.ADJUSTMENT],
@@ -476,22 +560,42 @@ export const masterLedgerService = {
               sumPoint({
                 direction: LedgerDirection.DEBIT,
                 txTypes: [PointTxType.ADJUSTMENT],
+                to: at,
+                owner: 'house',
+                house,
+              }),
+              // Seeding the GAME_HOUSE with diamonds is house inventory, not revenue —
+              // it only shows up here and in netMinted.
+              sumCoin({
+                direction: LedgerDirection.CREDIT,
+                txTypes: ADMIN_DIAMOND_TX,
+                currency: WalletCurrencyType.DIAMOND,
+                to: at,
+                owner: 'house',
+                house,
+              }),
+              sumCoin({
+                direction: LedgerDirection.DEBIT,
+                txTypes: ADMIN_DIAMOND_TX,
+                currency: WalletCurrencyType.DIAMOND,
                 to: at,
                 owner: 'house',
                 house,
               }),
             ])
-            return coinC - coinD + tradeC - tradeD + pointC - pointD
+            return coinC - coinD + tradeC - tradeD + pointC - pointD + diaC - diaD
           })(),
     ])
 
     const netMinted =
       BigInt(mint.created.coins) +
       BigInt(mint.created.points) +
-      BigInt(mint.created.tradingCoins) -
+      BigInt(mint.created.tradingCoins) +
+      BigInt(mint.created.diamonds) -
       BigInt(mint.returned.coins) -
       BigInt(mint.returned.points) -
-      BigInt(mint.returned.tradingCoins)
+      BigInt(mint.returned.tradingCoins) -
+      BigInt(mint.returned.diamonds)
 
     const outstanding = buckets.customerTotal
     const totalUnits = buckets.customerTotal + buckets.houseTotal
@@ -502,6 +606,7 @@ export const masterLedgerService = {
       line('agencyTradingCoins', 'Agency trading-coin stock', buckets.customerTradingCoins),
       line('hostPoints', 'Host unconverted points', buckets.customerHostPoints),
       line('agencyPoints', 'Agency points (commission + payroll)', buckets.customerAgencyPoints),
+      line('userDiamonds', 'User unspent diamonds', buckets.customerDiamonds),
       line('customerFloatTotal', 'Total customer float (liability)', buckets.customerTotal),
     ]
 
@@ -509,6 +614,7 @@ export const masterLedgerService = {
       line('houseCoins', 'House personal coins', buckets.houseCoins),
       line('houseTradingCoins', 'House trading-coin inventory', buckets.houseTradingCoins),
       line('housePoints', 'House points (incl. takeover inventory)', buckets.housePoints),
+      line('houseDiamonds', 'Game-house diamond inventory', buckets.houseDiamonds),
       line('houseInventoryTotal', 'Total house inventory (not a liability)', buckets.houseTotal),
     ]
 
@@ -540,6 +646,10 @@ export const masterLedgerService = {
       customerFloatUsd: unitsToUsd(buckets.customerTotal),
       houseInventoryUnits: buckets.houseTotal.toString(),
       houseInventoryUsd: unitsToUsd(buckets.houseTotal),
+      customerDiamondUnits: buckets.customerDiamonds.toString(),
+      customerDiamondUsd: unitsToUsd(buckets.customerDiamonds),
+      houseDiamondUnits: buckets.houseDiamonds.toString(),
+      houseDiamondUsd: unitsToUsd(buckets.houseDiamonds),
       totalUnits: totalUnits.toString(),
       netMinted: netMinted.toString(),
       houseMinted: houseMinted.toString(),
@@ -562,9 +672,11 @@ export const masterLedgerService = {
       adminCreditsCoin,
       adminCreditsTrading,
       adminCreditsPoint,
+      adminCreditsDiamond,
       promoCoins,
       promoTrading,
       promoPoints,
+      promoDiamonds,
       payouts,
       returnsToHouse,
     ] = await Promise.all([
@@ -615,6 +727,15 @@ export const masterLedgerService = {
       }),
       sumCoin({
         direction: LedgerDirection.CREDIT,
+        txTypes: ADMIN_DIAMOND_TX,
+        currency: WalletCurrencyType.DIAMOND,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
         txTypes: [CoinTxType.ADJUSTMENT],
         currency: WalletCurrencyType.COIN,
         from,
@@ -642,14 +763,28 @@ export const masterLedgerService = {
         owner: 'customer',
         house,
       }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: ADMIN_DIAMOND_TX,
+        currency: WalletCurrencyType.DIAMOND,
+        from,
+        to,
+        promotionalOnly: true,
+        owner: 'customer',
+        house,
+      }),
       companyPayoutUnits(from, to),
       returnsToHouseUnits(house, from, to),
     ])
 
-    const promoAdminMints = promoCoins + promoTrading + promoPoints
+    const promoAdminMints = promoCoins + promoTrading + promoPoints + promoDiamonds
     // Promotional credits are a cost, so they must not also count as a sale.
     const directAdminSales =
-      adminCreditsCoin + adminCreditsTrading + adminCreditsPoint - promoAdminMints
+      adminCreditsCoin +
+      adminCreditsTrading +
+      adminCreditsPoint +
+      adminCreditsDiamond -
+      promoAdminMints
     const treasuryGiveaway = treasury.promoUnits + treasury.writeOffUnits
 
     const revenue: LedgerLine[] = [
@@ -820,6 +955,8 @@ export const masterLedgerService = {
       adminClawbackPoint,
       withdrawalDebits,
       withdrawalCustomerCredits,
+      promoDiamonds,
+      adminClawbackDiamond,
     ] = await Promise.all([
       prismaRead.userStoreItem.aggregate({
         where: createdAt ? { createdAt } : undefined,
@@ -1024,16 +1161,37 @@ export const masterLedgerService = {
         owner: 'customer',
         house,
       }),
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: ADMIN_DIAMOND_TX,
+        currency: WalletCurrencyType.DIAMOND,
+        from,
+        to,
+        promotionalOnly: true,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.DEBIT,
+        txTypes: ADMIN_DIAMOND_TX,
+        currency: WalletCurrencyType.DIAMOND,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
     ])
 
     const payouts = await companyPayoutUnits(from, to)
+    const game = await gameHouseEdgeUnits(house, from, to)
 
     const storeUnits = profitFromFullCoinSink(BigInt(store._sum.coinsPaid ?? 0))
     const conversionSpread = pointExchangeOut - coinExchangeIn - tradingExchangeIn
     const customNet = customGift - customRefund
-    const promoAdminMints = promoCoins + promoPoints + promoTrading
+    const promoAdminMints = promoCoins + promoPoints + promoTrading + promoDiamonds
     const rewardCost = dailyLogin + weeklyTopup + platformRewardCoins + vipReward + streak
-    const adminClawback = adminClawbackCoin + adminClawbackTrading + adminClawbackPoint
+    const adminClawback =
+      adminClawbackCoin + adminClawbackTrading + adminClawbackPoint + adminClawbackDiamond
     // Net float reduction caused by the withdrawal subsystem, minus the fiat the
     // company itself paid (that leg is a cost in the imputed-cash report).
     const withdrawalNet = withdrawalDebits - withdrawalCustomerCredits - payouts
@@ -1075,6 +1233,7 @@ export const masterLedgerService = {
         conversionSpread < 0n ? 0n : conversionSpread,
       ),
       line('withdrawalNet', 'Withdrawal retention (net of company payouts)', withdrawalNet),
+      line('gameHouseEdge', 'Game house edge (diamonds won, net of payouts)', game.edge),
       line('coinExpiry', 'Expired coins', coinExpiry),
       line('forceExitPenalty', 'Agency force-exit penalties', forceExitPenalty),
       line('adminClawback', 'Admin clawbacks from customers', adminClawback),
@@ -1096,6 +1255,9 @@ export const masterLedgerService = {
         line('withdrawFeeShareMemo', 'Withdrawal fee share (fee-snapshot view)', feeShareMemo),
         line('hostPointsEarned', 'Host points earned from spend', giftHost),
         line('agencyCommission', 'Agency commission minted', giftAgency),
+        line('gameWagers', 'Diamonds wagered into the game house', game.wagers),
+        line('gameWinPayouts', 'Diamonds paid out as game wins', game.payouts),
+        line('gameRefunds', 'Diamonds refunded on cancelled rounds', game.refunds),
       ],
       operatingProfitUnits: operating.toString(),
       operatingProfitUsd: unitsToUsd(operating),
@@ -1112,6 +1274,8 @@ export const masterLedgerService = {
       withdrawalDebits,
       withdrawalRefunds,
       rewardPoints,
+      diamondsBought,
+      diamondsRedeemed,
     ] = await Promise.all([
       sumPoint({
         direction: LedgerDirection.CREDIT,
@@ -1171,7 +1335,29 @@ export const masterLedgerService = {
         owner: 'customer',
         house,
       }),
+      // Coin↔diamond conversion is 1:1 and float-neutral; shown so the diamond
+      // stock on the stock report has a visible origin.
+      sumCoin({
+        direction: LedgerDirection.CREDIT,
+        txTypes: [CoinTxType.DIAMOND_PURCHASE_IN],
+        currency: WalletCurrencyType.DIAMOND,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
+      sumCoin({
+        direction: LedgerDirection.DEBIT,
+        txTypes: [CoinTxType.DIAMOND_REDEEM_OUT],
+        currency: WalletCurrencyType.DIAMOND,
+        from,
+        to,
+        owner: 'customer',
+        house,
+      }),
     ])
+
+    const game = await gameHouseEdgeUnits(house, from, to)
 
     return [
       line('hostPointsEarned', 'Host points earned from user spend', hostPoints),
@@ -1181,6 +1367,11 @@ export const masterLedgerService = {
       line('withdrawalsSettled', 'Host points withdrawn (gross)', withdrawalDebits),
       line('withdrawalRefunds', 'Withdrawal refunds returned', withdrawalRefunds),
       line('rewardPointsMinted', 'Reward points minted', rewardPoints),
+      line('diamondsBought', 'Coins converted into diamonds', diamondsBought),
+      line('diamondsRedeemed', 'Diamonds redeemed back to coins', diamondsRedeemed),
+      line('gameWagers', 'Diamonds wagered into the game house', game.wagers),
+      line('gameWinPayouts', 'Diamonds paid out as game wins', game.payouts),
+      line('gameHouseEdge', 'Net game house edge', game.edge),
     ]
   },
 
@@ -1237,6 +1428,11 @@ export const masterLedgerService = {
         customerFloatUsd: stock.customerFloatUsd,
         houseInventoryUnits: stock.houseInventoryUnits,
         houseInventoryUsd: stock.houseInventoryUsd,
+        customerDiamondUnits: stock.customerDiamondUnits,
+        customerDiamondUsd: stock.customerDiamondUsd,
+        houseDiamondUnits: stock.houseDiamondUnits,
+        houseDiamondUsd: stock.houseDiamondUsd,
+        gameHouseConfigured: house.gameHouseIds.size > 0,
         treasuryConfigured: imputed.treasuryConfigured,
         reconciliationOk: reconciliationDelta === 0n,
         reconciliationDelta: reconciliationDelta.toString(),

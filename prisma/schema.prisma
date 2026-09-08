@@ -1760,11 +1760,15 @@ model LedgerFloatSnapshot {
   customerTradingCoins BigInt @default(0) @map("customer_trading_coins")
   customerHostPoints   BigInt @default(0) @map("customer_host_points")
   customerAgencyPoints BigInt @default(0) @map("customer_agency_points")
+  /// Diamonds held by non-house users; redeemable 1:1 to coins, so part of the liability.
+  customerDiamonds     BigInt @default(0) @map("customer_diamonds")
   customerTotal        BigInt @default(0) @map("customer_total")
 
   houseCoins        BigInt @default(0) @map("house_coins")
   houseTradingCoins BigInt @default(0) @map("house_trading_coins")
   housePoints       BigInt @default(0) @map("house_points")
+  /// GAME_HOUSE diamond inventory — wagers absorbed plus admin-seeded stock.
+  houseDiamonds     BigInt @default(0) @map("house_diamonds")
   houseTotal        BigInt @default(0) @map("house_total")
 
   ledgerNet      BigInt @default(0) @map("ledger_net")
