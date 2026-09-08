@@ -48,6 +48,7 @@
         "backfill:platform-inbox": "tsx scripts/backfill-platform-inbox-conversations.ts",
         "backfill:video-call-settings": "tsx src/scripts/backfill-video-call-settings.ts",
         "faces:reindex": "tsx src/scripts/reindex-face-collection.ts",
+        "media:rewrite-urls": "tsx src/scripts/rewrite-media-urls.ts",
         "report:duplicate-directs": "tsx scripts/report-duplicate-direct-conversations.ts",
         "typecheck": "tsc --noEmit -p tsconfig.json",
         "api-contract:lock": "tsx scripts/generate-api-contract-lock.ts && tsx scripts/generate-api-contract-index.ts",
