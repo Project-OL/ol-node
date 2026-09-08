@@ -71,6 +71,28 @@ sudo bash 04-post-restore.sh
 - **Face re-index last.** It needs the restored rows *and* the objects from step 3.
 - **App starts last,** in step 4 — never between restore and rewrite, or users hit broken media and stale face ids.
 
+## Seeds and admin views — what the dump does and does not carry
+
+Verified against the restored GCP copy, not assumed:
+
+| Table | Rows after restore | Action |
+|---|---|---|
+| `coin_packages` | 4 | none — dump carries it |
+| `rich_tier_configs` | 10 | none |
+| `wallet_level_configs` | 235 | none |
+| `coin_trading_topup_rates` | 28 | none (no duplicate active tiers) |
+| `agent_exchange_rates` | 24 | none |
+| `coin_trading_topup_packages` | 6 | none |
+| `gifts` / `banners` | 21 / 4 | none |
+| `game_providers` | 0 | none — created on demand by `getOrCreateBaishunProvider()` |
+| **`admin_views`** | **0** | **`seed:admin-views` — step 4 does this** |
+
+`admin_views` is the one gap: zero rows on the restored copy while the code defines ~26 views. The seed **creates missing views and merges endpoints into existing ones — it never removes**, so it is safe whichever state prodv2 is in.
+
+**Never run `npm run db:seed` after a restore.** It is a fresh-database script using `createMany`; the data is already in the dump, and re-running it against populated tables is exactly how the duplicated topup/agent-exchange ladders happened on 2026-09-06.
+
+Migration state on the restored copy: **152 applied, 0 unfinished**, latest `20260905120000_support_ticket_stars_and_face_dup_sort`. Step 4's `prisma migrate deploy` applies anything the deployed code adds on top.
+
 ## What the restore deliberately destroys
 
 The 3,066 GCP FaceIds written on 2026-09-08. The dump carries prodv2's ids back in, and they do not resolve in the GCP collection. `reindex-face-collection` reconciles them — which is why it *rewrites* stored ids rather than just skipping users already in the collection.

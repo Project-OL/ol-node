@@ -8,8 +8,16 @@
 #
 # Ordering is not arbitrary:
 #   migrate  — the dump carries prodv2's migration state; GCP code may be ahead
+#   views    — admin_views is the one seeded table the dump does not reliably
+#              carry (it was 0 rows on GCP while the code defines ~26 views)
 #   urls     — 54,856 stored absolute URLs still point at the old S3 origin
 #   faces    — needs the restored rows AND the objects from step 3 to be present
+#
+# Deliberately NOT run here: `npm run db:seed`. Every reference table it seeds
+# (coin packages, rich tiers, wallet levels, rate ladders, gifts, banners) comes
+# across in the dump intact — verified. It is a fresh-database script that uses
+# createMany, and re-running it against populated tables is how the duplicated
+# topup/agent-exchange ladders happened on 2026-09-06.
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/ol/apps/ol-node-rest}"
@@ -22,27 +30,38 @@ run_as_app() { sudo -u "$APP_USER" bash -c "cd $APP_DIR && set -a && . ./.env &&
 
 cd "$APP_DIR"
 
-log "1/5 prisma migrate deploy"
+log "1/6 prisma migrate deploy"
 if [ -n "$DRY" ]; then
   run_as_app "npx prisma migrate status" || true
 else
   run_as_app "npx prisma migrate deploy"
 fi
 
-log "2/5 rewrite stored media URLs (S3 origin -> R2)"
+log "2/6 seed admin views"
+# The only seeded table the dump did not carry: admin_views was 0 rows on the
+# restored GCP copy while the code defines ~26 views. The seed creates missing
+# views and MERGES endpoints into existing ones — it never removes, so it is
+# safe whether prodv2 had them or not.
+if [ -n "$DRY" ]; then
+  run_as_app "node -e \"const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.adminView.count().then(n=>{console.log('admin_views rows now:',n);return p.\\\$disconnect()})\""
+else
+  run_as_app "npx tsx scripts/seed-admin-views.ts 2>/dev/null || npm run seed:admin-views"
+fi
+
+log "3/6 rewrite stored media URLs (S3 origin -> R2)"
 # Most media columns store a bare key and the API builds the URL at read time,
 # so they need nothing. These 10 columns stored the absolute URL as written and
 # would 403 for every user until swapped.
 run_as_app "node dist/scripts/rewrite-media-urls.js $DRY"
 
-log "3/5 re-index / reconcile the Rekognition collection"
+log "4/6 re-index / reconcile the Rekognition collection"
 # The restore reintroduced prodv2's FaceIds, which do not resolve in the GCP
 # collection. Search still works (it matches on ExternalImageId), so this fails
 # silently — until a revoke calls DeleteFaces with a stale id and removes
 # nothing. This indexes newcomers AND rewrites the stale ids.
 run_as_app "node dist/scripts/reindex-face-collection.js $DRY"
 
-log "4/5 smoke checks"
+log "5/6 smoke checks"
 run_as_app "node -e \"
 const {PrismaClient}=require('@prisma/client');const p=new PrismaClient();
 (async()=>{
@@ -58,7 +77,7 @@ if [ -n "$DRY" ]; then
   echo; echo "DRY RUN — app not started, nothing written."; exit 0
 fi
 
-log "5/5 starting the app"
+log "6/6 starting the app"
 run_as_app "pm2 restart ol-api ol-worker ol-face-worker --update-env"
 sleep 5
 sudo -u "$APP_USER" pm2 list
