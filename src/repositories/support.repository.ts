@@ -495,13 +495,30 @@ export const supportRepository = {
     }
   },
 
+  /**
+   * Advance a read pointer, never rewind it.
+   *
+   * Callers pass the newest message of the page they just returned, and a paged
+   * read (`?cursor=`) returns an *older* page — so an unconditional write moved the
+   * pointer backwards and flipped the ticket back to unread as soon as anyone
+   * scrolled up. `updateMany` (not `update`) because the guard legitimately matches
+   * no row, and `update` throws on that. Also protects a second device racing the
+   * first with a stale pointer.
+   */
   async updateReadPointer(ticketId: bigint, actor: 'USER' | 'SUPPORT', messageId: bigint) {
+    const where =
+      actor === 'USER'
+        ? {
+            id: ticketId,
+            OR: [{ userLastReadMessageId: null }, { userLastReadMessageId: { lt: messageId } }],
+          }
+        : {
+            id: ticketId,
+            OR: [{ csLastReadMessageId: null }, { csLastReadMessageId: { lt: messageId } }],
+          }
     const data =
       actor === 'USER' ? { userLastReadMessageId: messageId } : { csLastReadMessageId: messageId }
-    return prisma.supportTicket.update({
-      where: { id: ticketId },
-      data,
-    })
+    return prisma.supportTicket.updateMany({ where, data })
   },
 
   async rateTicket(ticketId: bigint, rating: number) {

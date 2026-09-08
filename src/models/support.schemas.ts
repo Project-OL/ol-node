@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { TRANSACTION_REF_REQUIRED_SUBTYPES } from '../config/support-types.config'
 
 // Upload
 export const SupportUploadUrlSchema = z.object({
@@ -13,12 +14,6 @@ export const TransactionRefSchema = z.object({
   refType: z.enum(['WITHDRAWAL', 'POINT_TRANSFER', 'COIN_TRANSFER', 'LEDGER_ENTRY']),
   refId: z.string().min(1).max(120),
 })
-
-/** SubTypes that must carry a transaction reference. */
-const TRANSACTION_REF_REQUIRED_SUBTYPES = new Set([
-  'POINT_TRANSFER_CONFLICT',
-  'COIN_TRANSFER_CONFLICT',
-])
 
 // Ticket creation
 export const CreateTicketSchema = z

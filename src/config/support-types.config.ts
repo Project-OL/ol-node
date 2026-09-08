@@ -1,6 +1,23 @@
+/** Transaction kinds a ticket can be anchored to (mirrors `TransactionRefSchema.refType`). */
+export type SupportTransactionRefType =
+  | 'WITHDRAWAL'
+  | 'POINT_TRANSFER'
+  | 'COIN_TRANSFER'
+  | 'LEDGER_ENTRY'
+
 export interface SupportSubType {
   key: string
   label: string
+  /**
+   * Set only where `transactionRef` is mandatory on ticket creation. Clients render
+   * the picker straight from this catalog, so the requirement has to travel with it —
+   * otherwise the app has to hardcode the subType keys and re-ship to follow a
+   * backend change. `TRANSACTION_REF_REQUIRED_SUBTYPES` is derived from this flag,
+   * so the validator and the advertised catalog cannot drift apart.
+   */
+  requiresTransactionRef?: boolean
+  /** Which refTypes the client should offer for this subType. */
+  refTypes?: SupportTransactionRefType[]
 }
 
 export interface SupportTypeConfig {
@@ -43,9 +60,21 @@ export const SUPPORT_TYPE_CONFIG: SupportTypeConfig[] = [
       { key: 'LIVE_BROADCAST_VIOLATION', label: 'Live Broadcast Violation' },
       { key: 'VIOLATION_OF_CHILD_SAFETY', label: 'Violation of Child Safety' },
       { key: 'REPORT_OTHERS', label: 'Report Others' },
-      { key: 'WITHDRAWAL_DISPUTE', label: 'Withdrawal dispute' },
-      { key: 'POINT_TRANSFER_CONFLICT', label: 'Point Transfer Conflict' },
-      { key: 'COIN_TRANSFER_CONFLICT', label: 'Coin Transfer Conflict' },
+      // Not required: `POST /withdrawal/:id/dispute` stamps the ref itself. The hint
+      // lets a client filing through the generic form attach the withdrawal anyway.
+      { key: 'WITHDRAWAL_DISPUTE', label: 'Withdrawal dispute', refTypes: ['WITHDRAWAL'] },
+      {
+        key: 'POINT_TRANSFER_CONFLICT',
+        label: 'Point Transfer Conflict',
+        requiresTransactionRef: true,
+        refTypes: ['POINT_TRANSFER'],
+      },
+      {
+        key: 'COIN_TRANSFER_CONFLICT',
+        label: 'Coin Transfer Conflict',
+        requiresTransactionRef: true,
+        refTypes: ['COIN_TRANSFER'],
+      },
       { key: 'USER_REPORT_ESCALATION', label: 'User Report Escalation' },
     ],
   },
@@ -68,6 +97,17 @@ export const SUPPORT_TYPE_CONFIG: SupportTypeConfig[] = [
     ],
   },
 ]
+
+/**
+ * SubTypes that cannot be submitted without a `transactionRef`, derived from the
+ * catalog above so `CreateTicketSchema` validates exactly what `/ticket-types`
+ * advertises.
+ */
+export const TRANSACTION_REF_REQUIRED_SUBTYPES: ReadonlySet<string> = new Set(
+  SUPPORT_TYPE_CONFIG.flatMap((t) =>
+    t.subTypes.filter((s) => s.requiresTransactionRef).map((s) => s.key),
+  ),
+)
 
 /** O(n) lookup — config is tiny; no Map needed. */
 export function isValidSubType(type: string, subType: string): boolean {
