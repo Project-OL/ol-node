@@ -27,14 +27,19 @@ const SKIP_COIN_TX_TYPES = new Set<CoinTxType>([CoinTxType.TRADING_TRANSFER_REVE
 type TxWalletCurrency = 'COIN' | 'POINT' | 'TRADING_COIN' | 'DIAMOND'
 
 /**
- * Push notifications are sent for credits only.
+ * Push notifications are sent for credits of coins, points, and trading coins only.
  *
- * Debits of coins, points, trading coins and diamonds are the routine cost of using the
- * app — sending, gifting, betting — and notifying a user about money they just chose to
- * spend is noise. The platform message is still written either way, so the ledger trail
- * and in-app transaction history are unchanged; only the FCM push is suppressed.
+ * Debits are the routine cost of using the app — sending, gifting, betting — and notifying
+ * a user about money they just chose to spend is noise. Diamond credit/debit (game play,
+ * buy/redeem, admin adjust) is similarly noisy and suppressed entirely. The platform
+ * message is still written either way, so the ledger trail and in-app transaction history
+ * are unchanged; only the FCM push is suppressed.
  */
-function shouldPushForDirection(direction: 'CREDIT' | 'DEBIT'): boolean {
+function shouldSendTransactionalPush(
+  currency: TxWalletCurrency,
+  direction: 'CREDIT' | 'DEBIT',
+): boolean {
+  if (currency === 'DIAMOND') return false
   return direction === 'CREDIT'
 }
 
@@ -192,7 +197,7 @@ export const transactionalMessagingService = {
       metadata,
       clientMessageId: buildLedgerClientMessageId('coin', entry.id),
     })
-    if (sent.created && shouldPushForDirection(direction)) {
+    if (sent.created && shouldSendTransactionalPush(walletCurrency, direction)) {
       await pushTransactionalNotification({
         userId: selfUserId,
         title: transactionPushTitle(walletCurrency, direction),
@@ -260,7 +265,7 @@ export const transactionalMessagingService = {
       metadata,
       clientMessageId: buildLedgerClientMessageId('point', entry.id),
     })
-    if (sent.created && shouldPushForDirection(direction)) {
+    if (sent.created && shouldSendTransactionalPush('POINT', direction)) {
       await pushTransactionalNotification({
         userId: selfUserId,
         title: transactionPushTitle('POINT', direction),
