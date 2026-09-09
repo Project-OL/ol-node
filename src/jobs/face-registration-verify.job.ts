@@ -92,6 +92,16 @@ async function failTerminal(
     awsRequestId?: string | null
     status?: 'LIVENESS_FAILED' | 'VALIDATION_FAILED' | 'REJECTED'
     imageBytes?: Uint8Array | null
+    /**
+     * Rekognition's liveness Confidence for this attempt, when known.
+     *
+     * Recorded on failures as well as passes so the threshold can be tuned from
+     * evidence. Without it a rejected session stores only
+     * `liveness_confidence_below_threshold` and not the value, which made every
+     * stored confidence >= the gate and left no way to tell whether lowering
+     * the gate would recover most rejections or none of them.
+     */
+    livenessConfidence?: number | null
     audit?: {
       qualityCheckFailures?: string[]
       detectedGender?: string | null
@@ -113,6 +123,7 @@ async function failTerminal(
     failureImageS3Key,
     rekognitionRawStatus: extra?.rekognitionRawStatus ?? null,
     awsRequestId: extra?.awsRequestId ?? null,
+    ...(extra?.livenessConfidence != null ? { livenessConfidence: extra.livenessConfidence } : {}),
   })
   await faceRegistrationRepository.appendAudit({
     sessionId,
@@ -241,6 +252,7 @@ export async function processFaceRegistrationVerifyJob(
       rekognitionRawStatus: rawStatus,
       awsRequestId,
       imageBytes: refBytes,
+      livenessConfidence: confidence,
     })
     return
   }
@@ -249,6 +261,7 @@ export async function processFaceRegistrationVerifyJob(
     await failTerminal(sessionId, userId, 'missing_reference_image', {
       rekognitionRawStatus: rawStatus,
       awsRequestId,
+      livenessConfidence: confidence,
     })
     return
   }
@@ -274,6 +287,7 @@ export async function processFaceRegistrationVerifyJob(
       rekognitionRawStatus: rawStatus,
       awsRequestId,
       imageBytes: refBytes,
+      livenessConfidence: confidence,
     })
     return
   }
@@ -341,6 +355,7 @@ export async function processFaceRegistrationVerifyJob(
       awsRequestId,
       status: 'VALIDATION_FAILED',
       imageBytes: refBytes,
+      livenessConfidence: confidence,
       audit: {
         qualityCheckFailures: validation.details?.failedChecks,
         contentPolicyViolation: errorCode === FACE_REGISTRATION_ERRORS.FACE_QUALITY_CONTENT_POLICY,
