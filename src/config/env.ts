@@ -151,7 +151,19 @@ const envSchema = z
     /** Face Liveness + registration session TTL (minutes). */
     FACE_REGISTRATION_SESSION_TTL_MIN: z.coerce.number().int().positive().default(15),
     /** Minimum Rekognition Face Liveness confidence (0–100) before accepting reference image. */
-    FACE_LIVENESS_CONFIDENCE_MIN: z.coerce.number().min(0).max(100).default(80),
+    /**
+     * Minimum Rekognition liveness Confidence to accept a registration. This is
+     * the anti-spoofing gate — it is what rejects a photo or video of someone
+     * else held up to the camera.
+     *
+     * Lowered 80 -> 50 on 2026-09-09 deliberately: 3,086 registrations had been
+     * rejected as `liveness_confidence_below_threshold` while the confidence
+     * value itself was never persisted, so there was no evidence for where the
+     * gate belonged. Failures now record the value, so running open gathers the
+     * real distribution. **Raise this again once the histogram exists** — 50 is
+     * a measurement posture, not a resting state.
+     */
+    FACE_LIVENESS_CONFIDENCE_MIN: z.coerce.number().min(0).max(100).default(50),
     /** Risk score above this tightens liveness threshold by `FACE_LIVENESS_RISK_CONFIDENCE_DELTA`. */
     FACE_REGISTRATION_RISK_SCORE_STRICT: z.coerce.number().min(0).max(100).default(55),
     /**
@@ -190,7 +202,13 @@ const envSchema = z
     FACE_LIVENESS_CREDENTIALS_DURATION_SEC: z.coerce.number().int().min(900).max(3600).default(900),
 
     /** Rekognition DetectFaces quality thresholds (0–100 scale). */
-    FACE_MIN_BRIGHTNESS: z.coerce.number().min(0).max(100).default(20),
+    /**
+     * Rekognition Brightness floor for the captured face. A quality gate, not a
+     * security control — a dim photo is not an attack, so loosening it trades
+     * nothing away. Lowered 20 -> 10 on 2026-09-09: it accounted for 614
+     * `FACE_QUALITY_LOW_LIGHT` rejections, 52% of all quality failures.
+     */
+    FACE_MIN_BRIGHTNESS: z.coerce.number().min(0).max(100).default(10),
     FACE_MIN_SHARPNESS: z.coerce.number().min(0).max(100).default(25),
     /** Missing key landmark count before half-covered rejection. */
     FACE_MAX_LANDMARKS_MISSING: z.coerce.number().int().min(0).max(10).default(2),
