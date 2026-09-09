@@ -8,6 +8,7 @@ Four scripts, two operators. Target: **~8 minutes of write downtime.**
 | `02-restore-gcp.sh` | GCE VM | GCP operator | ~3 min |
 | `03-rclone-delta.sh` | GCE VM | GCP operator | ~2 min — **runs in parallel with 01/02** |
 | `04-post-restore.sh` | GCE VM | GCP operator | ~2 min |
+| `05-smoke-test.sh` | anywhere / GCE VM | GCP operator | ~1 min — **gate before DNS** |
 
 ## Facts this plan is built on
 
@@ -76,7 +77,20 @@ sudo AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=… bash 03-rclone-delta.sh
 sudo bash 04-post-restore.sh
 ```
 
-**T+7 — verify by hand, then flip DNS:** avatar loads, one face verification passes, one game launches.
+**T+6:30 — the gate. Do not skip.**
+
+```bash
+# on the GCE VM — data integrity + integrations
+sudo RUN_ON_VM=1 bash 05-smoke-test.sh
+
+# from anywhere — proves HTTPS and the journeys against GCP while
+# traffic is still on AWS, because --resolve pins the hostname to the LB
+SMOKE_IDENTIFIER=<test user> SMOKE_PASSWORD=<pw> bash 05-smoke-test.sh
+```
+
+It exits non-zero and prints **DO NOT MOVE DNS** if anything failed. Treat that literally — everything up to this point is reversible, and the DNS flip is where that stops being true.
+
+**T+7 — flip DNS.** Note the records are **CNAMEs** pointing at `ol-prod-alb-569195065.ap-south-1.elb.amazonaws.com`, and GCP is an **IP** — so this is a type change (delete CNAME, create A → `136.68.81.230`), not an edit. Do `api` first, alone, verify, then the rest. Keep that ALB hostname written down somewhere outside Vercel: recreating the CNAME is the rollback.
 
 ## Why the order is what it is
 
