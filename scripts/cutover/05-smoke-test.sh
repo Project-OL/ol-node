@@ -97,8 +97,11 @@ else
     ok "login returns an access token"
     AUTH=(-H "Authorization: Bearer $TOKEN")
 
+    # /users/me returns `userId`, not `id` — assert on the field the endpoint
+    # actually emits rather than the one it looked like it should.
     ME=$(req "${AUTH[@]}" "$BASE/api/v1/users/me")
-    echo "$ME" | grep -q '"id"' && ok "profile loads" || bad "profile — $(echo "$ME" | head -c 120)"
+    echo "$ME" | grep -qE '"(userId|publicId)"' && ok "profile loads" \
+      || bad "profile — $(echo "$ME" | head -c 120)"
 
     # The avatar is the canary for the whole S3 -> R2 migration: URL rewritten
     # in the database AND the object actually present in the new bucket.
@@ -122,8 +125,12 @@ else
 
     # A ws-ticket is what the app exchanges for a realtime connection; without
     # it every socket feature is dead even though HTTP looks healthy.
-    WT=$(req -X POST "${AUTH[@]}" "$BASE/api/v1/auth/ws-ticket")
-    echo "$WT" | grep -qE '"ticket"|"wsTicket"' && ok "websocket ticket issued" \
+    # Send an explicit empty JSON body. `curl -X POST` with no data sets no
+    # Content-Length, and Google's load balancer answers 411 before the request
+    # ever reaches the app — an artefact of the probe, not a broken endpoint.
+    WT=$(req -X POST "${AUTH[@]}" -H 'Content-Type: application/json' -d '{}' \
+      "$BASE/api/v1/auth/ws-ticket")
+    echo "$WT" | grep -qE '"token"' && ok "websocket ticket issued" \
       || bad "ws-ticket — $(echo "$WT" | head -c 120)"
   fi
 fi
