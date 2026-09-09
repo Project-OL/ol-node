@@ -196,13 +196,41 @@ export const giftAdminService = {
     return mapGiftAdminRow(g, timesSent)
   },
 
+  /**
+   * Permanently removes a gift.
+   *
+   * This used to be a soft delete (`isActive: false`), which left the row in the
+   * admin list — the list defaults to `status: 'all'` — so "Delete" looked like
+   * it had done nothing, and did the same thing as the enable/disable toggle.
+   *
+   * A gift that has ever been sent cannot be removed: `gift_transactions` and
+   * `gift_gallery_progress` are `onDelete: Restrict`, because those rows are the
+   * history behind real coin movements. We check first so the admin gets a
+   * 409 explaining what to do instead, rather than a foreign-key 500.
+   *
+   * Tags and gallery-section entries cascade; `custom_gift_requests.gift_id` is
+   * set null. Caches are invalidated from the pre-delete row, since the tags
+   * that key those caches disappear with it.
+   */
   async deleteGift(giftId: string) {
     const existing = await giftRepository.findById(giftId)
     if (!existing) throw new AppError(404, 'Gift not found', 'NOT_FOUND')
 
-    const g = await giftAdminRepository.updateGift(giftId, { isActive: false })
-    await giftService.invalidateCachesForGift(g)
-    return mapGiftAdminRow(g, 0)
+    const blockers = await giftAdminRepository.countDeleteBlockers(giftId)
+    if (blockers.transactions > 0 || blockers.galleryProgress > 0) {
+      const parts: string[] = []
+      if (blockers.transactions > 0) parts.push(`${blockers.transactions} transaction(s)`)
+      if (blockers.galleryProgress > 0) parts.push(`${blockers.galleryProgress} gallery progress row(s)`)
+      throw new AppError(
+        409,
+        `This gift has already been used (${parts.join(' and ')}) and cannot be deleted without losing that history. Disable it instead — it will stop appearing to users.`,
+        'GIFT_IN_USE',
+      )
+    }
+
+    await giftAdminRepository.hardDeleteGift(giftId)
+    await giftService.invalidateCachesForGift(existing)
+    return mapGiftAdminRow(existing, 0)
   },
 }
 

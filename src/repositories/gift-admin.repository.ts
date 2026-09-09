@@ -340,4 +340,30 @@ export const giftAdminRepository = {
       })
     })
   },
+
+  /**
+   * How many rows would block a hard delete.
+   *
+   * `gift_transactions` and `gift_gallery_progress` are declared
+   * `onDelete: Restrict`, so Postgres refuses to remove a gift that has either.
+   * Counting first turns that into a clear 409 instead of a raw FK error, and
+   * says which of the two is holding it.
+   */
+  async countDeleteBlockers(giftId: string) {
+    const [transactions, galleryProgress] = await Promise.all([
+      prisma.giftTransaction.count({ where: { giftId } }),
+      prisma.giftGalleryProgress.count({ where: { giftId } }),
+    ])
+    return { transactions, galleryProgress }
+  },
+
+  /**
+   * Permanently removes the row. `gift_tags` and `gift_gallery_section_items`
+   * cascade; `custom_gift_requests.gift_id` is set null. Anything referencing it
+   * from a Restrict relation makes this throw, which is the point — a sent gift
+   * is part of the ledger's history and must not disappear.
+   */
+  async hardDeleteGift(id: string) {
+    return prisma.gift.delete({ where: { id } })
+  },
 }
