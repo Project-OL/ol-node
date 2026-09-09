@@ -26,6 +26,10 @@ APP_USER="${APP_USER:-olapp}"
 if [ "${RUN_ON_VM:-0}" = "1" ]; then
   BASE="http://localhost:3000"
   RESOLVE=()
+elif [ "${NO_RESOLVE:-0}" = "1" ]; then
+  # After DNS has moved: exercise the real public path, resolving normally.
+  BASE="https://$HOST"
+  RESOLVE=()
 else
   BASE="https://$HOST"
   # Pin DNS for this process only — the point is to test the new stack while

@@ -84,9 +84,16 @@ if [ "${CHECK_ONLY:-0}" != "1" ]; then
   grep -viE '501|NotImplemented|status code|Attempt [0-9]+/[0-9]+' /tmp/rclone-delta.err | grep -iE 'error|failed' | head -10 || echo "  none"
 fi
 
-log "verifying by hash (authoritative)"
-rclone check --one-way "s3:$SRC_BUCKET" "r2:$R2_BUCKET" "${EXCLUDE[@]}" 2>&1 \
-  | grep -viE '501|NotImplemented|status code' | tail -6
+if [ "${SKIP_CHECK:-0}" = "1" ]; then
+  # The copy takes seconds; `rclone check` hashes all ~42k objects and takes
+  # ~40 minutes. It is a read-only audit, so during a cutover it belongs AFTER
+  # the DNS flip — keeping it inside the freeze buys nothing but downtime.
+  log "SKIP_CHECK=1 — hash verification deferred (run this script again with CHECK_ONLY=1 afterwards)"
+else
+  log "verifying by hash (authoritative)"
+  rclone check --one-way "s3:$SRC_BUCKET" "r2:$R2_BUCKET" "${EXCLUDE[@]}" 2>&1 \
+    | grep -viE '501|NotImplemented|status code' | tail -6
+fi
 
 log "after:"
 rclone size "s3:$SRC_BUCKET" "${EXCLUDE[@]}" 2>/dev/null | sed 's/^/  S3 /'
