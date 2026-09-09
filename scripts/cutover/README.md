@@ -1,6 +1,13 @@
 # AWS prodv2 → GCP cutover runbook
 
-Four scripts, two operators. Target: **~8 minutes of write downtime.**
+Five scripts plus an orchestrator, two operators. Target: **~8 minutes of write downtime.**
+
+`00-run-cutover.sh` drives steps 2–5 on the GCE VM and stops at a DNS prompt that
+requires you to type `dns done` before it verifies over the real hostname. Only
+step 1 is run by hand, by the prodv2 operator. `DRY_RUN=1` rehearses everything
+up to the prompt and never touches DNS.
+
+Installed on the VM at **`/opt/ol/cutover/`**.
 
 | Step | Where | Who | Time |
 |---|---|---|---|
@@ -85,12 +92,28 @@ sudo RUN_ON_VM=1 bash 05-smoke-test.sh
 
 # from anywhere — proves HTTPS and the journeys against GCP while
 # traffic is still on AWS, because --resolve pins the hostname to the LB
-SMOKE_IDENTIFIER=<test user> SMOKE_PASSWORD=<pw> bash 05-smoke-test.sh
+SMOKE_PROVIDER=publicId SMOKE_IDENTIFIER=34216645 SMOKE_PASSWORD=<pw> bash 05-smoke-test.sh
 ```
 
 It exits non-zero and prints **DO NOT MOVE DNS** if anything failed. Treat that literally — everything up to this point is reversible, and the DNS flip is where that stops being true.
 
-**T+7 — flip DNS.** Note the records are **CNAMEs** pointing at `ol-prod-alb-569195065.ap-south-1.elb.amazonaws.com`, and GCP is an **IP** — so this is a type change (delete CNAME, create A → `136.68.81.230`), not an edit. Do `api` first, alone, verify, then the rest. Keep that ALB hostname written down somewhere outside Vercel: recreating the CNAME is the rollback.
+**Watch the skip count, not just the failures.** Without credentials the suite skips the entire authenticated tier and still prints "safe to proceed" — having tested nothing but anonymous `401`s. A green run that proves anything is **21 passed / 0 skipped**.
+
+The restore overwrites the fixture account's password with production's, so `00-run-cutover.sh` re-establishes a known one via `reset-smoke-fixture.js` when `SMOKE_IDENTIFIER`/`SMOKE_PASSWORD` are set. It hashes through the app's own `passwordService`, so the hash cannot disagree with what login verifies against. **This is a real password on what becomes production the moment DNS moves — change it after the cutover.**
+
+Measured 2026-09-09 against the restored GCP copy, both modes **21 passed / 0 failed / 0 skipped**. The authenticated tier is the valuable half: `avatar image loads from object store (200)` is the end-to-end proof that the URL rewrite ran *and* the object exists in R2 — a single check covering the whole S3→R2 migration.
+
+**T+7 — flip DNS.** Note the records are **CNAMEs** pointing at `ol-prod-alb-569195065.ap-south-1.elb.amazonaws.com`, and GCP is an **IP** — so this is a type change (delete CNAME, create A → `136.68.81.230`), not an edit. Do `api` first, alone, verify, then `live`. Keep that ALB hostname written down somewhere outside Vercel: recreating the CNAME is the rollback.
+
+| Record | Moves? | Why |
+|---|---|---|
+| `api` | **yes** | 21/21 smoke checks pass through the GCP LB |
+| `live` | **yes** | every path the app uses (`/api/live-stream/*`, `/api/video-call/*`, socket.io) is covered by the url-map's live rules; socket.io verified 200 |
+| `admins3jinyu` | **NO — leave on AWS** | the admin panel is a static Vue SPA served by nginx on the EC2. The GCP LB has no backend for it and answers `404` on every path. Moving this record takes the admin panel down. |
+
+**Therefore the EC2 must stay running after the cutover** — it is still serving the admin panel. Shut down only Postgres writes (the app), not the box.
+
+Moving the admin panel later means hosting the SPA on GCP: a GCS bucket added as a backend to the existing LB (the certificate already covers the hostname), or Firebase Hosting. Either way it needs **SPA fallback** — the router uses `createWebHistory`, so unknown paths must serve `index.html` or every deep link and page refresh 404s. Verify with `curl --resolve … /customer-support/tickets/42` returning `200` *before* touching DNS.
 
 ## Why the order is what it is
 

@@ -50,6 +50,22 @@ else
 fi
 
 banner "4/6  Smoke test against the GCP load balancer (traffic still on AWS)"
+
+# The restore just overwrote the fixture account's password with production's,
+# so the authenticated tier would degrade to SKIP without this — the suite would
+# report "safe to proceed" having exercised nothing but anonymous 401s.
+# Runs from the app directory because Prisma resolves its engine relative to cwd.
+if [ -n "${SMOKE_PASSWORD:-}" ] && [ -n "${SMOKE_IDENTIFIER:-}" ]; then
+  APP_DIR="${APP_DIR:-/opt/ol/apps/ol-node-rest}"
+  cp reset-smoke-fixture.js "$APP_DIR/reset-smoke-fixture.js"
+  chown "${APP_USER:-olapp}" "$APP_DIR/reset-smoke-fixture.js"
+  sudo -u "${APP_USER:-olapp}" bash -c \
+    "cd $APP_DIR && set -a && . ./.env && set +a && \
+     PID='$SMOKE_IDENTIFIER' NEWPW='$SMOKE_PASSWORD' node reset-smoke-fixture.js" \
+    || echo "  WARNING: fixture reset failed — authenticated checks will be skipped"
+  rm -f "$APP_DIR/reset-smoke-fixture.js"
+fi
+
 # RUN_ON_VM covers data + integrations; the --resolve pass covers TLS and the
 # public path. Both must pass before anyone touches DNS.
 RUN_ON_VM=1 bash 05-smoke-test.sh || die "smoke test failed — DO NOT MOVE DNS"
@@ -71,8 +87,15 @@ cat <<EOF
      DELETE  CNAME  api  -> ol-prod-alb-569195065.ap-south-1.elb.amazonaws.com
      CREATE  A      api  -> $LB_IP        (TTL 60)
 
-  Do 'api' first and alone. Repeat for 'live' and 'admins3jinyu' only after
-  it verifies. TTL is already 60s, so rollback propagates in about a minute.
+  Do 'api' first and alone. Repeat for 'live' only after it verifies.
+  TTL is already 60s, so rollback propagates in about a minute.
+
+  *** DO NOT MOVE 'admins3jinyu' ***
+  The admin panel is static Vue served by nginx on the EC2. The GCP load
+  balancer has no backend for it and answers 404 on every path, so moving
+  that record takes the admin panel down. It stays on AWS until the SPA is
+  hosted on GCP separately (GCS bucket or Firebase Hosting) — which means
+  the EC2 must stay alive after this cutover.
 
   ROLLBACK: recreate the CNAME above. Write it down before you start.
 
