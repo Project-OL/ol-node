@@ -432,13 +432,23 @@ export const RedisKeys = {
   adminUserSearchHistory: (adminId: string) => `admin:user-search-history:${adminId}`,
   /** Master ledger: active house (treasury / company-agency / game-house) account ids. */
   ledgerHouseAccounts: () => 'ledger:house-accounts',
-  /** Cached active game-provider catalog (`GameProvider.id`); Redis-fronted mirror of the provider's game list. */
-  gameCatalog: (providerId: string) => `game:catalog:${providerId}`,
+  /**
+   * Cached game-provider catalog, keyed by the env-configured channel and the list type.
+   *
+   * Deliberately **not** keyed on `GameProvider.id`: that would force a DB round trip
+   * (the upsert that resolves the provider row) before we could even look in the cache,
+   * on every request including cache hits. Channel comes from env, so a hit costs no
+   * database work at all. The list type is part of the key because types 2 and 3 return
+   * different game sets and previously shared one entry.
+   */
+  gameCatalog: (channel: string, gameListType: number) => `game:catalog:${channel}:${gameListType}`,
+  /** Lock held by whichever process is refreshing a stale catalog in the background. */
+  gameCatalogRefreshLock: (channel: string, gameListType: number) =>
+    `game:catalog:refresh-lock:${channel}:${gameListType}`,
   /** One-time launch code issued by `POST /games/:gameId/launch`; GETDEL on first BAISHUN `get_sstoken` call. */
   gameLaunchCode: (code: string) => `game:launch-code:${code}`,
   /** Inbound webhook signature replay guard: `SET NX EX` on the provider's signature_nonce. */
-  gameProviderNonce: (providerCode: string, nonce: string) =>
-    `game:nonce:${providerCode}:${nonce}`,
+  gameProviderNonce: (providerCode: string, nonce: string) => `game:nonce:${providerCode}:${nonce}`,
 } as const
 
 /** TTL in seconds for user auth identifiers cache (1 hour). */

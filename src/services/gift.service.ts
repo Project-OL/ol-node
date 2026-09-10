@@ -3,6 +3,7 @@ import { GIFT_LIST_CACHE_TTL } from '../config/redis'
 import { giftRepository, type GiftWithTags } from '../repositories/gift.repository'
 import { AppError } from '../middlewares/errorHandler'
 import { giftGalleryService } from './gift-gallery.service'
+import { giftThumbnailService } from './gift-thumbnail.service'
 
 async function invalidateGiftCaches(affectedTags: string[]) {
   try {
@@ -45,7 +46,11 @@ function mapPublicGift(g: GiftWithTags) {
     name: g.name,
     code: g.code,
     coinCost: g.coinCost,
-    displayImageUrl: g.displayImageUrl,
+    // Clients draw this into a ~55dp grid cell, so they get the thumbnail. The
+    // full-resolution original stays available as `fullImageUrl` for anything that
+    // genuinely needs it (send animation, full-screen preview).
+    displayImageUrl: g.thumbnailUrl ?? g.displayImageUrl,
+    fullImageUrl: g.displayImageUrl,
     effectUrl: g.effectUrl,
     displayOrder: g.displayOrder,
     vipOnly: g.vipOnly,
@@ -113,6 +118,7 @@ export const giftService = {
       name: input.name,
       coinCost: input.coinCost,
       displayImageUrl: input.displayImageUrl,
+      thumbnailUrl: await giftThumbnailService.generateForSource(input.displayImageUrl),
       effectUrl: input.effectUrl ?? null,
       tags,
     })
@@ -135,7 +141,15 @@ export const giftService = {
     if (!existing) throw new AppError(404, 'Gift not found', 'NOT_FOUND')
 
     const oldTags = existing.tags.map((t: { tag: string }) => t.tag)
-    const g = await giftRepository.updateWithTags(giftId, input)
+    const imageChanged =
+      input.displayImageUrl !== undefined && input.displayImageUrl !== existing.displayImageUrl
+    const patch = imageChanged
+      ? {
+          ...input,
+          thumbnailUrl: await giftThumbnailService.generateForSource(input.displayImageUrl!),
+        }
+      : input
+    const g = await giftRepository.updateWithTags(giftId, patch)
     const newTags = input.tags ?? oldTags
     await invalidateGiftCaches([...new Set([...oldTags, ...newTags])])
     return g

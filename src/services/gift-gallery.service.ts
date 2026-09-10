@@ -130,7 +130,9 @@ function buildMergedResponse(
         itemId: gi.id,
         giftId: gi.gift.id,
         name: gi.gift.name,
-        imageUrl: gi.gift.displayImageUrl,
+        // Gallery renders a grid of the same catalog art; serve the thumbnail.
+        imageUrl: gi.gift.thumbnailUrl ?? gi.gift.displayImageUrl,
+        fullImageUrl: gi.gift.displayImageUrl,
         coinCost: gi.gift.coinCost,
         received: !!prog,
         receivedAt: prog?.receivedAt ?? null,

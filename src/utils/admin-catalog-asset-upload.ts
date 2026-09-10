@@ -6,14 +6,24 @@ import { env } from '../config/env'
 export type AdminCatalogDomain = 'gift' | 'store' | 'banner'
 export type AdminCatalogAssetRole = 'display' | 'effect'
 
-/** Gift catalog assets (display + effect). */
-export const GIFT_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
+/**
+ * A **display** asset is the still image drawn into a catalog grid cell, so only image
+ * types are accepted. Display and effect used to share one map, which is how a 4 MB
+ * 720p `.mp4` ended up as a gift's grid thumbnail in production — the client downloaded
+ * the whole video, failed to decode it, and fell back to a placeholder icon.
+ */
+const DISPLAY_IMAGE_EXT_TO_CONTENT_TYPE: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
   svg: 'image/svg+xml',
   gif: 'image/gif',
+}
+
+/** Gift catalog assets (display + effect). Effect may be image, Lottie/Rive, or video. */
+export const GIFT_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
+  ...DISPLAY_IMAGE_EXT_TO_CONTENT_TYPE,
   json: 'application/json',
   lottie: 'application/zip',
   riv: 'application/octet-stream',
@@ -23,12 +33,7 @@ export const GIFT_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
 
 /** Store catalog assets (display + effect). Effect may be image, Lottie/Rive, or video. */
 export const STORE_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  svg: 'image/svg+xml',
-  gif: 'image/gif',
+  ...DISPLAY_IMAGE_EXT_TO_CONTENT_TYPE,
   json: 'application/json',
   lottie: 'application/zip',
   riv: 'application/octet-stream',
@@ -48,9 +53,14 @@ export const BANNER_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
 
 const PRESIGNED_URL_EXPIRES_IN = 300
 
-function extMapForDomain(domain: AdminCatalogDomain): Record<string, string> {
-  if (domain === 'gift') return GIFT_ADMIN_EXT_TO_CONTENT_TYPE
+function extMapForDomain(
+  domain: AdminCatalogDomain,
+  role?: AdminCatalogAssetRole,
+): Record<string, string> {
+  // Banners are display-only and already image-restricted.
   if (domain === 'banner') return BANNER_ADMIN_EXT_TO_CONTENT_TYPE
+  if (role === 'display') return DISPLAY_IMAGE_EXT_TO_CONTENT_TYPE
+  if (domain === 'gift') return GIFT_ADMIN_EXT_TO_CONTENT_TYPE
   return STORE_ADMIN_EXT_TO_CONTENT_TYPE
 }
 
@@ -69,9 +79,10 @@ export function sanitizeBaseName(filename: string): string {
 export function resolveAdminCatalogAssetContentType(
   domain: AdminCatalogDomain,
   fileName: string,
+  role?: AdminCatalogAssetRole,
 ): { ext: string; contentType: string } {
   const ext = extFromFilename(fileName)
-  const extMap = extMapForDomain(domain)
+  const extMap = extMapForDomain(domain, role)
   if (!ext || !extMap[ext]) {
     const allowed = [...new Set(Object.keys(extMap))].sort().join(', ')
     const code =
@@ -90,7 +101,11 @@ export function buildAdminCatalogAssetKey(params: {
   role: AdminCatalogAssetRole
   fileName: string
 }): { key: string; contentType: string } {
-  const { contentType } = resolveAdminCatalogAssetContentType(params.domain, params.fileName)
+  const { contentType } = resolveAdminCatalogAssetContentType(
+    params.domain,
+    params.fileName,
+    params.role,
+  )
   const id = randomUUID()
   const safe = sanitizeBaseName(params.fileName)
   const prefix =

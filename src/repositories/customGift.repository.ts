@@ -7,7 +7,14 @@ import type {
 } from '@prisma/client'
 
 const GIFT_SELECT = {
-  select: { id: true, name: true, code: true, displayImageUrl: true, coinCost: true },
+  select: {
+    id: true,
+    name: true,
+    code: true,
+    displayImageUrl: true,
+    thumbnailUrl: true,
+    coinCost: true,
+  },
 } as const
 
 const USER_SELECT = {

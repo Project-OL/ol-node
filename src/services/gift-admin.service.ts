@@ -4,6 +4,7 @@ import { prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { toGiftSlug } from '../utils/gift-slug'
 import { giftService } from './gift.service'
+import { giftThumbnailService } from './gift-thumbnail.service'
 import type { GiftWithCategoryAndTags } from '../repositories/gift-admin.repository'
 
 function pctChange(today: number, yesterday: number): number | null {
@@ -19,7 +20,10 @@ function mapGiftAdminRow(g: GiftWithCategoryAndTags, timesSent: number) {
     id: g.id,
     name: g.name,
     code: g.code,
+    // Admin keeps the full-resolution original — this is the editor, and it is what an
+    // admin re-uploads or replaces. Only client payloads swap in `thumbnailUrl`.
     displayImageUrl: g.displayImageUrl,
+    thumbnailUrl: g.thumbnailUrl,
     effectUrl: g.effectUrl,
     category: g.category
       ? { id: g.category.id, name: g.category.name, slug: g.category.slug }
@@ -127,11 +131,14 @@ export const giftAdminService = {
       throw new AppError(409, 'Gift code already exists', 'GIFT_CODE_EXISTS')
     }
 
+    const thumbnailUrl = await giftThumbnailService.generateForSource(input.displayImageUrl)
+
     const g = await giftAdminRepository.createGift({
       name: input.name,
       code,
       coinCost: input.coinCost,
       displayImageUrl: input.displayImageUrl,
+      thumbnailUrl,
       effectUrl: input.effectUrl ?? null,
       categoryId: input.categoryId ?? null,
       displayOrder: input.displayOrder,
@@ -171,7 +178,18 @@ export const giftAdminService = {
       }
     }
 
-    const g = await giftAdminRepository.updateGift(giftId, input)
+    // Regenerate only when the image actually changes — a rename or a price edit should
+    // not pay for a download-resize-upload round trip.
+    const imageChanged =
+      input.displayImageUrl !== undefined && input.displayImageUrl !== existing.displayImageUrl
+    const patch = imageChanged
+      ? {
+          ...input,
+          thumbnailUrl: await giftThumbnailService.generateForSource(input.displayImageUrl!),
+        }
+      : input
+
+    const g = await giftAdminRepository.updateGift(giftId, patch)
     const timesSent = await prismaRead.giftTransaction.count({ where: { giftId } })
 
     await giftService.invalidateCachesForGift(g)

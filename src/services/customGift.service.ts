@@ -35,7 +35,13 @@ export interface CustomGiftRequestDto {
   status: CustomGiftRequestStatus
   failureReason: string | null
   refunded: boolean
-  gift: { id: string; name: string; code: string; displayImageUrl: string } | null
+  gift: {
+    id: string
+    name: string
+    code: string
+    displayImageUrl: string
+    fullImageUrl: string
+  } | null
   createdAt: string
   resolvedAt: string | null
 }
@@ -62,7 +68,8 @@ export function toRequestDto(row: CustomGiftRequestWithGift): CustomGiftRequestD
           id: row.gift.id,
           name: row.gift.name,
           code: row.gift.code,
-          displayImageUrl: row.gift.displayImageUrl,
+          displayImageUrl: row.gift.thumbnailUrl ?? row.gift.displayImageUrl,
+          fullImageUrl: row.gift.displayImageUrl,
         }
       : null,
     createdAt: row.createdAt.toISOString(),

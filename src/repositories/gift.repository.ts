@@ -50,6 +50,7 @@ export const giftRepository = {
     name: string
     coinCost: number
     displayImageUrl: string
+    thumbnailUrl?: string | null
     effectUrl?: string | null
     tags: string[]
     code?: string
@@ -61,6 +62,7 @@ export const giftRepository = {
         code,
         coinCost: data.coinCost,
         displayImageUrl: data.displayImageUrl,
+        thumbnailUrl: data.thumbnailUrl ?? null,
         effectUrl: data.effectUrl ?? null,
         tags: {
           create: data.tags.map((tag) => ({ tag })),
@@ -76,6 +78,7 @@ export const giftRepository = {
       name?: string
       coinCost?: number
       displayImageUrl?: string
+      thumbnailUrl?: string | null
       effectUrl?: string | null
       isActive?: boolean
       tags?: string[]
@@ -91,6 +94,7 @@ export const giftRepository = {
           ...(data.name !== undefined ? { name: data.name } : {}),
           ...(data.coinCost !== undefined ? { coinCost: data.coinCost } : {}),
           ...(data.displayImageUrl !== undefined ? { displayImageUrl: data.displayImageUrl } : {}),
+          ...(data.thumbnailUrl !== undefined ? { thumbnailUrl: data.thumbnailUrl } : {}),
           ...(data.effectUrl !== undefined ? { effectUrl: data.effectUrl } : {}),
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
           ...(data.tags

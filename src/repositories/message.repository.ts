@@ -52,6 +52,8 @@ export type GiftMessageSnapshot = {
   name: string
   code: string | null
   displayImageUrl: string
+  /** Full-resolution original. Null on messages sent before gift thumbnails existed. */
+  fullImageUrl: string | null
   effectUrl: string | null
   /** How many of this catalog gift were sent in this message (default 1). */
   quantity: number
@@ -167,6 +169,7 @@ export function giftSnapshotFromMetadata(metadata: unknown): GiftMessageSnapshot
     name,
     code: typeof m.code === 'string' ? m.code : null,
     displayImageUrl,
+    fullImageUrl: typeof m.fullImageUrl === 'string' ? m.fullImageUrl : null,
     effectUrl:
       typeof m.effectUrl === 'string'
         ? m.effectUrl

@@ -1843,6 +1843,10 @@ model GameCatalogEntry {
   gameId      Int      @map("game_id")
   name        String   @db.VarChar(150)
   previewUrl  String?  @map("preview_url") @db.VarChar(500)
+  /// Our own object-store copy of `previewUrl`. The provider serves previews off an
+  /// overseas CDN (~1s per image for Indian clients); mirroring lets the catalog hand
+  /// clients a local URL instead. Null until the first successful mirror.
+  previewMirrorUrl String? @map("preview_mirror_url") @db.VarChar(500)
   downloadUrl String?  @map("download_url") @db.VarChar(500)
   gameVersion String?  @map("game_version") @db.VarChar(30)
   gameMode    Int[]    @map("game_mode")
@@ -2438,6 +2442,10 @@ model Gift {
   code            String   @unique @db.VarChar(64)
   coinCost        Int      @map("coin_cost")
   displayImageUrl String   @map("display_image_url") @db.Text
+  /// Small (<=192px) WebP derived from `displayImageUrl`, generated on upload.
+  /// Client-facing payloads serve this in place of the full-resolution original,
+  /// which stays here for the send animation and the admin editor.
+  thumbnailUrl    String?  @map("thumbnail_url") @db.Text
   effectUrl       String?  @map("effect_url") @db.Text
   displayOrder    Int      @default(0) @map("display_order")
   vipOnly         Boolean  @default(false) @map("vip_only")

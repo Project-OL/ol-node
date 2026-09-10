@@ -277,6 +277,7 @@ export const giftAdminRepository = {
     code: string
     coinCost: number
     displayImageUrl: string
+    thumbnailUrl?: string | null
     effectUrl?: string | null
     displayOrder?: number
     vipOnly?: boolean
@@ -289,6 +290,7 @@ export const giftAdminRepository = {
         code: data.code,
         coinCost: data.coinCost,
         displayImageUrl: data.displayImageUrl,
+        thumbnailUrl: data.thumbnailUrl ?? null,
         effectUrl: data.effectUrl ?? null,
         displayOrder: data.displayOrder ?? 0,
         vipOnly: data.vipOnly ?? false,
@@ -306,6 +308,7 @@ export const giftAdminRepository = {
       code?: string
       coinCost?: number
       displayImageUrl?: string
+      thumbnailUrl?: string | null
       effectUrl?: string | null
       displayOrder?: number
       vipOnly?: boolean
@@ -325,6 +328,7 @@ export const giftAdminRepository = {
           ...(data.code !== undefined ? { code: data.code } : {}),
           ...(data.coinCost !== undefined ? { coinCost: data.coinCost } : {}),
           ...(data.displayImageUrl !== undefined ? { displayImageUrl: data.displayImageUrl } : {}),
+          ...(data.thumbnailUrl !== undefined ? { thumbnailUrl: data.thumbnailUrl } : {}),
           ...(data.effectUrl !== undefined ? { effectUrl: data.effectUrl } : {}),
           ...(data.displayOrder !== undefined ? { displayOrder: data.displayOrder } : {}),
           ...(data.vipOnly !== undefined ? { vipOnly: data.vipOnly } : {}),

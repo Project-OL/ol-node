@@ -657,7 +657,10 @@ export const messagingService = {
       giftTransactionId: giftResult.transactionId,
       name: gift.name,
       code: gift.code,
-      displayImageUrl: gift.displayImageUrl,
+      // Chat renders the gift as a small bubble thumbnail. This snapshot is frozen onto
+      // the message row, so messages sent before the backfill keep the original URL.
+      displayImageUrl: gift.thumbnailUrl ?? gift.displayImageUrl,
+      fullImageUrl: gift.displayImageUrl,
       effectUrl: gift.effectUrl,
       quantity: giftResult.quantity,
       unitCoinCost: giftResult.unitCoinCost,
