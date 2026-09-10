@@ -24,6 +24,7 @@ import type { AuthProvider } from '../models/types'
 import { formatUserName } from '../utils/user-display'
 import { allocateUniqueUsername } from '../utils/user-identity-unique'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
+import { normalizeEmail } from '../utils/auth-identifier'
 
 export interface OAuthUserInfo {
   email: string | null
@@ -256,7 +257,7 @@ export const oauthService = {
       identifiers.push({
         userId: user.id,
         provider: 'email',
-        identifier: userInfo.email,
+        identifier: normalizeEmail(userInfo.email),
         isVerified: true,
         verifiedAt: now,
         isPrimary: false,
@@ -317,7 +318,7 @@ export const oauthService = {
           data: {
             userId,
             provider: 'email',
-            identifier: userInfo.email,
+            identifier: normalizeEmail(userInfo.email),
             isVerified: true,
             verifiedAt: new Date(),
             isPrimary: false,

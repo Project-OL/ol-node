@@ -1,11 +1,20 @@
 import { prisma, prismaRead } from '../config/database'
 import type { AuthProvider } from '../models/types'
+import { normalizeAuthIdentifier, normalizeIdentifierGuess } from '../utils/auth-identifier'
 
+/**
+ * Every identifier that reaches the DB goes through `normalizeAuthIdentifier` here, so emails are
+ * stored and looked up lower-case regardless of how the caller spelt them. Callers still normalise
+ * at their own boundary when they derive Redis/OTP keys from the raw value.
+ */
 export const authIdentifierRepository = {
   async findByProviderAndIdentifier(provider: AuthProvider, identifier: string) {
     return prismaRead.authIdentifier.findUnique({
       where: {
-        provider_identifier: { provider, identifier },
+        provider_identifier: {
+          provider,
+          identifier: normalizeAuthIdentifier(provider, identifier),
+        },
       },
       include: { user: true },
     })
@@ -18,7 +27,10 @@ export const authIdentifierRepository = {
   async findForLoginWithPassword(provider: AuthProvider, identifier: string) {
     return prisma.authIdentifier.findUnique({
       where: {
-        provider_identifier: { provider, identifier },
+        provider_identifier: {
+          provider,
+          identifier: normalizeAuthIdentifier(provider, identifier),
+        },
       },
       include: { user: { include: { authPassword: true } } },
     })
@@ -26,7 +38,7 @@ export const authIdentifierRepository = {
 
   async findByIdentifier(identifier: string) {
     return prismaRead.authIdentifier.findFirst({
-      where: { identifier },
+      where: { identifier: normalizeIdentifierGuess(identifier) },
       include: { user: true },
     })
   },
@@ -57,7 +69,7 @@ export const authIdentifierRepository = {
       data: {
         userId: data.userId,
         provider: data.provider,
-        identifier: data.identifier,
+        identifier: normalizeAuthIdentifier(data.provider, data.identifier),
         isVerified: data.isVerified ?? false,
         verifiedAt: data.verifiedAt ?? undefined,
         isPrimary: data.isPrimary ?? false,
@@ -81,7 +93,7 @@ export const authIdentifierRepository = {
     const updated = await prisma.authIdentifier.updateMany({
       where: { userId, provider, version },
       data: {
-        identifier: newIdentifier,
+        identifier: normalizeAuthIdentifier(provider, newIdentifier),
         version: { increment: 1 },
         isVerified: true,
         verifiedAt: new Date(),

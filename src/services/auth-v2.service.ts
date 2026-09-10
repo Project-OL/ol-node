@@ -39,6 +39,7 @@ import { allocateUniqueUsername, assertDisplayNameAvailable } from '../utils/use
 import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'
 import { avatarModerationService } from './avatar-moderation.service'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
+import { normalizeAuthIdentifier, normalizeEmail } from '../utils/auth-identifier'
 
 const SIGNUP_VERIFIED_TTL = 300
 
@@ -117,8 +118,11 @@ export const authV2Service = {
     return { message: 'OTP sent successfully', expiresIn: 300 }
   },
 
-  async signupVerifyOtp(provider: AuthProvider, identifier: string, otp: string) {
-    validateIdentifier(provider, identifier)
+  async signupVerifyOtp(provider: AuthProvider, rawIdentifier: string, otp: string) {
+    validateIdentifier(provider, rawIdentifier)
+    // Same canonical form as the stored row, so the Redis key matches whatever casing
+    // the client sends on the create-password step.
+    const identifier = normalizeAuthIdentifier(provider, rawIdentifier)
     const valid = await otpAuthService.verify({
       targetIdentifier: identifier,
       purpose: 'signup',
@@ -136,11 +140,12 @@ export const authV2Service = {
    */
   async signupCreatePassword(
     provider: AuthProvider,
-    identifier: string,
+    rawIdentifier: string,
     password: string,
     request?: { ip?: string; headers?: Record<string, string | string[] | undefined> },
   ) {
-    validateIdentifier(provider, identifier)
+    validateIdentifier(provider, rawIdentifier)
+    const identifier = normalizeAuthIdentifier(provider, rawIdentifier)
     const strength = passwordService.validateStrength(password)
     if (!strength.ok) throw new AppError(400, strength.error, 'WEAK_PASSWORD')
     const existingAuth = await authIdentifierRepository.findByProviderAndIdentifier(
@@ -776,7 +781,8 @@ export const authV2Service = {
     return { message: 'OTP sent to new email', expiresIn: 300 }
   },
 
-  async emailBindVerifyOtp(userId: string, newEmail: string, otp: string) {
+  async emailBindVerifyOtp(userId: string, rawNewEmail: string, otp: string) {
+    const newEmail = normalizeEmail(rawNewEmail)
     const valid = await otpAuthService.verify({
       targetIdentifier: newEmail,
       purpose: 'bind_email',
@@ -835,7 +841,9 @@ export const authV2Service = {
     return { message: 'Current email verified' }
   },
 
-  async emailModifyVerifyNew(userId: string, newEmail: string, otp?: string) {
+  async emailModifyVerifyNew(userId: string, rawNewEmail: string, otp?: string) {
+    // Written straight to the row below, so it must already be canonical.
+    const newEmail = normalizeEmail(rawNewEmail)
     const raw = await redisClient.get(RedisKeys.emailModifyInProgress(userId))
     if (!raw) throw new AppError(400, 'Please verify current email first', 'OLD_EMAIL_NOT_VERIFIED')
     const data = JSON.parse(raw) as { currentEmail: string; verifiedOldAt?: number }
