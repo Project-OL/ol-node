@@ -220,7 +220,19 @@ const envSchema = z
     FACE_MODERATION_STRICT_MODE: z.coerce.boolean().default(false),
     FACE_MIN_USER_AGE: z.coerce.number().int().min(0).max(120).default(16),
     FACE_CHECK_MINOR_AGE: z.coerce.boolean().default(true),
-    FACE_GENDER_AUTO_UPDATE_ENABLED: z.coerce.boolean().default(false),
+    /**
+     * Auto-correct a user's stored gender from the Rekognition DetectFaces result
+     * during registration. Defaults on: GCP production has run with it enabled and
+     * that is the intended behavior everywhere.
+     *
+     * String transform rather than `z.coerce.boolean()` — coercion treats the string
+     * `"false"` as truthy, so with a `true` default a `.env` opt-out would silently
+     * do nothing. Same pattern as `AVATAR_CONTENT_MODERATION_ENABLED` below.
+     */
+    FACE_GENDER_AUTO_UPDATE_ENABLED: z
+      .string()
+      .default('true')
+      .transform((s) => s === 'true' || s === '1'),
     FACE_DUPLICATE_CHECK_ENABLED: z.coerce.boolean().default(true),
     FACE_CONTENT_MODERATION_ENABLED: z.coerce.boolean().default(false),
     /**
