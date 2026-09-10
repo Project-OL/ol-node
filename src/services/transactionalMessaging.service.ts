@@ -5,6 +5,7 @@ import {
   COUNTERPARTY_USER_SELECT,
   buildCounterpartyDetailsMap,
 } from '../utils/ledger-transaction-enrichment'
+import { isDiamondLedgerMovement } from '../config/diamond-ledger'
 import { platformMessagingService } from './platformMessaging.service'
 import { pushNotificationService } from './pushNotification.service'
 import type { PlatformMessageMetadata } from '../models/platform-message.schemas'
@@ -30,10 +31,12 @@ type TxWalletCurrency = 'COIN' | 'POINT' | 'TRADING_COIN' | 'DIAMOND'
  * Push notifications are sent for credits of coins, points, and trading coins only.
  *
  * Debits are the routine cost of using the app — sending, gifting, betting — and notifying
- * a user about money they just chose to spend is noise. Diamond credit/debit (game play,
- * buy/redeem, admin adjust) is similarly noisy and suppressed entirely. The platform
- * message is still written either way, so the ledger trail and in-app transaction history
- * are unchanged; only the FCM push is suppressed.
+ * a user about money they just chose to spend is noise. The platform message is still
+ * written for a debit, so the ledger trail and in-app transaction history are unchanged;
+ * only the FCM push is suppressed.
+ *
+ * Diamonds never reach here at all — see the `isDiamondLedgerMovement` guard below, which
+ * drops the message and the push together. The DIAMOND arm is kept as a backstop.
  */
 function shouldSendTransactionalPush(
   currency: TxWalletCurrency,
@@ -139,6 +142,12 @@ export const transactionalMessagingService = {
     if (SKIP_COIN_TX_TYPES.has(entry.txType)) return
 
     const currencyType = entry.wallet.currencyType
+
+    // Diamond movement is inbox-silent: no transactional message, no push. Enqueue is
+    // already skipped in coin-wallet.service; this also drops jobs queued before that
+    // shipped, and any future caller that reaches the queue by another route.
+    if (isDiamondLedgerMovement(currencyType, entry.txType)) return
+
     const walletCurrency: TxWalletCurrency =
       currencyType === WalletCurrencyType.TRADING_COIN
         ? 'TRADING_COIN'

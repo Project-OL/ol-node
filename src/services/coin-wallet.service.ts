@@ -25,6 +25,7 @@ import { assertCoinDebitAllowed, assertCoinDebitAllowedInTx } from './wallet-fre
 import { RECHARGE_TX_TYPES, richTierService } from './rich-tier.service'
 import { epayClient } from '../lib/epay.client'
 import { enqueuePlatformLedgerMessage } from '../queues/platform-message.queue'
+import { isDiamondLedgerMovement } from '../config/diamond-ledger'
 
 /** Coins debited when changing display name via PATCH /users/me (`name` field). */
 export const USERNAME_CHANGE_COIN_COST = 10_000n
@@ -642,7 +643,9 @@ export const coinWalletService = {
       options.applyWealthXp && currencyType === WalletCurrencyType.COIN,
     )
 
-    void enqueuePlatformLedgerMessage('coin', entry.id).catch(() => {})
+    if (!isDiamondLedgerMovement(currencyType, txType)) {
+      void enqueuePlatformLedgerMessage('coin', entry.id).catch(() => {})
+    }
 
     return { ledgerEntryId: entry.id, balanceAfter: entry.balanceAfter, wealthLevelResult }
   },
@@ -717,7 +720,9 @@ export const coinWalletService = {
       idempotencyKey: options.idempotencyKey,
     })
     await walletRepository.bumpVersion(tx, wallet.id)
-    void enqueuePlatformLedgerMessage('coin', entry.id).catch(() => {})
+    if (!isDiamondLedgerMovement(currencyType, txType)) {
+      void enqueuePlatformLedgerMessage('coin', entry.id).catch(() => {})
+    }
     return {
       ledgerEntryId: entry.id,
       balanceAfter: entry.balanceAfter,
