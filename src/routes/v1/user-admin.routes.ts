@@ -484,7 +484,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users'],
         description:
-          'Delete a REJECTED agency application so the user can apply again. KYC contact and government ID are kept.',
+          'Delete a REJECTED agency application — or an APPROVED one whose agency was deleted — so the user can apply again. KYC contact and government ID are kept.',
         params: {
           type: 'object',
           required: ['userId'],
@@ -500,6 +500,8 @@ export default async function userAdminRoutes(app: FastifyInstance) {
         actionDetails: {
           userId: request.params.userId,
           previousApplicationId: result.previousApplicationId,
+          previousStatus: result.previousStatus,
+          stranded: result.stranded,
         },
       })
       return reply.send(result)

@@ -218,6 +218,14 @@ export const adminUserDetailService = {
       ipAddresses.unshift(row.lastIpAddress.trim())
     }
 
+    // An APPROVED application with no `agencies` row means the agency was deleted or banned and
+    // the stale row now blocks both re-approval and re-application. The admin panel offers a
+    // reopen for exactly this state.
+    const strandedApplication =
+      applicationRow?.status === 'APPROVED'
+        ? (await agencyRepository.getAgencyByUserId(userId)) == null
+        : false
+
     const detail = {
       userId: row.id,
       username: row.username,
@@ -258,7 +266,12 @@ export const adminUserDetailService = {
         : null,
       /** Present when an agency agent application row exists (pending/rejected/approved). */
       agencyApplication: applicationRow
-        ? { id: applicationRow.id, status: applicationRow.status }
+        ? {
+            id: applicationRow.id,
+            status: applicationRow.status,
+            /** APPROVED but the agency row is gone — user is stuck until the application is cleared. */
+            stranded: strandedApplication,
+          }
         : null,
       ipAddress: deviceInfo.ipAddress,
       ipAddresses,

@@ -103,6 +103,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/agency/applications/:userId/kyc/govt-id/upload-url',
     'POST /admin/agency/applications/:userId/kyc/govt-id/confirm',
     'POST /admin/agency/applications/:userId/reopen',
+    'GET /admin/agency/applications/stranded',
+    'POST /admin/agency/applications/repair-stranded',
     'POST /admin/agency/:applicantUserId/approve',
     'POST /admin/agency/applications/:applicantUserId/reject',
   ],

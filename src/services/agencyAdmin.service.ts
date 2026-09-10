@@ -810,6 +810,87 @@ export const agencyAdminService = {
     }
   },
 
+  /**
+   * Users left with an APPROVED agent application but no `agencies` row. Deleting or banning an
+   * agency used to leave the application behind, and that stale row blocks both re-approval
+   * (`ALREADY_APPROVED`) and a fresh application — the user has no way back in.
+   */
+  async listStrandedApplications() {
+    const approved = await prismaRead.agencyAgentApplication.findMany({
+      where: { status: 'APPROVED' },
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        reviewedAt: true,
+        user: {
+          select: {
+            username: true,
+            firstName: true,
+            lastName: true,
+            defaultPublicId: true,
+            isAgent: true,
+            agencyBarredAt: true,
+            currentAgencyId: true,
+          },
+        },
+      },
+    })
+    if (approved.length === 0) return []
+
+    const existing = await prismaRead.agency.findMany({
+      where: { userId: { in: approved.map((a) => a.userId) } },
+      select: { userId: true },
+    })
+    const hasAgency = new Set(existing.map((a) => a.userId))
+
+    return approved
+      .filter((a) => !hasAgency.has(a.userId))
+      .map((a) => ({
+        applicationId: a.id,
+        userId: a.userId,
+        username: formatUserName(a.user ?? {}),
+        publicId: a.user?.defaultPublicId?.toString() ?? null,
+        isAgent: a.user?.isAgent ?? false,
+        barred: a.user?.agencyBarredAt != null,
+        barredAt: a.user?.agencyBarredAt?.toISOString() ?? null,
+        appliedAt: a.createdAt.toISOString(),
+        approvedAt: a.reviewedAt?.toISOString() ?? null,
+      }))
+  },
+
+  /**
+   * Clear those stale applications so the users can apply again. KYC contact and government ID
+   * are kept, exactly as the per-user reopen does. `dryRun` only reports what would change.
+   */
+  async repairStrandedApplications(adminUserId: string, opts: { dryRun?: boolean } = {}) {
+    const stranded = await this.listStrandedApplications()
+    if (opts.dryRun) {
+      return { ok: true as const, dryRun: true as const, repaired: 0, failed: 0, items: stranded }
+    }
+
+    const repaired: typeof stranded = []
+    const failed: Array<{ userId: string; reason: string }> = []
+    for (const item of stranded) {
+      try {
+        await agencyKycService.reopenRejectedApplication(item.userId)
+        repaired.push(item)
+      } catch (err) {
+        failed.push({ userId: item.userId, reason: (err as Error).message })
+      }
+    }
+
+    return {
+      ok: true as const,
+      dryRun: false as const,
+      repaired: repaired.length,
+      failed: failed.length,
+      items: repaired,
+      failures: failed,
+      adminUserId,
+    }
+  },
+
   async unbarUser(userId: string, adminUserId: string) {
     const user = await prisma.user.findUnique({
       where: { id: userId },

@@ -106,8 +106,9 @@ export const agencyKycService = {
   },
 
   /**
-   * Drop a REJECTED application so the user can `POST /agency/kyc/apply` again.
-   * Unlinks KYC first (FK is ON DELETE CASCADE) so contact + govt ID are kept.
+   * Drop a REJECTED application — or an APPROVED one whose agency no longer exists — so the user
+   * can `POST /agency/kyc/apply` again. Unlinks KYC first (FK is ON DELETE CASCADE) so contact +
+   * govt ID are kept.
    */
   async reopenRejectedApplication(userId: string) {
     const user = await userRepository.findById(userId)
@@ -117,7 +118,20 @@ export const agencyKycService = {
     if (!application) {
       throw new AppError(404, 'Application not found', 'APPLICATION_NOT_FOUND')
     }
-    if (application.status !== 'REJECTED') {
+    let stranded = false
+    if (application.status === 'APPROVED') {
+      // Approval left behind by an agency delete/ban: the agency row is gone, so the stale
+      // APPROVED row is the only thing blocking a fresh application.
+      const agency = await agencyRepository.getAgencyByUserId(userId)
+      if (agency) {
+        throw new AppError(
+          400,
+          'This agency still exists — delete it before reopening the application',
+          'AGENCY_EXISTS',
+        )
+      }
+      stranded = true
+    } else if (application.status !== 'REJECTED') {
       throw new AppError(
         400,
         'Only a rejected application can be reopened',
@@ -128,6 +142,10 @@ export const agencyKycService = {
     await prisma.$transaction(async (tx) => {
       await agencyApplicationKycRepository.upsertKycDetails(userId, { applicationId: null }, tx)
       await agencyAgentApplicationRepository.deleteById(application.id, tx)
+      if (stranded && user.isAgent) {
+        // No agency row, so the agent flag is stale too.
+        await tx.user.update({ where: { id: userId }, data: { isAgent: false } })
+      }
     })
 
     return {
@@ -135,6 +153,9 @@ export const agencyKycService = {
       userId,
       reopened: true as const,
       previousApplicationId: application.id,
+      previousStatus: application.status,
+      /** True when this cleared a stale APPROVED row left by a deleted/banned agency. */
+      stranded,
     }
   },
 

@@ -750,6 +750,21 @@ export const agencyHostService = {
       where: { id: agentUserId },
       data: { isAgent: false },
     })
+    // The agency row is gone, but an APPROVED application would still block every way back in:
+    // re-approval throws ALREADY_APPROVED and the user cannot re-apply. Drop it like a reopen
+    // does — unlink KYC first, since the FK is ON DELETE CASCADE and would take contact +
+    // government ID with it.
+    const application = await tx.agencyAgentApplication.findUnique({
+      where: { userId: agentUserId },
+      select: { id: true },
+    })
+    if (application) {
+      await tx.agencyApplicationKyc.updateMany({
+        where: { userId: agentUserId },
+        data: { applicationId: null },
+      })
+      await tx.agencyAgentApplication.delete({ where: { id: application.id } })
+    }
   },
 
   async handleHostAccountDeletion(hostUserId: string, tx: Prisma.TransactionClient) {

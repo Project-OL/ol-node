@@ -61,6 +61,10 @@ const listAgentApplicationsQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(20),
 })
 
+const repairStrandedBodySchema = z.object({
+  dryRun: z.coerce.boolean().optional().default(false),
+})
+
 const preAuth = [authenticateAdmin]
 
 const positiveAmountString = z
@@ -201,6 +205,53 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     })
     return reply.send(result)
   })
+
+  app.get(
+    '/applications/stranded',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'Users with an APPROVED application but no agency row — left behind by an agency delete/ban. They can neither be re-approved nor re-apply until the application is cleared.',
+      },
+    },
+    async (_request, reply) => {
+      const items = await agencyAdminService.listStrandedApplications()
+      return reply.send({ items, count: items.length })
+    },
+  )
+
+  app.post(
+    '/applications/repair-stranded',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Agency'],
+        description:
+          'Clear stale APPROVED applications whose agency no longer exists so those users can apply again. KYC contact and government ID are kept. Pass `dryRun: true` to preview.',
+      },
+    },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = repairStrandedBodySchema.parse(request.body ?? {})
+      const result = await agencyAdminService.repairStrandedApplications(adminUserId, {
+        dryRun: body.dryRun,
+      })
+      if (!result.dryRun && result.repaired > 0) {
+        auditService.logAdminFromRequest(request, {
+          actionType: 'ADMIN_AGENCY_STRANDED_APPLICATIONS_REPAIRED',
+          actionDetails: {
+            repaired: result.repaired,
+            failed: result.failed,
+            userIds: result.items.map((i) => i.userId),
+          },
+        })
+      }
+      return reply.send(result)
+    },
+  )
 
   app.patch<{ Params: { agencyIdentifier: string } }>(
     '/:agencyIdentifier/commission-tier',
@@ -850,7 +901,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Agency'],
         description:
-          'Delete a REJECTED application so the user can apply again. KYC contact and government ID are kept.',
+          'Delete a REJECTED application — or an APPROVED one whose agency was deleted — so the user can apply again. KYC contact and government ID are kept.',
       },
     },
     async (request, reply) => {
@@ -861,6 +912,8 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         actionDetails: {
           userId: request.params.userId,
           previousApplicationId: result.previousApplicationId,
+          previousStatus: result.previousStatus,
+          stranded: result.stranded,
         },
       })
       return reply.send(result)
