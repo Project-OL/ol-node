@@ -1,17 +1,21 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { AppError } from '../../middlewares/errorHandler'
-import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
+import { authenticateAdmin, requireAdminRole } from '../../middlewares/adminAuth.middleware'
 import {
   adminDeviceBanBodySchema,
+  adminFaceIndexBodySchema,
   adminFaceRevokeBodySchema,
+  adminFaceUploadUrlBodySchema,
   adminLivePhotoRemoveBodySchema,
   adminPasswordResetBodySchema,
   adminSecurityPasswordSetBodySchema,
 } from '../../models/admin-user-moderation.schemas'
 import { adminUserModerationService } from '../../services/adminUserModeration.service'
+import { faceVerificationAdminService } from '../../services/face-verification-admin.service'
 import { auditService } from '../../services/audit.service'
 
 const preAuth = [authenticateAdmin]
+const superAdminAuth = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
 
 export default async function adminUserModerationRoutes(app: FastifyInstance) {
   app.post<{ Params: { userId: string } }>(
@@ -85,6 +89,84 @@ export default async function adminUserModerationRoutes(app: FastifyInstance) {
     async (request, reply) => {
       return reply.send(
         await adminUserModerationService.getFaceVerificationStatus(request.params.userId),
+      )
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/face-verification/upload-url',
+    {
+      preHandler: superAdminAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Face verification'],
+        description:
+          'SUPER_ADMIN only: presigned PUT URL to attach a face reference image under face/register/{userId}/. Follow with POST .../face-verification/index after uploading.',
+        body: {
+          type: 'object',
+          properties: {
+            mimeType: { type: 'string', enum: ['image/jpeg', 'image/jpg', 'image/png'] },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      if (request.adminUser?.role !== 'SUPER_ADMIN') {
+        throw new AppError(403, 'Insufficient admin role', 'ADMIN_FORBIDDEN')
+      }
+      const parsed = adminFaceUploadUrlBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await faceVerificationAdminService.createAdminFaceUploadUrl(
+          request.params.userId,
+          parsed.data.mimeType,
+        ),
+      )
+    },
+  )
+
+  app.post<{ Params: { userId: string } }>(
+    '/users/:userId/face-verification/index',
+    {
+      preHandler: superAdminAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Face verification'],
+        description:
+          'SUPER_ADMIN only: index an admin-uploaded face image into Rekognition (skips liveness/quality/duplicate gates). Use replaceExisting=true to replace an already INDEXED profile. Enables live-photo matching and faceVerified.',
+        body: {
+          type: 'object',
+          required: ['s3Key'],
+          properties: {
+            s3Key: { type: 'string' },
+            reason: { type: 'string', maxLength: 500 },
+            replaceExisting: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      if (request.adminUser?.role !== 'SUPER_ADMIN') {
+        throw new AppError(403, 'Insufficient admin role', 'ADMIN_FORBIDDEN')
+      }
+      const parsed = adminFaceIndexBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      return reply.send(
+        await faceVerificationAdminService.indexFaceFromAdminUpload(
+          request.params.userId,
+          request.adminUser!.id,
+          parsed.data,
+        ),
       )
     },
   )

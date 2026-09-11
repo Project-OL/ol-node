@@ -16,6 +16,20 @@ export const adminFaceRevokeBodySchema = z.object({
   revokeRelated: z.boolean().optional(),
 })
 
+export const adminFaceUploadUrlBodySchema = z.object({
+  mimeType: z
+    .enum(['image/jpeg', 'image/jpg', 'image/png'])
+    .optional()
+    .default('image/jpeg'),
+})
+
+export const adminFaceIndexBodySchema = z.object({
+  s3Key: z.string().min(1).max(512),
+  reason: z.string().max(500).optional(),
+  /** When true, replaces an existing INDEXED profile (DeleteFaces then re-index). Default false. */
+  replaceExisting: z.boolean().optional().default(false),
+})
+
 export const adminLivePhotoRemoveBodySchema = z.object({
   reason: z.string().max(500).optional(),
 })

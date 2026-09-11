@@ -16,6 +16,7 @@ import {
   ATTENTION_NEEDED_STATUSES,
   ACCEPTABLE_FAILED_SESSION_STATUSES,
 } from '../repositories/faceRegistration.repository'
+import { userRepository } from '../repositories/user.repository'
 import { redisClient, RedisKeys } from '../config/redis'
 import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
 import { mapPool } from '../utils/map-pool'
@@ -786,6 +787,124 @@ export const faceVerificationAdminService = {
       s3KeyReference,
       message:
         'Face accepted and indexed. Live photo verification and faceVerified gates should work now.',
+    }
+  },
+
+  /**
+   * SUPER_ADMIN: mint a short-lived PUT URL for attaching a face reference image
+   * under `face/register/{userId}/...` (same prefix live-photo CompareFaces uses).
+   */
+  async createAdminFaceUploadUrl(
+    targetUserId: string,
+    mimeType: 'image/jpeg' | 'image/jpg' | 'image/png' = 'image/jpeg',
+  ): Promise<{ uploadUrl: string; s3Key: string; expiresInSec: number }> {
+    const user = await userRepository.findById(targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const normalized = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType
+    const ext = normalized === 'image/png' ? 'png' : 'jpg'
+    const expiresInSec = 300
+    const s3Key = `face/register/${targetUserId}/${randomUUID()}.${ext}`
+    const uploadUrl = await storageService.getPresignedPutUrl(s3Key, normalized, expiresInSec)
+    return { uploadUrl, s3Key, expiresInSec }
+  },
+
+  /**
+   * SUPER_ADMIN override: index an admin-uploaded image for a user (no liveness /
+   * quality / duplicate gates). Powers live-photo matching and faceVerified gates.
+   * When `replaceExisting` is true and the profile is already INDEXED, removes the
+   * old Rekognition face first then re-indexes.
+   */
+  async indexFaceFromAdminUpload(
+    targetUserId: string,
+    adminUserId: string,
+    input: { s3Key: string; reason?: string; replaceExisting?: boolean },
+  ): Promise<{
+    success: true
+    userId: string
+    rekognitionFaceId: string
+    s3KeyReference: string
+    replaced: boolean
+    message: string
+  }> {
+    const user = await userRepository.findById(targetUserId)
+    if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    const prefix = `face/register/${targetUserId}/`
+    if (!input.s3Key.startsWith(prefix) || input.s3Key.includes('..')) {
+      throw new AppError(400, 'Invalid image key for user', 'FACE_INVALID_S3_KEY')
+    }
+
+    const existing = await faceVerificationRepository.getProfileByUserId(targetUserId)
+    let replaced = false
+    if (existing?.status === 'INDEXED') {
+      if (!input.replaceExisting) {
+        throw new AppError(
+          409,
+          'Face profile is already indexed. Pass replaceExisting=true to replace it.',
+          'FACE_ALREADY_INDEXED',
+        )
+      }
+      await deleteRekognitionFaceSafe(existing.rekognitionFaceId, new Set())
+      replaced = true
+    }
+
+    const imageBytes = await storageService.getObjectBuffer(input.s3Key)
+    if (!imageBytes || imageBytes.byteLength < 1024) {
+      throw new AppError(
+        422,
+        'Uploaded face image is missing or too small to index',
+        'FACE_ACCEPT_NO_IMAGE',
+      )
+    }
+
+    const indexRes = await indexUserFace({
+      userId: targetUserId,
+      imageBytes: new Uint8Array(imageBytes),
+    })
+    const faceId = indexRes.FaceRecords?.[0]?.Face?.FaceId
+    if (!faceId) {
+      throw new AppError(422, 'Rekognition could not index the uploaded image', 'FACE_INDEX_FAILED')
+    }
+
+    await faceVerificationRepository.upsertAdminAcceptedIndexed({
+      userId: targetUserId,
+      collectionId: env.REKOGNITION_COLLECTION_ID,
+      s3KeyReference: input.s3Key,
+      rekognitionFaceId: faceId,
+    })
+
+    const closedSessionId = await faceRegistrationRepository
+      .markLatestFailedSessionIndexed(targetUserId)
+      .catch(() => null)
+    await resetFaceRegistrationRateLimits(targetUserId)
+    await meService.invalidateUserCaches(targetUserId)
+    await emitFaceRegistrationIndexed(targetUserId, closedSessionId ?? targetUserId)
+
+    auditService.log({
+      userId: targetUserId,
+      actionType: 'face_profile_admin_indexed_from_upload',
+      actionStatus: 'success',
+      actionDetails: {
+        adminUserId,
+        rekognitionFaceId: faceId,
+        s3KeyReference: input.s3Key,
+        previousStatus: existing?.status ?? null,
+        replaced,
+        closedSessionId,
+        reason: input.reason ?? null,
+      },
+    })
+
+    return {
+      success: true,
+      userId: targetUserId,
+      rekognitionFaceId: faceId,
+      s3KeyReference: input.s3Key,
+      replaced,
+      message: replaced
+        ? 'Previous face replaced and re-indexed. Live photo matching will use the new image.'
+        : 'Face indexed from admin upload. Live photo matching and faceVerified gates should work now.',
     }
   },
 
