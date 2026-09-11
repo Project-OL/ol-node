@@ -26,9 +26,8 @@ import {
 } from '../utils/datetime'
 import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
 import { effectiveTierWindowTotal, serializeAgencyTierLock } from '../utils/agency-tier-lock'
-import { adminUserTagsService } from './admin-user-tags.service'
-import { hasCoinsellerAdminTag, withCoinsellerAdminTag } from '../utils/adminTags'
-import { userRepository } from '../repositories/user.repository'
+import { coinTradingRepository } from '../repositories/coinTrading.repository'
+import { coinsellerMinTradingBalance, isCoinsellerByTradingBalance } from '../utils/coinseller'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -210,6 +209,7 @@ export const agencyAdminService = {
     status?: 'ACTIVE' | 'SUSPENDED'
     country?: string
     search?: string
+    coinseller?: boolean
     skip: number
     take: number
   }) {
@@ -221,11 +221,26 @@ export const agencyAdminService = {
     )
     const monthEnd = addUtcDays(monthEndExclusive, -1)
 
+    let coinsellerAgencyUserIds: string[] | undefined
+    if (params.coinseller) {
+      coinsellerAgencyUserIds = await agencyRepository.listCoinsellerAgencyUserIds(
+        coinsellerMinTradingBalance(),
+      )
+      if (coinsellerAgencyUserIds.length === 0) {
+        return { items: [], total: 0, skip: params.skip, take: params.take }
+      }
+    }
+
+    const listParams = { ...params, coinsellerAgencyUserIds }
     const [rows, total, earningsMap] = await Promise.all([
-      agencyRepository.listForAdmin(params),
-      agencyRepository.countForAdmin(params),
+      agencyRepository.listForAdmin(listParams),
+      agencyRepository.countForAdmin(listParams),
       agencyRepository.sumEarningsByAgencyForRange(monthStart, monthEnd),
     ])
+
+    const balances = await coinTradingRepository.getTradingBalancesByUserIds(
+      rows.map((r) => r.userId),
+    )
 
     const items = rows.map((row) => {
       const earnings = earningsMap.get(row.userId) ?? 0n
@@ -241,7 +256,7 @@ export const agencyAdminService = {
         commissionTier: row.currentLevel,
         payrollPrivilegeGranted: row.payrollPrivilegeGranted,
         payrollEnabled: row.payrollEnabled,
-        coinsellerListed: hasCoinsellerAdminTag(row.user.adminTags),
+        coinsellerListed: isCoinsellerByTradingBalance(balances.get(row.userId)),
         status: agencyStatusLabel(row),
         approvedAt: row.createdAt.toISOString(),
       }
@@ -312,7 +327,8 @@ export const agencyAdminService = {
     )
     const monthEnd = addUtcDays(monthEndExclusive, -1)
 
-    const [owner, kycRow, totalEarnings, monthEarnings, earningHostsCount] = await Promise.all([
+    const [owner, kycRow, totalEarnings, monthEarnings, earningHostsCount, tradingBalance] =
+      await Promise.all([
       prismaRead.user.findUnique({
         where: { id: agencyUserId },
         select: {
@@ -324,7 +340,6 @@ export const agencyAdminService = {
           defaultPublicId: true,
           currentVipPublicId: true,
           country: true,
-          adminTags: true,
           faceProfile: { select: { status: true, s3KeyReference: true } },
         },
       }),
@@ -332,6 +347,7 @@ export const agencyAdminService = {
       agencyCommissionRepository.sumAgencyDailyEarningsAllTime(agencyUserId),
       agencyCommissionRepository.sumAgencyDailyEarnings(agencyUserId, monthStart, monthEnd),
       agencyRepository.countHostsWithCommission(agencyUserId),
+      coinTradingRepository.getTradingBalance(agencyUserId),
     ])
 
     if (!owner) throw new AppError(404, 'Agency owner not found', 'USER_NOT_FOUND')
@@ -379,28 +395,9 @@ export const agencyAdminService = {
       ),
       payrollPrivilegeGranted: agency.payrollPrivilegeGranted,
       payrollEnabled: agency.payrollEnabled,
-      coinsellerListed: hasCoinsellerAdminTag(owner.adminTags),
+      coinsellerListed: isCoinsellerByTradingBalance(tradingBalance),
       status: agencyStatusLabel(agency),
       pausedUntil: agency.pausedUntil?.toISOString() ?? null,
-    }
-  },
-
-  /**
-   * Toggle the owner's stored `coinseller` admin tag (list + profile badge).
-   * Merges with existing tags; does not wipe other labels.
-   */
-  async setCoinsellerListed(identifier: string, enabled: boolean) {
-    const agency = await resolveAgencyByIdentifier(identifier)
-    const owner = await userRepository.findById(agency.userId)
-    if (!owner) throw new AppError(404, 'Agency owner not found', 'USER_NOT_FOUND')
-
-    const nextTags = withCoinsellerAdminTag(owner.adminTags ?? [], enabled)
-    const updated = await adminUserTagsService.setTags(agency.userId, nextTags)
-    return {
-      ok: true as const,
-      agencyUserId: agency.userId,
-      coinsellerListed: hasCoinsellerAdminTag(updated.adminTags),
-      adminTags: updated.adminTags,
     }
   },
 

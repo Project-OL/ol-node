@@ -7,7 +7,7 @@ import { agencyCoinsellerService } from './agencyCoinseller.service'
 import { walletLevelService } from './user-level.service'
 import { formatUserName } from '../utils/user-display'
 import { countryCacheKeySegment } from '../utils/agency-country'
-import { ADMIN_MANAGED_TAGS } from '../utils/adminTags'
+import { coinsellerMinTradingBalance } from '../utils/coinseller'
 
 export type AgencyRankingPeriod = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'ALL_TIME'
 
@@ -344,7 +344,7 @@ export const agencyRankingService = {
   },
 
   /**
-   * Discovery list of agencies whose owner has the stored `coinseller` admin tag.
+   * Discovery list of agencies whose owner TRADING_COIN balance meets the coinseller threshold.
    * Country-scoped like ranking; same item shape (including `rank` as page position).
    */
   async getCoinsellerListing(params: {
@@ -380,7 +380,7 @@ export const agencyRankingService = {
       limit,
       skip,
       country: params.country,
-      coinsellerTag: ADMIN_MANAGED_TAGS.COINSELLER,
+      minTradingBalance: coinsellerMinTradingBalance(),
     })
 
     const hasMore = rows.length > limit

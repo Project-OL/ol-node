@@ -1,24 +1,18 @@
 import { normalizeAdminTags } from '../models/admin-user-tags.schemas'
+import { isCoinsellerByTradingBalance } from './coinseller'
 
 /** Derived labels merged into public `adminTags` at read time (not persisted). */
 export const DERIVED_ADMIN_TAGS = {
   AGENCY: 'agency',
+  COINSELLER: 'coinseller',
   GIFT_COLLECTION: 'gift collection',
   VIP_DIAMOND: 'VIP Diamond',
   SVIP: 'SVIP',
 } as const
 
-/**
- * Tags an admin applies by hand via `PUT /admin/users/:id/tags`. They are never derived,
- * so being an agency no longer implies being a coin seller — the two are separate facts.
- *
- * Kept here only to pin the canonical spelling in one place. The app's badge matcher
- * (`user_profile_bottom_sheet.dart` `_buildBadgeForTag`) lowercases and trims before
- * comparing, and accepts `coin seller` / `coin_seller` / `coinseller` for this badge, so
- * an admin typing any of those still renders correctly.
- */
+/** @deprecated Coinseller is derived from TRADING_COIN balance; kept for call-site compatibility. */
 export const ADMIN_MANAGED_TAGS = {
-  COINSELLER: 'coinseller',
+  COINSELLER: DERIVED_ADMIN_TAGS.COINSELLER,
 } as const
 
 /** Normalize tag text the same way the Flutter badge matcher does (`coin seller` / `coin_seller` / `coinseller`). */
@@ -34,16 +28,6 @@ export function hasCoinsellerAdminTag(tags: string[] | null | undefined): boolea
   return (tags ?? []).some(isCoinsellerAdminTag)
 }
 
-/**
- * Add or remove the canonical `coinseller` tag while preserving other labels.
- * Strips any coinseller spelling variant so list filters on the exact canonical value stay accurate.
- */
-export function withCoinsellerAdminTag(tags: string[] | null | undefined, enabled: boolean): string[] {
-  const without = (tags ?? []).filter((t) => !isCoinsellerAdminTag(t))
-  if (!enabled) return normalizeAdminTags(without)
-  return normalizeAdminTags([...without, ADMIN_MANAGED_TAGS.COINSELLER])
-}
-
 const RICH_ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'] as const
 
 export function defaultRichDisplayName(tier: number): string {
@@ -53,19 +37,27 @@ export function defaultRichDisplayName(tier: number): string {
 /**
  * Public `adminTags` = derived status labels + stored admin labels.
  * Stored tags are unchanged on PUT `/admin/users/:id/tags`; this merge is GET-only.
+ *
+ * `coinseller` is derived when the user is an agency owner with TRADING_COIN balance
+ * at/above `COINSELLER_MIN_TRADING_BALANCE`. Stored coinseller spellings are stripped
+ * so the badge tracks balance, not free-text tags.
  */
 export function composePublicAdminTags(input: {
   stored?: string[] | null
   isAgency?: boolean
+  /** Agency owner TRADING_COIN balance (ignored unless `isAgency`). */
+  tradingBalance?: bigint | number | null
   isFullGallery?: boolean
   vipMembership?: { isActive?: boolean; tier?: string | null } | null
   richTier?: { tier?: number | null; displayName?: string | null } | null
 }): string[] {
   const derived: string[] = []
-  // Approved agencies are tagged `agency` automatically (isAgency mirrors `user.isAgent`,
-  // set only by createAgencyFromApplication). `coinseller` is deliberately NOT derived here:
-  // it is an admin-applied tag, because an agency is not automatically a coin seller.
-  if (input.isAgency) derived.push(DERIVED_ADMIN_TAGS.AGENCY)
+  if (input.isAgency) {
+    derived.push(DERIVED_ADMIN_TAGS.AGENCY)
+    if (isCoinsellerByTradingBalance(input.tradingBalance)) {
+      derived.push(DERIVED_ADMIN_TAGS.COINSELLER)
+    }
+  }
   if (input.isFullGallery) derived.push(DERIVED_ADMIN_TAGS.GIFT_COLLECTION)
   if (input.vipMembership?.isActive) {
     const tier = input.vipMembership.tier?.toUpperCase()
@@ -77,5 +69,6 @@ export function composePublicAdminTags(input: {
     const name = input.richTier?.displayName?.trim()
     derived.push(name ? name : defaultRichDisplayName(richTier))
   }
-  return normalizeAdminTags([...derived, ...(input.stored ?? [])])
+  const storedWithoutCoinseller = (input.stored ?? []).filter((t) => !isCoinsellerAdminTag(t))
+  return normalizeAdminTags([...derived, ...storedWithoutCoinseller])
 }

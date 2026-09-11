@@ -32,6 +32,11 @@ export const agencyAdminListQuerySchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED']).optional(),
   country: z.string().min(2).max(8).optional(),
   q: z.string().max(255).optional(),
+  /** When true, only agencies with TRADING_COIN balance at/above coinseller threshold. */
+  coinseller: z
+    .union([z.literal('true'), z.literal('false'), z.boolean()])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === true || v === 'true')),
   skip: z.coerce.number().int().min(0).default(0),
   take: z.coerce.number().int().min(1).max(100).default(20),
 })
@@ -82,11 +87,6 @@ export const suspendAgencyBodySchema = z
 
 export const setAgencyPayrollBodySchema = z.object({
   payrollEnabled: z.boolean(),
-})
-
-/** Admin toggle for agency owner's stored `coinseller` tag (list + profile badge). */
-export const setAgencyCoinsellerBodySchema = z.object({
-  enabled: z.boolean(),
 })
 
 export const banAgencyBodySchema = z.object({

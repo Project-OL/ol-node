@@ -21,6 +21,7 @@ import { RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { singleflight } from '../utils/singleflight'
 import { composePublicAdminTags } from '../utils/adminTags'
+import { coinTradingService } from './coinTrading.service'
 
 type SearchCardShared = Pick<
   UserCard,
@@ -248,6 +249,9 @@ export const userSearchService = {
       adminTags: composePublicAdminTags({
         stored: user.adminTags ?? [],
         isAgency: Boolean(user.isAgent),
+        tradingBalance: user.isAgent
+          ? await coinTradingService.getTradingBalance(user.id).catch(() => 0n)
+          : null,
         isFullGallery: Boolean(shared.galleryCompletion?.isFullGallery),
         vipMembership: shared.vipMembership,
         richTier: shared.richTier,

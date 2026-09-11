@@ -439,6 +439,12 @@ const envSchema = z
       .transform((s) => s === 'true'),
 
     /**
+     * Agency owner TRADING_COIN balance at/above this amount qualifies as a coinseller
+     * (discovery list + derived public `adminTags` badge). Default 500_000.
+     */
+    COINSELLER_MIN_TRADING_BALANCE: z.coerce.number().int().nonnegative().default(500_000),
+
+    /**
      * When not the string `false`, agency tier window total includes unreversed
      * gift/video-call host POINT credits in the precise `[now − duration, now)`
      * window (includes agency owner when they earn as a host). Default **on**.

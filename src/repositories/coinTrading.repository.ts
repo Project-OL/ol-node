@@ -239,4 +239,33 @@ export const coinTradingRepository = {
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.TRADING_COIN)
     return coinLedgerRepository.computeBalance(wallet.id)
   },
+
+  /**
+   * Latest TRADING_COIN `balance_after` per user (missing wallet / ledger → 0).
+   * One query for the page; does not create wallets.
+   */
+  async getTradingBalancesByUserIds(userIds: string[]): Promise<Map<string, bigint>> {
+    const out = new Map<string, bigint>()
+    if (userIds.length === 0) return out
+    for (const id of userIds) out.set(id, 0n)
+
+    const idList = Prisma.join(userIds.map((id) => Prisma.sql`${id}::uuid`))
+    const rows = await prismaRead.$queryRaw<Array<{ user_id: string; balance: bigint }>>`
+      SELECT w.user_id, COALESCE(e.balance_after, 0)::bigint AS balance
+      FROM wallets w
+      LEFT JOIN LATERAL (
+        SELECT cle.balance_after
+        FROM coin_ledger_entries cle
+        WHERE cle.wallet_id = w.id
+        ORDER BY cle.created_at DESC, cle.id DESC
+        LIMIT 1
+      ) e ON true
+      WHERE w.currency_type = 'TRADING_COIN'
+        AND w.user_id IN (${idList})
+    `
+    for (const row of rows) {
+      out.set(row.user_id, row.balance)
+    }
+    return out
+  },
 }

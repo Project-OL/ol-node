@@ -176,6 +176,13 @@ export const walletService = {
     } catch {
       // ignore
     }
+    // Coinseller badge on /users/me and search is derived from trading balance.
+    try {
+      const { meService } = await import('./me.service')
+      await meService.invalidateUserCaches(userId)
+    } catch {
+      // ignore
+    }
   },
 
   async acquireIdemKey(key: string): Promise<boolean> {

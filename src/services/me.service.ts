@@ -38,6 +38,7 @@ import { storeService } from './store.service'
 import { richTierService } from './rich-tier.service'
 import { vipMembershipService } from './vip-membership.service'
 import { agencyService } from './agency.service'
+import { coinTradingService } from './coinTrading.service'
 import { livePhotoService } from './livePhoto.service'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { videoCallSettingsService } from './video-call.service'
@@ -121,6 +122,7 @@ function buildMeResponse(
     faceStatus: string
     faceCanReRegister: boolean
     acceptVideoCalls: boolean
+    tradingBalance?: bigint | null
   },
 ): MeResponseDto {
   const usernameEligibility = freeUsernameChangeEligibility(profile.usernameUpdatedAt)
@@ -129,6 +131,7 @@ function buildMeResponse(
     adminTags: composePublicAdminTags({
       stored: profile.adminTags,
       isAgency: extras.agency.role === 'AGENT',
+      tradingBalance: extras.tradingBalance,
       isFullGallery: galleryCompletion.isFullGallery,
       vipMembership: extras.vipMembership,
       richTier: extras.richTier,
@@ -290,6 +293,10 @@ export const meService = {
         .get(RedisKeys.userActiveVipId(userId))
         .catch(() => null),
     ])
+    const tradingBalance =
+      agency.role === 'AGENT'
+        ? await coinTradingService.getTradingBalance(userId).catch(() => 0n)
+        : null
     const data = buildMeResponse(profile, walletData, galleryCompletion, {
       isSuperHost,
       activeGuardian,
@@ -302,6 +309,7 @@ export const meService = {
       faceStatus: faceState.faceStatus,
       faceCanReRegister: faceState.faceCanReRegister,
       acceptVideoCalls,
+      tradingBalance,
     })
     if (activeVipRaw) {
       // Prefer live equipped rare-ID marker over cached profile displayPublicId.

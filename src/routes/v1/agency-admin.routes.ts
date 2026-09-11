@@ -13,7 +13,6 @@ import {
   rejectApplicationBodySchema,
   sendAgencyMessageBodySchema,
   setAgencyPayrollBodySchema,
-  setAgencyCoinsellerBodySchema,
   suspendAgencyBodySchema,
   transferHostsBodySchema,
   adminKycContactPatchSchema,
@@ -183,6 +182,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       status: q.status,
       country: q.country,
       search: q.q,
+      coinseller: q.coinseller,
       skip: q.skip,
       take: q.take,
     })
@@ -402,28 +402,6 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         /** Agent accept-toggle; forced false when privilege is revoked. */
         payrollEnabled: updated.payrollEnabled,
       })
-    },
-  )
-
-  app.patch<{ Params: { agencyIdentifier: string } }>(
-    '/:agencyIdentifier/coinseller',
-    { preHandler: preAuth },
-    async (request, reply) => {
-      const body = setAgencyCoinsellerBodySchema.parse(request.body ?? {})
-      const result = await agencyAdminService.setCoinsellerListed(
-        request.params.agencyIdentifier,
-        body.enabled,
-      )
-      auditService.logAdminFromRequest(request, {
-        actionType: 'ADMIN_AGENCY_COINSELLER_SET',
-        targetUserId: result.agencyUserId,
-        actionDetails: {
-          agencyUserId: result.agencyUserId,
-          coinsellerListed: result.coinsellerListed,
-          adminTags: result.adminTags,
-        },
-      })
-      return reply.send(result)
     },
   )
 

@@ -163,7 +163,7 @@ export default async function agencyRoutes(app: FastifyInstance) {
   )
 
   /**
-   * Agencies whose owner has the stored `coinseller` admin tag (country-scoped).
+   * Agencies whose owner TRADING_COIN balance meets the coinseller threshold (country-scoped).
    * Same item shape as `/ranking` minus `period`. Does not replace `/ranking`.
    */
   app.get(

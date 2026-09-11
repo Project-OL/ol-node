@@ -6,6 +6,10 @@ export type AgencyAdminListParams = {
   status?: 'ACTIVE' | 'SUSPENDED'
   country?: string
   search?: string
+  /** When true, only agencies whose owner TRADING_COIN balance meets the coinseller threshold. */
+  coinseller?: boolean
+  /** Precomputed owner ids when `coinseller` filter is applied (set by service). */
+  coinsellerAgencyUserIds?: string[]
   skip: number
   take: number
 }
@@ -27,6 +31,10 @@ function buildAdminListWhere(params: AgencyAdminListParams): Prisma.AgencyWhereI
 
   if (params.country) {
     and.push({ user: { country: countryEqualsFilter(params.country) } })
+  }
+
+  if (params.coinsellerAgencyUserIds) {
+    and.push({ userId: { in: params.coinsellerAgencyUserIds } })
   }
 
   const q = params.search?.trim()
@@ -254,7 +262,6 @@ export const agencyRepository = {
             defaultPublicId: true,
             currentVipPublicId: true,
             country: true,
-            adminTags: true,
           },
         },
       },
@@ -323,36 +330,85 @@ export const agencyRepository = {
   },
 
   /**
-   * Agencies whose owner has the canonical `coinseller` admin tag.
+   * Agencies whose owner TRADING_COIN balance is at/above `minTradingBalance`.
    * Same sort/cursor model as {@link listForRanking}; country-scoped when provided.
    */
   async listForCoinsellerListing(params: {
     limit: number
     skip: number
     country: string | null
-    coinsellerTag: string
+    minTradingBalance: bigint
   }) {
     if (!params.country) return []
-    return prismaRead.agency.findMany({
-      where: {
-        user: {
-          country: countryEqualsFilter(params.country),
-          adminTags: { has: params.coinsellerTag },
-        },
-      },
-      orderBy: [{ totalHostsCount: 'desc' }, { defaultPublicId: 'desc' }],
-      skip: params.skip,
-      take: params.limit + 1,
-      select: {
-        userId: true,
-        defaultPublicId: true,
-        displayName: true,
-        totalHostsCount: true,
-        lifetimeHostEarningsPoints: true,
-        currentLevel: true,
-        pausedAt: true,
-        pausedUntil: true,
-      },
-    })
+    const country = params.country.trim()
+    const rows = await prismaRead.$queryRaw<
+      Array<{
+        user_id: string
+        default_public_id: bigint
+        display_name: string
+        total_hosts_count: number
+        lifetime_host_earnings_points: bigint
+        current_level: string
+        paused_at: Date | null
+        paused_until: Date | null
+      }>
+    >`
+      SELECT
+        a.user_id,
+        a.default_public_id,
+        a.display_name,
+        a.total_hosts_count,
+        a.lifetime_host_earnings_points,
+        a.current_level,
+        a.paused_at,
+        a.paused_until
+      FROM agencies a
+      INNER JOIN users u ON u.id = a.user_id
+      INNER JOIN wallets w
+        ON w.user_id = a.user_id
+       AND w.currency_type = 'TRADING_COIN'
+      INNER JOIN LATERAL (
+        SELECT cle.balance_after
+        FROM coin_ledger_entries cle
+        WHERE cle.wallet_id = w.id
+        ORDER BY cle.created_at DESC, cle.id DESC
+        LIMIT 1
+      ) bal ON true
+      WHERE LOWER(TRIM(u.country)) = LOWER(TRIM(${country}))
+        AND bal.balance_after >= ${params.minTradingBalance}
+      ORDER BY a.total_hosts_count DESC, a.default_public_id DESC
+      OFFSET ${params.skip}
+      LIMIT ${params.limit + 1}
+    `
+    return rows.map((r) => ({
+      userId: r.user_id,
+      defaultPublicId: r.default_public_id,
+      displayName: r.display_name,
+      totalHostsCount: r.total_hosts_count,
+      lifetimeHostEarningsPoints: r.lifetime_host_earnings_points,
+      currentLevel: r.current_level,
+      pausedAt: r.paused_at,
+      pausedUntil: r.paused_until,
+    }))
+  },
+
+  /** Agency owner user ids with TRADING_COIN balance >= min (for admin list filter). */
+  async listCoinsellerAgencyUserIds(minTradingBalance: bigint): Promise<string[]> {
+    const rows = await prismaRead.$queryRaw<Array<{ user_id: string }>>`
+      SELECT a.user_id
+      FROM agencies a
+      INNER JOIN wallets w
+        ON w.user_id = a.user_id
+       AND w.currency_type = 'TRADING_COIN'
+      INNER JOIN LATERAL (
+        SELECT cle.balance_after
+        FROM coin_ledger_entries cle
+        WHERE cle.wallet_id = w.id
+        ORDER BY cle.created_at DESC, cle.id DESC
+        LIMIT 1
+      ) bal ON true
+      WHERE bal.balance_after >= ${minTradingBalance}
+    `
+    return rows.map((r) => r.user_id)
   },
 }

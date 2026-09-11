@@ -313,7 +313,7 @@ export const RedisKeys = {
     `agency:ranking:v6:${country}:${period}:${limit}:${cursor}`,
   /** Agencies with stored `coinseller` admin tag (country-scoped discovery list). */
   agencyCoinsellerList: (country: string, limit: number, cursor: string) =>
-    `agency:coinseller-list:v1:${country}:${limit}:${cursor}`,
+    `agency:coinseller-list:v2:${country}:${limit}:${cursor}`,
   /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
   /** Throttle gate for HTTP `lastActiveTracker` writes to `users.last_active_at`. */
   userLastActive: (userId: string) => `user:lastActive:${userId}`,
