@@ -254,6 +254,7 @@ export const agencyRepository = {
             defaultPublicId: true,
             currentVipPublicId: true,
             country: true,
+            adminTags: true,
           },
         },
       },
@@ -304,6 +305,40 @@ export const agencyRepository = {
     return prismaRead.agency.findMany({
       where: {
         user: { country: countryEqualsFilter(params.country) },
+      },
+      orderBy: [{ totalHostsCount: 'desc' }, { defaultPublicId: 'desc' }],
+      skip: params.skip,
+      take: params.limit + 1,
+      select: {
+        userId: true,
+        defaultPublicId: true,
+        displayName: true,
+        totalHostsCount: true,
+        lifetimeHostEarningsPoints: true,
+        currentLevel: true,
+        pausedAt: true,
+        pausedUntil: true,
+      },
+    })
+  },
+
+  /**
+   * Agencies whose owner has the canonical `coinseller` admin tag.
+   * Same sort/cursor model as {@link listForRanking}; country-scoped when provided.
+   */
+  async listForCoinsellerListing(params: {
+    limit: number
+    skip: number
+    country: string | null
+    coinsellerTag: string
+  }) {
+    if (!params.country) return []
+    return prismaRead.agency.findMany({
+      where: {
+        user: {
+          country: countryEqualsFilter(params.country),
+          adminTags: { has: params.coinsellerTag },
+        },
       },
       orderBy: [{ totalHostsCount: 'desc' }, { defaultPublicId: 'desc' }],
       skip: params.skip,

@@ -21,6 +21,29 @@ export const ADMIN_MANAGED_TAGS = {
   COINSELLER: 'coinseller',
 } as const
 
+/** Normalize tag text the same way the Flutter badge matcher does (`coin seller` / `coin_seller` / `coinseller`). */
+export function normalizeCoinsellerTagKey(tag: string): string {
+  return tag.trim().toLowerCase().replace(/[_\s]+/g, '')
+}
+
+export function isCoinsellerAdminTag(tag: string): boolean {
+  return normalizeCoinsellerTagKey(tag) === 'coinseller'
+}
+
+export function hasCoinsellerAdminTag(tags: string[] | null | undefined): boolean {
+  return (tags ?? []).some(isCoinsellerAdminTag)
+}
+
+/**
+ * Add or remove the canonical `coinseller` tag while preserving other labels.
+ * Strips any coinseller spelling variant so list filters on the exact canonical value stay accurate.
+ */
+export function withCoinsellerAdminTag(tags: string[] | null | undefined, enabled: boolean): string[] {
+  const without = (tags ?? []).filter((t) => !isCoinsellerAdminTag(t))
+  if (!enabled) return normalizeAdminTags(without)
+  return normalizeAdminTags([...without, ADMIN_MANAGED_TAGS.COINSELLER])
+}
+
 const RICH_ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'] as const
 
 export function defaultRichDisplayName(tier: number): string {

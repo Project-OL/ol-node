@@ -1,4 +1,4 @@
-import { AGENCY_RANKING_CACHE_TTL, RedisKeys, redisClient } from '../config/redis'
+import { AGENCY_COINSELLER_LIST_CACHE_TTL, AGENCY_RANKING_CACHE_TTL, RedisKeys, redisClient } from '../config/redis'
 import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { agencyRepository } from '../repositories/agency.repository'
@@ -7,6 +7,7 @@ import { agencyCoinsellerService } from './agencyCoinseller.service'
 import { walletLevelService } from './user-level.service'
 import { formatUserName } from '../utils/user-display'
 import { countryCacheKeySegment } from '../utils/agency-country'
+import { ADMIN_MANAGED_TAGS } from '../utils/adminTags'
 
 export type AgencyRankingPeriod = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'ALL_TIME'
 
@@ -335,6 +336,112 @@ export const agencyRankingService = {
 
     try {
       await redisClient.set(cacheKey, JSON.stringify(payload), 'EX', AGENCY_RANKING_CACHE_TTL)
+    } catch {
+      /* ignore */
+    }
+
+    return payload
+  },
+
+  /**
+   * Discovery list of agencies whose owner has the stored `coinseller` admin tag.
+   * Country-scoped like ranking; same item shape (including `rank` as page position).
+   */
+  async getCoinsellerListing(params: {
+    limit: number
+    cursor?: string | null
+    country: string | null
+  }) {
+    const limit = Math.min(Math.max(params.limit, 1), 100)
+    const skip = decodeCursor(params.cursor ?? undefined)
+    const countryKey = params.country ? countryCacheKeySegment(params.country) : 'none'
+    const cacheKey = RedisKeys.agencyCoinsellerList(countryKey, limit, params.cursor ?? '')
+
+    if (!params.country) {
+      return {
+        items: [] as AgencyRankingItem[],
+        nextCursor: null as string | null,
+      }
+    }
+
+    try {
+      const cached = await redisClient.get(cacheKey)
+      if (cached) {
+        return JSON.parse(cached) as {
+          items: AgencyRankingItem[]
+          nextCursor: string | null
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+
+    const rows = await agencyRepository.listForCoinsellerListing({
+      limit,
+      skip,
+      country: params.country,
+      coinsellerTag: ADMIN_MANAGED_TAGS.COINSELLER,
+    })
+
+    const hasMore = rows.length > limit
+    const page = hasMore ? rows.slice(0, limit) : rows
+    const nextCursor = hasMore && page.length > 0 ? encodeCursor(skip + limit) : null
+
+    let items: AgencyRankingItem[] = []
+    if (page.length > 0) {
+      const userIds = page.map((r) => r.userId)
+      const [levelsMap, users, kycRows, coinsellerRows] = await Promise.all([
+        walletLevelService.getDisplayLevelsForUsers(userIds),
+        prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: {
+            id: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            gender: true,
+            dateOfBirth: true,
+            avatarUrl: true,
+          },
+        }),
+        prismaRead.agencyApplicationKyc.findMany({
+          where: { userId: { in: userIds } },
+          select: { userId: true, contactPhone: true },
+        }),
+        agencyCoinsellerRepository.findManyByAgencyUserIds(userIds),
+      ])
+      const userById = new Map(users.map((u) => [u.id, u]))
+      const phoneByUserId = new Map(kycRows.map((k) => [k.userId, k.contactPhone]))
+      const coinsellerByUserId = new Map(coinsellerRows.map((c) => [c.agencyUserId, c]))
+      items = page.map((r, i) => {
+        const cs = coinsellerByUserId.get(r.userId)
+        return {
+          rank: skip + i + 1,
+          ...mapAgencyToPublicProfile({
+            agency: r,
+            owner: userById.get(r.userId) ?? null,
+            wealthLevel: levelsMap.get(r.userId)?.wealthLevel ?? 0,
+            livestreamLevel: levelsMap.get(r.userId)?.livestreamLevel ?? 0,
+            agencyContactNumber: phoneByUserId.get(r.userId) ?? null,
+            coinseller: cs
+              ? {
+                  priceImageS3Key: cs.priceImageS3Key,
+                  whatsappNumber: cs.whatsappNumber,
+                  transferChannel: cs.transferChannel,
+                }
+              : null,
+          }),
+        }
+      })
+    }
+
+    const payload = { items, nextCursor }
+
+    try {
+      await redisClient.set(cacheKey, JSON.stringify(payload), 'EX', AGENCY_COINSELLER_LIST_CACHE_TTL)
     } catch {
       /* ignore */
     }

@@ -311,6 +311,9 @@ export const RedisKeys = {
   /** Bump segment when ranking item shape changes — avoids stale Redis payloads. */
   agencyRanking: (country: string, period: string, limit: number, cursor: string) =>
     `agency:ranking:v6:${country}:${period}:${limit}:${cursor}`,
+  /** Agencies with stored `coinseller` admin tag (country-scoped discovery list). */
+  agencyCoinsellerList: (country: string, limit: number, cursor: string) =>
+    `agency:coinseller-list:v1:${country}:${limit}:${cursor}`,
   /** Throttle User.lastActiveAt DB writes (10 min window presence key). */
   /** Throttle gate for HTTP `lastActiveTracker` writes to `users.last_active_at`. */
   userLastActive: (userId: string) => `user:lastActive:${userId}`,
@@ -633,6 +636,8 @@ export const VIPM_MUTATION_RL_TTL = 60
 
 /** Agency snapshot cache for ranking list (60s). */
 export const AGENCY_RANKING_CACHE_TTL = 60
+/** Agency coinseller discovery list (same TTL as ranking). */
+export const AGENCY_COINSELLER_LIST_CACHE_TTL = 60
 /** Agency single-record caches */
 export const AGENCY_ME_CACHE_TTL = 60
 export const AGENCY_BY_PUBLIC_ID_CACHE_TTL = 300

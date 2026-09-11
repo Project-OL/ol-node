@@ -26,6 +26,9 @@ import {
 } from '../utils/datetime'
 import { agencyCommissionConfigService } from './agencyCommissionConfig.service'
 import { effectiveTierWindowTotal, serializeAgencyTierLock } from '../utils/agency-tier-lock'
+import { adminUserTagsService } from './admin-user-tags.service'
+import { hasCoinsellerAdminTag, withCoinsellerAdminTag } from '../utils/adminTags'
+import { userRepository } from '../repositories/user.repository'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -238,6 +241,7 @@ export const agencyAdminService = {
         commissionTier: row.currentLevel,
         payrollPrivilegeGranted: row.payrollPrivilegeGranted,
         payrollEnabled: row.payrollEnabled,
+        coinsellerListed: hasCoinsellerAdminTag(row.user.adminTags),
         status: agencyStatusLabel(row),
         approvedAt: row.createdAt.toISOString(),
       }
@@ -320,6 +324,7 @@ export const agencyAdminService = {
           defaultPublicId: true,
           currentVipPublicId: true,
           country: true,
+          adminTags: true,
           faceProfile: { select: { status: true, s3KeyReference: true } },
         },
       }),
@@ -374,8 +379,28 @@ export const agencyAdminService = {
       ),
       payrollPrivilegeGranted: agency.payrollPrivilegeGranted,
       payrollEnabled: agency.payrollEnabled,
+      coinsellerListed: hasCoinsellerAdminTag(owner.adminTags),
       status: agencyStatusLabel(agency),
       pausedUntil: agency.pausedUntil?.toISOString() ?? null,
+    }
+  },
+
+  /**
+   * Toggle the owner's stored `coinseller` admin tag (list + profile badge).
+   * Merges with existing tags; does not wipe other labels.
+   */
+  async setCoinsellerListed(identifier: string, enabled: boolean) {
+    const agency = await resolveAgencyByIdentifier(identifier)
+    const owner = await userRepository.findById(agency.userId)
+    if (!owner) throw new AppError(404, 'Agency owner not found', 'USER_NOT_FOUND')
+
+    const nextTags = withCoinsellerAdminTag(owner.adminTags ?? [], enabled)
+    const updated = await adminUserTagsService.setTags(agency.userId, nextTags)
+    return {
+      ok: true as const,
+      agencyUserId: agency.userId,
+      coinsellerListed: hasCoinsellerAdminTag(updated.adminTags),
+      adminTags: updated.adminTags,
     }
   },
 

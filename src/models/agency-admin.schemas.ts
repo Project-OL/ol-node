@@ -84,6 +84,11 @@ export const setAgencyPayrollBodySchema = z.object({
   payrollEnabled: z.boolean(),
 })
 
+/** Admin toggle for agency owner's stored `coinseller` tag (list + profile badge). */
+export const setAgencyCoinsellerBodySchema = z.object({
+  enabled: z.boolean(),
+})
+
 export const banAgencyBodySchema = z.object({
   reason: z.string().max(1000).optional(),
 })

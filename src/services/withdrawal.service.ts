@@ -730,11 +730,10 @@ export const withdrawalService = {
 
         const host = await tx.user.findUnique({
           where: { id: w.userId },
-          select: { country: true, currentAgencyId: true },
+          select: { country: true },
         })
         const hostCountry = host?.country ?? null
         const withdrawerUserId = w.userId
-        const excludeAgencyUserId = host?.currentAgencyId ?? null
 
         const cfgCap = await tx.payrollConfig.findUnique({ where: { id: 1 } })
         const maxAttempts = cfgCap?.maxAssignmentAttempts ?? 5
@@ -760,10 +759,9 @@ export const withdrawalService = {
 
         let agencyUserId: string | null = null
         if (opts?.overrideAgencyUserId) {
-          if (
-            opts.overrideAgencyUserId === withdrawerUserId ||
-            opts.overrideAgencyUserId === excludeAgencyUserId
-          ) {
+          // Only block assigning the withdrawer's own payroll to themselves (agency owner).
+          // Hosts may be assigned to the agency they belong to.
+          if (opts.overrideAgencyUserId === withdrawerUserId) {
             if (opts.rejectOnIneligibleOverride) {
               selfAssignBlocked = true
               return
@@ -798,7 +796,6 @@ export const withdrawalService = {
         } else {
           agencyUserId = await withdrawalRepository.getNextEligibleAgency(tx, hostCountry, {
             withdrawerUserId,
-            excludeAgencyUserId,
           })
         }
 
@@ -844,7 +841,7 @@ export const withdrawalService = {
     if (selfAssignBlocked) {
       throw new AppError(
         400,
-        'Payroll cannot be assigned to the withdrawer or their own agency',
+        'Payroll cannot be assigned to the withdrawer (agency owners cannot process their own payroll)',
         'PAYROLL_SELF_ASSIGN_FORBIDDEN',
       )
     }

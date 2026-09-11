@@ -134,6 +134,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/agency/:identifier/suspend',
     'POST /admin/agency/:agencyUserId/unpause',
     'PATCH /admin/agency/:identifier/payroll',
+    'PATCH /admin/agency/:identifier/coinseller',
     'POST /admin/agency/:identifier/ban',
     'POST /admin/agency/barred/:userId/unbar',
     'DELETE /admin/agency/:identifier',

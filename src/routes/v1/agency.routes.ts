@@ -162,6 +162,28 @@ export default async function agencyRoutes(app: FastifyInstance) {
     },
   )
 
+  /**
+   * Agencies whose owner has the stored `coinseller` admin tag (country-scoped).
+   * Same item shape as `/ranking` minus `period`. Does not replace `/ranking`.
+   */
+  app.get(
+    '/coinsellers',
+    { preHandler: preAuth },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const q = request.query as Record<string, string | undefined>
+      const limit = Math.min(100, Math.max(1, Number(q.limit ?? '20') || 20))
+      const cursor = q.cursor ?? undefined
+      const viewer = await userRepository.findById(userId)
+      const result = await agencyRankingService.getCoinsellerListing({
+        limit,
+        cursor,
+        country: viewer?.country ?? null,
+      })
+      return reply.send(result)
+    },
+  )
+
   app.post(
     '/applications',
     {
