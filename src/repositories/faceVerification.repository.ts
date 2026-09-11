@@ -452,6 +452,49 @@ export const faceVerificationRepository = {
     })
   },
 
+  /**
+   * Admin Accept of a failed registration session: create or overwrite the face profile as
+   * INDEXED with the accepted reference image. Clears duplicate linkage and prior failure state.
+   */
+  upsertAdminAcceptedIndexed(
+    input: {
+      userId: string
+      collectionId: string
+      s3KeyReference: string
+      rekognitionFaceId: string
+      livenessConfidence?: number | null
+    },
+    tx?: Prisma.TransactionClient,
+  ) {
+    return getDb(tx).userFaceProfile.upsert({
+      where: { userId: input.userId },
+      update: {
+        collectionId: input.collectionId,
+        s3KeyReference: input.s3KeyReference,
+        status: 'INDEXED',
+        rekognitionFaceId: input.rekognitionFaceId,
+        indexedAt: new Date(),
+        failureReason: null,
+        revokedAt: null,
+        duplicateOfUserId: null,
+        matchedUserId: null,
+        faceMatchSimilarity: null,
+        ...(input.livenessConfidence != null
+          ? { livenessConfidence: input.livenessConfidence }
+          : {}),
+      },
+      create: {
+        userId: input.userId,
+        collectionId: input.collectionId,
+        s3KeyReference: input.s3KeyReference,
+        status: 'INDEXED',
+        rekognitionFaceId: input.rekognitionFaceId,
+        indexedAt: new Date(),
+        livenessConfidence: input.livenessConfidence ?? null,
+      },
+    })
+  },
+
   markProfileFailed(input: { userId: string; reason: string }, tx?: Prisma.TransactionClient) {
     return getDb(tx).userFaceProfile.update({
       where: { userId: input.userId },

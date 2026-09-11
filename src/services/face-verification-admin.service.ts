@@ -14,6 +14,7 @@ import { faceVerificationRepository } from '../repositories/faceVerification.rep
 import {
   faceRegistrationRepository,
   ATTENTION_NEEDED_STATUSES,
+  ACCEPTABLE_FAILED_SESSION_STATUSES,
 } from '../repositories/faceRegistration.repository'
 import { redisClient, RedisKeys } from '../config/redis'
 import { enqueueFaceRegistrationVerification } from '../queues/face-registration.queue'
@@ -22,6 +23,9 @@ import { storageService } from './storage.service'
 import { auditService } from './audit.service'
 import { afterFaceProfileRevoked } from './face-profile-invalidate'
 import { faceRegistrationService } from './faceRegistration.service'
+import { meService } from './me.service'
+import { publishServerFrameToUser } from '../utils/ws-publisher'
+import type { ServerFrame } from '../realtime/types'
 
 async function deleteRekognitionFaceSafe(
   faceId: string | null | undefined,
@@ -56,6 +60,63 @@ function toFailureImageUrl(key: string | null | undefined): string | null {
   } catch {
     return null
   }
+}
+
+function resolveAcceptability(input: {
+  status: string
+  failureImageS3Key?: string | null
+  profileS3KeyReference?: string | null
+}): { canAccept: boolean; acceptBlockedReason: string | null } {
+  if (!(ACCEPTABLE_FAILED_SESSION_STATUSES as string[]).includes(input.status)) {
+    return { canAccept: false, acceptBlockedReason: 'NOT_TERMINAL_FAILURE' }
+  }
+  const hasImage = Boolean(
+    input.failureImageS3Key?.trim() || input.profileS3KeyReference?.trim(),
+  )
+  if (!hasImage) {
+    return { canAccept: false, acceptBlockedReason: 'NO_IMAGE' }
+  }
+  return { canAccept: true, acceptBlockedReason: null }
+}
+
+async function resetFaceRegistrationRateLimits(userId: string): Promise<void> {
+  await redisClient.del(
+    RedisKeys.faceRegistrationSessionRate(userId),
+    RedisKeys.faceRegistrationVerifyRate(userId),
+    RedisKeys.faceRegistrationLock(userId),
+  )
+}
+
+async function emitFaceRegistrationIndexed(userId: string, sessionId: string): Promise<void> {
+  const frame: ServerFrame = {
+    t: 'FACE_REGISTRATION',
+    event: 'face.registration.indexed',
+    sessionId,
+    detail: { faceProfileIndexed: true, adminAccepted: true },
+  }
+  await publishServerFrameToUser(userId, frame).catch(() => undefined)
+}
+
+/**
+ * Promote a failure-prefix image to the stable register prefix used by live-photo / indexing.
+ * Keys already under `face/register/` are returned unchanged.
+ */
+async function ensureRegisterReferenceKey(
+  userId: string,
+  sourceKey: string,
+  imageBytes: Buffer,
+): Promise<string> {
+  if (sourceKey.startsWith('face/register/') && !sourceKey.startsWith('face/register-failed/')) {
+    return sourceKey
+  }
+  const key = `face/register/${userId}/${randomUUID()}.jpg`
+  await storageService.putObjectBuffer({
+    key,
+    body: imageBytes,
+    contentType: 'image/jpeg',
+    cacheControl: 'private, max-age=0, no-transform',
+  })
+  return key
 }
 
 function formatDisplayPublicId(input: {
@@ -398,11 +459,7 @@ export const faceVerificationAdminService = {
       failureReason,
     )
 
-    await redisClient.del(
-      RedisKeys.faceRegistrationSessionRate(targetUserId),
-      RedisKeys.faceRegistrationVerifyRate(targetUserId),
-      RedisKeys.faceRegistrationLock(targetUserId),
-    )
+    await resetFaceRegistrationRateLimits(targetUserId)
 
     auditService.log({
       userId: targetUserId,
@@ -466,11 +523,7 @@ export const faceVerificationAdminService = {
           row.user_id,
           failureReason,
         )
-        await redisClient.del(
-          RedisKeys.faceRegistrationSessionRate(row.user_id),
-          RedisKeys.faceRegistrationVerifyRate(row.user_id),
-          RedisKeys.faceRegistrationLock(row.user_id),
-        )
+        await resetFaceRegistrationRateLimits(row.user_id)
         return clearedIds.length
       })
 
@@ -538,27 +591,39 @@ export const faceVerificationAdminService = {
       page,
       limit,
       total,
-      sessions: items.map((s) => ({
-        sessionId: s.id,
-        userId: s.user_id,
-        publicId: formatDisplayPublicId({
-          publicId: s.public_id,
-          currentVipPublicId: s.current_vip_public_id,
-        }),
-        name: formatUserName({
-          firstName: s.first_name,
-          lastName: s.last_name,
-          username: s.username,
-        }),
-        status: s.status,
-        awsSessionId: s.aws_session_id,
-        riskScore: s.risk_score,
-        failureReason: s.failure_reason,
-        failureImageUrl: toFailureImageUrl(s.failure_image_s3_key),
-        createdAt: s.created_at.toISOString(),
-        updatedAt: s.updated_at.toISOString(),
-        stuckForSec: Math.floor((now - s.created_at.getTime()) / 1000),
-      })),
+      sessions: items.map((s) => {
+        const accept = resolveAcceptability({
+          status: s.status,
+          failureImageS3Key: s.failure_image_s3_key,
+          profileS3KeyReference: s.profile_s3_key_reference,
+        })
+        const displayImageKey = s.failure_image_s3_key?.trim()
+          ? s.failure_image_s3_key
+          : s.profile_s3_key_reference
+        return {
+          sessionId: s.id,
+          userId: s.user_id,
+          publicId: formatDisplayPublicId({
+            publicId: s.public_id,
+            currentVipPublicId: s.current_vip_public_id,
+          }),
+          name: formatUserName({
+            firstName: s.first_name,
+            lastName: s.last_name,
+            username: s.username,
+          }),
+          status: s.status,
+          awsSessionId: s.aws_session_id,
+          riskScore: s.risk_score,
+          failureReason: s.failure_reason,
+          failureImageUrl: toFailureImageUrl(displayImageKey),
+          canAccept: accept.canAccept,
+          acceptBlockedReason: accept.acceptBlockedReason,
+          createdAt: s.created_at.toISOString(),
+          updatedAt: s.updated_at.toISOString(),
+          stuckForSec: Math.floor((now - s.created_at.getTime()) / 1000),
+        }
+      }),
     }
   },
 
@@ -573,6 +638,9 @@ export const faceVerificationAdminService = {
   async getOpenRegistrationSessionsForUser(targetUserId: string) {
     const open = await faceRegistrationRepository.findOpenSessionsForUser(targetUserId)
     const now = Date.now()
+    const profile = await faceVerificationRepository.getProfileByUserId(targetUserId)
+    const profileS3 = profile?.s3KeyReference ?? null
+
     const toRow = (s: {
       id: string
       status: string
@@ -582,17 +650,27 @@ export const faceVerificationAdminService = {
       failureImageS3Key?: string | null
       createdAt: Date
       updatedAt: Date
-    }) => ({
-      sessionId: s.id,
-      status: s.status,
-      awsSessionId: s.awsSessionId,
-      riskScore: s.riskScore,
-      failureReason: s.failureReason,
-      failureImageUrl: toFailureImageUrl(s.failureImageS3Key),
-      createdAt: s.createdAt.toISOString(),
-      updatedAt: s.updatedAt.toISOString(),
-      stuckForSec: Math.floor((now - s.createdAt.getTime()) / 1000),
-    })
+    }) => {
+      const accept = resolveAcceptability({
+        status: s.status,
+        failureImageS3Key: s.failureImageS3Key,
+        profileS3KeyReference: profileS3,
+      })
+      const displayImageKey = s.failureImageS3Key?.trim() ? s.failureImageS3Key : profileS3
+      return {
+        sessionId: s.id,
+        status: s.status,
+        awsSessionId: s.awsSessionId,
+        riskScore: s.riskScore,
+        failureReason: s.failureReason,
+        failureImageUrl: toFailureImageUrl(displayImageKey),
+        canAccept: accept.canAccept,
+        acceptBlockedReason: accept.acceptBlockedReason,
+        createdAt: s.createdAt.toISOString(),
+        updatedAt: s.updatedAt.toISOString(),
+        stuckForSec: Math.floor((now - s.createdAt.getTime()) / 1000),
+      }
+    }
 
     if (open.length > 0) return open.map(toRow)
 
@@ -601,6 +679,114 @@ export const faceVerificationAdminService = {
       return [toRow(latest)]
     }
     return []
+  },
+
+  /**
+   * Admin override: accept a terminal failed registration session's captured photo,
+   * index it into Rekognition, mark the profile INDEXED, and close the session so
+   * live-photo / faceVerified gates work without a client retry.
+   */
+  async acceptFailedRegistrationSession(
+    targetUserId: string,
+    sessionId: string,
+    adminUserId: string,
+    reason?: string,
+  ): Promise<{
+    success: true
+    userId: string
+    sessionId: string
+    rekognitionFaceId: string
+    s3KeyReference: string
+    message: string
+  }> {
+    const session = await faceRegistrationRepository.findByIdForUser(sessionId, targetUserId)
+    if (!session) {
+      throw new AppError(404, 'Registration session not found', 'FACE_REG_SESSION_NOT_FOUND')
+    }
+    if (!(ACCEPTABLE_FAILED_SESSION_STATUSES as string[]).includes(session.status)) {
+      throw new AppError(
+        409,
+        'Only LIVENESS_FAILED, VALIDATION_FAILED, or REJECTED sessions can be accepted',
+        'FACE_ACCEPT_NOT_TERMINAL_FAILURE',
+      )
+    }
+
+    const existing = await faceVerificationRepository.getProfileByUserId(targetUserId)
+    if (existing?.status === 'INDEXED') {
+      throw new AppError(409, 'Face profile is already indexed', 'FACE_ALREADY_INDEXED')
+    }
+
+    const sourceKey =
+      session.failureImageS3Key?.trim() || existing?.s3KeyReference?.trim() || null
+    if (!sourceKey) {
+      throw new AppError(
+        422,
+        'No captured face image is available for this session; clear and have the user retry',
+        'FACE_ACCEPT_NO_IMAGE',
+      )
+    }
+
+    const imageBytes = await storageService.getObjectBuffer(sourceKey)
+    if (!imageBytes || imageBytes.byteLength < 1024) {
+      throw new AppError(
+        422,
+        'Stored face image is missing or too small to index',
+        'FACE_ACCEPT_NO_IMAGE',
+      )
+    }
+
+    const s3KeyReference = await ensureRegisterReferenceKey(
+      targetUserId,
+      sourceKey,
+      Buffer.from(imageBytes),
+    )
+    const indexRes = await indexUserFace({
+      userId: targetUserId,
+      imageBytes: new Uint8Array(imageBytes),
+    })
+    const faceId = indexRes.FaceRecords?.[0]?.Face?.FaceId
+    if (!faceId) {
+      throw new AppError(422, 'Rekognition could not index the stored image', 'FACE_INDEX_FAILED')
+    }
+
+    await faceVerificationRepository.upsertAdminAcceptedIndexed({
+      userId: targetUserId,
+      collectionId: env.REKOGNITION_COLLECTION_ID,
+      s3KeyReference,
+      rekognitionFaceId: faceId,
+      livenessConfidence: session.livenessConfidence,
+    })
+
+    await faceRegistrationRepository.markSessionIndexed(sessionId)
+    await resetFaceRegistrationRateLimits(targetUserId)
+    await meService.invalidateUserCaches(targetUserId)
+    await emitFaceRegistrationIndexed(targetUserId, sessionId)
+
+    auditService.log({
+      userId: targetUserId,
+      actionType: 'face_registration_session_admin_accepted',
+      actionStatus: 'success',
+      actionDetails: {
+        adminUserId,
+        sessionId,
+        previousStatus: session.status,
+        failureReason: session.failureReason,
+        rekognitionFaceId: faceId,
+        s3KeyReference,
+        sourceKey,
+        reason: reason ?? null,
+      },
+    })
+
+    return {
+      success: true,
+      userId: targetUserId,
+      sessionId,
+      rekognitionFaceId: faceId,
+      s3KeyReference,
+      message:
+        'Face accepted and indexed. Live photo verification and faceVerified gates should work now.',
+    }
   },
 
   /**
@@ -810,6 +996,14 @@ export const faceVerificationAdminService = {
     await faceRegistrationService.onFaceProfileIndexed(blockedUserId).catch(() => {
       /* non-fatal: registration session may not exist */
     })
+    // Accept-both previously left REJECTED sessions on the Needs Attention worklist.
+    const closedSessionId = await faceRegistrationRepository
+      .markLatestFailedSessionIndexed(blockedUserId)
+      .catch(() => null)
+    if (closedSessionId) {
+      await emitFaceRegistrationIndexed(blockedUserId, closedSessionId)
+    }
+    await meService.invalidateUserCaches(blockedUserId)
 
     auditService.log({
       userId: blockedUserId,
@@ -821,6 +1015,7 @@ export const faceVerificationAdminService = {
         rekognitionFaceId: faceId,
         previousSimilarity: profile.faceMatchSimilarity,
         reason: reason ?? null,
+        closedSessionId,
       },
     })
 

@@ -24,6 +24,8 @@ export type AttentionNeededSessionRow = {
   risk_score: number
   failure_reason: string | null
   failure_image_s3_key: string | null
+  /** Profile reference image when present (e.g. DUPLICATE_FACE stores here, not on the session). */
+  profile_s3_key_reference: string | null
   created_at: Date
   updated_at: Date
   user_id: string
@@ -33,6 +35,13 @@ export type AttentionNeededSessionRow = {
   public_id: bigint
   current_vip_public_id: bigint | null
 }
+
+/** Terminal failures an admin may Accept (index override) when an image is available. */
+export const ACCEPTABLE_FAILED_SESSION_STATUSES: FaceRegistrationSessionStatus[] = [
+  'LIVENESS_FAILED',
+  'VALIDATION_FAILED',
+  'REJECTED',
+]
 
 function getDb(tx?: Prisma.TransactionClient) {
   return tx ?? prisma
@@ -160,10 +169,12 @@ export const faceRegistrationRepository = {
         SELECT
           ls.id, ls.status, ls.aws_session_id, ls.risk_score, ls.failure_reason,
           ls.failure_image_s3_key,
+          ufp.s3_key_reference AS profile_s3_key_reference,
           ls.created_at, ls.updated_at, ls.user_id,
           u.username, u.first_name, u.last_name, u.public_id, u.current_vip_public_id
         FROM latest_sessions ls
         JOIN users u ON u.id = ls.user_id
+        LEFT JOIN user_face_profiles ufp ON ufp.user_id = ls.user_id
         WHERE ls.status IN (${statusList})
           AND ls.created_at <= ${cutoff}
           ${userFilter}
@@ -322,6 +333,47 @@ export const faceRegistrationRepository = {
       where: { id: row.id },
       data: { status: 'INDEXED', indexedAt: new Date() },
     })
+    return row.id
+  },
+
+  /**
+   * Admin Accept / accept-duplicate close-out: mark a specific failed (or INDEX_PENDING)
+   * session as INDEXED so it leaves the Needs Attention worklist.
+   */
+  async markSessionIndexed(
+    sessionId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const db = getDb(tx)
+    await db.faceRegistrationSession.update({
+      where: { id: sessionId },
+      data: {
+        status: 'INDEXED',
+        indexedAt: new Date(),
+        failureReason: null,
+      },
+    })
+  },
+
+  /**
+   * After admin indexes a face without going through INDEX_PENDING, close the user's
+   * latest terminal-failure session (if any) so they drop off the stuck worklist.
+   */
+  async markLatestFailedSessionIndexed(
+    userId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<string | null> {
+    const db = getDb(tx)
+    const row = await db.faceRegistrationSession.findFirst({
+      where: {
+        userId,
+        status: { in: ACCEPTABLE_FAILED_SESSION_STATUSES },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    })
+    if (!row) return null
+    await this.markSessionIndexed(row.id, tx)
     return row.id
   },
 }

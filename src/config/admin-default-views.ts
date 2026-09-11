@@ -390,4 +390,19 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'PUT /admin/system-settings/account-deletion',
     'GET /admin/users/:id',
   ],
+  FaceVerificationSessionsView: [
+    'GET /admin/face-verification/registration-sessions/stuck',
+    'POST /admin/face-verification/registration-sessions/clear-all',
+    'GET /admin/face-verification/:userId/registration-sessions',
+    'POST /admin/face-verification/:userId/registration-sessions/clear',
+    'POST /admin/face-verification/:userId/registration-sessions/:sessionId/recheck',
+    'POST /admin/face-verification/:userId/registration-sessions/:sessionId/accept',
+  ],
+  FaceDuplicatesView: [
+    'GET /admin/face-verification/duplicates/pending',
+    'POST /admin/face-verification/duplicates/:userId/send-to-bottom',
+    'POST /admin/face-verification/duplicates/:userId/restore-order',
+    'POST /admin/face-verification/:userId/accept-duplicate',
+    'POST /admin/face-verification/:userId/resolve-duplicate',
+  ],
 }

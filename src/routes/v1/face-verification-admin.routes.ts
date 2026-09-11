@@ -369,6 +369,52 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
     },
   )
 
+  app.post<{ Params: { userId: string; sessionId: string } }>(
+    '/face-verification/:userId/registration-sessions/:sessionId/accept',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Face verification'],
+        description:
+          'Admin override: accept a terminal failed registration session (VALIDATION_FAILED / LIVENESS_FAILED / REJECTED) when a captured image is available, index it into Rekognition, mark the profile INDEXED, and close the session so live-photo and faceVerified gates work without a client retry. Skips quality/duplicate gates. Requires an image (session failure image or profile reference).',
+        params: {
+          type: 'object',
+          required: ['userId', 'sessionId'],
+          properties: {
+            userId: { type: 'string', format: 'uuid' },
+            sessionId: { type: 'string', format: 'uuid' },
+          },
+        },
+        body: {
+          type: 'object',
+          properties: { reason: { type: 'string', maxLength: 500 } },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { userId: string; sessionId: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const parsed = adminAcceptDuplicateBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const adminId = request.adminUser?.id
+      if (!adminId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const result = await faceVerificationAdminService.acceptFailedRegistrationSession(
+        request.params.userId,
+        request.params.sessionId,
+        adminId,
+        parsed.data.reason,
+      )
+      return reply.send(result)
+    },
+  )
+
   app.get(
     '/face-verification/duplicates/pending',
     {
