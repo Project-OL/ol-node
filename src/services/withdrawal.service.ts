@@ -1573,7 +1573,11 @@ export const withdrawalService = {
       proofS3Bucket: string
       reason?: string
     },
-  ): Promise<{ target: 'assignment' | 'withdrawal'; assignmentId: string | null; proofImageUrl: string }> {
+  ): Promise<{
+    target: 'assignment' | 'withdrawal'
+    assignmentId: string | null
+    proofImageUrl: string
+  }> {
     const prefix = `payroll/proofs/admin-edit/${withdrawalId}/`
     if (!params.proofS3Key.startsWith(prefix)) {
       throw new AppError(400, 'Invalid proof key', 'INVALID_PROOF_KEY')

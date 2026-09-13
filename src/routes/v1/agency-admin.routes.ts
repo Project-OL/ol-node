@@ -953,7 +953,10 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const body = adminKycContactPatchSchema.parse(request.body ?? {})
-      const result = await agencyAdminService.updateKycContact(request.params.agencyIdentifier, body)
+      const result = await agencyAdminService.updateKycContact(
+        request.params.agencyIdentifier,
+        body,
+      )
       auditService.logAdminFromRequest(request, {
         actionType: 'ADMIN_AGENCY_KYC_CONTACT_UPDATED',
         targetUserId: result.userId,
@@ -973,8 +976,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       preHandler: [authenticateAdmin],
       schema: {
         tags: ['Admin', 'Agency'],
-        description:
-          'Presign S3 PUT for replacing an approved agency owner government ID.',
+        description: 'Presign S3 PUT for replacing an approved agency owner government ID.',
       },
     },
     async (request, reply) => {

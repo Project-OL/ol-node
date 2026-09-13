@@ -157,7 +157,8 @@ function mapAdminAssignment(
       }),
       /** True when admin may attach proof + mark complete for any chosen agency. */
       canCompletePayrollManually:
-        !isPlatformHandledWithdrawal(w) && (w.status === 'PENDING' || w.status === 'PENDING_PLATFORM'),
+        !isPlatformHandledWithdrawal(w) &&
+        (w.status === 'PENDING' || w.status === 'PENDING_PLATFORM'),
     },
     paymentMethod: w.paymentMethod ? mapPaymentMethodMaskedForAgent(w.paymentMethod) : null,
   }
