@@ -166,6 +166,26 @@ const AdminCompletePlatformSchema = z.object({
   proofS3Bucket: z.string().min(1).max(255),
 })
 
+const AdminCompletePayrollManuallySchema = z.object({
+  agencyUserId: z.string().uuid().optional(),
+  /** Numeric agency public ID or owner public/display ID. Leading `#` is stripped in the service. */
+  agencyPublicId: z.string().trim().regex(/^\d+$/).optional(),
+  proofS3Key: z.string().min(1).max(500),
+  proofS3Bucket: z.string().min(1).max(255),
+  reason: z.string().max(1000).optional(),
+})
+
+const AdminUpdatePayrollProofSchema = z.object({
+  /** Edit this specific assignment's proof directly, regardless of status. */
+  assignmentId: z.string().uuid().optional(),
+  /** No assignmentId: target that agency's most recent assignment on this withdrawal instead. */
+  agencyUserId: z.string().uuid().optional(),
+  agencyPublicId: z.string().trim().regex(/^\d+$/).optional(),
+  proofS3Key: z.string().min(1).max(500),
+  proofS3Bucket: z.string().min(1).max(255),
+  reason: z.string().max(1000).optional(),
+})
+
 const HostTagSchema = z.object({
   isTagged: z.boolean(),
 })
@@ -1303,6 +1323,68 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = AdminCompletePlatformSchema.parse(request.body ?? {})
       const result = await withdrawalService.adminCompletePayrollTakeover(
+        adminUserId,
+        request.params.id,
+        body,
+      )
+      return reply.send({ ok: true, ...result })
+    },
+  )
+
+  app.post<{ Params: { id: string } }>(
+    '/withdrawal/:id/payroll-complete/upload-url',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AdminProofUploadUrlSchema.parse(request.body ?? {})
+      const result = await payrollAdminService.getPayrollCompleteUploadUrl(
+        request.params.id,
+        body.mimeType,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { id: string } }>(
+    '/withdrawal/:id/payroll-complete',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AdminCompletePayrollManuallySchema.parse(request.body ?? {})
+      const result = await payrollAdminService.completePayrollManually(
+        adminUserId,
+        request.params.id,
+        body,
+      )
+      return reply.send({ ok: true, ...result })
+    },
+  )
+
+  app.post<{ Params: { id: string } }>(
+    '/withdrawal/:id/payroll-proof/upload-url',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AdminProofUploadUrlSchema.parse(request.body ?? {})
+      const result = await payrollAdminService.getPayrollProofUploadUrl(
+        request.params.id,
+        body.mimeType,
+      )
+      return reply.send(result)
+    },
+  )
+
+  app.post<{ Params: { id: string } }>(
+    '/withdrawal/:id/payroll-proof',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = AdminUpdatePayrollProofSchema.parse(request.body ?? {})
+      const result = await payrollAdminService.updatePayrollProof(
         adminUserId,
         request.params.id,
         body,

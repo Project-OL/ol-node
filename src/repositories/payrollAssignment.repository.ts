@@ -69,6 +69,10 @@ export const payrollAssignmentRepository = {
       expiresAt: Date
       assignmentNumber: number
       status?: string
+      /** Only set when creating an already-terminal-ish row directly (admin manual complete). */
+      proofS3Key?: string
+      proofS3Bucket?: string
+      waitingExpiresAt?: Date
     },
     tx: Prisma.TransactionClient,
   ) {
@@ -80,6 +84,9 @@ export const payrollAssignmentRepository = {
         expiresAt: data.expiresAt,
         assignmentNumber: data.assignmentNumber,
         status: data.status ?? 'PENDING',
+        ...(data.proofS3Key !== undefined ? { proofS3Key: data.proofS3Key } : {}),
+        ...(data.proofS3Bucket !== undefined ? { proofS3Bucket: data.proofS3Bucket } : {}),
+        ...(data.waitingExpiresAt !== undefined ? { waitingExpiresAt: data.waitingExpiresAt } : {}),
       },
     })
   },

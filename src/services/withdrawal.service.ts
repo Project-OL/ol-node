@@ -1333,6 +1333,339 @@ export const withdrawalService = {
     }
   },
 
+  async getAdminManualPayrollCompleteUploadUrl(withdrawalId: string, mimeType: string) {
+    const w = await prismaRead.withdrawal.findUnique({ where: { id: withdrawalId } })
+    if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+    if (isPlatformHandledWithdrawal(w)) {
+      throw new AppError(
+        400,
+        'EPAY withdrawals are paid by the platform - use the platform complete flow',
+        'EPAY_PLATFORM_PAYOUT',
+      )
+    }
+    if (w.status !== 'PENDING' && w.status !== 'PENDING_PLATFORM') {
+      throw new AppError(400, 'Withdrawal is not awaiting an agency payout', 'INVALID_STATE')
+    }
+    const key = `payroll/proofs/admin-manual/${withdrawalId}/${randomUUID()}`
+    const uploadUrl = await storageService.getPresignedPutUrl(key, mimeType, 600)
+    return {
+      uploadUrl,
+      s3Key: key,
+      s3Bucket: s3Bucket ?? '',
+    }
+  },
+
+  /**
+   * Admin attaches proof and marks a BANK payroll withdrawal complete on behalf of a chosen
+   * agency, then puts it into the normal WAITING (host dispute-window) state - same terminus as
+   * agentCompletePayroll, just admin-triggered for any eligible agency instead of whoever
+   * currently holds the (possibly stale) open assignment.
+   *
+   * Exists for the case where agency A actually paid the host, but the SLA expired before they
+   * attached proof and the withdrawal auto-reassigned to agency B (or exhausted attempts into
+   * PENDING_PLATFORM) before admin could intervene. Superseding B's now-stale open assignment
+   * (if any) keeps the "at most one open assignment per withdrawal" invariant that assignToAgency
+   * depends on.
+   */
+  async adminCompletePayrollForAgency(
+    adminUserId: string,
+    withdrawalId: string,
+    params: { agencyUserId: string; proofS3Key: string; proofS3Bucket: string; reason?: string },
+  ): Promise<{
+    assignmentId: string
+    agentRewardPoints: string
+    hostPayoutPoints: string
+    waitingExpiresAt: string
+  }> {
+    const prefix = `payroll/proofs/admin-manual/${withdrawalId}/`
+    if (!params.proofS3Key.startsWith(prefix)) {
+      throw new AppError(400, 'Invalid proof key', 'INVALID_PROOF_KEY')
+    }
+
+    const config = await withdrawalService.getPayrollConfig()
+    const waitingExpiresAt = new Date(Date.now() + config.waitingHours * 60 * 60 * 1000)
+    const now = new Date()
+
+    let assignmentIdOut = ''
+    let rewardOut = '0'
+    let hostPayoutOut = '0'
+    let supersededAssignmentId: string | null = null
+    /** The open assignment's SLA job (if it was PENDING) needs clearing either way - whether
+     * it was superseded or reused in place, it's no longer PENDING after this. */
+    let openAssignmentSlaToClear: string | null = null
+    let hostUserIdOut = ''
+
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+        if (isPlatformHandledWithdrawal(w)) {
+          throw new AppError(
+            400,
+            'EPAY withdrawals are paid by the platform - use the platform complete flow',
+            'EPAY_PLATFORM_PAYOUT',
+          )
+        }
+        if (w.status !== 'PENDING' && w.status !== 'PENDING_PLATFORM') {
+          throw new AppError(400, 'Withdrawal is not awaiting an agency payout', 'INVALID_STATE')
+        }
+        if (params.agencyUserId === w.userId) {
+          throw new AppError(
+            400,
+            'Payroll cannot be assigned to the withdrawer (agency owners cannot process their own payroll)',
+            'PAYROLL_SELF_ASSIGN_FORBIDDEN',
+          )
+        }
+
+        const agency = await tx.agency.findUnique({ where: { userId: params.agencyUserId } })
+        const paused =
+          !!agency?.pausedAt &&
+          !(agency.pausedUntil != null && agency.pausedUntil.getTime() <= now.getTime())
+        if (!agency || !agency.payrollEnabled || !agency.payrollPrivilegeGranted || paused) {
+          throw new AppError(
+            400,
+            'Agency is not eligible for payroll (privilege, accept-toggle, or pause)',
+            'PAYROLL_AGENCY_INELIGIBLE',
+          )
+        }
+
+        // Whatever open assignment currently holds this withdrawal - most likely a different
+        // agency's PENDING one, exactly the reassignment race this exists to fix.
+        const openAssignment = await tx.withdrawalPayrollAssignment.findFirst({
+          where: { withdrawalId, status: { in: ['PENDING', 'WAITING'] } },
+        })
+
+        if (openAssignment?.status === 'PENDING') {
+          openAssignmentSlaToClear = openAssignment.id
+        }
+
+        let assignmentId: string
+        if (openAssignment && openAssignment.agencyUserId === params.agencyUserId) {
+          // Same agency already holds it (e.g. admin is uploading proof on their behalf) -
+          // complete that row in place rather than superseding it with a lookalike new one.
+          await payrollAssignmentRepository.updateStatus(
+            {
+              id: openAssignment.id,
+              status: 'WAITING',
+              proofS3Key: params.proofS3Key,
+              proofS3Bucket: params.proofS3Bucket,
+              waitingExpiresAt,
+            },
+            tx,
+          )
+          assignmentId = openAssignment.id
+        } else {
+          let assignmentCount = w.assignmentCount
+          if (openAssignment) {
+            await payrollAssignmentRepository.updateStatus(
+              {
+                id: openAssignment.id,
+                status: 'REJECTED',
+                rejectedAt: now,
+                rejectionReason: `Superseded by admin manual completion for a different agency${
+                  params.reason ? `: ${params.reason}` : ''
+                }`,
+              },
+              tx,
+            )
+            const wAfter = await withdrawalRepository.incrementAssignmentCount(withdrawalId, tx)
+            assignmentCount = wAfter.assignmentCount
+            supersededAssignmentId = openAssignment.id
+          }
+
+          assignmentId = randomUUID()
+          await payrollAssignmentRepository.create(
+            {
+              id: assignmentId,
+              withdrawalId,
+              agencyUserId: params.agencyUserId,
+              expiresAt: waitingExpiresAt,
+              assignmentNumber: assignmentCount + 1,
+              status: 'WAITING',
+              proofS3Key: params.proofS3Key,
+              proofS3Bucket: params.proofS3Bucket,
+              waitingExpiresAt,
+            },
+            tx,
+          )
+        }
+        await withdrawalRepository.touchAgencyPayrollTimestamp(params.agencyUserId, tx)
+        await withdrawalRepository.updateStatus({ id: withdrawalId, status: 'WAITING' }, tx)
+
+        const hostPayoutPoints = withdrawalHostPayoutPoints({
+          amountPoints: w.amountPoints,
+          platformFeePoints: w.platformFeePoints,
+          serviceFeePoints: w.serviceFeePoints,
+        })
+        rewardOut = (w.agentRewardPoints ?? 0n).toString()
+        hostPayoutOut = hostPayoutPoints.toString()
+        assignmentIdOut = assignmentId
+        hostUserIdOut = w.userId
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+
+    if (openAssignmentSlaToClear) await removePayrollSla(openAssignmentSlaToClear)
+    await enqueuePayrollWaiting(assignmentIdOut, waitingExpiresAt)
+    await bustPayrollSummaryCache(params.agencyUserId)
+
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: params.agencyUserId,
+      actionType: 'WITHDRAWAL_PAYROLL_ADMIN_MANUAL_COMPLETE',
+      actionStatus: 'success',
+      actionDetails: {
+        withdrawalId,
+        agencyUserId: params.agencyUserId,
+        assignmentId: assignmentIdOut,
+        supersededAssignmentId,
+        reason: params.reason ?? null,
+      },
+    })
+
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'waiting',
+      hostUserId: hostUserIdOut,
+      agentUserId: params.agencyUserId,
+    }).catch(() => {})
+
+    return {
+      assignmentId: assignmentIdOut,
+      agentRewardPoints: rewardOut,
+      hostPayoutPoints: hostPayoutOut,
+      waitingExpiresAt: waitingExpiresAt.toISOString(),
+    }
+  },
+
+  /** Presign for correcting a proof screenshot - any withdrawal status, no restriction. */
+  async getAdminPayrollProofUploadUrl(withdrawalId: string, mimeType: string) {
+    const w = await prismaRead.withdrawal.findUnique({ where: { id: withdrawalId } })
+    if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+    const key = `payroll/proofs/admin-edit/${withdrawalId}/${randomUUID()}`
+    const uploadUrl = await storageService.getPresignedPutUrl(key, mimeType, 600)
+    return {
+      uploadUrl,
+      s3Key: key,
+      s3Bucket: s3Bucket ?? '',
+    }
+  },
+
+  /**
+   * Corrects a wrong/missing proof screenshot after the fact - deliberately works on a payroll
+   * in ANY status (including already COMPLETED/PAID), since this only edits the evidence field
+   * and never touches status or ledger credits.
+   *
+   * - `assignmentId` given: edits that specific assignment's proof directly (the normal case -
+   *   admin is looking at one assignment and its agency is already implicit).
+   * - No `assignmentId` but `agencyUserId` given: finds that agency's most recent assignment on
+   *   this withdrawal and edits its proof instead.
+   * - Neither given: edits the withdrawal's own proof fields (EPAY/platform-handled proof, or a
+   *   BANK withdrawal with no assignment at all) - agency is optional, not required.
+   */
+  async adminUpdatePayrollProof(
+    adminUserId: string,
+    withdrawalId: string,
+    params: {
+      assignmentId?: string
+      agencyUserId?: string
+      proofS3Key: string
+      proofS3Bucket: string
+      reason?: string
+    },
+  ): Promise<{ target: 'assignment' | 'withdrawal'; assignmentId: string | null; proofImageUrl: string }> {
+    const prefix = `payroll/proofs/admin-edit/${withdrawalId}/`
+    if (!params.proofS3Key.startsWith(prefix)) {
+      throw new AppError(400, 'Invalid proof key', 'INVALID_PROOF_KEY')
+    }
+
+    let targetAssignmentId: string | null = null
+    let target: 'assignment' | 'withdrawal' = 'withdrawal'
+
+    await prisma.$transaction(
+      async (tx) => {
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
+
+        if (params.assignmentId) {
+          const a = await tx.withdrawalPayrollAssignment.findFirst({
+            where: { id: params.assignmentId, withdrawalId },
+          })
+          if (!a) throw new AppError(404, 'Assignment not found', 'NOT_FOUND')
+          await payrollAssignmentRepository.updateStatus(
+            {
+              id: a.id,
+              status: a.status,
+              proofS3Key: params.proofS3Key,
+              proofS3Bucket: params.proofS3Bucket,
+            },
+            tx,
+          )
+          targetAssignmentId = a.id
+          target = 'assignment'
+          return
+        }
+
+        if (params.agencyUserId) {
+          const a = await tx.withdrawalPayrollAssignment.findFirst({
+            where: { withdrawalId, agencyUserId: params.agencyUserId },
+            orderBy: { assignedAt: 'desc' },
+          })
+          if (!a) {
+            throw new AppError(
+              404,
+              'No assignment found for that agency on this withdrawal',
+              'NOT_FOUND',
+            )
+          }
+          await payrollAssignmentRepository.updateStatus(
+            {
+              id: a.id,
+              status: a.status,
+              proofS3Key: params.proofS3Key,
+              proofS3Bucket: params.proofS3Bucket,
+            },
+            tx,
+          )
+          targetAssignmentId = a.id
+          target = 'assignment'
+          return
+        }
+
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: w.status,
+            proofS3Key: params.proofS3Key,
+            proofS3Bucket: params.proofS3Bucket,
+          },
+          tx,
+        )
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+
+    auditService.logAdmin({
+      adminUserId,
+      targetUserId: params.agencyUserId ?? null,
+      actionType: 'WITHDRAWAL_PAYROLL_PROOF_EDITED',
+      actionStatus: 'success',
+      actionDetails: {
+        withdrawalId,
+        target,
+        assignmentId: targetAssignmentId,
+        agencyUserId: params.agencyUserId ?? null,
+        reason: params.reason ?? null,
+      },
+    })
+
+    return {
+      target,
+      assignmentId: targetAssignmentId,
+      proofImageUrl: storageService.getCdnOrS3PublicUrl(params.proofS3Key),
+    }
+  },
+
   /** WAITING → COMPLETED + withdrawal PAID; credits agency host-payout + reward. */
   async autoCompleteWaiting(assignmentId: string): Promise<void> {
     const pre = await prismaRead.withdrawalPayrollAssignment.findUnique({

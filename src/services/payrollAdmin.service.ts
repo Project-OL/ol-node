@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
-import { withdrawalService } from './withdrawal.service'
+import { withdrawalService, isPlatformHandledWithdrawal } from './withdrawal.service'
 import { auditService } from './audit.service'
 import { withdrawalRepository } from '../repositories/withdrawal.repository'
 import { payrollAssignmentRepository } from '../repositories/payrollAssignment.repository'
@@ -155,6 +155,9 @@ function mapAdminAssignment(
         status: w.status,
         processedAt: w.processedAt,
       }),
+      /** True when admin may attach proof + mark complete for any chosen agency. */
+      canCompletePayrollManually:
+        !isPlatformHandledWithdrawal(w) && (w.status === 'PENDING' || w.status === 'PENDING_PLATFORM'),
     },
     paymentMethod: w.paymentMethod ? mapPaymentMethodMaskedForAgent(w.paymentMethod) : null,
   }
@@ -537,6 +540,65 @@ export const payrollAdminService = {
     return withdrawalService.getAdminDisputedPayrolls(opts)
   },
 
+  getPayrollProofUploadUrl(withdrawalId: string, mimeType: string) {
+    return withdrawalService.getAdminPayrollProofUploadUrl(withdrawalId, mimeType)
+  },
+
+  async updatePayrollProof(
+    adminUserId: string,
+    withdrawalId: string,
+    opts: {
+      assignmentId?: string
+      agencyUserId?: string
+      agencyPublicId?: string
+      proofS3Key: string
+      proofS3Bucket: string
+      reason?: string
+    },
+  ) {
+    const agencyUserId = await resolveAgencyUserId({
+      agencyUserId: opts.agencyUserId,
+      agencyPublicId: opts.agencyPublicId,
+    })
+    return withdrawalService.adminUpdatePayrollProof(adminUserId, withdrawalId, {
+      assignmentId: opts.assignmentId,
+      agencyUserId,
+      proofS3Key: opts.proofS3Key,
+      proofS3Bucket: opts.proofS3Bucket,
+      reason: opts.reason,
+    })
+  },
+
+  getPayrollCompleteUploadUrl(withdrawalId: string, mimeType: string) {
+    return withdrawalService.getAdminManualPayrollCompleteUploadUrl(withdrawalId, mimeType)
+  },
+
+  async completePayrollManually(
+    adminUserId: string,
+    withdrawalId: string,
+    opts: {
+      agencyUserId?: string
+      agencyPublicId?: string
+      proofS3Key: string
+      proofS3Bucket: string
+      reason?: string
+    },
+  ) {
+    const agencyUserId = await resolveAgencyUserId({
+      agencyUserId: opts.agencyUserId,
+      agencyPublicId: opts.agencyPublicId,
+    })
+    if (!agencyUserId) {
+      throw new AppError(400, 'agencyUserId or agencyPublicId is required', 'INVALID_REQUEST')
+    }
+    return withdrawalService.adminCompletePayrollForAgency(adminUserId, withdrawalId, {
+      agencyUserId,
+      proofS3Key: opts.proofS3Key,
+      proofS3Bucket: opts.proofS3Bucket,
+      reason: opts.reason,
+    })
+  },
+
   async listAssignments(query: {
     status?: string
     /** Excludes EXPIRED rows when no explicit status filter is set. Default true. */
@@ -642,6 +704,10 @@ export const payrollAdminService = {
       canPay:
         (row.payoutHandler === 'PLATFORM' || row.methodType === 'EPAY') &&
         row.status === 'PENDING_PLATFORM',
+      /** True when admin may attach proof + mark complete for any chosen agency. */
+      canCompletePayrollManually:
+        !isPlatformHandledWithdrawal(row) &&
+        (row.status === 'PENDING' || row.status === 'PENDING_PLATFORM'),
       host: mapUserCard(row.user),
       paymentMethod: row.paymentMethod ? mapPaymentMethodMaskedForAgent(row.paymentMethod) : null,
     }
