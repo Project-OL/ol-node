@@ -698,6 +698,14 @@ export const rateLimitLivestreamRewardClaim = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.ratelimitLivestreamRewardClaim(userId),
 })
 
+/** Royal Host reward claim: max 5 per 60s per user. */
+export const rateLimitRoyalHostClaim = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? '',
+  keyBuilder: (userId) => RedisKeys.ratelimitRoyalHostClaim(userId),
+})
+
 export const rateLimitFaceRegister = buildFaceRateLimit({
   max: env.FACE_REGISTER_RATE_PER_HOUR,
   windowMs: 3_600_000,

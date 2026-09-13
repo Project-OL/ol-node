@@ -15,6 +15,7 @@ export const POINT_EARNINGS_CATEGORIES = {
     PointTxType.PAYROLL_TAKEOVER_INVENTORY,
     PointTxType.PLATFORM_REWARD,
     PointTxType.LIVESTREAM_STREAK_REWARD, // rewards section: first-7-days livestream daily parts
+    PointTxType.ROYAL_HOST_REWARD, // rewards section: weekly Royal Host timing/gifting parts
   ],
   subscription: [PointTxType.SUBSCRIPTION, PointTxType.GUARDIAN_PURCHASE],
   withdraw: [

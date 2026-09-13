@@ -1,11 +1,19 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { authenticate } from '../../middlewares/auth.middleware'
-import { rateLimitVipmClaim, rateLimitLivestreamRewardClaim } from '../../middlewares/rateLimitAuth'
+import {
+  rateLimitVipmClaim,
+  rateLimitLivestreamRewardClaim,
+  rateLimitRoyalHostClaim,
+} from '../../middlewares/rateLimitAuth'
 import { AppError } from '../../middlewares/errorHandler'
 import { rewardService } from '../../services/reward.service'
 import { vipMembershipService } from '../../services/vip-membership.service'
 import { livestreamRewardService } from '../../services/livestream-reward.service'
-import { ClaimLivestreamRewardSchema } from '../../models/reward.schemas'
+import { royalHostRewardService } from '../../services/royal-host-reward.service'
+import {
+  ClaimLivestreamRewardSchema,
+  ClaimRoyalHostRewardSchema,
+} from '../../models/reward.schemas'
 
 const preAuth = [authenticate]
 
@@ -64,6 +72,31 @@ export default async function rewardsRoutes(app: FastifyInstance) {
         )
       }
       const body = await livestreamRewardService.claimPart(userId, parsed.data.part)
+      return reply.send(body)
+    },
+  )
+
+  app.post<{ Body: unknown }>(
+    '/royal-host/claim',
+    {
+      preHandler: [...preAuth, rateLimitRoyalHostClaim],
+      schema: {
+        tags: ['Rewards'],
+        description:
+          'Claim a Royal Host weekly reward increment (timing step or gifting tier); Royal Host-tagged users only',
+      },
+    },
+    async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
+      const userId = request.userId!
+      const parsed = ClaimRoyalHostRewardSchema.safeParse(request.body)
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          'INVALID_REQUEST',
+        )
+      }
+      const body = await royalHostRewardService.claimReward(userId, parsed.data.rewardType)
       return reply.send(body)
     },
   )

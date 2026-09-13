@@ -28,7 +28,7 @@ export const GiftListQuerySchema = z.object({
 export const SendGiftBodySchema = z.object({
   receiverUserId: z.string().uuid(),
   giftId: z.string().uuid(),
-  context: z.enum(['direct', 'livestream']),
+  context: z.enum(['direct', 'livestream', 'video_call']),
   /** How many of the same gift to send; coins/points/commission scale. Default 1 (max 100). */
   quantity: z.coerce.number().int().min(1).max(100).optional(),
   /** Optional client retry token; same key replays the original result instead of re-sending. */

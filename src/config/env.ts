@@ -432,6 +432,12 @@ const envSchema = z
       .optional()
       .transform((s) => s === 'true'),
 
+    /** When not the string `true`, scheduled weekly Royal Host eval master no-ops (admin `force` still runs). */
+    ROYAL_HOST_WEEKLY_EVAL_ENABLED: z
+      .string()
+      .optional()
+      .transform((s) => s === 'true'),
+
     /** When not `true`, scheduled agency level recompute master no-ops (admin enqueue still works). */
     AGENCY_LEVEL_RECOMPUTE_ENABLED: z
       .string()

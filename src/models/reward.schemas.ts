@@ -5,3 +5,14 @@ export const ClaimLivestreamRewardSchema = z.object({
 })
 
 export type ClaimLivestreamRewardInput = z.infer<typeof ClaimLivestreamRewardSchema>
+
+export const ClaimRoyalHostRewardSchema = z.object({
+  rewardType: z
+    .string()
+    .regex(
+      /^TIMING_STEP_[12]$|^GIFTING_TIER_\d+$/,
+      'rewardType must be TIMING_STEP_1, TIMING_STEP_2, or GIFTING_TIER_<n>',
+    ),
+})
+
+export type ClaimRoyalHostRewardInput = z.infer<typeof ClaimRoyalHostRewardSchema>

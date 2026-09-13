@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import {
@@ -15,6 +16,7 @@ import { FaceLivenessConfigUpdateSchema } from '../../models/faceLivenessConfig.
 import { AdminAuthConfigUpdateSchema } from '../../models/adminAuthConfig.schemas'
 import { AgencyHostConfigUpdateSchema } from '../../models/agencyHostConfig.schemas'
 import { LivestreamRewardConfigUpdateSchema } from '../../models/livestreamRewardConfig.schemas'
+import { RoyalHostRewardConfigUpdateSchema } from '../../models/royalHostRewardConfig.schemas'
 import { AccountDeletionConfigUpdateSchema } from '../../models/accountDeletionConfig.schemas'
 import { ReplaceRestrictedIdentityWordsSchema } from '../../models/restrictedIdentityWords.schemas'
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
@@ -24,12 +26,15 @@ import { faceLivenessConfigService } from '../../services/faceLivenessConfig.ser
 import { adminAuthConfigService } from '../../services/adminAuthConfig.service'
 import { agencyHostConfigService } from '../../services/agencyHostConfig.service'
 import { livestreamRewardConfigService } from '../../services/livestreamRewardConfig.service'
+import { royalHostRewardConfigService } from '../../services/royalHostRewardConfig.service'
 import { accountDeletionConfigService } from '../../services/accountDeletionConfig.service'
 import { restrictedIdentityWordsService } from '../../services/restrictedIdentityWords.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
 import { videoCallPriceCapService } from '../../services/videoCallPriceCap.service'
 import { richTierService } from '../../services/rich-tier.service'
 import { auditService } from '../../services/audit.service'
+import { enqueueEvalMaster } from '../../queues/royalHost.queue'
+import { addUtcDays, utcStartOfWeek } from '../../utils/datetime'
 
 /**
  * Platform-wide coin / point rate configs (System Settings).
@@ -334,6 +339,49 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
         actionDetails: { settingKey: 'livestream-reward' },
       })
       return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/system-settings/royal-host-reward',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await royalHostRewardConfigService.getConfig())
+    },
+  )
+
+  app.put(
+    '/system-settings/royal-host-reward',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = RoyalHostRewardConfigUpdateSchema.parse(request.body ?? {})
+      const result = await royalHostRewardConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'royal-host-reward' },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.post(
+    '/royal-host-reward/rollover',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const body = z
+        .object({ weekStart: z.string().date().optional(), force: z.boolean().optional() })
+        .parse(request.body ?? {})
+      const weekStart = body.weekStart
+        ? utcStartOfWeek(new Date(body.weekStart))
+        : addUtcDays(utcStartOfWeek(new Date()), -7)
+      await enqueueEvalMaster(weekStart, body.force)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_ROYAL_HOST_ROLLOVER_TRIGGERED',
+        actionDetails: { weekStart: weekStart.toISOString(), force: body.force ?? false },
+      })
+      return reply.send({ ok: true, enqueued: true })
     },
   )
 

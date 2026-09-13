@@ -58,6 +58,12 @@ export function utcDayFromTimestamp(d: Date): Date {
   return utcStartOfDay(d)
 }
 
+/** Start of the GMT week (Sunday 00:00:00.000 UTC) containing `d`. */
+export function utcStartOfWeek(d: Date): Date {
+  const day = utcStartOfDay(d)
+  return addUtcDays(day, -day.getUTCDay())
+}
+
 /**
  * Duration in whole minutes for agency commission rolling window config.
  * Minimum 1 minute (same as admin config validation).

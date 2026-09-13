@@ -6,6 +6,7 @@ import { redisClient, RedisKeys } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { giftRepository } from '../repositories/gift.repository'
 import { giftTransactionRepository } from '../repositories/gift-transaction.repository'
+import { videoCallRepository } from '../repositories/video-call.repository'
 import { walletRepository } from '../repositories/wallet.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
 import { pointLedgerRepository } from '../repositories/point-ledger.repository'
@@ -54,7 +55,7 @@ type SendGiftParams = {
   senderUserId: string
   receiverUserId: string
   giftId: string
-  context: 'direct' | 'livestream'
+  context: 'direct' | 'livestream' | 'video_call'
   /** Number of the same catalog gift in one send. Default 1; max 100 (UI: 1/10/50/100). */
   quantity?: number
   idempotencyKey?: string
@@ -72,6 +73,16 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
 
   await assertNotBlockedEitherWay(params.senderUserId, params.receiverUserId)
   await assertCoinDebitAllowed(params.senderUserId, WalletCurrencyType.COIN)
+
+  if (params.context === 'video_call') {
+    const activeCall = await videoCallRepository.getActiveSessionBetweenUsers(
+      params.senderUserId,
+      params.receiverUserId,
+    )
+    if (!activeCall) {
+      throw new AppError(403, 'No active video call between these users', 'NO_ACTIVE_VIDEO_CALL')
+    }
+  }
 
   const gift = await giftRepository.findById(params.giftId)
   if (!gift || !gift.isActive) {

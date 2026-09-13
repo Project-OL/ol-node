@@ -68,6 +68,19 @@ export const videoCallRepository = {
     })
   },
 
+  /** Order-agnostic: matches an active call regardless of which of the two users is caller/creator. */
+  async getActiveSessionBetweenUsers(userIdA: string, userIdB: string) {
+    return prismaRead.videoCallSession.findFirst({
+      where: {
+        status: 'ACTIVE',
+        OR: [
+          { callerId: userIdA, creatorId: userIdB },
+          { callerId: userIdB, creatorId: userIdA },
+        ],
+      },
+    })
+  },
+
   async incrementMinute(sessionId: string, coinsDeducted: bigint, pointsAwarded: bigint) {
     return prisma.videoCallSession.update({
       where: { id: sessionId },

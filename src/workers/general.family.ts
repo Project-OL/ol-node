@@ -30,6 +30,8 @@ import {
 import { publicIdPreGenerationService } from '../services/public-id-pre-generation.service'
 import { RICH_TIER_JOB_MASTER, RICH_TIER_ROLLOVER_QUEUE } from '../queues/rich-tier.constants'
 import { processRichTierRolloverJob } from '../jobs/rich-tier-rollover.job'
+import { ROYAL_HOST_JOB_MASTER, ROYAL_HOST_EVAL_QUEUE } from '../queues/royalHost.constants'
+import { processRoyalHostWeeklyEvalJob } from '../jobs/royal-host-weekly-eval.job'
 import {
   VIP_MEMBERSHIP_EXPIRY_JOB,
   VIP_MEMBERSHIP_EXPIRY_QUEUE,
@@ -282,6 +284,28 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
     { connection, concurrency: env.WORKER_CONCURRENCY_DEFAULT },
   )
 
+  const royalHostEvalQueue = new Queue(ROYAL_HOST_EVAL_QUEUE, { connection })
+  await royalHostEvalQueue.add(
+    ROYAL_HOST_JOB_MASTER,
+    {},
+    {
+      repeat: { pattern: '0 0 * * 0', tz: 'UTC' },
+      jobId: 'royal-host-weekly-repeatable-master-utc',
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  )
+
+  const royalHostEvalWorker = new Worker(
+    ROYAL_HOST_EVAL_QUEUE,
+    async (job: Job) => {
+      await processRoyalHostWeeklyEvalJob(job)
+    },
+    { connection, concurrency: env.WORKER_CONCURRENCY_DEFAULT },
+  )
+
   const vipMembershipExpiryWorker = new Worker(
     VIP_MEMBERSHIP_EXPIRY_QUEUE,
     async (job: Job<{ userId: string }>) => {
@@ -493,6 +517,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   supportAutocloseWorker.on('failed', onFail('Support autoclose'))
   publicIdPregenWorker.on('failed', onFail('Public ID pregen'))
   richTierRolloverWorker.on('failed', onFail('Rich tier rollover'))
+  royalHostEvalWorker.on('failed', onFail('Royal Host weekly eval'))
   vipMembershipExpiryWorker.on('failed', onFail('VIP membership expiry'))
   agencyLeaveWorker.on('failed', onFail('Agency leave auto-approve'))
   agencyLevelRecomputeWorker.on('failed', onFail('Agency level recompute'))
@@ -523,6 +548,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await vipMembershipExpiryWorker.close()
       await richTierRolloverWorker.close()
       await richTierRolloverQueue.close()
+      await royalHostEvalWorker.close()
+      await royalHostEvalQueue.close()
       await publicIdPregenWorker.close()
       await storeItemExpiryWorker.close()
       await supportAutocloseWorker.close()

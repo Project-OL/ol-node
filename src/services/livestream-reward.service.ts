@@ -46,7 +46,7 @@ export type LivestreamRewardStatusDto = {
   previousRewards: LivestreamRewardDayDto[]
 }
 
-type SessionDurationRow = {
+export type SessionDurationRow = {
   streamId: string
   startedAt: Date | null
   endedAt: Date | null
@@ -67,7 +67,7 @@ function dayIndexSinceJoin(createdAt: Date, today: Date): number {
  * was left at 0 (legacy / failed write), fall back to wall-clock. In-progress sessions
  * compute a provisional value (gross − Redis uncounted / camera-off).
  */
-async function effectiveSecondsForSession(s: SessionDurationRow): Promise<number> {
+export async function effectiveSecondsForSession(s: SessionDurationRow): Promise<number> {
   if (!s.startedAt) return 0
   if (s.isLive && !s.endedAt) {
     return provisionalEffectiveDurationSeconds(s.streamId, s.startedAt)

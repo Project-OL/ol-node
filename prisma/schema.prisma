@@ -148,6 +148,8 @@ model User {
   vipDailyClaims                VipDailyClaim[]
   vipDailyQuotas                VipDailyQuota[]
   livestreamRewardClaims        LiveStreamRewardClaim[]
+  royalHostRewardClaims         RoyalHostRewardClaim[]
+  royalHostWeeklyEvaluations    RoyalHostWeeklyEvaluation[]
   customGiftRequests            CustomGiftRequest[]
   questionnaireAttempts         UserQuestionnaireAttempt[]
   faceProfile                   UserFaceProfile?
@@ -1190,6 +1192,7 @@ enum PointTxType {
   LIVESTREAM_STREAK_REWARD // first-7-days livestream daily reward (2 parts/day); excluded from commission + livestream XP
   /// Company-agency inventory when platform takes over a failed BANK payroll (host payout units).
   PAYROLL_TAKEOVER_INVENTORY
+  ROYAL_HOST_REWARD // weekly Royal Host timing/gifting reward; excluded from commission + livestream/wealth XP
 }
 
 enum WithdrawalStatus {
@@ -1371,6 +1374,41 @@ model LiveStreamRewardClaim {
   @@map("livestream_reward_claims")
 }
 
+/// One claimed increment (a timing step or a gifting tier) of the weekly Royal Host reward.
+model RoyalHostRewardClaim {
+  userId        String   @map("user_id") @db.Uuid
+  weekStart     DateTime @map("week_start") @db.Date
+  /// TIMING_STEP_1 | TIMING_STEP_2 | GIFTING_TIER_1..4
+  rewardType    String   @map("reward_type") @db.VarChar(20)
+  pointsAmount  BigInt   @map("points_amount")
+  ledgerEntryId String   @map("ledger_entry_id") @db.Uuid
+  claimedAt     DateTime @default(now()) @map("claimed_at")
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntry PointLedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+
+  @@id([userId, weekStart, rewardType])
+  @@index([userId, weekStart(sort: Desc)])
+  @@map("royal_host_reward_claims")
+}
+
+/// One closed-week evaluation of a Royal Host-tagged user, driving the auto-revoke counter.
+model RoyalHostWeeklyEvaluation {
+  userId                            String   @map("user_id") @db.Uuid
+  weekStart                         DateTime @map("week_start") @db.Date
+  earningsTotal                     BigInt   @default(0) @map("earnings_total")
+  targetMet                         Boolean  @map("target_met")
+  consecutiveMissCountAfterThisWeek Int      @default(0) @map("consecutive_miss_count_after_this_week")
+  tagRevokedAfterThisWeek           Boolean  @default(false) @map("tag_revoked_after_this_week")
+  createdAt                         DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, weekStart])
+  @@index([weekStart, targetMet])
+  @@map("royal_host_weekly_evaluations")
+}
+
 model PointLedgerEntry {
   id             String          @id @default(uuid()) @db.Uuid
   walletId       String          @map("wallet_id") @db.Uuid
@@ -1387,6 +1425,7 @@ model PointLedgerEntry {
 
   wallet                 Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
   livestreamRewardClaims LiveStreamRewardClaim[]
+  royalHostRewardClaims  RoyalHostRewardClaim[]
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([walletId, txType, createdAt(sort: Desc)])
@@ -2795,6 +2834,28 @@ model LivestreamRewardConfig {
   updatedByAdminId String? @map("updated_by_admin_id")
 
   @@map("livestream_reward_config")
+}
+
+model RoyalHostRewardConfig {
+  id                   Int    @id @default(1)
+  /// Counted (capped) live hours required per GMT week for the timing reward.
+  weeklyHoursRequired  Int    @default(14) @map("weekly_hours_required")
+  /// Per-calendar-day cap on counted live minutes before summing into the weekly total.
+  dailyHoursCapMinutes Int    @default(180) @map("daily_hours_cap_minutes")
+  /// Timing reward unlocked at weeklyHoursRequired regardless of earnings.
+  timingStep1Points    BigInt @default(40000) @map("timing_step1_points")
+  /// Additional timing reward once weeklyHoursRequired AND timingStep2EarningThreshold are both met.
+  timingStep2Points    BigInt @default(60000) @map("timing_step2_points")
+  timingStep2EarningThreshold BigInt @default(1000000) @map("timing_step2_earning_threshold")
+  /// Ascending ladder: [{ "threshold": "1000000", "cumulativePoints": "60000" }, ...]. Earnings-only, independent of hours.
+  giftingTiers         Json   @map("gifting_tiers")
+  /// Consecutive missed weeks (earnings < autoRevokeEarningThreshold) before the "royal host" tag is auto-revoked.
+  consecutiveMissWeeksLimit  Int    @default(3) @map("consecutive_miss_weeks_limit")
+  autoRevokeEarningThreshold BigInt @default(1000000) @map("auto_revoke_earning_threshold")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  updatedByAdminId String?  @map("updated_by_admin_id")
+
+  @@map("royal_host_reward_config")
 }
 
 model AgencyDailyEarning {
