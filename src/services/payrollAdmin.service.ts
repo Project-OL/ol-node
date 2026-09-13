@@ -539,6 +539,8 @@ export const payrollAdminService = {
 
   async listAssignments(query: {
     status?: string
+    /** Excludes EXPIRED rows when no explicit status filter is set. Default true. */
+    hideExpired?: boolean
     agencyUserId?: string
     agencyPublicId?: string
     hostUserId?: string
@@ -571,6 +573,7 @@ export const payrollAdminService = {
 
     const rows = await payrollAssignmentRepository.listForAdmin({
       status: query.status,
+      excludeStatus: !query.status && query.hideExpired !== false ? ['EXPIRED'] : undefined,
       agencyUserId,
       hostUserId,
       withdrawalId: query.withdrawalId,

@@ -714,9 +714,18 @@ export const withdrawalService = {
     let selfAssignBlocked = false
     let overrideNotFound = false
     let overrideIneligible = false
+    let alreadyAssigned = false
 
     await prisma.$transaction(
       async (tx) => {
+        // Row-lock the withdrawal for the duration of the transaction so concurrent
+        // assignToAgency calls (double-click, retry, overlapping SLA reassign) serialize
+        // instead of all reading the same pre-commit assignmentCount/status.
+        const locked = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM withdrawals WHERE id = ${withdrawalId}::uuid FOR UPDATE
+        `
+        if (!locked.length) return
+
         const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
         if (!w) return
         if (isPlatformHandledWithdrawal(w)) {
@@ -727,6 +736,21 @@ export const withdrawalService = {
           )
         }
         if (w.status !== 'PENDING' && w.status !== 'PENDING_PLATFORM') return
+
+        const openAssignment = await tx.withdrawalPayrollAssignment.findFirst({
+          where: { withdrawalId, status: { in: ['PENDING', 'WAITING'] } },
+          select: { id: true },
+        })
+        if (openAssignment) {
+          alreadyAssigned = true
+          // Self-heal: a withdrawal can only be PENDING_PLATFORM here if an earlier race
+          // let a "no agency" / "attempts exhausted" branch overwrite the status after
+          // this open assignment was already created.
+          if (w.status !== 'PENDING') {
+            await withdrawalRepository.updateStatus({ id: withdrawalId, status: 'PENDING' }, tx)
+          }
+          return
+        }
 
         const host = await tx.user.findUnique({
           where: { id: w.userId },
@@ -837,6 +861,17 @@ export const withdrawalService = {
       },
       { timeout: INTERACTIVE_TX_MS },
     )
+
+    if (alreadyAssigned && opts?.allowBeyondAssignmentCap) {
+      // Only the manual admin-assign path (payrollAdmin.service.ts) sets this flag, so
+      // only that caller gets a hard error; automatic reassign paths (SLA expiry, agent
+      // reject) silently no-op above since hitting this case there is just a benign race.
+      throw new AppError(
+        409,
+        'Withdrawal already has an active agency assignment',
+        'ALREADY_ASSIGNED',
+      )
+    }
 
     if (selfAssignBlocked) {
       throw new AppError(

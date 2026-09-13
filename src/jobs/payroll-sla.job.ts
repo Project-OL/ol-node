@@ -40,4 +40,13 @@ export async function runPayrollSlaSafetyNet(): Promise<void> {
   for (const w of overduePlatform) {
     await enqueuePlatformWaiting(w.id, w.waitingExpiresAt ?? now)
   }
+
+  // Catches withdrawals left PENDING with no open assignment - e.g. processSlaExpiry expired
+  // the old assignment but the follow-up assignToAgency call never completed (crash/error
+  // between the two steps). Not caught by the overdue-assignment sweep above since the
+  // assignment itself is already EXPIRED, not PENDING.
+  const stuckPending = await withdrawalRepository.listStuckPendingNoOpenAssignment(200)
+  for (const w of stuckPending) {
+    await withdrawalService.assignToAgency(w.id).catch(() => {})
+  }
 }

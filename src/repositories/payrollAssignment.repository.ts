@@ -330,6 +330,8 @@ export const payrollAssignmentRepository = {
 
   async listForAdmin(filter: {
     status?: string
+    /** Applied only when `status` is unset - an explicit status filter always wins. */
+    excludeStatus?: string[]
     agencyUserId?: string
     hostUserId?: string
     withdrawalId?: string
@@ -354,7 +356,11 @@ export const payrollAssignmentRepository = {
 
     return prismaRead.withdrawalPayrollAssignment.findMany({
       where: {
-        ...(filter.status ? { status: filter.status } : {}),
+        ...(filter.status
+          ? { status: filter.status }
+          : filter.excludeStatus?.length
+            ? { status: { notIn: filter.excludeStatus } }
+            : {}),
         ...(filter.agencyUserId ? { agencyUserId: filter.agencyUserId } : {}),
         ...(filter.withdrawalId ? { withdrawalId: filter.withdrawalId } : {}),
         ...(Object.keys(assignedAt).length ? { assignedAt } : {}),

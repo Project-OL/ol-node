@@ -1185,6 +1185,9 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     }
     const result = await payrollAdminService.listAssignments({
       status,
+      // Default view hides EXPIRED noise (usually the majority of rows); explicit status
+      // filter (including status=EXPIRED itself) always wins. hideExpired=false resets it.
+      hideExpired: status ? false : q.hideExpired !== 'false',
       agencyUserId: q.agencyUserId?.trim() || undefined,
       agencyPublicId: q.agencyPublicId?.trim() || undefined,
       hostUserId: q.hostUserId?.trim() || undefined,

@@ -294,6 +294,28 @@ export const withdrawalRepository = {
     })
   },
 
+  /**
+   * Withdrawals left PENDING with no open (PENDING/WAITING) assignment - the gap left by
+   * processSlaExpiry's expire-then-reassign not being one atomic step: if the reassign call
+   * throws or the process dies between the two steps, the withdrawal is otherwise invisible
+   * to listOverdueSlaAssignments (its assignment is already EXPIRED, not PENDING).
+   */
+  listStuckPendingNoOpenAssignment(limit: number) {
+    return prismaRead.$queryRaw<Array<{ id: string }>>`
+      SELECT w.id
+      FROM withdrawals w
+      WHERE w.status = 'PENDING'
+        AND w.payout_handler IS DISTINCT FROM 'PLATFORM'
+        AND w.method_type IS DISTINCT FROM 'EPAY'
+        AND NOT EXISTS (
+          SELECT 1 FROM withdrawal_payroll_assignments a
+          WHERE a.withdrawal_id = w.id AND a.status IN ('PENDING','WAITING')
+        )
+      ORDER BY w.updated_at ASC
+      LIMIT ${limit}
+    `
+  },
+
   listOverduePlatformWaiting(now: Date, limit: number) {
     return prismaRead.withdrawal.findMany({
       where: {
