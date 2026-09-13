@@ -33,7 +33,11 @@ import {
 import { userRestrictionService } from './userRestriction.service'
 import { AppError } from '../middlewares/errorHandler'
 import { MediaProcessingStatus } from '@prisma/client'
-import { publishServerFrameToConversation, publishToConversation } from '../utils/ws-publisher'
+import {
+  publishServerFrameToConversation,
+  publishServerFrameToUser,
+  publishToConversation,
+} from '../utils/ws-publisher'
 import { enqueueMessageOutboxPublish } from '../queues/messaging.queue'
 import {
   publishMessageOutboxRowInline,
@@ -1096,11 +1100,28 @@ export const messagingService = {
     const msg = await messageRepository.softDeleteMessage(messageId, userId)
     await cacheService.delete(RedisKeys.convMessages(msg.conversationId))
     await redisClient.del(RedisKeys.convMessages(msg.conversationId))
-    await publishToConversation(msg.conversationId, {
-      type: 'MESSAGE_DELETED',
+
+    const deletedFrame = {
+      t: 'MESSAGE_DELETED' as const,
       conversationId: msg.conversationId,
       messageId,
+      seq: 0,
+    }
+
+    // Joined thread watchers (msg:conv:{id})
+    await publishServerFrameToConversation(msg.conversationId, deletedFrame)
+
+    // Conversation-list / inbox viewers (msg:user:{id}) — same frame so Flutter can
+    // clear a deleted latest-message preview without JOINing the thread.
+    // Joined users may receive the frame twice; clients should dedupe by messageId.
+    const members = await prisma.conversationMember.findMany({
+      where: { conversationId: msg.conversationId, isDeleted: false },
+      select: { userId: true },
     })
+    await Promise.all([
+      ...members.map((m) => publishServerFrameToUser(m.userId, deletedFrame)),
+      ...members.map((m) => cacheService.delete(RedisKeys.userConversations(m.userId))),
+    ])
   },
 
   async editMessage(

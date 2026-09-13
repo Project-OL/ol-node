@@ -13,6 +13,11 @@ export type ServerFrame =
       seq: number
     }
   | {
+      /**
+       * Soft-deleted message. Published on JOIN'd `msg:conv:{id}` and on every
+       * member's `msg:user:{userId}` so conversation-list clients can clear a
+       * deleted latest-message preview without JOINing the thread. Dedupe by messageId.
+       */
       t: 'MESSAGE_DELETED'
       conversationId: string
       messageId: string
