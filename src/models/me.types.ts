@@ -138,6 +138,8 @@ export interface MeResponseDto extends MeProfileCache {
    * Default `true` when the user has never configured call settings.
    */
   acceptVideoCalls: boolean
+  /** Alias for acceptVideoCalls (additive). */
+  isVideoCallEnabled?: boolean
 }
 
 export interface PatchMeResponseDto {

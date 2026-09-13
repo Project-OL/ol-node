@@ -36,9 +36,26 @@ export const UpdateCallSettingsSchema = z
     { message: 'At least one field required' },
   )
 
-export const updateAcceptVideoCallsSchema = z.object({
-  acceptVideoCalls: z.boolean(),
-})
+const booleanCoerce = z.preprocess((v) => {
+  if (typeof v === 'string') {
+    if (v.toLowerCase() === 'true') return true
+    if (v.toLowerCase() === 'false') return false
+  }
+  return v
+}, z.boolean())
+
+export const updateAcceptVideoCallsSchema = z
+  .object({
+    acceptVideoCalls: booleanCoerce.optional(),
+    isVideoCallEnabled: booleanCoerce.optional(),
+  })
+  .refine(
+    (d) => d.acceptVideoCalls !== undefined || d.isVideoCallEnabled !== undefined,
+    { message: 'acceptVideoCalls is required' },
+  )
+  .transform((d) => ({
+    acceptVideoCalls: (d.acceptVideoCalls ?? d.isVideoCallEnabled)!,
+  }))
 
 export const InitiateCallSchema = z.object({
   creatorPublicId: z.string().min(1),

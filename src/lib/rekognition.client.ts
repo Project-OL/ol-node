@@ -107,6 +107,10 @@ export async function ensureCollectionExists(): Promise<void> {
     if (error instanceof ResourceAlreadyExistsException) {
       return
     }
+    const errName = (error as { name?: string }).name
+    if (errName === 'AccessDeniedException') {
+      return
+    }
     throw error
   }
 }
@@ -237,7 +241,12 @@ export async function searchFaceInCollection(params: {
       requestId: result.$metadata.requestId,
     }
   } catch (error) {
-    if ((error as { name?: string }).name === 'InvalidParameterException') {
+    const errName = (error as { name?: string }).name
+    if (
+      errName === 'InvalidParameterException' ||
+      errName === 'ResourceNotFoundException' ||
+      errName === 'AccessDeniedException'
+    ) {
       return null
     }
     throw error
@@ -310,25 +319,36 @@ export async function createFaceLivenessSession(params: {
   outputPrefix?: string
 }) {
   const timeoutMs = Math.max(env.FACE_VERIFY_TIMEOUT_MS, 15_000)
-  return withTimeout(timeoutMs, async (abortSignal) =>
-    rekognitionClient.send(
-      new CreateFaceLivenessSessionCommand({
-        ClientRequestToken: params.clientRequestToken,
-        Settings: {
-          AuditImagesLimit: params.auditImagesLimit ?? env.FACE_LIVENESS_AUDIT_IMAGES_LIMIT,
-          ...(params.outputBucket
-            ? {
-                OutputConfig: {
-                  S3Bucket: params.outputBucket,
-                  S3KeyPrefix: params.outputPrefix ?? `${env.FACE_LIVENESS_S3_OUTPUT_PREFIX}/`,
-                },
-              }
-            : {}),
-        },
-      }),
-      { abortSignal },
-    ),
-  )
+  const sendCreate = (bucket?: string) =>
+    withTimeout(timeoutMs, async (abortSignal) =>
+      rekognitionClient.send(
+        new CreateFaceLivenessSessionCommand({
+          ClientRequestToken: params.clientRequestToken,
+          Settings: {
+            AuditImagesLimit: params.auditImagesLimit ?? env.FACE_LIVENESS_AUDIT_IMAGES_LIMIT,
+            ...(bucket
+              ? {
+                  OutputConfig: {
+                    S3Bucket: bucket,
+                    S3KeyPrefix: params.outputPrefix ?? `${env.FACE_LIVENESS_S3_OUTPUT_PREFIX}/`,
+                  },
+                }
+              : {}),
+          },
+        }),
+        { abortSignal },
+      ),
+    )
+
+  try {
+    return await sendCreate(params.outputBucket)
+  } catch (error) {
+    const msg = String((error as { message?: string })?.message ?? '')
+    if (params.outputBucket && /uploading object to s3/i.test(msg)) {
+      return await sendCreate(undefined)
+    }
+    throw error
+  }
 }
 
 export async function getFaceLivenessSessionResults(sessionId: string) {

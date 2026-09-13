@@ -28,6 +28,8 @@ import { videoCallPriceCapService } from './videoCallPriceCap.service'
 import { livekitCircuitBreaker } from '../utils/circuitBreaker'
 import { assertCoinDebitAllowed } from './wallet-freeze.service'
 import { lockWalletsInOrder } from '../utils/wallet-lock-order'
+import { cacheRedisService } from './cacheRedis.service'
+import { RedisKeys } from '../config/redis'
 
 /** Public call-settings shape — always populated (virtual defaults when no DB row). */
 export type VideoCallSettingsDto = {
@@ -36,6 +38,8 @@ export type VideoCallSettingsDto = {
   blockLv5: boolean
   blockLv10: boolean
   acceptVideoCalls: boolean
+  /** Alias for acceptVideoCalls (additive). */
+  isVideoCallEnabled?: boolean
   /** Host livestream level used to resolve allowedPrices (additive). */
   livestreamLevel?: number
   /** Discrete pricePerMin values this host may choose (additive). */
@@ -58,12 +62,14 @@ function toPublicSettings(
     acceptVideoCalls?: boolean | null
   } | null,
 ): VideoCallSettingsDto {
+  const acceptVideoCalls = row?.acceptVideoCalls ?? DEFAULT_CALL_SETTINGS.acceptVideoCalls
   return {
     userId,
     pricePerMin: row?.pricePerMin ?? DEFAULT_CALL_SETTINGS.pricePerMin,
     blockLv5: row?.blockLv5 ?? DEFAULT_CALL_SETTINGS.blockLv5,
     blockLv10: row?.blockLv10 ?? DEFAULT_CALL_SETTINGS.blockLv10,
-    acceptVideoCalls: row?.acceptVideoCalls ?? DEFAULT_CALL_SETTINGS.acceptVideoCalls,
+    acceptVideoCalls,
+    isVideoCallEnabled: acceptVideoCalls,
   }
 }
 
@@ -137,6 +143,14 @@ export const videoCallSettingsService = {
     }
 
     const row = await videoCallRepository.upsertSettings(userId, input)
+    if (input.acceptVideoCalls !== undefined) {
+      await cacheRedisService.del(
+        RedisKeys.userMe(userId),
+        RedisKeys.userMeAssembled(userId),
+        RedisKeys.userProfile(userId),
+        RedisKeys.userSearchCard(userId),
+      ).catch(() => {})
+    }
     return withAllowedPrices(userId, toPublicSettings(userId, row))
   },
 
@@ -145,6 +159,12 @@ export const videoCallSettingsService = {
     acceptVideoCalls: boolean,
   ): Promise<VideoCallSettingsDto> {
     const row = await videoCallRepository.upsertSettings(userId, { acceptVideoCalls })
+    await cacheRedisService.del(
+      RedisKeys.userMe(userId),
+      RedisKeys.userMeAssembled(userId),
+      RedisKeys.userProfile(userId),
+      RedisKeys.userSearchCard(userId),
+    ).catch(() => {})
     return withAllowedPrices(userId, toPublicSettings(userId, row))
   },
 }

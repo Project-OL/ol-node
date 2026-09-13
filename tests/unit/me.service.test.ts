@@ -385,6 +385,7 @@ describe('meService', () => {
     faceStatus: 'NONE',
     faceCanReRegister: false,
     acceptVideoCalls: true,
+    isVideoCallEnabled: true,
   }
 
   it('getMe returns cached payload on Redis HIT', async () => {

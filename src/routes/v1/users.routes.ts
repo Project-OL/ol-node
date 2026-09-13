@@ -177,6 +177,19 @@ export default async function usersRoutes(app: FastifyInstance) {
     },
   )
 
+  const handleToggleVideoCalls = async (request: FastifyRequest, reply: FastifyReply) => {
+    const userId = request.userId!
+    const body = updateAcceptVideoCallsSchema.parse(request.body ?? {})
+    const updated = await videoCallSettingsService.setAcceptVideoCalls(
+      userId,
+      body.acceptVideoCalls,
+    )
+    return reply.send({
+      acceptVideoCalls: updated.acceptVideoCalls,
+      isVideoCallEnabled: updated.acceptVideoCalls,
+    })
+  }
+
   app.put(
     '/me/video-calls',
     {
@@ -184,18 +197,36 @@ export default async function usersRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Users'],
         description:
-          'Global video-call availability toggle. `acceptVideoCalls: false` means the user does not want to receive video calls right now. Also returned on GET /users/me and GET /call/settings.',
+          'Global video-call availability toggle. `acceptVideoCalls: false` means the user does not want to receive video calls right now. Also returned on GET /users/me, GET /users/search, and GET /call/settings.',
       },
     },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const userId = request.userId!
-      const body = updateAcceptVideoCallsSchema.parse(request.body ?? {})
-      const updated = await videoCallSettingsService.setAcceptVideoCalls(
-        userId,
-        body.acceptVideoCalls,
-      )
-      return reply.send({ acceptVideoCalls: updated.acceptVideoCalls })
+    handleToggleVideoCalls,
+  )
+
+  app.patch(
+    '/me/video-calls',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Global video-call availability toggle (PATCH alias). `acceptVideoCalls: false` means the user does not want to receive video calls right now.',
+      },
     },
+    handleToggleVideoCalls,
+  )
+
+  app.post(
+    '/me/video-calls',
+    {
+      preHandler: [authenticate],
+      schema: {
+        tags: ['Users'],
+        description:
+          'Global video-call availability toggle (POST alias). `acceptVideoCalls: false` means the user does not want to receive video calls right now.',
+      },
+    },
+    handleToggleVideoCalls,
   )
 
   app.post(

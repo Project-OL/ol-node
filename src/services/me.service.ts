@@ -149,6 +149,7 @@ function buildMeResponse(
     faceCanReRegister: extras.faceCanReRegister,
     vipMembership: extras.vipMembership,
     acceptVideoCalls: extras.acceptVideoCalls,
+    isVideoCallEnabled: extras.acceptVideoCalls,
     canChangeUsername: usernameEligibility.canChangeUsername,
     usernameNextChangeAt: usernameEligibility.usernameNextChangeAt,
   }
@@ -323,7 +324,13 @@ export const meService = {
 
   async patchMe(
     userId: string,
-    fields: { name?: string; dob?: string; bio?: string },
+    fields: {
+      name?: string
+      dob?: string
+      bio?: string
+      acceptVideoCalls?: string | boolean
+      isVideoCallEnabled?: string | boolean
+    },
     avatarBuffer: Buffer | null,
     jwtCtx: {
       deviceId?: string
@@ -343,6 +350,14 @@ export const meService = {
     let touchedDob = false
     let touchedBio = false
     let touchedAvatar = false
+    let touchedVideoCalls = false
+
+    if (fields.acceptVideoCalls !== undefined || fields.isVideoCallEnabled !== undefined) {
+      const raw = String(fields.acceptVideoCalls ?? fields.isVideoCallEnabled).trim().toLowerCase()
+      const boolVal = raw === 'true' || raw === '1'
+      await videoCallSettingsService.setAcceptVideoCalls(userId, boolVal)
+      touchedVideoCalls = true
+    }
 
     if (fields.name !== undefined) {
       const trimmed = sanitizePlain(fields.name, 80)
@@ -445,7 +460,8 @@ export const meService = {
       !noopDuplicateDisplayName &&
       !touchedDob &&
       !touchedBio &&
-      !touchedAvatar
+      !touchedAvatar &&
+      !touchedVideoCalls
     ) {
       throw new AppError(400, 'No valid fields to update', 'INVALID_REQUEST')
     }

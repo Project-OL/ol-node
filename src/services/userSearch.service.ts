@@ -36,6 +36,7 @@ type SearchCardShared = Pick<
   | 'vipMembership'
   | 'faceVerified'
   | 'acceptVideoCalls'
+  | 'isVideoCallEnabled'
   | 'agencyTag'
 >
 
@@ -115,6 +116,7 @@ async function loadSearchCardShared(user: {
       vipMembership,
       faceVerified,
       acceptVideoCalls,
+      isVideoCallEnabled: acceptVideoCalls,
       agencyTag,
     }
     void cacheRedisService.set(key, shared, env.REDIS_TTL_USER_SEARCH_CARD)
@@ -136,6 +138,8 @@ export type ResolvedPublicIdentity = {
   lastActiveAt: string | null
   lastOnlineSeconds: number | null
   lastOnlineLabel: string | null
+  acceptVideoCalls: boolean
+  isVideoCallEnabled: boolean
 }
 
 export const userSearchService = {
@@ -154,14 +158,17 @@ export const userSearchService = {
     const user = await userRepository.findByPublicId(numericId)
     if (!user) return null
 
-    const presence = viewerId
-      ? await presenceService.getPublicPresenceForUser(viewerId, user.id)
-      : {
-          isOnline: false,
-          lastActiveAt: null,
-          lastOnlineSeconds: null,
-          lastOnlineLabel: null,
-        }
+    const [presence, acceptVideoCalls] = await Promise.all([
+      viewerId
+        ? presenceService.getPublicPresenceForUser(viewerId, user.id)
+        : Promise.resolve({
+            isOnline: false,
+            lastActiveAt: null,
+            lastOnlineSeconds: null,
+            lastOnlineLabel: null,
+          }),
+      videoCallSettingsService.getAcceptVideoCalls(user.id),
+    ])
 
     return {
       userId: user.id,
@@ -175,6 +182,8 @@ export const userSearchService = {
       lastActiveAt: presence.lastActiveAt,
       lastOnlineSeconds: presence.lastOnlineSeconds,
       lastOnlineLabel: presence.lastOnlineLabel,
+      acceptVideoCalls,
+      isVideoCallEnabled: acceptVideoCalls,
     }
   },
 
@@ -245,6 +254,7 @@ export const userSearchService = {
       vipMembership: shared.vipMembership,
       faceVerified: shared.faceVerified,
       acceptVideoCalls: shared.acceptVideoCalls,
+      isVideoCallEnabled: shared.acceptVideoCalls,
       agencyTag: shared.agencyTag,
       adminTags: composePublicAdminTags({
         stored: user.adminTags ?? [],

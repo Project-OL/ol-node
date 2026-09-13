@@ -33,6 +33,7 @@ import { storageService } from './storage.service'
 import { adminUserSearchService } from './adminUserSearch.service'
 import { phoneSchema } from '../models/schemas'
 import { formatUserName, resolveDisplayPublicId } from '../utils/user-display'
+import { videoCallSettingsService } from './video-call.service'
 import { assertDisplayNameAvailable, assertUsernameAvailable } from '../utils/user-identity-unique'
 import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'
 import { normalizeCountryOptional } from '../utils/agency-country'
@@ -196,6 +197,7 @@ export const adminUserDetailService = {
       faceVerified,
       kycRow,
       applicationRow,
+      acceptVideoCalls,
     ] = await Promise.all([
       adminUserDetailRepository.getLatestSession(userId),
       adminUserDetailRepository.getLatestDevice(userId),
@@ -209,6 +211,7 @@ export const adminUserDetailService = {
       faceVerificationRepository.isVerifiedForUser(userId),
       agencyApplicationKycRepository.getKycByUserId(userId),
       agencyAgentApplicationRepository.findByUserId(userId),
+      videoCallSettingsService.getAcceptVideoCalls(userId),
     ])
 
     const deviceInfo = resolveDeviceAndIp(row, session, device)
@@ -250,6 +253,8 @@ export const adminUserDetailService = {
       lastActiveAt: row.lastActiveAt?.toISOString() ?? deviceInfo.lastLoggedInAt,
       wealthLevel: level.wealthLevel,
       livestreamLevel: level.livestreamLevel,
+      acceptVideoCalls,
+      isVideoCallEnabled: acceptVideoCalls,
       tags: row.adminTags,
       agency,
       /** Present when the user started agency KYC — phone/email submitted on the application, not login IDs. */
