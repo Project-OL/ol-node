@@ -55,6 +55,9 @@ export type GiftMessageSnapshot = {
   /** Full-resolution original. Null on messages sent before gift thumbnails existed. */
   fullImageUrl: string | null
   effectUrl: string | null
+  vapUrl: string | null
+  /** True when `vapUrl` is set — clients should render the VAP animation instead of the mp4. */
+  isVap: boolean
   /** How many of this catalog gift were sent in this message (default 1). */
   quantity: number
   /** Catalog coin price for one gift. */
@@ -176,6 +179,8 @@ export function giftSnapshotFromMetadata(metadata: unknown): GiftMessageSnapshot
         : typeof m.giftEffectUrl === 'string'
           ? m.giftEffectUrl
           : null,
+    vapUrl: typeof m.vapUrl === 'string' ? m.vapUrl : null,
+    isVap: Boolean(typeof m.vapUrl === 'string' ? m.vapUrl : m.isVap),
     quantity,
     unitCoinCost,
     coinCost,

@@ -666,6 +666,8 @@ export const messagingService = {
       displayImageUrl: gift.thumbnailUrl ?? gift.displayImageUrl,
       fullImageUrl: gift.displayImageUrl,
       effectUrl: gift.effectUrl,
+      vapUrl: gift.vapUrl,
+      isVap: Boolean(gift.vapUrl),
       quantity: giftResult.quantity,
       unitCoinCost: giftResult.unitCoinCost,
       coinCost: giftResult.coinCost,

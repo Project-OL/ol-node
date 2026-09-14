@@ -11,6 +11,7 @@ export const CreateGiftBodySchema = z.object({
   coinCost: z.coerce.number().int().positive(),
   displayImageUrl: z.string().url(),
   effectUrl: z.string().url().optional(),
+  vapUrl: z.string().url().nullable().optional(),
   tags: z.array(slugTag).optional(),
 })
 

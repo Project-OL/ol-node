@@ -5,7 +5,7 @@ import { buildAdminCatalogAssetKey } from './admin-catalog-asset-upload'
 export async function uploadGiftAdminAsset(params: {
   buffer: Buffer
   filename: string
-  role: 'display' | 'effect'
+  role: 'display' | 'effect' | 'vap'
 }): Promise<string> {
   const { key, contentType } = buildAdminCatalogAssetKey({
     domain: 'gift',

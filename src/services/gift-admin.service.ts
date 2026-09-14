@@ -25,6 +25,8 @@ function mapGiftAdminRow(g: GiftWithCategoryAndTags, timesSent: number) {
     displayImageUrl: g.displayImageUrl,
     thumbnailUrl: g.thumbnailUrl,
     effectUrl: g.effectUrl,
+    vapUrl: g.vapUrl,
+    isVap: Boolean(g.vapUrl),
     category: g.category
       ? { id: g.category.id, name: g.category.name, slug: g.category.slug }
       : null,
@@ -116,6 +118,7 @@ export const giftAdminService = {
     coinCost: number
     displayImageUrl: string
     effectUrl?: string | null
+    vapUrl?: string | null
     categoryId?: string | null
     displayOrder?: number
     vipOnly?: boolean
@@ -140,6 +143,7 @@ export const giftAdminService = {
       displayImageUrl: input.displayImageUrl,
       thumbnailUrl,
       effectUrl: input.effectUrl ?? null,
+      vapUrl: input.vapUrl ?? null,
       categoryId: input.categoryId ?? null,
       displayOrder: input.displayOrder,
       vipOnly: input.vipOnly ?? false,
@@ -157,6 +161,7 @@ export const giftAdminService = {
       coinCost?: number
       displayImageUrl?: string
       effectUrl?: string | null
+      vapUrl?: string | null
       categoryId?: string | null
       displayOrder?: number
       vipOnly?: boolean
@@ -220,7 +225,8 @@ export const giftAdminService = {
     if (blockers.transactions > 0 || blockers.galleryProgress > 0) {
       const parts: string[] = []
       if (blockers.transactions > 0) parts.push(`${blockers.transactions} transaction(s)`)
-      if (blockers.galleryProgress > 0) parts.push(`${blockers.galleryProgress} gallery progress row(s)`)
+      if (blockers.galleryProgress > 0)
+        parts.push(`${blockers.galleryProgress} gallery progress row(s)`)
       throw new AppError(
         409,
         `This gift has already been used (${parts.join(' and ')}) and cannot be deleted without losing that history. Disable it instead — it will stop appearing to users.`,

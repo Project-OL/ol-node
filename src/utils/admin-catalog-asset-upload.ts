@@ -4,7 +4,7 @@ import { AppError } from '../middlewares/errorHandler'
 import { env } from '../config/env'
 
 export type AdminCatalogDomain = 'gift' | 'store' | 'banner'
-export type AdminCatalogAssetRole = 'display' | 'effect'
+export type AdminCatalogAssetRole = 'display' | 'effect' | 'vap'
 
 /**
  * A **display** asset is the still image drawn into a catalog grid cell, so only image
@@ -29,6 +29,8 @@ export const GIFT_ADMIN_EXT_TO_CONTENT_TYPE: Record<string, string> = {
   riv: 'application/octet-stream',
   mp4: 'video/mp4',
   webm: 'video/webm',
+  /** VAP (Video Animation Player) file, pre-built outside this system and uploaded as-is. */
+  vap: 'application/octet-stream',
 }
 
 /** Store catalog assets (display + effect). Effect may be image, Lottie/Rive, or video. */

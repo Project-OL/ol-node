@@ -279,6 +279,7 @@ export const giftAdminRepository = {
     displayImageUrl: string
     thumbnailUrl?: string | null
     effectUrl?: string | null
+    vapUrl?: string | null
     displayOrder?: number
     vipOnly?: boolean
     categoryId?: string | null
@@ -292,6 +293,7 @@ export const giftAdminRepository = {
         displayImageUrl: data.displayImageUrl,
         thumbnailUrl: data.thumbnailUrl ?? null,
         effectUrl: data.effectUrl ?? null,
+        vapUrl: data.vapUrl ?? null,
         displayOrder: data.displayOrder ?? 0,
         vipOnly: data.vipOnly ?? false,
         categoryId: data.categoryId ?? null,
@@ -310,6 +312,7 @@ export const giftAdminRepository = {
       displayImageUrl?: string
       thumbnailUrl?: string | null
       effectUrl?: string | null
+      vapUrl?: string | null
       displayOrder?: number
       vipOnly?: boolean
       isActive?: boolean
@@ -330,6 +333,7 @@ export const giftAdminRepository = {
           ...(data.displayImageUrl !== undefined ? { displayImageUrl: data.displayImageUrl } : {}),
           ...(data.thumbnailUrl !== undefined ? { thumbnailUrl: data.thumbnailUrl } : {}),
           ...(data.effectUrl !== undefined ? { effectUrl: data.effectUrl } : {}),
+          ...(data.vapUrl !== undefined ? { vapUrl: data.vapUrl } : {}),
           ...(data.displayOrder !== undefined ? { displayOrder: data.displayOrder } : {}),
           ...(data.vipOnly !== undefined ? { vipOnly: data.vipOnly } : {}),
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),

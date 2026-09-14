@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const AdminCatalogAssetUploadUrlBodySchema = z.object({
-  role: z.enum(['display', 'effect']),
+  role: z.enum(['display', 'effect', 'vap']),
   fileName: z.string().min(1).max(255),
   sizeBytes: z.coerce.number().int().positive().optional(),
 })

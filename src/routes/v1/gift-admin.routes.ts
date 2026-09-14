@@ -36,10 +36,12 @@ async function readGiftAdminMultipart(request: FastifyRequest): Promise<{
   fields: Record<string, string>
   displayImage?: FilePart
   effect?: FilePart
+  vap?: FilePart
 }> {
   const fields: Record<string, string> = {}
   let displayImage: FilePart | undefined
   let effect: FilePart | undefined
+  let vap: FilePart | undefined
 
   try {
     for await (const part of request.parts()) {
@@ -72,6 +74,20 @@ async function readGiftAdminMultipart(request: FastifyRequest): Promise<{
             )
           }
           effect = { buffer: Buffer.concat(chunks), filename }
+        } else if (part.fieldname === 'vap' || part.fieldname === 'vapFile') {
+          const chunks: Buffer[] = []
+          for await (const ch of part.file) {
+            chunks.push(ch as Buffer)
+          }
+          const filename = part.filename?.trim() || ''
+          if (!filename) {
+            throw new AppError(
+              400,
+              'vap upload must include a filename with extension',
+              'INVALID_REQUEST',
+            )
+          }
+          vap = { buffer: Buffer.concat(chunks), filename }
         } else {
           part.file.resume()
           throw new AppError(400, `Unexpected file field: ${part.fieldname}`, 'INVALID_REQUEST')
@@ -90,7 +106,7 @@ async function readGiftAdminMultipart(request: FastifyRequest): Promise<{
     throw e
   }
 
-  return { fields, displayImage, effect }
+  return { fields, displayImage, effect, vap }
 }
 
 function hasOwnField(fields: Record<string, string>, key: string): boolean {
@@ -145,7 +161,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
       const ct = String(request.headers['content-type'] ?? '')
 
       if (ct.includes('multipart/form-data')) {
-        const { fields, displayImage, effect } = await readGiftAdminMultipart(request)
+        const { fields, displayImage, effect, vap } = await readGiftAdminMultipart(request)
         const parsed = CreateGiftAdminMultipartFieldsSchema.safeParse(fields)
         if (!parsed.success) {
           throw new AppError(
@@ -183,12 +199,25 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
           effectUrl = f.effectUrl === '' ? null : f.effectUrl
         }
 
+        // VAP is opt-in: no file and no vapUrl field means a plain (non-VAP) gift.
+        let vapUrl: string | null = null
+        if (vap) {
+          vapUrl = await uploadGiftAdminAsset({
+            buffer: vap.buffer,
+            filename: vap.filename,
+            role: 'vap',
+          })
+        } else if (f.vapUrl !== undefined) {
+          vapUrl = f.vapUrl === '' ? null : f.vapUrl
+        }
+
         const created = await giftAdminService.createGift({
           name: f.name,
           code: f.code,
           coinCost: f.coinCost,
           displayImageUrl,
           effectUrl,
+          vapUrl,
           categoryId: f.categoryId ?? null,
           displayOrder: f.displayOrder,
           vipOnly: f.vipOnly,
@@ -224,7 +253,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
       const ct = String(request.headers['content-type'] ?? '')
 
       if (ct.includes('multipart/form-data')) {
-        const { fields, displayImage, effect } = await readGiftAdminMultipart(request)
+        const { fields, displayImage, effect, vap } = await readGiftAdminMultipart(request)
         const parsed = PatchGiftAdminMultipartFieldsSchema.safeParse(fields)
         if (!parsed.success) {
           throw new AppError(
@@ -268,6 +297,25 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
               throw new AppError(400, 'effectUrl must be a valid URL or empty', 'INVALID_REQUEST')
             }
             patch.effectUrl = urlCheck.data
+          }
+        }
+
+        if (vap) {
+          patch.vapUrl = await uploadGiftAdminAsset({
+            buffer: vap.buffer,
+            filename: vap.filename,
+            role: 'vap',
+          })
+        } else if (hasOwnField(fields, 'vapUrl')) {
+          // Sending vapUrl='' clears it — the gift stops being VAP without touching effectUrl.
+          const raw = fields.vapUrl ?? ''
+          if (raw === '') patch.vapUrl = null
+          else {
+            const urlCheck = z.string().url().safeParse(raw)
+            if (!urlCheck.success) {
+              throw new AppError(400, 'vapUrl must be a valid URL or empty', 'INVALID_REQUEST')
+            }
+            patch.vapUrl = urlCheck.data
           }
         }
 

@@ -45,6 +45,7 @@ export const CreateGiftAdminBodySchema = z.object({
   coinCost: z.coerce.number().int().positive(),
   displayImageUrl: z.string().url(),
   effectUrl: z.string().url().nullable().optional(),
+  vapUrl: z.string().url().nullable().optional(),
   categoryId: z.string().uuid().nullable().optional(),
   displayOrder: z.coerce.number().int().min(0).optional(),
   vipOnly: z.coerce.boolean().optional(),
@@ -56,6 +57,7 @@ export const CreateGiftAdminMultipartFieldsSchema = z.object({
   coinCost: z.coerce.number().int().positive(),
   displayImageUrl: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
   effectUrl: z.union([z.literal(''), z.string().url()]).optional(),
+  vapUrl: z.union([z.literal(''), z.string().url()]).optional(),
   categoryId: z.preprocess(
     (v) => (v === '' ? undefined : v),
     z.string().uuid().nullable().optional(),
@@ -78,6 +80,7 @@ export const PatchGiftAdminBodySchema = z.object({
   coinCost: z.coerce.number().int().positive().optional(),
   displayImageUrl: z.string().url().optional(),
   effectUrl: z.string().url().nullable().optional(),
+  vapUrl: z.string().url().nullable().optional(),
   categoryId: z.string().uuid().nullable().optional(),
   displayOrder: z.coerce.number().int().min(0).optional(),
   vipOnly: z.boolean().optional(),
@@ -93,6 +96,7 @@ export const PatchGiftAdminMultipartFieldsSchema = z.object({
   ),
   displayImageUrl: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
   effectUrl: z.string().optional(),
+  vapUrl: z.string().optional(),
   categoryId: z.preprocess(
     (v) => (v === '' ? null : v === undefined ? undefined : v),
     z.string().uuid().nullable().optional(),

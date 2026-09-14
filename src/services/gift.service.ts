@@ -52,6 +52,8 @@ function mapPublicGift(g: GiftWithTags) {
     displayImageUrl: g.thumbnailUrl ?? g.displayImageUrl,
     fullImageUrl: g.displayImageUrl,
     effectUrl: g.effectUrl,
+    vapUrl: g.vapUrl,
+    isVap: Boolean(g.vapUrl),
     displayOrder: g.displayOrder,
     vipOnly: g.vipOnly,
     tags: g.tags.map((t: { tag: string }) => t.tag),
@@ -111,6 +113,7 @@ export const giftService = {
     coinCost: number
     displayImageUrl: string
     effectUrl?: string
+    vapUrl?: string | null
     tags?: string[]
   }) {
     const tags = input.tags ?? []
@@ -120,6 +123,7 @@ export const giftService = {
       displayImageUrl: input.displayImageUrl,
       thumbnailUrl: await giftThumbnailService.generateForSource(input.displayImageUrl),
       effectUrl: input.effectUrl ?? null,
+      vapUrl: input.vapUrl ?? null,
       tags,
     })
     await invalidateGiftCaches(tags)
@@ -133,6 +137,7 @@ export const giftService = {
       coinCost?: number
       displayImageUrl?: string
       effectUrl?: string | null
+      vapUrl?: string | null
       isActive?: boolean
       tags?: string[]
     },

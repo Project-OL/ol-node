@@ -52,6 +52,7 @@ export const giftRepository = {
     displayImageUrl: string
     thumbnailUrl?: string | null
     effectUrl?: string | null
+    vapUrl?: string | null
     tags: string[]
     code?: string
   }) {
@@ -64,6 +65,7 @@ export const giftRepository = {
         displayImageUrl: data.displayImageUrl,
         thumbnailUrl: data.thumbnailUrl ?? null,
         effectUrl: data.effectUrl ?? null,
+        vapUrl: data.vapUrl ?? null,
         tags: {
           create: data.tags.map((tag) => ({ tag })),
         },
@@ -80,6 +82,7 @@ export const giftRepository = {
       displayImageUrl?: string
       thumbnailUrl?: string | null
       effectUrl?: string | null
+      vapUrl?: string | null
       isActive?: boolean
       tags?: string[]
     },
@@ -96,6 +99,7 @@ export const giftRepository = {
           ...(data.displayImageUrl !== undefined ? { displayImageUrl: data.displayImageUrl } : {}),
           ...(data.thumbnailUrl !== undefined ? { thumbnailUrl: data.thumbnailUrl } : {}),
           ...(data.effectUrl !== undefined ? { effectUrl: data.effectUrl } : {}),
+          ...(data.vapUrl !== undefined ? { vapUrl: data.vapUrl } : {}),
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
           ...(data.tags
             ? {

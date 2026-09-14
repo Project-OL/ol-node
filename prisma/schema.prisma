@@ -2486,6 +2486,10 @@ model Gift {
   /// which stays here for the send animation and the admin editor.
   thumbnailUrl    String?  @map("thumbnail_url") @db.Text
   effectUrl       String?  @map("effect_url") @db.Text
+  /// Pre-built VAP animation file (Tencent Video Animation Player format), produced
+  /// outside this system and uploaded as-is — we never generate or mux this file.
+  /// A gift "is VAP" purely by having this set; there is no separate type flag.
+  vapUrl          String?  @map("vap_url") @db.Text
   displayOrder    Int      @default(0) @map("display_order")
   vipOnly         Boolean  @default(false) @map("vip_only")
   isLucky         Boolean  @default(false) @map("is_lucky")
