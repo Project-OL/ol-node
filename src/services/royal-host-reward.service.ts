@@ -15,7 +15,7 @@ import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
-const ROYAL_HOST_TAG = 'royal host'
+export const ROYAL_HOST_TAG = 'royal host'
 
 export type RoyalHostTimingStepDto = {
   points: string
@@ -58,7 +58,7 @@ export type RoyalHostRewardStatusDto =
       totalRewardPointsThisWeek: string
     }
 
-function hasRoyalHostTag(adminTags: string[]): boolean {
+export function hasRoyalHostTag(adminTags: string[]): boolean {
   return adminTags.some((t) => t.trim().toLowerCase() === ROYAL_HOST_TAG)
 }
 

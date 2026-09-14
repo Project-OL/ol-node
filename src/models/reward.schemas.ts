@@ -16,3 +16,9 @@ export const ClaimRoyalHostRewardSchema = z.object({
 })
 
 export type ClaimRoyalHostRewardInput = z.infer<typeof ClaimRoyalHostRewardSchema>
+
+export const ClaimNormalHostRewardSchema = z.object({
+  hourSlot: z.number().int().min(1).max(24),
+})
+
+export type ClaimNormalHostRewardInput = z.infer<typeof ClaimNormalHostRewardSchema>

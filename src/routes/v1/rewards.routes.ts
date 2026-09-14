@@ -4,15 +4,18 @@ import {
   rateLimitVipmClaim,
   rateLimitLivestreamRewardClaim,
   rateLimitRoyalHostClaim,
+  rateLimitNormalHostClaim,
 } from '../../middlewares/rateLimitAuth'
 import { AppError } from '../../middlewares/errorHandler'
 import { rewardService } from '../../services/reward.service'
 import { vipMembershipService } from '../../services/vip-membership.service'
 import { livestreamRewardService } from '../../services/livestream-reward.service'
 import { royalHostRewardService } from '../../services/royal-host-reward.service'
+import { normalHostRewardService } from '../../services/normal-host-reward.service'
 import {
   ClaimLivestreamRewardSchema,
   ClaimRoyalHostRewardSchema,
+  ClaimNormalHostRewardSchema,
 } from '../../models/reward.schemas'
 
 const preAuth = [authenticate]
@@ -97,6 +100,31 @@ export default async function rewardsRoutes(app: FastifyInstance) {
         )
       }
       const body = await royalHostRewardService.claimReward(userId, parsed.data.rewardType)
+      return reply.send(body)
+    },
+  )
+
+  app.post<{ Body: unknown }>(
+    '/normal-host/claim',
+    {
+      preHandler: [...preAuth, rateLimitNormalHostClaim],
+      schema: {
+        tags: ['Rewards'],
+        description:
+          'Claim a Normal Host daily reward hour-slot; unavailable while the user holds the Royal Host tag',
+      },
+    },
+    async (request: FastifyRequest<{ Body: unknown }>, reply: FastifyReply) => {
+      const userId = request.userId!
+      const parsed = ClaimNormalHostRewardSchema.safeParse(request.body)
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          'INVALID_REQUEST',
+        )
+      }
+      const body = await normalHostRewardService.claimReward(userId, parsed.data.hourSlot)
       return reply.send(body)
     },
   )

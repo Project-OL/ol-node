@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+import { getQualifyingRewardEarningsForRange } from './rewardEarnings.repository'
 
 export const royalHostRewardRepository = {
   async getClaimsForWeek(userId: string, weekStart: Date) {
@@ -22,31 +23,7 @@ export const royalHostRewardRepository = {
     return tx.royalHostRewardClaim.create({ data })
   },
 
-  /**
-   * Sum of qualifying Royal Host earnings for `userId` in `[start, end)`:
-   * livestream gifts, video-call gifts, and video-call per-minute points.
-   * Mirrors the JSON-metadata `context` filtering used in agencyCommission.repository.ts.
-   */
-  async getQualifyingEarningsForRange(userId: string, start: Date, end: Date): Promise<bigint> {
-    const [row] = await prismaRead.$queryRaw<Array<{ total: bigint }>>`
-      SELECT COALESCE(SUM(ple.amount), 0)::bigint AS total
-      FROM point_ledger_entries ple
-      INNER JOIN wallets w ON w.id = ple.wallet_id
-      WHERE w.currency_type = 'POINT'
-        AND w.user_id = ${userId}::uuid
-        AND ple.direction = 'CREDIT'
-        AND ple.created_at >= ${start}
-        AND ple.created_at < ${end}
-        AND (
-          ple.tx_type = 'VIDEO_CALL'
-          OR (
-            ple.tx_type = 'GIFT_RECEIVE'
-            AND COALESCE(ple.metadata->>'context', 'livestream') IN ('livestream', 'video_call')
-          )
-        )
-    `
-    return row?.total ?? 0n
-  },
+  getQualifyingEarningsForRange: getQualifyingRewardEarningsForRange,
 
   /** Keyset-cursor scan of users currently tagged 'royal host', ordered by id. */
   async listTaggedUsers({ cursor, limit }: { cursor: string; limit: number }): Promise<string[]> {

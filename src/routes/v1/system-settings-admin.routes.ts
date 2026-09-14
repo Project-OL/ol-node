@@ -17,6 +17,7 @@ import { AdminAuthConfigUpdateSchema } from '../../models/adminAuthConfig.schema
 import { AgencyHostConfigUpdateSchema } from '../../models/agencyHostConfig.schemas'
 import { LivestreamRewardConfigUpdateSchema } from '../../models/livestreamRewardConfig.schemas'
 import { RoyalHostRewardConfigUpdateSchema } from '../../models/royalHostRewardConfig.schemas'
+import { NormalHostRewardConfigUpdateSchema } from '../../models/normalHostRewardConfig.schemas'
 import { AccountDeletionConfigUpdateSchema } from '../../models/accountDeletionConfig.schemas'
 import { ReplaceRestrictedIdentityWordsSchema } from '../../models/restrictedIdentityWords.schemas'
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
@@ -27,6 +28,7 @@ import { adminAuthConfigService } from '../../services/adminAuthConfig.service'
 import { agencyHostConfigService } from '../../services/agencyHostConfig.service'
 import { livestreamRewardConfigService } from '../../services/livestreamRewardConfig.service'
 import { royalHostRewardConfigService } from '../../services/royalHostRewardConfig.service'
+import { normalHostRewardConfigService } from '../../services/normalHostRewardConfig.service'
 import { accountDeletionConfigService } from '../../services/accountDeletionConfig.service'
 import { restrictedIdentityWordsService } from '../../services/restrictedIdentityWords.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
@@ -367,7 +369,7 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
   )
 
   app.post(
-    '/royal-host-reward/rollover',
+    '/system-settings/royal-host-reward/rollover',
     { preHandler: [authenticateAdmin] },
     async (request, reply) => {
       const body = z
@@ -382,6 +384,30 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
         actionDetails: { weekStart: weekStart.toISOString(), force: body.force ?? false },
       })
       return reply.send({ ok: true, enqueued: true })
+    },
+  )
+
+  app.get(
+    '/system-settings/normal-host-reward',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await normalHostRewardConfigService.getConfig())
+    },
+  )
+
+  app.put(
+    '/system-settings/normal-host-reward',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = NormalHostRewardConfigUpdateSchema.parse(request.body ?? {})
+      const result = await normalHostRewardConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'normal-host-reward' },
+      })
+      return reply.send(result)
     },
   )
 

@@ -306,6 +306,7 @@ export const RedisKeys = {
   ratelimitVipmClaim: (userId: string) => `ratelimit:vip-membership:claim:${userId}`,
   ratelimitLivestreamRewardClaim: (userId: string) => `ratelimit:livestream-reward:claim:${userId}`,
   ratelimitRoyalHostClaim: (userId: string) => `ratelimit:royal-host-reward:claim:${userId}`,
+  ratelimitNormalHostClaim: (userId: string) => `ratelimit:normal-host-reward:claim:${userId}`,
   /** Agency: GET /users/me agency block cache bust target */
   agencyMe: (userId: string) => `agency:me:${userId}`,
   agencyByPublicId: (publicId: string) => `agency:pub:${publicId}`,
@@ -401,6 +402,8 @@ export const RedisKeys = {
   livestreamRewardConfig: () => 'livestream-reward:config',
   /** Royal Host weekly reward ladder + thresholds (admin system settings). */
   royalHostRewardConfig: () => 'royal-host-reward:config',
+  /** Normal Host daily reward tier ladder (admin system settings). */
+  normalHostRewardConfig: () => 'normal-host-reward:config',
   /** Account deletion grace + permanent-delete windows (admin system settings). */
   accountDeletionConfig: () => 'account-deletion:config',
   userPaymentMethods: (userId: string) => `pmethods:${userId}`,
@@ -625,6 +628,8 @@ export const AGENCY_HOST_CONFIG_TTL = 300
 export const LIVESTREAM_REWARD_CONFIG_TTL = 300
 /** Royal Host weekly reward config singleton. */
 export const ROYAL_HOST_REWARD_CONFIG_TTL = 300
+/** Normal Host daily reward config singleton. */
+export const NORMAL_HOST_REWARD_CONFIG_TTL = 300
 /** Account deletion grace + delete windows singleton. */
 export const ACCOUNT_DELETION_CONFIG_TTL = 300
 /** Agent payroll dashboard summary (tab counts + toggle). */

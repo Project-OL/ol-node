@@ -150,6 +150,7 @@ model User {
   livestreamRewardClaims        LiveStreamRewardClaim[]
   royalHostRewardClaims         RoyalHostRewardClaim[]
   royalHostWeeklyEvaluations    RoyalHostWeeklyEvaluation[]
+  normalHostRewardClaims        NormalHostRewardClaim[]
   customGiftRequests            CustomGiftRequest[]
   questionnaireAttempts         UserQuestionnaireAttempt[]
   faceProfile                   UserFaceProfile?
@@ -1193,6 +1194,7 @@ enum PointTxType {
   /// Company-agency inventory when platform takes over a failed BANK payroll (host payout units).
   PAYROLL_TAKEOVER_INVENTORY
   ROYAL_HOST_REWARD // weekly Royal Host timing/gifting reward; excluded from commission + livestream/wealth XP
+  NORMAL_HOST_REWARD // daily Normal Host tiered hourly reward; excluded from commission + livestream/wealth XP
 }
 
 enum WithdrawalStatus {
@@ -1409,6 +1411,26 @@ model RoyalHostWeeklyEvaluation {
   @@map("royal_host_weekly_evaluations")
 }
 
+/// One claimed hour-slot of the daily Normal Host reward.
+model NormalHostRewardClaim {
+  userId              String   @map("user_id") @db.Uuid
+  rewardDate          DateTime @map("reward_date") @db.Date
+  /// 1..hourCapHours of whichever tier funded this claim.
+  hourSlot            Int      @map("hour_slot")
+  pointsAmount        BigInt   @map("points_amount")
+  /// Audit: which tier's threshold was current when this slot was claimed.
+  tierThresholdPoints BigInt   @map("tier_threshold_points")
+  ledgerEntryId       String   @map("ledger_entry_id") @db.Uuid
+  claimedAt           DateTime @default(now()) @map("claimed_at")
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntry PointLedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+
+  @@id([userId, rewardDate, hourSlot])
+  @@index([userId, rewardDate(sort: Desc)])
+  @@map("normal_host_reward_claims")
+}
+
 model PointLedgerEntry {
   id             String          @id @default(uuid()) @db.Uuid
   walletId       String          @map("wallet_id") @db.Uuid
@@ -1426,6 +1448,7 @@ model PointLedgerEntry {
   wallet                 Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
   livestreamRewardClaims LiveStreamRewardClaim[]
   royalHostRewardClaims  RoyalHostRewardClaim[]
+  normalHostRewardClaims NormalHostRewardClaim[]
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([walletId, txType, createdAt(sort: Desc)])
@@ -2860,6 +2883,18 @@ model RoyalHostRewardConfig {
   updatedByAdminId String?  @map("updated_by_admin_id")
 
   @@map("royal_host_reward_config")
+}
+
+model NormalHostRewardConfig {
+  id Int @id @default(1)
+  /// Ascending tier ladder: [{ thresholdPoints, hourlyRatePoints, hourCapHours, windowDays }, ...].
+  /// Each tier is evaluated against a rolling window of its own `windowDays` (default: 100K/30d, rest/7d).
+  tiers Json
+
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  updatedByAdminId String?  @map("updated_by_admin_id")
+
+  @@map("normal_host_reward_config")
 }
 
 model AgencyDailyEarning {
