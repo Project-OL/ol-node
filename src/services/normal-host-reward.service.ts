@@ -17,7 +17,11 @@ import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
 export type NormalHostSlotDto = {
+  /** Send this as `hourSlot` in the claim request. */
+  claimType: number
   hourSlot: number
+  requiredMinutes: number
+  completedMinutes: number
   unlocked: boolean
   claimed: boolean
   pointsAmount: string
@@ -28,6 +32,16 @@ export type NormalHostNextTierDto = {
   windowDays: number
   earningsSoFar: string
   earningsRemaining: string
+  progressPercent: number
+}
+
+export type NormalHostUpcomingTierDto = {
+  thresholdPoints: string
+  hourlyRatePoints: string
+  hourCapHours: number
+  windowDays: number
+  earnedPoints: string
+  remainingPoints: string
   progressPercent: number
 }
 
@@ -51,6 +65,8 @@ export type NormalHostRewardStatusDto =
         hourCapHours: number
         windowDays: number
       }
+      /** null once the user is already on the highest configured tier. */
+      nextTier: NormalHostUpcomingTierDto | null
       slots: NormalHostSlotDto[]
       totalClaimedToday: string
     }
@@ -150,12 +166,17 @@ export const normalHostRewardService = {
     }
 
     const claimedSlots = new Map(claims.map((c) => [c.hourSlot, c]))
+    const totalMinutesToday = Math.floor(secondsToday / 60)
     const unlockedSlots = Math.min(Math.floor(secondsToday / 3600), currentTier.hourCapHours)
     const slots: NormalHostSlotDto[] = []
     for (let hourSlot = 1; hourSlot <= currentTier.hourCapHours; hourSlot++) {
       const claimed = claimedSlots.get(hourSlot)
+      const completedMinutes = Math.max(0, Math.min(60, totalMinutesToday - (hourSlot - 1) * 60))
       slots.push({
+        claimType: hourSlot,
         hourSlot,
+        requiredMinutes: 60,
+        completedMinutes,
         unlocked: hourSlot <= unlockedSlots,
         claimed: !!claimed,
         // Not-yet-claimed slots float to the CURRENT tier's rate; claimed slots keep their locked-in amount.
@@ -165,6 +186,29 @@ export const normalHostRewardService = {
       })
     }
     const totalClaimedToday = claims.reduce((sum, c) => sum + c.pointsAmount, 0n)
+
+    const currentTierIdx = config.tiersBigInt.findIndex(
+      (t) => t.thresholdPoints === currentTier.thresholdPoints,
+    )
+    const upcomingTier = config.tiersBigInt[currentTierIdx + 1] ?? null
+    let nextTier: NormalHostUpcomingTierDto | null = null
+    if (upcomingTier) {
+      const earned = earningsByWindow.get(upcomingTier.windowDays) ?? 0n
+      const remaining =
+        earned >= upcomingTier.thresholdPoints ? 0n : upcomingTier.thresholdPoints - earned
+      nextTier = {
+        thresholdPoints: upcomingTier.thresholdPoints.toString(),
+        hourlyRatePoints: upcomingTier.hourlyRatePoints.toString(),
+        hourCapHours: upcomingTier.hourCapHours,
+        windowDays: upcomingTier.windowDays,
+        earnedPoints: earned.toString(),
+        remainingPoints: remaining.toString(),
+        progressPercent:
+          upcomingTier.thresholdPoints > 0n
+            ? Math.min(100, Number((earned * 100n) / upcomingTier.thresholdPoints))
+            : 100,
+      }
+    }
 
     return {
       eligible: true,
@@ -177,6 +221,7 @@ export const normalHostRewardService = {
         hourCapHours: currentTier.hourCapHours,
         windowDays: currentTier.windowDays,
       },
+      nextTier,
       slots,
       totalClaimedToday: totalClaimedToday.toString(),
     }

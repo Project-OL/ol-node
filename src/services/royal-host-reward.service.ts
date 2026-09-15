@@ -17,21 +17,47 @@ const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
 export const ROYAL_HOST_TAG = 'royal host'
 
-export type RoyalHostTimingStepDto = {
+export type RoyalHostTimingClaimType = 'TIMING_STEP_1' | 'TIMING_STEP_2'
+
+export type RoyalHostCurrentTimingDto = {
+  claimType: RoyalHostTimingClaimType
   points: string
+  requiredMinutes: number
+  completedMinutes: number
+  earningThreshold: string | null
+  earnedPoints: string | null
+  remainingPoints: string | null
+  progressPercent: number
   unlocked: boolean
   claimed: boolean
 }
 
-export type RoyalHostGiftingTierStatusDto = {
-  tierIndex: number
-  earningThreshold: string
-  cumulativePoints: string
-  incrementPoints: string
+export type RoyalHostNextTimingDto = {
+  claimType: RoyalHostTimingClaimType
+  points: string
+  earningThreshold: string | null
+}
+
+export type RoyalHostCurrentGiftingDto = {
+  claimType: string
+  threshold: string
+  points: string
+  earnedPoints: string
+  remainingPoints: string
+  progressPercent: number
   unlocked: boolean
   claimed: boolean
-  earningsRemaining: string
-  progressPercent: number
+}
+
+export type RoyalHostNextGiftingDto = {
+  claimType: string
+  threshold: string
+  points: string
+}
+
+export type RoyalHostTierRewardDto = {
+  threshold: string
+  totalReward: string
 }
 
 export type RoyalHostRewardStatusDto =
@@ -40,21 +66,20 @@ export type RoyalHostRewardStatusDto =
       eligible: true
       weekStart: string
       weekEndsInSeconds: number
-      requiredWeeklyHours: number
       dailyHoursCapMinutes: number
-      streamedSecondsThisWeek: number
-      timingProgressPercent: number
-      timingRequirementMet: boolean
       weeklyEarningsPoints: string
-      timing: {
-        step1: RoyalHostTimingStepDto
-        step2: RoyalHostTimingStepDto & { earningThreshold: string }
+      timingReward: {
         totalClaimed: string
+        current: RoyalHostCurrentTimingDto | null
+        next: RoyalHostNextTimingDto | null
       }
-      gifting: {
-        tiers: RoyalHostGiftingTierStatusDto[]
+      giftingReward: {
         totalClaimed: string
+        current: RoyalHostCurrentGiftingDto | null
+        next: RoyalHostNextGiftingDto | null
       }
+      /** Full reference ladder: threshold reached -> total cumulative reward for the week. */
+      tiers: RoyalHostTierRewardDto[]
       totalRewardPointsThisWeek: string
     }
 
@@ -90,36 +115,84 @@ async function streamedSecondsForWeek(
   return total
 }
 
-function buildGiftingTiers(
+type GiftingTierComputed = {
+  claimType: string
+  threshold: bigint
+  incrementPoints: bigint
+  cumulativePoints: bigint
+  unlocked: boolean
+  claimed: boolean
+}
+
+function computeGiftingTiers(
   config: RoyalHostRewardEffectiveConfig,
   weeklyEarnings: bigint,
   claimedTypes: Set<string>,
-): RoyalHostGiftingTierStatusDto[] {
+): GiftingTierComputed[] {
   let prevCumulative = 0n
   return config.giftingTiersBigInt.map((tier, i) => {
     const tierIndex = i + 1
-    const rewardType = `GIFTING_TIER_${tierIndex}`
+    const claimType = `GIFTING_TIER_${tierIndex}`
     const incrementPoints = tier.cumulativePoints - prevCumulative
-    const unlocked = weeklyEarnings >= tier.threshold
-    const earningsRemaining = unlocked ? 0n : tier.threshold - weeklyEarnings
-    const progressPercent = unlocked
-      ? 100
-      : tier.threshold > 0n
-        ? Math.min(100, Number((weeklyEarnings * 100n) / tier.threshold))
-        : 0
-    const dto: RoyalHostGiftingTierStatusDto = {
-      tierIndex,
-      earningThreshold: tier.threshold.toString(),
-      cumulativePoints: tier.cumulativePoints.toString(),
-      incrementPoints: incrementPoints.toString(),
-      unlocked,
-      claimed: claimedTypes.has(rewardType),
-      earningsRemaining: earningsRemaining.toString(),
-      progressPercent,
+    const computed: GiftingTierComputed = {
+      claimType,
+      threshold: tier.threshold,
+      incrementPoints,
+      cumulativePoints: tier.cumulativePoints,
+      unlocked: weeklyEarnings >= tier.threshold,
+      claimed: claimedTypes.has(claimType),
     }
     prevCumulative = tier.cumulativePoints
-    return dto
+    return computed
   })
+}
+
+function giftingProgress(
+  tier: GiftingTierComputed,
+  weeklyEarnings: bigint,
+): { earnedPoints: string; remainingPoints: string; progressPercent: number } {
+  const remaining = tier.unlocked ? 0n : tier.threshold - weeklyEarnings
+  const progressPercent = tier.unlocked
+    ? 100
+    : tier.threshold > 0n
+      ? Math.min(100, Number((weeklyEarnings * 100n) / tier.threshold))
+      : 0
+  return {
+    earnedPoints: weeklyEarnings.toString(),
+    remainingPoints: remaining.toString(),
+    progressPercent,
+  }
+}
+
+/** Walk tiers in order; "current" = first not-yet-claimed one (locked+in-progress, or unlocked+claimable). */
+function buildGiftingCurrentAndNext(
+  tiers: GiftingTierComputed[],
+  weeklyEarnings: bigint,
+): { current: RoyalHostCurrentGiftingDto | null; next: RoyalHostNextGiftingDto | null } {
+  const currentIndex = tiers.findIndex((t) => !t.claimed)
+  if (currentIndex === -1) return { current: null, next: null }
+
+  const tier = tiers[currentIndex]!
+  const progress = giftingProgress(tier, weeklyEarnings)
+  const current: RoyalHostCurrentGiftingDto = {
+    claimType: tier.claimType,
+    threshold: tier.threshold.toString(),
+    points: tier.incrementPoints.toString(),
+    ...progress,
+    unlocked: tier.unlocked,
+    claimed: tier.claimed,
+  }
+
+  const nextTier = tiers[currentIndex + 1]
+  const next: RoyalHostNextGiftingDto | null = nextTier
+    ? {
+        claimType: nextTier.claimType,
+        threshold: nextTier.threshold.toString(),
+        points: nextTier.incrementPoints.toString(),
+      }
+    : null
+
+  return { current, next }
 }
 
 async function loadStatusInputs(userId: string) {
@@ -154,47 +227,89 @@ export const royalHostRewardService = {
     const step1Unlocked = timingRequirementMet
     const step2Unlocked =
       timingRequirementMet && weeklyEarningsPoints >= config.timingStep2EarningThresholdBigInt
+    const step1Claimed = claimedTypes.has('TIMING_STEP_1')
+    const step2Claimed = claimedTypes.has('TIMING_STEP_2')
 
     const timingClaimedTotal =
-      (claimedTypes.has('TIMING_STEP_1') ? config.timingStep1PointsBigInt : 0n) +
-      (claimedTypes.has('TIMING_STEP_2') ? config.timingStep2PointsBigInt : 0n)
+      (step1Claimed ? config.timingStep1PointsBigInt : 0n) +
+      (step2Claimed ? config.timingStep2PointsBigInt : 0n)
 
-    const gifting = buildGiftingTiers(config, weeklyEarningsPoints, claimedTypes)
+    const requiredMinutes = Math.floor(requiredSeconds / 60)
+    const completedMinutes = Math.min(requiredMinutes, Math.floor(streamedSecondsThisWeek / 60))
+
+    let timingCurrent: RoyalHostCurrentTimingDto | null = null
+    let timingNext: RoyalHostNextTimingDto | null = null
+    if (!step1Claimed) {
+      timingCurrent = {
+        claimType: 'TIMING_STEP_1',
+        points: config.timingStep1PointsBigInt.toString(),
+        requiredMinutes,
+        completedMinutes,
+        earningThreshold: null,
+        earnedPoints: null,
+        remainingPoints: null,
+        progressPercent:
+          requiredMinutes > 0
+            ? Math.min(100, Math.floor((completedMinutes * 100) / requiredMinutes))
+            : 0,
+        unlocked: step1Unlocked,
+        claimed: step1Claimed,
+      }
+      timingNext = {
+        claimType: 'TIMING_STEP_2',
+        points: config.timingStep2PointsBigInt.toString(),
+        earningThreshold: config.timingStep2EarningThresholdBigInt.toString(),
+      }
+    } else if (!step2Claimed) {
+      const threshold = config.timingStep2EarningThresholdBigInt
+      const remaining = weeklyEarningsPoints >= threshold ? 0n : threshold - weeklyEarningsPoints
+      timingCurrent = {
+        claimType: 'TIMING_STEP_2',
+        points: config.timingStep2PointsBigInt.toString(),
+        requiredMinutes,
+        completedMinutes,
+        earningThreshold: threshold.toString(),
+        earnedPoints: weeklyEarningsPoints.toString(),
+        remainingPoints: remaining.toString(),
+        progressPercent:
+          threshold > 0n ? Math.min(100, Number((weeklyEarningsPoints * 100n) / threshold)) : 100,
+        unlocked: step2Unlocked,
+        claimed: step2Claimed,
+      }
+      timingNext = null
+    }
+
+    const giftingTiersComputed = computeGiftingTiers(config, weeklyEarningsPoints, claimedTypes)
+    const { current: giftingCurrent, next: giftingNext } = buildGiftingCurrentAndNext(
+      giftingTiersComputed,
+      weeklyEarningsPoints,
+    )
     const giftingClaimedTotal = claims
       .filter((c) => c.rewardType.startsWith('GIFTING_TIER_'))
       .reduce((sum, c) => sum + c.pointsAmount, 0n)
+
+    const tiers: RoyalHostTierRewardDto[] = giftingTiersComputed.map((t) => ({
+      threshold: t.threshold.toString(),
+      totalReward: t.cumulativePoints.toString(),
+    }))
 
     return {
       eligible: true,
       weekStart: utcDateString(weekStart),
       weekEndsInSeconds: Math.max(0, Math.floor((weekEnd.getTime() - now.getTime()) / 1000)),
-      requiredWeeklyHours: config.weeklyHoursRequired,
       dailyHoursCapMinutes: config.dailyHoursCapMinutes,
-      streamedSecondsThisWeek,
-      timingProgressPercent: Math.min(
-        100,
-        Math.floor((streamedSecondsThisWeek * 100) / requiredSeconds),
-      ),
-      timingRequirementMet,
       weeklyEarningsPoints: weeklyEarningsPoints.toString(),
-      timing: {
-        step1: {
-          points: config.timingStep1PointsBigInt.toString(),
-          unlocked: step1Unlocked,
-          claimed: claimedTypes.has('TIMING_STEP_1'),
-        },
-        step2: {
-          points: config.timingStep2PointsBigInt.toString(),
-          unlocked: step2Unlocked,
-          claimed: claimedTypes.has('TIMING_STEP_2'),
-          earningThreshold: config.timingStep2EarningThresholdBigInt.toString(),
-        },
+      timingReward: {
         totalClaimed: timingClaimedTotal.toString(),
+        current: timingCurrent,
+        next: timingNext,
       },
-      gifting: {
-        tiers: gifting,
+      giftingReward: {
         totalClaimed: giftingClaimedTotal.toString(),
+        current: giftingCurrent,
+        next: giftingNext,
       },
+      tiers,
       totalRewardPointsThisWeek: (timingClaimedTotal + giftingClaimedTotal).toString(),
     }
   },
