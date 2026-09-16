@@ -70,6 +70,21 @@ export function resolvePointLedgerRevertability(params: {
   return POINT_WALLET_SOURCE_PEER_TYPES.has(params.txType)
 }
 
+/**
+ * Single-wallet (no counterparty) point ledger rows an admin can revert:
+ * generic balance corrections and the three reward-claim credit types.
+ * None of these ever apply livestream XP or agency commission on credit
+ * (verified: not in COMMISSION_ELIGIBLE_TX_TYPES / ranking tx-type sets, and
+ * the reward services credit with `applyLivestreamLevel: false`), so a
+ * revert never needs the XP/commission-reversal dance that peer reverts do.
+ */
+const SINGLE_WALLET_REVERTABLE_TX_TYPES = new Set<PointTxType>([
+  PointTxType.ADJUSTMENT,
+  PointTxType.NORMAL_HOST_REWARD,
+  PointTxType.ROYAL_HOST_REWARD,
+  PointTxType.LIVESTREAM_STREAK_REWARD,
+])
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export type AdminUserBrief = {
@@ -831,6 +846,119 @@ export const adminTransactionsService = {
         throw new AppError(
           402,
           'Insufficient points on receiver to revert',
+          'INSUFFICIENT_POINTS',
+          err.details,
+        )
+      }
+      throw err
+    }
+  },
+
+  /**
+   * Revert a single-wallet (no counterparty) point ledger entry: an admin
+   * ADJUSTMENT correction, or a reward-claim credit (Normal/Royal Host,
+   * Livestream Streak). A DEBIT is reverted with a clean credit back (no XP
+   * — unlike the generic "Add Points" admin endpoint, which always grants
+   * livestream XP); a CREDIT (e.g. a claimed reward) is reverted with a
+   * debit gated on the user actually having the balance to give it back.
+   */
+  async revertSingleWalletPointEntry(params: {
+    ledgerEntryId: string
+    adminUserId: string
+    reason: string
+    idempotencyKey?: string
+  }) {
+    const entry = await adminTransactionsRepository.findPointLedgerById(params.ledgerEntryId)
+    if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
+
+    if (!SINGLE_WALLET_REVERTABLE_TX_TYPES.has(entry.txType)) {
+      throw new AppError(
+        400,
+        'Only admin ADJUSTMENT and reward-claim credits are revertable via this endpoint',
+        'NOT_REVERTABLE',
+      )
+    }
+
+    const existing = await adminTransactionsRepository.findExistingSingleWalletReversal(entry.id)
+    if (existing) {
+      throw new AppError(409, 'Ledger entry already reverted', 'ALREADY_REVERTED')
+    }
+
+    const userId = entry.wallet.userId
+    const amount = entry.amount
+    const idempotencyKey = `admin-revert:point-single:${entry.id}:reverse`
+    const metadata = {
+      adminUserId: params.adminUserId,
+      source: 'admin_single_wallet_revert',
+      originalLedgerEntryId: entry.id,
+      reason: params.reason,
+    }
+
+    try {
+      const result = await prisma.$transaction(
+        async (tx) => {
+          if (entry.direction === LedgerDirection.DEBIT) {
+            const credit = await pointWalletService.creditInTransaction(
+              userId,
+              amount,
+              PointTxType.ADJUSTMENT,
+              tx,
+              {
+                idempotencyKey,
+                description: `Admin revert credit: ${params.reason}`.slice(0, 500),
+                applyLivestreamLevel: false,
+                metadata,
+              },
+            )
+            return { direction: LedgerDirection.CREDIT, ...credit }
+          }
+
+          const debit = await pointWalletService.debit(userId, amount, PointTxType.ADJUSTMENT, tx, {
+            idempotencyKey,
+            description: `Admin revert debit: ${params.reason}`.slice(0, 500),
+            availabilityCheck: true,
+            metadata,
+          })
+          return { direction: LedgerDirection.DEBIT, ...debit }
+        },
+        { timeout: TX_TIMEOUT_MS },
+      )
+
+      await walletService.adjustPointBalanceCache(
+        userId,
+        result.direction === LedgerDirection.CREDIT ? amount : -amount,
+      )
+
+      auditService.logAdmin({
+        adminUserId: params.adminUserId,
+        targetUserId: userId,
+        actionType: 'ADMIN_WALLET_REVERT_SINGLE_POINT',
+        actionStatus: 'success',
+        actionDetails: {
+          originalLedgerEntryId: entry.id,
+          originalTxType: entry.txType,
+          userId,
+          amount: amount.toString(),
+          reason: params.reason,
+          reversalLedgerEntryId: result.ledgerEntryId,
+          idempotencyKey,
+        },
+        destination: `Revert single-wallet point ledger ${entry.id}`,
+      })
+
+      return {
+        ok: true as const,
+        originalLedgerEntryId: entry.id,
+        userId,
+        originalDirection: entry.direction,
+        amount: amount.toString(),
+        reversalLedgerEntryId: result.ledgerEntryId,
+      }
+    } catch (err) {
+      if (err instanceof AppError && err.code === 'INSUFFICIENT_POINTS') {
+        throw new AppError(
+          402,
+          'Insufficient points on this user to revert this credit',
           'INSUFFICIENT_POINTS',
           err.details,
         )

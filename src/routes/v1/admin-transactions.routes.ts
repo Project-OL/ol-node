@@ -250,6 +250,29 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
   )
 
+  app.post<{ Params: { ledgerEntryId: string } }>(
+    '/transactions/points/:ledgerEntryId/revert-single',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Transactions'],
+        description:
+          'Revert a single-wallet (no counterparty) point ledger entry: an admin ADJUSTMENT correction, or a claimed Normal/Royal Host or Livestream Streak reward. A DEBIT is credited back cleanly (no livestream XP); a CREDIT is debited back only if the user still has the balance to cover it.',
+      },
+    },
+    async (request, reply) => {
+      const body = parseRevertBody(request.body)
+      return reply.send(
+        await adminTransactionsService.revertSingleWalletPointEntry({
+          ledgerEntryId: request.params.ledgerEntryId,
+          adminUserId: request.adminUser!.id,
+          reason: body.reason,
+          idempotencyKey: body.idempotencyKey,
+        }),
+      )
+    },
+  )
+
   app.post<{ Params: { transferId: string } }>(
     '/transactions/coin-trading-transfers/:transferId/revert',
     {
