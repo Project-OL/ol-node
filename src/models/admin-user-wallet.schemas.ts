@@ -11,6 +11,12 @@ export const adminWalletAmountBodySchema = z.object({
   idempotencyKey: z.string().max(128).optional(),
 })
 
+export const adminWalletBulkDeductPointsBodySchema = z.object({
+  userIds: z.array(z.string().uuid()).min(1).max(200),
+  amount: positiveAmountSchema,
+  description: z.string().max(500).optional(),
+})
+
 export const adminTransactionListQuerySchema = z.object({
   types: z
     .union([z.string(), z.array(z.string())])

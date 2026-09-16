@@ -54,6 +54,7 @@ export const rewardClaimsRepository = {
   /** Per-user totals across all reward claim types, sorted by total desc, paginated. */
   async listUsersByTotalClaimed(params: {
     country?: string
+    agencyUserId?: string
     from?: Date
     to?: Date
     type?: RewardClaimType
@@ -63,6 +64,9 @@ export const rewardClaimsRepository = {
     const cte = claimsCte(params)
     const countryClause = params.country
       ? Prisma.sql`AND u.country = ${countryEqualsFilter(params.country).equals}`
+      : Prisma.empty
+    const agencyClause = params.agencyUserId
+      ? Prisma.sql`AND u.current_agency_id = ${params.agencyUserId}::uuid`
       : Prisma.empty
 
     const rows = await prismaRead.$queryRaw<
@@ -80,7 +84,7 @@ export const rewardClaimsRepository = {
         COUNT(*)::bigint AS claim_count
       FROM (${cte}) c
       INNER JOIN users u ON u.id = c.user_id
-      WHERE true ${countryClause}
+      WHERE true ${countryClause} ${agencyClause}
       GROUP BY c.user_id, u.username, u.country, u.public_id
       ORDER BY total_points DESC
       LIMIT ${params.take} OFFSET ${params.skip}
@@ -90,7 +94,7 @@ export const rewardClaimsRepository = {
       SELECT COUNT(DISTINCT c.user_id)::bigint AS count
       FROM (${cte}) c
       INNER JOIN users u ON u.id = c.user_id
-      WHERE true ${countryClause}
+      WHERE true ${countryClause} ${agencyClause}
     `)
 
     return {
@@ -143,6 +147,7 @@ export const rewardClaimsRepository = {
   /** Every claim row matching the filter, unpaginated — for Excel export (caller enforces a row cap). */
   async listAllClaims(params: {
     country?: string
+    agencyUserId?: string
     from?: Date
     to?: Date
     type?: RewardClaimType
@@ -150,6 +155,9 @@ export const rewardClaimsRepository = {
     const cte = claimsCte(params)
     const countryClause = params.country
       ? Prisma.sql`AND u.country = ${countryEqualsFilter(params.country).equals}`
+      : Prisma.empty
+    const agencyClause = params.agencyUserId
+      ? Prisma.sql`AND u.current_agency_id = ${params.agencyUserId}::uuid`
       : Prisma.empty
 
     const rows = await prismaRead.$queryRaw<
@@ -168,7 +176,7 @@ export const rewardClaimsRepository = {
       SELECT c.*, u.username, u.country, u.public_id
       FROM (${cte}) c
       INNER JOIN users u ON u.id = c.user_id
-      WHERE true ${countryClause}
+      WHERE true ${countryClause} ${agencyClause}
       ORDER BY c.claimed_at DESC
     `)
 

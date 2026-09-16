@@ -6,6 +6,7 @@ import { adminUserTransactionsService } from '../../services/adminUserTransactio
 import {
   adminTransactionListQuerySchema,
   adminWalletAmountBodySchema,
+  adminWalletBulkDeductPointsBodySchema,
   adminSetLevelBodySchema,
   adminLevelTypeParamSchema,
 } from '../../models/admin-user-wallet.schemas'
@@ -21,6 +22,18 @@ function parseAmountBody(body: unknown) {
     amount: BigInt(parsed.data.amount),
     description: parsed.data.description,
     idempotencyKey: parsed.data.idempotencyKey,
+  }
+}
+
+function parseBulkDeductBody(body: unknown) {
+  const parsed = adminWalletBulkDeductPointsBodySchema.safeParse(body ?? {})
+  if (!parsed.success) {
+    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+  }
+  return {
+    userIds: parsed.data.userIds,
+    amount: BigInt(parsed.data.amount),
+    description: parsed.data.description,
   }
 }
 
@@ -112,7 +125,7 @@ export default async function adminUserWalletRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Users', 'Wallet'],
         description:
-          'DIAMOND transaction history for a user — game wagers/results/refunds, Coin↔Diamond conversions, and admin diamond adjustments. Rows are never revertable (game settlement is paired against the GAME_HOUSE account on BAISHUN\'s order_id); correct a balance with POST /admin/currency/adjust instead.',
+          "DIAMOND transaction history for a user — game wagers/results/refunds, Coin↔Diamond conversions, and admin diamond adjustments. Rows are never revertable (game settlement is paired against the GAME_HOUSE account on BAISHUN's order_id); correct a balance with POST /admin/currency/adjust instead.",
       },
     },
     async (request, reply) => {
@@ -228,6 +241,29 @@ export default async function adminUserWalletRoutes(app: FastifyInstance) {
           amount: body.amount,
           description: body.description,
           idempotencyKey: body.idempotencyKey,
+        }),
+      )
+    },
+  )
+
+  app.post(
+    '/users/wallet/points/bulk-deduct',
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users', 'Wallet'],
+        description:
+          'Debit the same point amount from up to 200 users in one call. Each user is independent — one insufficient-balance or frozen-wallet failure never blocks the rest; per-user results are returned.',
+      },
+    },
+    async (request, reply) => {
+      const body = parseBulkDeductBody(request.body)
+      return reply.send(
+        await adminWalletService.bulkDebitPoints({
+          adminUserId: request.adminUser!.id,
+          userIds: body.userIds,
+          amount: body.amount,
+          description: body.description,
         }),
       )
     },

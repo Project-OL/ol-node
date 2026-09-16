@@ -162,11 +162,17 @@ export const adminWalletService = {
       const diamonds = params.diamonds!
       const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
         async (tx) =>
-          diamondWalletService.credit(params.targetUserId, diamonds, CoinTxType.GAME_ADJUSTMENT, tx, {
-            idempotencyKey: `${baseKey}:diamonds`,
-            description: description || 'Admin diamond credit',
-            metadata,
-          }),
+          diamondWalletService.credit(
+            params.targetUserId,
+            diamonds,
+            CoinTxType.GAME_ADJUSTMENT,
+            tx,
+            {
+              idempotencyKey: `${baseKey}:diamonds`,
+              description: description || 'Admin diamond credit',
+              metadata,
+            },
+          ),
         { timeout: TX_TIMEOUT_MS },
       )
       await diamondWalletService.bustBalanceCache(params.targetUserId)
@@ -331,11 +337,17 @@ export const adminWalletService = {
 
     const { ledgerEntryId, balanceAfter } = await prisma.$transaction(
       async (tx) =>
-        diamondWalletService.debit(params.targetUserId, params.amount, CoinTxType.GAME_ADJUSTMENT, tx, {
-          idempotencyKey: baseKey,
-          description,
-          metadata,
-        }),
+        diamondWalletService.debit(
+          params.targetUserId,
+          params.amount,
+          CoinTxType.GAME_ADJUSTMENT,
+          tx,
+          {
+            idempotencyKey: baseKey,
+            description,
+            metadata,
+          },
+        ),
       { timeout: TX_TIMEOUT_MS },
     )
     await diamondWalletService.bustBalanceCache(params.targetUserId)
@@ -413,6 +425,50 @@ export const adminWalletService = {
       userId: params.targetUserId,
       debited: { points: params.amount.toString() },
       balance: { ledgerEntryId, balanceAfter: balanceAfter.toString() },
+    }
+  },
+
+  /**
+   * Debit the same point amount from several users in one call. Each user's debit is
+   * fully independent (own wallet lock, own transaction inside debitPoints) — a failure
+   * on one user (insufficient points, frozen wallet, not found) never blocks the rest.
+   * Mirrors the per-id try/catch + summary shape of supportAdminService.bulkResolveWithTemplate.
+   */
+  async bulkDebitPoints(params: {
+    adminUserId: string
+    userIds: string[]
+    amount: bigint
+    description?: string
+    auditMeta?: AdminAuditRequestMeta
+  }): Promise<{
+    succeeded: number
+    failed: number
+    results: { userId: string; ok: boolean; error?: string }[]
+  }> {
+    const results: { userId: string; ok: boolean; error?: string }[] = []
+    for (const targetUserId of params.userIds) {
+      try {
+        await adminWalletService.debitPoints({
+          adminUserId: params.adminUserId,
+          targetUserId,
+          amount: params.amount,
+          description: params.description,
+          idempotencyKey: `admin-wallet-bulk-debit-points:${params.adminUserId}:${targetUserId}:${randomUUID()}`,
+          auditMeta: params.auditMeta,
+        })
+        results.push({ userId: targetUserId, ok: true })
+      } catch (err) {
+        results.push({
+          userId: targetUserId,
+          ok: false,
+          error: err instanceof AppError ? (err.code ?? err.message) : 'FAILED',
+        })
+      }
+    }
+    return {
+      succeeded: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
     }
   },
 
