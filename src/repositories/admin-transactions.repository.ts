@@ -600,6 +600,13 @@ export const adminTransactionsRepository = {
     })
   },
 
+  async findExistingSingleWalletReversal(originalLedgerEntryId: string) {
+    return prismaRead.pointLedgerEntry.findFirst({
+      where: { idempotencyKey: `admin-revert:point-single:${originalLedgerEntryId}:reverse` },
+      select: { id: true, idempotencyKey: true },
+    })
+  },
+
   async findExistingGiftReversal(giftTransactionId: string) {
     return prismaRead.coinLedgerEntry.findFirst({
       where: { idempotencyKey: `admin-revert:gift:${giftTransactionId}:credit` },

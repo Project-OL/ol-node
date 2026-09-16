@@ -12,7 +12,11 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
   LoginView: ['POST /admin/auth/login'],
   HomeView: [],
   AboutView: [],
-  UserListView: ['GET /admin/users/search', 'GET /admin/users/search/history', 'GET /admin/users/stats'],
+  UserListView: [
+    'GET /admin/users/search',
+    'GET /admin/users/search/history',
+    'GET /admin/users/stats',
+  ],
   UserDetailView: [
     'GET /admin/users/search',
     'GET /admin/users/search/history',
@@ -47,6 +51,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/transactions/store-purchases',
     'POST /admin/transactions/coins/:ledgerEntryId/revert',
     'POST /admin/transactions/points/:ledgerEntryId/revert',
+    'POST /admin/transactions/points/:ledgerEntryId/revert-single',
     'POST /admin/transactions/coin-trading-transfers/:transferId/revert',
     'POST /admin/transactions/gifts/:giftTransactionId/revert',
     'POST /admin/users/:id/wallet/personal-coins/add',
@@ -266,8 +271,15 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/transactions/platform-profit/summary',
     'POST /admin/transactions/coins/:ledgerEntryId/revert',
     'POST /admin/transactions/points/:ledgerEntryId/revert',
+    'POST /admin/transactions/points/:ledgerEntryId/revert-single',
     'POST /admin/transactions/coin-trading-transfers/:transferId/revert',
     'POST /admin/transactions/gifts/:giftTransactionId/revert',
+    'GET /admin/users/search',
+  ],
+  RewardsDashboardView: [
+    'GET /admin/rewards/claims',
+    'GET /admin/rewards/claims/export',
+    'POST /admin/transactions/points/:ledgerEntryId/revert-single',
     'GET /admin/users/search',
   ],
   CurrencyView: [
