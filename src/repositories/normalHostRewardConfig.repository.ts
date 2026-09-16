@@ -3,6 +3,7 @@ import { prisma } from '../config/database'
 
 export const DEFAULT_NORMAL_HOST_REWARD_TIERS = [
   { thresholdPoints: '100000', hourlyRatePoints: '1000', hourCapHours: 1, windowDays: 30 },
+  { thresholdPoints: '300000', hourlyRatePoints: '2000', hourCapHours: 2, windowDays: 7 },
   { thresholdPoints: '500000', hourlyRatePoints: '3500', hourCapHours: 2, windowDays: 7 },
   { thresholdPoints: '1000000', hourlyRatePoints: '7000', hourCapHours: 2, windowDays: 7 },
   { thresholdPoints: '2000000', hourlyRatePoints: '14000', hourCapHours: 2, windowDays: 7 },
