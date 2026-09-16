@@ -280,6 +280,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/rewards/claims',
     'GET /admin/rewards/claims/export',
     'POST /admin/transactions/points/:ledgerEntryId/revert-single',
+    'POST /admin/users/wallet/points/bulk-deduct',
+    'GET /admin/agency',
     'GET /admin/users/search',
   ],
   CurrencyView: [

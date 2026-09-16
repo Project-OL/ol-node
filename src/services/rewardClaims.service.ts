@@ -31,6 +31,7 @@ export const rewardClaimsService = {
 
     const { items: userTotals, total } = await rewardClaimsRepository.listUsersByTotalClaimed({
       country: query.country,
+      agencyUserId: query.agencyUserId,
       from,
       to,
       type: query.type,
@@ -90,6 +91,7 @@ export const rewardClaimsService = {
     const { from, to } = dateRange(query)
     const rows = await rewardClaimsRepository.listAllClaims({
       country: query.country,
+      agencyUserId: query.agencyUserId,
       from,
       to,
       type: query.type,
