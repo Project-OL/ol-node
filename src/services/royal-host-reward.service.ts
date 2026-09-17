@@ -164,7 +164,12 @@ function giftingProgress(
   }
 }
 
-/** Walk tiers in order; "current" = first not-yet-claimed one (locked+in-progress, or unlocked+claimable). */
+/**
+ * Walk tiers in order; "current" = first not-yet-claimed one (locked+in-progress, or unlocked+claimable).
+ * "next" previews the tier that becomes current once `current` is claimed — but while `current` is still
+ * LOCKED, there's nothing to unlock beyond it yet, so `next` mirrors `current`'s own tier instead of
+ * skipping ahead (avoids showing a milestone the user can't work toward before clearing the one in front of it).
+ */
 function buildGiftingCurrentAndNext(
   tiers: GiftingTierComputed[],
   weeklyEarnings: bigint,
@@ -183,7 +188,7 @@ function buildGiftingCurrentAndNext(
     claimed: tier.claimed,
   }
 
-  const nextTier = tiers[currentIndex + 1]
+  const nextTier = tier.unlocked ? tiers[currentIndex + 1] : tier
   const next: RoyalHostNextGiftingDto | null = nextTier
     ? {
         claimType: nextTier.claimType,
@@ -255,11 +260,19 @@ export const royalHostRewardService = {
         unlocked: step1Unlocked,
         claimed: step1Claimed,
       }
-      timingNext = {
-        claimType: 'TIMING_STEP_2',
-        points: config.timingStep2PointsBigInt.toString(),
-        earningThreshold: config.timingStep2EarningThresholdBigInt.toString(),
-      }
+      // While step 1 is still locked, there's nothing to unlock beyond it yet — mirror step 1
+      // itself instead of previewing step 2 (see buildGiftingCurrentAndNext for the same rule).
+      timingNext = step1Unlocked
+        ? {
+            claimType: 'TIMING_STEP_2',
+            points: config.timingStep2PointsBigInt.toString(),
+            earningThreshold: config.timingStep2EarningThresholdBigInt.toString(),
+          }
+        : {
+            claimType: 'TIMING_STEP_1',
+            points: config.timingStep1PointsBigInt.toString(),
+            earningThreshold: null,
+          }
     } else if (!step2Claimed) {
       const threshold = config.timingStep2EarningThresholdBigInt
       const remaining = weeklyEarningsPoints >= threshold ? 0n : threshold - weeklyEarningsPoints
@@ -276,7 +289,15 @@ export const royalHostRewardService = {
         unlocked: step2Unlocked,
         claimed: step2Claimed,
       }
-      timingNext = null
+      // Step 2 is the last step — once it's unlocked there's genuinely nothing after it (next stays
+      // null), but while it's still locked, mirror it the same way step 1's locked case does above.
+      timingNext = step2Unlocked
+        ? null
+        : {
+            claimType: 'TIMING_STEP_2',
+            points: config.timingStep2PointsBigInt.toString(),
+            earningThreshold: threshold.toString(),
+          }
     }
 
     const giftingTiersComputed = computeGiftingTiers(config, weeklyEarningsPoints, claimedTypes)
