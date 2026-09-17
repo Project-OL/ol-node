@@ -45,6 +45,15 @@ export type NormalHostUpcomingTierDto = {
   progressPercent: number
 }
 
+/** Full admin-configured ladder, no progress fields — lets the client render the whole ladder
+ * (or derive "the tier after next") without a second request. Always present, regardless of hasTier. */
+export type NormalHostTierListItemDto = {
+  thresholdPoints: string
+  hourlyRatePoints: string
+  hourCapHours: number
+  windowDays: number
+}
+
 export type NormalHostRewardStatusDto =
   | { eligible: false }
   | {
@@ -53,6 +62,7 @@ export type NormalHostRewardStatusDto =
       streamedSecondsToday: number
       hasTier: false
       nextTier: NormalHostNextTierDto
+      tiers: NormalHostTierListItemDto[]
     }
   | {
       eligible: true
@@ -69,6 +79,7 @@ export type NormalHostRewardStatusDto =
       nextTier: NormalHostUpcomingTierDto | null
       slots: NormalHostSlotDto[]
       totalClaimedToday: string
+      tiers: NormalHostTierListItemDto[]
     }
 
 async function streamedSecondsToday(userId: string, dayStartUtc: Date): Promise<number> {
@@ -94,6 +105,15 @@ function resolveCurrentTier(
     }
   }
   return best
+}
+
+function buildTierList(tiers: NormalHostTierBigInt[]): NormalHostTierListItemDto[] {
+  return tiers.map((t) => ({
+    thresholdPoints: t.thresholdPoints.toString(),
+    hourlyRatePoints: t.hourlyRatePoints.toString(),
+    hourCapHours: t.hourCapHours,
+    windowDays: t.windowDays,
+  }))
 }
 
 async function loadEligibilityAndInputs(userId: string) {
@@ -162,6 +182,7 @@ export const normalHostRewardService = {
           earningsRemaining: earningsRemaining.toString(),
           progressPercent,
         },
+        tiers: buildTierList(config.tiersBigInt),
       }
     }
 
@@ -224,6 +245,7 @@ export const normalHostRewardService = {
       nextTier,
       slots,
       totalClaimedToday: totalClaimedToday.toString(),
+      tiers: buildTierList(config.tiersBigInt),
     }
   },
 
