@@ -23,7 +23,10 @@ import { allocateUniqueUsername } from '../utils/user-identity-unique'
 import { explainFaceProfileStatus } from '../utils/face-profile-status'
 import { describeLivePhotoFailureReason, explainLivePhotoStatus } from '../utils/live-photo-status'
 import { adminAuditMetaFromRequest } from '../utils/admin-audit'
+import { adminCountryAccessService } from './adminCountryAccess.service'
+import { superAdminNotificationService } from './superAdminNotification.service'
 import type { FastifyRequest } from 'fastify'
+import type { AdminRole } from '@prisma/client'
 
 const OTHER_ACTIVE_LOGINS_PER_DEVICE = 50
 
@@ -377,9 +380,15 @@ export const adminUserModerationService = {
     )
   },
 
-  async removeAvatar(userId: string, adminUserId: string) {
+  async removeAvatar(
+    userId: string,
+    adminUserId: string,
+    opts: { reason?: string; adminRole: AdminRole },
+  ) {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    await adminCountryAccessService.assertAllowed(adminUserId, opts.adminRole, user.country)
 
     await userRepository.updateProfile(userId, { avatarUrl: null })
     await meService.invalidateUserCaches(userId)
@@ -389,6 +398,14 @@ export const adminUserModerationService = {
       targetUserId: userId,
       actionType: 'ADMIN_AVATAR_REMOVED',
       actionStatus: 'success',
+      actionDetails: opts.reason ? { reason: opts.reason } : undefined,
+    })
+
+    void superAdminNotificationService.notifyAll('PROFILE_PICTURE_REMOVED', {
+      targetUserId: userId,
+      reason: opts.reason ?? null,
+      restrictedUntil: null,
+      performedByAdminId: adminUserId,
     })
 
     return { ok: true as const, userId, avatarUrl: null }

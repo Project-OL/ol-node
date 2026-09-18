@@ -92,6 +92,7 @@ export default async function adminUserRestrictionRoutes(app: FastifyInstance) {
           reason: parsed.data.reason,
           reportId: parsed.data.reportId,
           adminUserId: request.adminUser!.id,
+          adminRole: request.adminUser!.role,
           targetUserIds: parsed.data.targetUserIds,
           extend: parsed.data.extend,
         }),

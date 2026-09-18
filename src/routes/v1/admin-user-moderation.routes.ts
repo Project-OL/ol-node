@@ -8,6 +8,7 @@ import {
   adminFaceUploadUrlBodySchema,
   adminLivePhotoRemoveBodySchema,
   adminPasswordResetBodySchema,
+  adminRemoveAvatarBodySchema,
   adminSecurityPasswordSetBodySchema,
 } from '../../models/admin-user-moderation.schemas'
 import { adminUserModerationService } from '../../services/adminUserModeration.service'
@@ -247,10 +248,32 @@ export default async function adminUserModerationRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { userId: string } }>(
     '/users/:userId/profile/remove-avatar',
-    { preHandler: preAuth, schema: { tags: ['Admin', 'Users'] } },
+    {
+      preHandler: preAuth,
+      schema: {
+        tags: ['Admin', 'Users'],
+        description:
+          'Remove the user’s profile picture. Optional reason is audited and included in the SUPER_ADMIN notification.',
+      },
+    },
     async (request, reply) => {
+      const parsed = adminRemoveAvatarBodySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
       return reply.send(
-        await adminUserModerationService.removeAvatar(request.params.userId, request.adminUser!.id),
+        await adminUserModerationService.removeAvatar(
+          request.params.userId,
+          request.adminUser!.id,
+          {
+            reason: parsed.data.reason,
+            adminRole: request.adminUser!.role,
+          },
+        ),
       )
     },
   )

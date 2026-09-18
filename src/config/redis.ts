@@ -437,6 +437,8 @@ export const RedisKeys = {
   adminLoginFail: (email: string) => `admin:login:fail:${email.toLowerCase()}`,
   /** Cached per-admin view permission snapshot (JSON; TTL ADMIN_VIEW_ACCESS_TTL). */
   adminViewAccess: (adminId: string) => `admin:views:access:${adminId}`,
+  /** Cached per-admin country-access snapshot (JSON; TTL ADMIN_COUNTRY_ACCESS_TTL). */
+  adminCountryAccess: (adminId: string) => `admin:country:access:${adminId}`,
   /** Per-admin last searched/viewed users (Redis LIST of userIds; max 10). */
   adminUserSearchHistory: (adminId: string) => `admin:user-search-history:${adminId}`,
   /** Master ledger: active house (treasury / company-agency / game-house) account ids. */
@@ -581,6 +583,8 @@ export const SUPPORT_TICKET_DETAIL_TTL = 30
 export const ADMIN_ONLINE_TTL = 120
 /** Per-admin view permission snapshot TTL — busted on assignment/view changes. */
 export const ADMIN_VIEW_ACCESS_TTL = 120
+/** Per-admin country-access snapshot TTL — busted on grant changes. */
+export const ADMIN_COUNTRY_ACCESS_TTL = 120
 /** Admin login failure throttle window per email (seconds). */
 export const ADMIN_LOGIN_FAIL_TTL = 900
 /** Failures within the throttle window before pre-DB 429s. */
