@@ -70,6 +70,11 @@ export type RoyalHostRewardStatusDto =
       weeklyEarningsPoints: string
       timingReward: {
         totalClaimed: string
+        /** Timing's one earnings gate (step 2's requirement) — surfaced here so it's visible
+         * regardless of which step is currently `current` (step 1 has no earnings dimension). */
+        earningThreshold: string
+        earnedPoints: string
+        progressPercent: number
         current: RoyalHostCurrentTimingDto | null
         next: RoyalHostNextTimingDto | null
       }
@@ -322,6 +327,15 @@ export const royalHostRewardService = {
       weeklyEarningsPoints: weeklyEarningsPoints.toString(),
       timingReward: {
         totalClaimed: timingClaimedTotal.toString(),
+        earningThreshold: config.timingStep2EarningThresholdBigInt.toString(),
+        earnedPoints: weeklyEarningsPoints.toString(),
+        progressPercent:
+          config.timingStep2EarningThresholdBigInt > 0n
+            ? Math.min(
+                100,
+                Number((weeklyEarningsPoints * 100n) / config.timingStep2EarningThresholdBigInt),
+              )
+            : 100,
         current: timingCurrent,
         next: timingNext,
       },
