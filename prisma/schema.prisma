@@ -194,6 +194,7 @@ model User {
   hostAdminsReceived           LiveStreamAdmin[]             @relation("HostAdminUser")
   userRestrictions             UserRestriction[]
   restrictionTargetsAsTarget   UserRestrictionTarget[] @relation("RestrictionTargetUser")
+  moderationNotifications      SuperAdminNotification[]
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -3088,6 +3089,37 @@ model CsaNotification {
   @@map("csa_notifications")
 }
 
+/// Fired whenever any admin applies LIVE_CHAT_MUTE / LIVE_AUDIO_MUTE /
+/// MESSAGING_DISABLE or removes a profile picture — one row per SUPER_ADMIN
+/// recipient (fan-out), same per-recipient polling shape as CsaNotification.
+enum ModerationNotificationType {
+  LIVE_CHAT_MUTE
+  LIVE_AUDIO_MUTE
+  MESSAGING_DISABLE
+  PROFILE_PICTURE_REMOVED
+}
+
+model SuperAdminNotification {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  recipientAdminId   String                     @map("recipient_admin_id")
+  recipient          SystemAdmin                @relation(fields: [recipientAdminId], references: [id], onDelete: Cascade)
+  actionType         ModerationNotificationType @map("action_type")
+  targetUserId       String                     @map("target_user_id") @db.Uuid
+  targetUser         User                       @relation(fields: [targetUserId], references: [id], onDelete: Cascade)
+  reason             String?                    @db.Text
+  /// null for PROFILE_PICTURE_REMOVED (instant, no duration).
+  restrictedUntil    DateTime?                  @map("restricted_until")
+  /// No FK, same convention as UserRestriction.createdByAdminId — survives admin removal.
+  performedByAdminId String                     @map("performed_by_admin_id")
+  isRead             Boolean                    @default(false) @map("is_read")
+  readAt             DateTime?                  @map("read_at")
+  createdAt          DateTime                   @default(now()) @map("created_at")
+
+  @@index([recipientAdminId, isRead, createdAt(sort: Desc)])
+  @@index([targetUserId])
+  @@map("super_admin_notifications")
+}
+
 model SupportMessage {
   id           BigInt                   @id @default(autoincrement()) @db.BigInt
   publicId     String                   @unique @default(cuid()) @map("public_id")
@@ -3499,6 +3531,8 @@ model SystemAdmin {
   viewAssignments AdminViewAssignment[]
   ipWhitelist     AdminIpWhitelist[]
   loginFailures   AdminLoginFailure[]
+  countryAccess   AdminCountryAccess[]
+  moderationNotificationsReceived SuperAdminNotification[]
 
   @@map("system_admins")
 }
@@ -3571,6 +3605,22 @@ model AdminViewAssignment {
   @@unique([adminId, viewId])
   @@index([viewId])
   @@map("admin_view_assignments")
+}
+
+/// Countries an admin may search/act on via the country-scoped user search page.
+/// Zero rows for an admin = unrestricted (legacy behavior), same convention as
+/// AdminViewAssignment: 0 assignments = role-only gating, >=1 = restricted.
+model AdminCountryAccess {
+  id                String      @id @default(uuid())
+  adminId           String      @map("admin_id")
+  admin             SystemAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  country           String      @db.VarChar(100)
+  createdByAdminId  String?     @map("created_by_admin_id")
+  createdAt         DateTime    @default(now()) @map("created_at")
+
+  @@unique([adminId, country])
+  @@index([adminId])
+  @@map("admin_country_access")
 }
 
 model AdminSession {

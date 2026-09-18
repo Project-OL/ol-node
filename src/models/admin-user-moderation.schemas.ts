@@ -17,10 +17,7 @@ export const adminFaceRevokeBodySchema = z.object({
 })
 
 export const adminFaceUploadUrlBodySchema = z.object({
-  mimeType: z
-    .enum(['image/jpeg', 'image/jpg', 'image/png'])
-    .optional()
-    .default('image/jpeg'),
+  mimeType: z.enum(['image/jpeg', 'image/jpg', 'image/png']).optional().default('image/jpeg'),
 })
 
 export const adminFaceIndexBodySchema = z.object({
@@ -31,6 +28,10 @@ export const adminFaceIndexBodySchema = z.object({
 })
 
 export const adminLivePhotoRemoveBodySchema = z.object({
+  reason: z.string().max(500).optional(),
+})
+
+export const adminRemoveAvatarBodySchema = z.object({
   reason: z.string().max(500).optional(),
 })
 

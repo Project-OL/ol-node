@@ -99,6 +99,9 @@ import customGiftRoutes from './routes/v1/custom-gift.routes'
 import customGiftAdminRoutes from './routes/v1/custom-gift-admin.routes'
 import systemSettingsAdminRoutes from './routes/v1/system-settings-admin.routes'
 import adminViewRoutes from './routes/v1/admin-view.routes'
+import adminCountryAccessRoutes from './routes/v1/admin-country-access.routes'
+import adminCountryUserSearchRoutes from './routes/v1/admin-country-user-search.routes'
+import superAdminNotificationRoutes from './routes/v1/super-admin-notification.routes'
 import { schedulePublicIdPregen } from './queues/public-id-pregen.queue'
 import { publicIdPreGenerationService } from './services/public-id-pre-generation.service'
 import { rootLogger } from './utils/rootLogger'
@@ -294,6 +297,9 @@ export async function buildApp() {
       await adminApp.register(bannerAdminRoutes)
       await adminApp.register(customGiftAdminRoutes)
       await adminApp.register(adminViewRoutes)
+      await adminApp.register(adminCountryAccessRoutes)
+      await adminApp.register(adminCountryUserSearchRoutes)
+      await adminApp.register(superAdminNotificationRoutes)
     },
     { prefix: `${prefix}/admin` },
   )

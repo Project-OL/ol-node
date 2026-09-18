@@ -1,4 +1,4 @@
-import type { UserRestrictionType } from '@prisma/client'
+import type { AdminRole, UserRestrictionType } from '@prisma/client'
 import { RedisKeys, redisClient } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { userRepository } from '../repositories/user.repository'
@@ -10,6 +10,8 @@ import { prismaRead } from '../config/database'
 import { auditService } from './audit.service'
 import { publishServerFrameToUser } from '../utils/ws-publisher'
 import { formatUserName } from '../utils/user-display'
+import { adminCountryAccessService } from './adminCountryAccess.service'
+import { superAdminNotificationService } from './superAdminNotification.service'
 
 const ERROR_BY_TYPE: Record<UserRestrictionType, { code: string; message: string }> = {
   LIVE_CHAT_MUTE: {
@@ -241,6 +243,7 @@ export const userRestrictionService = {
     reason?: string
     reportId?: string
     adminUserId: string
+    adminRole: AdminRole
     targetUserIds?: string[]
     extend?: boolean
   }) {
@@ -262,6 +265,12 @@ export const userRestrictionService = {
 
     const user = await userRepository.findById(params.userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
+
+    await adminCountryAccessService.assertAllowed(
+      params.adminUserId,
+      params.adminRole,
+      user.country,
+    )
 
     if (params.reportId) {
       const report = await prismaRead.messageReport.findUnique({
@@ -360,6 +369,15 @@ export const userRestrictionService = {
       event: 'restriction.applied',
       restriction: dto,
     })
+
+    if (params.type !== 'LIVE_STREAM_START_BAN') {
+      void superAdminNotificationService.notifyAll(params.type, {
+        targetUserId: params.userId,
+        reason,
+        restrictedUntil,
+        performedByAdminId: params.adminUserId,
+      })
+    }
 
     if (params.type === 'LIVE_STREAM_START_BAN') {
       void import('./adminLiveStream.service')

@@ -97,6 +97,17 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'DELETE /admin/devices/:deviceId/ban',
   ],
   UserLocationsView: ['GET /admin/locations'],
+  // Country-restricted moderation page: minimal-field search + only mute
+  // chat/audio, disable messaging, and remove-avatar (no wallet/agency/etc.).
+  // Country enforcement itself is per-admin (admin_country_access), not this
+  // view's job — this only grants the endpoints.
+  CountryUserSearchView: [
+    'GET /admin/country-access/me',
+    'GET /admin/users/country-search',
+    'GET /admin/users/:id/restrictions',
+    'POST /admin/users/:id/restrictions',
+    'POST /admin/users/:id/profile/remove-avatar',
+  ],
   AgencyListView: [
     'GET /admin/agency/stats',
     'GET /admin/agency',

@@ -23,6 +23,14 @@ const LiveSessionEndSchema = z.object({
   endedAt: z.string().datetime().optional(),
 })
 
+const ModerationNotifySchema = z.object({
+  type: z.enum(['LIVE_CHAT_MUTE', 'LIVE_AUDIO_MUTE']),
+  targetUserId: z.string().min(1),
+  reason: z.string().max(500).optional(),
+  restrictedUntil: z.string().datetime(),
+  performedByAdminId: z.string().min(1),
+})
+
 export async function webhooksRoutes(app: FastifyInstance) {
   app.post('/epay', async (request: FastifyRequest, reply: FastifyReply) => {
     const signature = String(request.headers['x-epay-signature'] ?? '')
@@ -120,6 +128,36 @@ export async function webhooksRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { userRestrictionService } = await import('../../services/userRestriction.service')
       return reply.send(await userRestrictionService.listActiveForUser(request.params.userId))
+    },
+  )
+
+  /**
+   * Live-server: notify all SUPER_ADMINs after it applies LIVE_CHAT_MUTE /
+   * LIVE_AUDIO_MUTE (those two types are created on Live-server, not here).
+   * Auth: X-Live-Webhook-Secret
+   */
+  app.post(
+    '/live/moderation-notify',
+    { preHandler: [verifyLiveWebhookSecret] },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const parsed = ModerationNotifySchema.safeParse(request.body ?? {})
+      if (!parsed.success) {
+        throw new AppError(
+          400,
+          parsed.error.errors[0]?.message ?? 'Invalid body',
+          'INVALID_REQUEST',
+        )
+      }
+      const body = parsed.data
+      const { superAdminNotificationService } =
+        await import('../../services/superAdminNotification.service')
+      await superAdminNotificationService.notifyAll(body.type, {
+        targetUserId: body.targetUserId,
+        reason: body.reason,
+        restrictedUntil: new Date(body.restrictedUntil),
+        performedByAdminId: body.performedByAdminId,
+      })
+      return reply.code(200).send({ ok: true })
     },
   )
 }
