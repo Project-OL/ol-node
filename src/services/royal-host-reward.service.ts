@@ -21,7 +21,10 @@ const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 export type RoyalHostTimingClaimType = 'TIMING_STEP_1' | 'TIMING_STEP_2'
 
 export type RoyalHostCurrentTimingDto = {
-  claimType: RoyalHostTimingClaimType
+  /** `null` once both timing steps are claimed — a terminal marker, not an actionable step.
+   * `requiredMinutes`/`completedMinutes` (and every other field here) stay populated so a
+   * client reading `current.*` unconditionally still gets real values. */
+  claimType: RoyalHostTimingClaimType | null
   points: string
   requiredMinutes: number
   completedMinutes: number
@@ -76,11 +79,15 @@ export type RoyalHostRewardStatusDto =
         earningThreshold: string
         earnedPoints: string
         progressPercent: number
-        /** Weekly hours requirement, surfaced here (not just inside `current`) so the UI has it
-         * even once both steps are claimed and `current` is null. */
+        /** Weekly hours requirement, mirrored from `current.requiredMinutes`/`completedMinutes`
+         * so a client reading either the top-level pair or `current`'s own pair gets the same
+         * values, regardless of claim state. */
         requiredMinutes: number
         completedMinutes: number
-        current: RoyalHostCurrentTimingDto | null
+        /** Never `null` — once both steps are claimed this becomes a terminal marker
+         * (`claimType: null, claimed: true`) instead of disappearing, so `current.*` stays a
+         * stable read for clients that don't special-case the all-claimed state. */
+        current: RoyalHostCurrentTimingDto
         next: RoyalHostNextTimingDto | null
       }
       giftingReward: {
@@ -303,6 +310,23 @@ export const royalHostRewardService = {
         claimed: step2Claimed,
       }
       // Step 2 is the last timing step — there's nothing after it, locked or not.
+      timingNext = null
+    } else {
+      // Both steps claimed. Terminal marker, not an actionable step — kept non-null (instead of
+      // dropping to null) so clients reading current.requiredMinutes/completedMinutes unconditionally
+      // still get real values once the week's timing reward is fully claimed.
+      timingCurrent = {
+        claimType: null,
+        points: '0',
+        requiredMinutes,
+        completedMinutes,
+        earningThreshold: null,
+        earnedPoints: null,
+        remainingPoints: null,
+        progressPercent: 100,
+        unlocked: false,
+        claimed: true,
+      }
       timingNext = null
     }
 
