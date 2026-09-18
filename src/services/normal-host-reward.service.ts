@@ -9,8 +9,9 @@ import {
   normalHostRewardConfigService,
   type NormalHostTierBigInt,
 } from './normalHostRewardConfig.service'
-import { effectiveSecondsForSession } from './livestream-reward.service'
-import { hasRoyalHostTag } from './royal-host-reward.service'
+import { dayIndexSinceJoin, effectiveSecondsForSession } from './livestream-reward.service'
+import { livestreamRewardConfigService } from './livestreamRewardConfig.service'
+import { hasRoyalHostTag } from '../utils/royalHostTag'
 import { utcDateString, utcStartOfDay } from '../utils/datetime'
 import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 
@@ -117,12 +118,21 @@ function buildTierList(tiers: NormalHostTierBigInt[]): NormalHostTierListItemDto
 }
 
 async function loadEligibilityAndInputs(userId: string) {
-  const [user, config] = await Promise.all([
-    prismaRead.user.findUnique({ where: { id: userId }, select: { adminTags: true } }),
+  const [user, config, livestreamConfig] = await Promise.all([
+    prismaRead.user.findUnique({
+      where: { id: userId },
+      select: { adminTags: true, createdAt: true },
+    }),
     normalHostRewardConfigService.getConfig(),
+    livestreamRewardConfigService.getConfig(),
   ])
   if (!user) throw new AppError(404, 'User not found', 'NOT_FOUND')
-  const eligible = !hasRoyalHostTag(user.adminTags)
+
+  // Normal Host reward starts only once the livestream (7-day new-host) reward window has
+  // fully closed, and never applies to Royal Host-tagged users (they're on the royal ladder).
+  const today = utcStartOfDay(new Date())
+  const dayIndex = dayIndexSinceJoin(user.createdAt, today)
+  const eligible = !hasRoyalHostTag(user.adminTags) && dayIndex > livestreamConfig.windowDays
   return { eligible, config }
 }
 
