@@ -76,6 +76,10 @@ export type RoyalHostRewardStatusDto =
         earningThreshold: string
         earnedPoints: string
         progressPercent: number
+        /** Weekly hours requirement, surfaced here (not just inside `current`) so the UI has it
+         * even once both steps are claimed and `current` is null. */
+        requiredMinutes: number
+        completedMinutes: number
         current: RoyalHostCurrentTimingDto | null
         next: RoyalHostNextTimingDto | null
       }
@@ -333,6 +337,8 @@ export const royalHostRewardService = {
                 Number((weeklyEarningsPoints * 100n) / config.timingStep2EarningThresholdBigInt),
               )
             : 100,
+        requiredMinutes,
+        completedMinutes,
         current: timingCurrent,
         next: timingNext,
       },
