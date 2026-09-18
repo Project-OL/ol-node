@@ -78,7 +78,8 @@ export type RoyalHostRewardStatusDto =
         current: RoyalHostCurrentGiftingDto | null
         next: RoyalHostNextGiftingDto | null
       }
-      /** Full reference ladder: threshold reached -> total cumulative reward for the week. */
+      /** Full reference ladder: threshold reached -> total cumulative reward for the week
+       * (gifting cumulative + timing reward achievable at that threshold, see timingRewardForTier). */
       tiers: RoyalHostTierRewardDto[]
       totalRewardPointsThisWeek: string
     }
@@ -145,6 +146,20 @@ function computeGiftingTiers(
     prevCumulative = tier.cumulativePoints
     return computed
   })
+}
+
+/**
+ * Timing reward achievable once weekly earnings reach a given gifting-tier threshold: step 1 is
+ * always in reach (it's earning-independent), step 2 only once the tier's threshold strictly
+ * exceeds timingStep2EarningThreshold — a tier sitting exactly ON that threshold (the lowest tier,
+ * by default) is treated as not yet past it, so it reflects step 1 only.
+ */
+function timingRewardForTier(
+  config: RoyalHostRewardEffectiveConfig,
+  tierThreshold: bigint,
+): bigint {
+  const step2Reached = tierThreshold > config.timingStep2EarningThresholdBigInt
+  return config.timingStep1PointsBigInt + (step2Reached ? config.timingStep2PointsBigInt : 0n)
 }
 
 function giftingProgress(
@@ -311,7 +326,7 @@ export const royalHostRewardService = {
 
     const tiers: RoyalHostTierRewardDto[] = giftingTiersComputed.map((t) => ({
       threshold: t.threshold.toString(),
-      totalReward: t.cumulativePoints.toString(),
+      totalReward: (t.cumulativePoints + timingRewardForTier(config, t.threshold)).toString(),
     }))
 
     return {
