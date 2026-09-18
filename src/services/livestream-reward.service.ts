@@ -13,6 +13,7 @@ import {
 import { addUtcDays, utcDateString, utcStartOfDay } from '../utils/datetime'
 import { provisionalEffectiveDurationSeconds } from '../utils/live-stream-effective-duration'
 import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
+import { hasRoyalHostTag } from '../utils/royalHostTag'
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
 
@@ -55,7 +56,7 @@ export type SessionDurationRow = {
 }
 
 /** 1-indexed day of membership, e.g. join day itself is day 1. */
-function dayIndexSinceJoin(createdAt: Date, today: Date): number {
+export function dayIndexSinceJoin(createdAt: Date, today: Date): number {
   const joinDay = utcStartOfDay(createdAt)
   const diffDays = Math.round((today.getTime() - joinDay.getTime()) / 86_400_000)
   return diffDays + 1
@@ -166,7 +167,7 @@ export const livestreamRewardService = {
     const [user, config] = await Promise.all([
       prismaRead.user.findUnique({
         where: { id: userId },
-        select: { createdAt: true },
+        select: { createdAt: true, adminTags: true },
       }),
       livestreamRewardConfigService.getConfig(),
     ])
@@ -175,7 +176,9 @@ export const livestreamRewardService = {
     const today = utcStartOfDay(new Date())
     const joinDay = utcStartOfDay(user.createdAt)
     const dayIndex = dayIndexSinceJoin(user.createdAt, today)
-    const eligible = dayIndex >= 1 && dayIndex <= config.windowDays
+    // Royal Host reward supersedes the livestream reward entirely — tagged users never see it.
+    const eligible =
+      dayIndex >= 1 && dayIndex <= config.windowDays && !hasRoyalHostTag(user.adminTags)
 
     let streamedMinutesToday = 0
     let parts: LivestreamRewardPartDto[] = []
@@ -213,11 +216,19 @@ export const livestreamRewardService = {
     const [user, config] = await Promise.all([
       prismaRead.user.findUnique({
         where: { id: userId },
-        select: { createdAt: true },
+        select: { createdAt: true, adminTags: true },
       }),
       livestreamRewardConfigService.getConfig(),
     ])
     if (!user) throw new AppError(404, 'User not found', 'NOT_FOUND')
+
+    if (hasRoyalHostTag(user.adminTags)) {
+      throw new AppError(
+        403,
+        'Royal Host reward replaces the livestream reward',
+        'LIVESTREAM_REWARD_ROYAL_HOST_EXCLUDED',
+      )
+    }
 
     const today = utcStartOfDay(new Date())
     const dayIndex = dayIndexSinceJoin(user.createdAt, today)

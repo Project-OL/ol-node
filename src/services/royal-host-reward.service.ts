@@ -12,10 +12,11 @@ import {
 import { effectiveSecondsForSession } from './livestream-reward.service'
 import { addUtcDays, utcDateString, utcStartOfWeek } from '../utils/datetime'
 import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
+import { ROYAL_HOST_TAG, hasRoyalHostTag } from '../utils/royalHostTag'
+
+export { ROYAL_HOST_TAG, hasRoyalHostTag }
 
 const INTERACTIVE_TX_TIMEOUT_MS = 20_000
-
-export const ROYAL_HOST_TAG = 'royal host'
 
 export type RoyalHostTimingClaimType = 'TIMING_STEP_1' | 'TIMING_STEP_2'
 
@@ -88,10 +89,6 @@ export type RoyalHostRewardStatusDto =
       tiers: RoyalHostTierRewardDto[]
       totalRewardPointsThisWeek: string
     }
-
-export function hasRoyalHostTag(adminTags: string[]): boolean {
-  return adminTags.some((t) => t.trim().toLowerCase() === ROYAL_HOST_TAG)
-}
 
 async function streamedSecondsForWeek(
   userId: string,
