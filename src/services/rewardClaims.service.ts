@@ -40,22 +40,28 @@ export const rewardClaimsService = {
     })
 
     const userIds = userTotals.map((u) => u.userId)
-    const claims = await rewardClaimsRepository.listClaimsForUsers({
-      userIds,
-      from,
-      to,
-      type: query.type,
-    })
+    const [claims, deductions] = await Promise.all([
+      rewardClaimsRepository.listClaimsForUsers({ userIds, from, to, type: query.type }),
+      rewardClaimsRepository.listDeductionsForUsers({ userIds, from, to }),
+    ])
 
-    const reversedIds = await rewardClaimsRepository.findReversedLedgerEntryIds(
-      claims.map((c) => c.ledgerEntryId),
-    )
+    const reversedIds = await rewardClaimsRepository.findReversedLedgerEntryIds([
+      ...claims.map((c) => c.ledgerEntryId),
+      ...deductions.map((d) => d.ledgerEntryId),
+    ])
 
     const claimsByUser = new Map<string, typeof claims>()
     for (const claim of claims) {
       const list = claimsByUser.get(claim.userId)
       if (list) list.push(claim)
       else claimsByUser.set(claim.userId, [claim])
+    }
+
+    const deductionsByUser = new Map<string, typeof deductions>()
+    for (const deduction of deductions) {
+      const list = deductionsByUser.get(deduction.userId)
+      if (list) list.push(deduction)
+      else deductionsByUser.set(deduction.userId, [deduction])
     }
 
     const users = userTotals.map((u) => ({
@@ -65,6 +71,9 @@ export const rewardClaimsService = {
       publicId: u.publicId.toString(),
       totalPoints: u.totalPoints.toString(),
       claimCount: Number(u.claimCount),
+      totalDeducted: u.totalDeducted.toString(),
+      deductionCount: Number(u.deductionCount),
+      netPoints: (u.totalPoints - u.totalDeducted).toString(),
       claims: (claimsByUser.get(u.userId) ?? []).map((c) => ({
         type: c.type,
         typeLabel: TYPE_LABEL[c.type],
@@ -73,6 +82,14 @@ export const rewardClaimsService = {
         ledgerEntryId: c.ledgerEntryId,
         claimedAt: c.claimedAt.toISOString(),
         reverted: reversedIds.has(c.ledgerEntryId),
+      })),
+      deductions: (deductionsByUser.get(u.userId) ?? []).map((d) => ({
+        ledgerEntryId: d.ledgerEntryId,
+        amount: d.amount.toString(),
+        description: d.description,
+        adminUserId: d.adminUserId,
+        createdAt: d.createdAt.toISOString(),
+        reverted: reversedIds.has(d.ledgerEntryId),
       })),
     }))
 
@@ -89,20 +106,29 @@ export const rewardClaimsService = {
     query: ExportRewardClaimsQuery,
   ): Promise<{ buffer: Buffer; count: number }> {
     const { from, to } = dateRange(query)
-    const rows = await rewardClaimsRepository.listAllClaims({
-      country: query.country,
-      agencyUserId: query.agencyUserId,
-      from,
-      to,
-      type: query.type,
-    })
-    if (rows.length > EXPORT_ROW_CAP) {
+    const [rows, deductionRows] = await Promise.all([
+      rewardClaimsRepository.listAllClaims({
+        country: query.country,
+        agencyUserId: query.agencyUserId,
+        from,
+        to,
+        type: query.type,
+      }),
+      rewardClaimsRepository.listAllDeductions({
+        country: query.country,
+        agencyUserId: query.agencyUserId,
+        from,
+        to,
+      }),
+    ])
+    if (rows.length > EXPORT_ROW_CAP || deductionRows.length > EXPORT_ROW_CAP) {
       throw new AppError(413, 'Export too large — narrow the filter', 'EXPORT_TOO_LARGE')
     }
 
-    const reversedIds = await rewardClaimsRepository.findReversedLedgerEntryIds(
-      rows.map((r) => r.ledgerEntryId),
-    )
+    const reversedIds = await rewardClaimsRepository.findReversedLedgerEntryIds([
+      ...rows.map((r) => r.ledgerEntryId),
+      ...deductionRows.map((d) => d.ledgerEntryId),
+    ])
 
     const workbook = new ExcelJS.Workbook()
     const sheet = workbook.addWorksheet('Reward Claims')
@@ -130,7 +156,32 @@ export const rewardClaimsService = {
     }
     sheet.getRow(1).font = { bold: true }
 
+    const deductionSheet = workbook.addWorksheet('Admin Deductions')
+    deductionSheet.columns = [
+      { header: 'Username', key: 'username', width: 24 },
+      { header: 'Public ID', key: 'publicId', width: 14 },
+      { header: 'Country', key: 'country', width: 18 },
+      { header: 'Points Deducted', key: 'amount', width: 16 },
+      { header: 'Reason', key: 'description', width: 32 },
+      { header: 'Admin User ID', key: 'adminUserId', width: 36 },
+      { header: 'Debited At', key: 'createdAt', width: 22 },
+      { header: 'Reverted', key: 'reverted', width: 12 },
+    ]
+    for (const d of deductionRows) {
+      deductionSheet.addRow({
+        username: d.username,
+        publicId: d.publicId.toString(),
+        country: d.country ?? '',
+        amount: d.amount.toString(),
+        description: d.description ?? '',
+        adminUserId: d.adminUserId ?? '',
+        createdAt: d.createdAt.toISOString(),
+        reverted: reversedIds.has(d.ledgerEntryId) ? 'Yes' : 'No',
+      })
+    }
+    deductionSheet.getRow(1).font = { bold: true }
+
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer())
-    return { buffer, count: rows.length }
+    return { buffer, count: rows.length + deductionRows.length }
   },
 }

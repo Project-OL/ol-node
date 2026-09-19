@@ -19,7 +19,7 @@ export default async function adminRewardsRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Rewards'],
         description:
-          'Reward claims (Normal/Royal Host, Livestream Streak) aggregated per user, sorted by total claimed desc. Filter by country, type, and claim date range.',
+          'Reward claims (Normal/Royal Host, Livestream Streak) plus admin point deductions, aggregated per user, sorted by total claimed desc. Filter by country, type, and claim date range.',
       },
     },
     async (request, reply) => {
@@ -36,7 +36,7 @@ export default async function adminRewardsRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Rewards'],
         description:
-          'Excel export of reward claims for the given filter (country/type/date range).',
+          'Excel export of reward claims and admin point deductions (two sheets) for the given filter (country/type/date range).',
       },
     },
     async (request, reply) => {
