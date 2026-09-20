@@ -40,6 +40,7 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'GET /admin/users/:id/transactions/coins',
     'GET /admin/users/:id/transactions/points',
     'GET /admin/users/:id/transactions/trading-coins',
+    'GET /admin/users/:id/rewards-overview',
     'POST /admin/currency/adjust',
     'GET /admin/transactions/coins',
     'GET /admin/transactions/points',

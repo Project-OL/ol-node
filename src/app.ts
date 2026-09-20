@@ -77,6 +77,7 @@ import accountDeletionAdminRoutes from './routes/v1/account-deletion-admin.route
 import adminUserWalletRoutes from './routes/v1/admin-user-wallet.routes'
 import adminTransactionsRoutes from './routes/v1/admin-transactions.routes'
 import adminRewardsRoutes from './routes/v1/admin-rewards.routes'
+import adminUserRewardsOverviewRoutes from './routes/v1/admin-user-rewards-overview.routes'
 import adminCurrencyRoutes from './routes/v1/admin-currency.routes'
 import adminActivityRoutes from './routes/v1/admin-activity.routes'
 import adminUserModerationRoutes from './routes/v1/admin-user-moderation.routes'
@@ -278,6 +279,7 @@ export async function buildApp() {
       await adminApp.register(adminUserWalletRoutes)
       await adminApp.register(adminTransactionsRoutes)
       await adminApp.register(adminRewardsRoutes)
+      await adminApp.register(adminUserRewardsOverviewRoutes)
       await adminApp.register(adminCurrencyRoutes)
       await adminApp.register(adminActivityRoutes)
       await adminApp.register(adminUserModerationRoutes)
