@@ -25,6 +25,8 @@ export type AdminCountryUserSearchRow = Prisma.UserGetPayload<{
 export const adminCountryUserSearchRepository = {
   /**
    * Same name-match OR-clause as `adminUserSearch.repository.ts#searchByName`,
+   * plus an exact publicId/defaultPublicId/currentVipPublicId match when `q`
+   * is numeric (mirrors `adminUserSearch.repository.ts#findByPublicId`),
    * narrowed to the caller's granted countries. Empty `q` returns the most
    * recently created users in-scope (browse mode).
    */
@@ -50,6 +52,12 @@ export const adminCountryUserSearchRepository = {
       { firstName: { contains: q, mode: 'insensitive' } },
       { lastName: { contains: q, mode: 'insensitive' } },
     ]
+
+    if (/^\d+$/.test(q)) {
+      const publicId = BigInt(q)
+      or.push({ publicId }, { defaultPublicId: publicId }, { currentVipPublicId: publicId })
+    }
+
     const spaceIdx = q.indexOf(' ')
     if (spaceIdx > 0) {
       const first = q.slice(0, spaceIdx).trim()
