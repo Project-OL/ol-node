@@ -21,7 +21,7 @@ export default async function adminCountryUserSearchRoutes(app: FastifyInstance)
       schema: {
         tags: ['Admin', 'Users'],
         description:
-          'Search users by name/username within the caller’s granted countries. Returns only username, name, avatarUrl, publicId, and country — no email/phone. SUPER_ADMIN must pass an explicit country.',
+          'Search users by name/username/public ID within the caller’s granted countries. Returns only username, name, avatarUrl, publicId, and country — no email/phone. SUPER_ADMIN must pass an explicit country.',
       },
     },
     async (req, reply) => {
