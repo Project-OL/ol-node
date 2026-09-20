@@ -9,6 +9,7 @@ import {
   CreateCsaSchema,
   UpdateCsaSchema,
   SetCsaStatusSchema,
+  SetCsaAutoAssignSchema,
   ListCsasQuerySchema,
   ExportCsasQuerySchema,
   CsaIdParamsSchema,
@@ -94,6 +95,13 @@ export default async function csaAdminRoutes(app: FastifyInstance) {
     const body = parseRequest(SetCsaStatusSchema, req.body)
     const result = await csaManagementService.setStatus(adminId, body.status)
     return reply.send({ csa: result })
+  })
+
+  app.patch('/csas/:adminId/auto-assign', { preHandler: preAuth }, async (req, reply) => {
+    const { adminId } = parseRequest(CsaIdParamsSchema, req.params)
+    const body = parseRequest(SetCsaAutoAssignSchema, req.body)
+    const csa = await csaManagementService.setAutoAssign(adminId, body.autoAssignEnabled)
+    return reply.send({ csa })
   })
 
   app.get('/csas/:adminId/stats', { preHandler: preAuth }, async (req, reply) => {
