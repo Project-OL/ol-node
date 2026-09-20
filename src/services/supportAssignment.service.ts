@@ -8,7 +8,9 @@ import { countriesMatch } from '../utils/agency-country'
  * Auto-assignment for support tickets.
  *
  * Routing rules:
- * 1. Candidates = ACTIVE admins with role CUSTOMER_SUPPORT (minus excludeAdminId).
+ * 1. Candidates = ACTIVE admins with role CUSTOMER_SUPPORT (minus excludeAdminId),
+ *    minus any CSA with autoAssignEnabled=false (opted out of new tickets — they
+ *    keep whatever's already assigned, they just aren't picked for new ones).
  * 2. Prefer CSAs whose country matches the ticket owner's country (case-insensitive).
  *    When none match, all candidates are eligible.
  * 3. Pick the candidate with the lowest open (non-CLOSED) assigned-ticket count;
@@ -32,7 +34,7 @@ export const supportAssignmentService = {
 
     const candidates = (
       await systemAdminRepository.findAllByRole('CUSTOMER_SUPPORT', 'ACTIVE')
-    ).filter((a) => a.id !== opts?.excludeAdminId)
+    ).filter((a) => a.id !== opts?.excludeAdminId && a.autoAssignEnabled)
     if (candidates.length === 0) return null
 
     const owner = await userRepository.findById(ticket.userId)

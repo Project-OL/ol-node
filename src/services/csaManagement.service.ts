@@ -49,6 +49,7 @@ function toCsaDto(admin: SystemAdmin) {
     lockedUntil: admin.lockedUntil,
     /** True while lockedUntil is in the future (login lockout, not DISABLED/SUSPENDED). */
     isLocked: admin.lockedUntil != null && admin.lockedUntil.getTime() > Date.now(),
+    autoAssignEnabled: admin.autoAssignEnabled,
   }
 }
 
@@ -260,6 +261,17 @@ export const csaManagementService = {
 
     console.warn('[csa-management] status changed', { adminId, status, reassignment })
     return { ...toCsaDto(updated), reassignment }
+  },
+
+  /**
+   * Toggling this off only stops NEW tickets from being routed to this CSA
+   * (supportAssignmentService's candidate filter) — unlike setStatus, it does not
+   * touch existing assigned tickets or log the CSA out.
+   */
+  async setAutoAssign(adminId: string, autoAssignEnabled: boolean) {
+    await findCsaOrThrow(adminId)
+    const updated = await systemAdminRepository.setAutoAssignEnabled(adminId, autoAssignEnabled)
+    return toCsaDto(updated)
   },
 
   async exportCsasCsv(status?: AdminStatus) {

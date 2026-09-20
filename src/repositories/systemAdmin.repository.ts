@@ -103,6 +103,13 @@ export const systemAdminRepository = {
     })
   },
 
+  async setAutoAssignEnabled(id: string, autoAssignEnabled: boolean) {
+    return prisma.systemAdmin.update({
+      where: { id },
+      data: { autoAssignEnabled },
+    })
+  },
+
   async updateLastLogin(id: string) {
     return prisma.systemAdmin.update({
       where: { id },

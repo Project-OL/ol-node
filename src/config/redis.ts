@@ -101,10 +101,6 @@ export const RedisKeys = {
   otpDeliveryConfig: () => 'otp:delivery-config',
   /** Cached OTP per-country cost rate overrides (whatsapp/sms). */
   otpCostRates: () => 'otp:cost-rates',
-  /** Cached running EC2/RDS/ElastiCache inventory (admin infra-cost dashboard). */
-  infraCostInventory: () => 'infra-cost:inventory',
-  /** Cached AWS Cost Explorer spend-by-service for one UTC month. */
-  infraCostByService: (year: number, month: number) => `infra-cost:by-service:${year}-${month}`,
   /** Cached GCP Billing Export (BigQuery) spend-by-service for one UTC month. */
   gcpCostByService: (year: number, month: number) => `gcp-infra-cost:by-service:${year}-${month}`,
   /** Per-user social endpoint rate limit. */
@@ -516,18 +512,10 @@ export const OTP_SMS_TRIGGER_AFTER_COUNT = 3
 export const OTP_DELIVERY_CONFIG_TTL = 300
 /** Cached OTP per-country cost rate overrides TTL (5 minutes). */
 export const OTP_COST_RATES_TTL = 300
-/** Cached EC2/RDS/ElastiCache inventory TTL (15 minutes) — cheap AWS calls, but no need to refetch every page load. */
-export const INFRA_COST_INVENTORY_TTL = 900
 /**
- * Cached Cost Explorer spend-by-service TTL (1 hour). GetCostAndUsage is billed per API
- * call (not free) and Cost Explorer data itself lags ~24h, so there's no benefit to
- * fetching more often than this even for the current, still-forming month.
- */
-export const INFRA_COST_BY_SERVICE_TTL = 3600
-/**
- * Cached GCP Billing Export (BigQuery) spend-by-service TTL (1 hour) — same rationale
- * as `INFRA_COST_BY_SERVICE_TTL`: querying BigQuery is a billed operation, and the
- * export itself lags, so there's no benefit to a shorter TTL.
+ * Cached GCP Billing Export (BigQuery) spend-by-service TTL (1 hour) — querying
+ * BigQuery is a billed operation, and the export itself lags, so there's no benefit
+ * to a shorter TTL.
  */
 export const GCP_COST_BY_SERVICE_TTL = 3600
 

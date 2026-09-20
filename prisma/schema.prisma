@@ -3593,6 +3593,9 @@ model SystemAdmin {
   gender            String?     @db.VarChar(20)
   country           String?     @db.VarChar(100)
   status            AdminStatus @default(ACTIVE)
+  /// New support tickets skip this admin as a candidate while false. Existing assigned
+  /// tickets are unaffected — this only gates supportAssignmentService's candidate pool.
+  autoAssignEnabled Boolean     @default(true) @map("auto_assign_enabled")
   failedLoginCount  Int         @default(0) @map("failed_login_count")
   lastFailedLoginAt DateTime?   @map("last_failed_login_at")
   lockedUntil       DateTime?   @map("locked_until")

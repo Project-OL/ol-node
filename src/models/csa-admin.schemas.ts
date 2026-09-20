@@ -60,6 +60,10 @@ export const SetCsaStatusSchema = z.object({
   status: AdminStatusEnum,
 })
 
+export const SetCsaAutoAssignSchema = z.object({
+  autoAssignEnabled: z.boolean(),
+})
+
 export const ListCsasQuerySchema = z.object({
   status: AdminStatusEnum.optional(),
   country: z.string().max(100).optional(),
