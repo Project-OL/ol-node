@@ -92,6 +92,20 @@ const envSchema = z
     AWS_S3_BUCKET: z.string().optional(),
 
     /**
+     * GCP infra monitor (admin "GCP Infra & Cost" dashboard). Optional — when
+     * `GCP_PROJECT_ID` is unset the monitor collectors and billing-cost queries are
+     * skipped entirely, so environments without this configured still boot cleanly.
+     * Auth is Application Default Credentials (no key file) — the running VM's
+     * attached service account, granted `roles/monitoring.viewer` and, once the
+     * billing export exists, `roles/bigquery.dataViewer` + `roles/bigquery.jobUser`.
+     */
+    GCP_PROJECT_ID: z.string().optional(),
+    /** BigQuery dataset the GCP Billing Export writes to, e.g. "billing_export". */
+    GCP_BILLING_BQ_DATASET: z.string().optional(),
+    /** Hours an unresolved GCP infra flag waits before re-emailing SUPER_ADMINs. */
+    GCP_INFRA_ALERT_RENOTIFY_HOURS: z.coerce.number().int().positive().default(6),
+
+    /**
      * Object-storage overrides for S3-compatible providers (Cloudflare R2 on GCP).
      * All optional — when unset the storage layer behaves exactly as before
      * (AWS S3 in `AWS_REGION` with `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`).
