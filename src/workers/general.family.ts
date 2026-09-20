@@ -82,10 +82,12 @@ import { processLedgerFloatSnapshotJob } from '../jobs/ledger-float-snapshot.job
 import { RANKING_BACKFILL_QUEUE } from '../queues/ranking.constants'
 import { registerRankingReconcileJob } from '../queues/ranking.queue'
 import { processRankingBackfillJob } from '../jobs/ranking-backfill.job'
+import { runGcpInfraMonitorJob } from '../jobs/gcp-infra-monitor.job'
 import type { WorkerFamily } from './family'
 
 const ACCOUNT_DELETION_QUEUE = 'account-deletion'
 const FACE_REGISTRATION_SWEEP_QUEUE = 'face-registration-sweep'
+const GCP_INFRA_MONITOR_QUEUE = 'gcp-infra-monitor'
 
 /**
  * Payroll, expiry, agency, live-session, and other non-chat workers.
@@ -166,6 +168,28 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   const ledgerFloatSnapshotWorker = new Worker(
     LEDGER_FLOAT_SNAPSHOT_QUEUE,
     async (job: Job) => processLedgerFloatSnapshotJob(job),
+    { connection, concurrency: 1 },
+  )
+
+  const gcpInfraMonitorQueue = new Queue(GCP_INFRA_MONITOR_QUEUE, { connection })
+  await gcpInfraMonitorQueue.add(
+    'run',
+    {},
+    {
+      repeat: { pattern: '0 * * * *', tz: 'UTC' },
+      jobId: 'gcp-infra-monitor-hourly-utc',
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      removeOnComplete: 1000,
+      removeOnFail: 500,
+    },
+  )
+
+  const gcpInfraMonitorWorker = new Worker(
+    GCP_INFRA_MONITOR_QUEUE,
+    async () => {
+      await runGcpInfraMonitorJob()
+    },
     { connection, concurrency: 1 },
   )
 
@@ -527,6 +551,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   ledgerAuditWorker.on('failed', onFail('Ledger audit'))
   ledgerFloatSnapshotWorker.on('failed', onFail('Ledger float snapshot'))
   rankingBackfillWorker.on('failed', onFail('Ranking backfill'))
+  gcpInfraMonitorWorker.on('failed', onFail('GCP infra monitor'))
 
   return {
     name: 'general',
@@ -562,6 +587,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await accountDeletionQueue.close()
       await faceRegistrationSweepWorker.close()
       await faceRegistrationSweepQueue.close()
+      await gcpInfraMonitorWorker.close()
+      await gcpInfraMonitorQueue.close()
     },
   }
 }

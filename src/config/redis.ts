@@ -105,6 +105,8 @@ export const RedisKeys = {
   infraCostInventory: () => 'infra-cost:inventory',
   /** Cached AWS Cost Explorer spend-by-service for one UTC month. */
   infraCostByService: (year: number, month: number) => `infra-cost:by-service:${year}-${month}`,
+  /** Cached GCP Billing Export (BigQuery) spend-by-service for one UTC month. */
+  gcpCostByService: (year: number, month: number) => `gcp-infra-cost:by-service:${year}-${month}`,
   /** Per-user social endpoint rate limit. */
   socialRateLimit: (endpoint: string, userId: string) => `ratelimit:social:${endpoint}:${userId}`,
   /** User level cache. */
@@ -522,6 +524,12 @@ export const INFRA_COST_INVENTORY_TTL = 900
  * fetching more often than this even for the current, still-forming month.
  */
 export const INFRA_COST_BY_SERVICE_TTL = 3600
+/**
+ * Cached GCP Billing Export (BigQuery) spend-by-service TTL (1 hour) — same rationale
+ * as `INFRA_COST_BY_SERVICE_TTL`: querying BigQuery is a billed operation, and the
+ * export itself lags, so there's no benefit to a shorter TTL.
+ */
+export const GCP_COST_BY_SERVICE_TTL = 3600
 
 /** Wallet: cached balance TTL (5 minutes). */
 /** Broadcast progress/pending keys — safety ceiling; normal completion deletes them explicitly. */
