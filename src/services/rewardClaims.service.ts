@@ -11,7 +11,7 @@ import type {
 
 const EXPORT_ROW_CAP = 10_000
 
-const TYPE_LABEL: Record<RewardClaimType, string> = {
+export const TYPE_LABEL: Record<RewardClaimType, string> = {
   NORMAL_HOST: 'Normal Host',
   ROYAL_HOST: 'Royal Host',
   LIVESTREAM_STREAK: 'Livestream Streak',
