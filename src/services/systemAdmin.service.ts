@@ -127,7 +127,11 @@ export const systemAdminService = {
     })
   },
 
-  async login(email: string, password: string, meta: { ipAddress?: string; userAgent?: string }) {
+  async login(
+    email: string,
+    password: string,
+    meta: { ipAddress?: string; userAgent?: string; origin?: string },
+  ) {
     // Pre-DB throttle: brakes dictionary attacks even for unknown emails.
     const failKey = RedisKeys.adminLoginFail(email)
     const recentFailures = Number((await redisClient.get(failKey).catch(() => null)) ?? 0)
@@ -191,6 +195,25 @@ export const systemAdminService = {
         })
         throw new AppError(403, 'Login not allowed from this IP address', 'ADMIN_IP_FORBIDDEN')
       }
+    }
+
+    // Portal split: admins3jinyu is SUPER_ADMIN-only, priviledge is everyone else —
+    // mutually exclusive so a brute-force run against the public portal can never even
+    // attempt a SUPER_ADMIN login. Unrecognized/missing Origin (Postman, other
+    // integrations) is not restricted.
+    const portalMismatch =
+      (meta.origin === env.SUPER_ADMIN_PORTAL_ORIGIN && admin.role !== 'SUPER_ADMIN') ||
+      (meta.origin === env.ADMIN_PORTAL_ORIGIN && admin.role === 'SUPER_ADMIN')
+    if (portalMismatch) {
+      await recordLoginFailure(failKey)
+      await persistFailedLogin(admin, 'ADMIN_PORTAL_FORBIDDEN', meta)
+      await systemAdminRepository.touchLastFailedLogin(admin.id).catch(() => null)
+      console.warn('[admin-auth] login blocked by portal mismatch', {
+        adminId: admin.id,
+        role: admin.role,
+        origin: meta.origin ?? null,
+      })
+      throw new AppError(403, 'This portal does not accept this account', 'ADMIN_PORTAL_FORBIDDEN')
     }
 
     if (admin.failedLoginCount > 0 || admin.lockedUntil) {

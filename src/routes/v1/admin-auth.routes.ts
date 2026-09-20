@@ -47,6 +47,7 @@ export async function registerAdminAuthRoutes(app: FastifyInstance) {
     const result = await systemAdminService.login(body.email, body.password, {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
+      origin: req.headers.origin,
     })
     auditService.logAdmin({
       adminUserId: result.admin.id,

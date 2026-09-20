@@ -3543,6 +3543,7 @@ enum AdminLoginFailureReason {
   INVALID_CREDENTIALS
   ACCOUNT_LOCKED
   ADMIN_IP_FORBIDDEN
+  ADMIN_PORTAL_FORBIDDEN
 }
 
 model AdminLoginFailure {
