@@ -2,8 +2,12 @@ import { prismaRead } from '../config/database'
 
 /**
  * Sum of qualifying reward earnings for `userId` in `[start, end)`:
- * livestream gifts, video-call gifts, and video-call per-minute points.
- * Mirrors the JSON-metadata `context` filtering used in agencyCommission.repository.ts.
+ * any non-direct gift (livestream, video-call, self-gift, ...) plus video-call
+ * per-minute points. Only excludes `direct` (chat) gifts.
+ * Deliberately not pinned to an exact context spelling: Live-server's own
+ * livestream gift path writes `context: "live_stream"` (not "livestream"),
+ * so this mirrors the `<> 'direct'` pattern already used in
+ * agencyCommission.repository.ts rather than an exact-match allow-list.
  * Shared by the Royal Host and Normal Host reward services — same earnings definition.
  */
 export async function getQualifyingRewardEarningsForRange(
@@ -24,7 +28,7 @@ export async function getQualifyingRewardEarningsForRange(
         ple.tx_type = 'VIDEO_CALL'
         OR (
           ple.tx_type = 'GIFT_RECEIVE'
-          AND COALESCE(ple.metadata->>'context', 'livestream') IN ('livestream', 'video_call')
+          AND COALESCE(ple.metadata->>'context', 'livestream') <> 'direct'
         )
       )
   `
