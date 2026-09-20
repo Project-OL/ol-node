@@ -68,6 +68,14 @@ const envSchema = z
       .string()
       .optional()
       .transform((s) => s === 'true'),
+    /**
+     * Browser origins for the two admin portals. Login enforces a mutually exclusive
+     * split by the request's `Origin` header: SUPER_ADMIN only succeeds from
+     * SUPER_ADMIN_PORTAL_ORIGIN, every other role only from ADMIN_PORTAL_ORIGIN. An
+     * unrecognized/missing Origin (Postman, other integrations) is not restricted.
+     */
+    SUPER_ADMIN_PORTAL_ORIGIN: z.string().optional().default('https://admins3jinyu.offoolive.com'),
+    ADMIN_PORTAL_ORIGIN: z.string().optional().default('https://priviledge.offoolive.com'),
     /** Optional override for inbox sender (`users.id`). When unset, server uses or creates `offoo_platform`. */
     PLATFORM_SENDER_USER_ID: z.string().uuid().optional(),
     /**
