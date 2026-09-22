@@ -33,6 +33,7 @@ import { supportService } from './support.service'
 import { storageService } from './storage.service'
 import { withdrawalPayoutRailConfigService } from './withdrawalPayoutRailConfig.service'
 import { enqueuePlatformWithdrawalMessage } from '../queues/platform-message.queue'
+import { payrollAssignmentNotifier } from './payrollAssignmentNotifier.service'
 import {
   enqueuePayrollSla,
   enqueuePayrollWaiting,
@@ -905,9 +906,17 @@ export const withdrawalService = {
       await enqueuePayrollSla(assignmentIdOut, expiresAtOut)
       const assignment = await prismaRead.withdrawalPayrollAssignment.findUnique({
         where: { id: assignmentIdOut },
-        select: { agencyUserId: true },
+        select: { agencyUserId: true, withdrawalId: true, withdrawal: { select: { amountPoints: true } } },
       })
-      if (assignment) await bustPayrollSummaryCache(assignment.agencyUserId)
+      if (assignment) {
+        await bustPayrollSummaryCache(assignment.agencyUserId)
+        await payrollAssignmentNotifier.notifyAgencyOfAssignment({
+          agencyUserId: assignment.agencyUserId,
+          assignmentId: assignmentIdOut,
+          withdrawalId: assignment.withdrawalId,
+          amountPoints: assignment.withdrawal.amountPoints,
+        })
+      }
     }
   },
 

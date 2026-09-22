@@ -17,6 +17,7 @@ import { bigIntToStr, formatDuration } from '../utils/bigint'
 import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '../utils/user-display'
 import { agencyHostConfigService } from './agencyHostConfig.service'
 import { auditService } from './audit.service'
+import { agencyHostJoinNotifier } from './agencyHostJoinNotifier.service'
 
 type HostEarningsAgg = {
   hostEarnings: bigint
@@ -266,6 +267,7 @@ export const agencyHostService = {
 
     await cacheRedisService.del(RedisKeys.agencyMe(hostUserId))
     await agencyService.onAgencyMutation(agency.userId)
+    await agencyHostJoinNotifier.notifyHostJoined({ agencyUserId: agency.userId, hostUserId })
     return { ok: true as const, immediate: true as const }
   },
 
@@ -901,6 +903,7 @@ export const agencyHostService = {
 
     await cacheRedisService.del(RedisKeys.agencyMe(hostUserId))
     await agencyService.onAgencyMutation(agencyUserId)
+    await agencyHostJoinNotifier.notifyHostJoined({ agencyUserId, hostUserId })
     return { ok: true as const, hostUserId, agencyUserId, adminUserId }
   },
 
@@ -964,6 +967,13 @@ export const agencyHostService = {
     }
     await agencyService.onAgencyMutation(params.sourceAgencyUserId)
     await agencyService.onAgencyMutation(params.targetAgencyUserId)
+
+    for (const hostUserId of transferred) {
+      await agencyHostJoinNotifier.notifyHostJoined({
+        agencyUserId: params.targetAgencyUserId,
+        hostUserId,
+      })
+    }
 
     return {
       ok: true as const,
