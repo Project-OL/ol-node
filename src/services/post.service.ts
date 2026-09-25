@@ -106,7 +106,9 @@ export const postService = {
     }
 
     const key = `posts/${userId}/${crypto.randomUUID()}.${ext}`
-    const uploadUrl = await storageService.getPresignedPutUrl(key, mimeType, 600)
+    const uploadUrl = await storageService.getPresignedPutUrl(key, mimeType, 600, {
+      cacheControl: 'public, max-age=31536000, immutable',
+    })
 
     return { uploadUrl, mediaKey: key }
   },
@@ -151,7 +153,7 @@ export const postService = {
       }
     }
 
-    const mediaUrl = storageService.getPublicUrl(mediaKey)
+    const mediaUrl = storageService.getCdnOrS3PublicUrl(mediaKey)
     const mediaType = detectPostMediaType(mediaKey)
     let thumbnailKey: string | null = null
     let thumbnailUrl: string | null = null
@@ -166,7 +168,7 @@ export const postService = {
           body: thumbnailBuffer,
           contentType: 'image/jpeg',
         })
-        thumbnailUrl = storageService.getPublicUrl(thumbnailKey)
+        thumbnailUrl = storageService.getCdnOrS3PublicUrl(thumbnailKey)
       } catch (err) {
         rootLogger
           .child({ module: 'post-service', mediaKey })
