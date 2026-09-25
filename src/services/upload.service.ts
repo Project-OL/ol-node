@@ -52,8 +52,8 @@ export const uploadService = {
     return {
       uploadUrl,
       key,
-      // Single source of truth for the public origin (honors S3_PUBLIC_BASE_URL on R2).
-      publicUrl: storageService.getPublicUrl(key),
+      // CDN-aware: matches the rest of the codebase (CloudFront when configured, S3 origin otherwise).
+      publicUrl: storageService.getCdnOrS3PublicUrl(key),
       expiresIn: PRESIGNED_URL_EXPIRES_IN,
     }
   },
@@ -199,9 +199,7 @@ export const uploadService = {
         s3Key,
         file.mimeType.split(';')[0]!.trim(),
         presignTtl,
-        file.mediaType === 'AUDIO'
-          ? { cacheControl: 'public, max-age=31536000, immutable' }
-          : undefined,
+        { cacheControl: 'public, max-age=31536000, immutable' },
       )
       const publicUrl = storageService.getCdnOrS3PublicUrl(s3Key)
       result.push({
@@ -228,7 +226,9 @@ export const uploadService = {
     const ts = Date.now()
     for (let i = 0; i < count; i++) {
       const s3Key = `reports/${userId}/${ts}-${i}.jpg`
-      const uploadUrl = await storageService.getPresignedPutUrl(s3Key, 'image/jpeg', 300)
+      const uploadUrl = await storageService.getPresignedPutUrl(s3Key, 'image/jpeg', 300, {
+        cacheControl: 'public, max-age=31536000, immutable',
+      })
       result.push({ s3Key, uploadUrl })
     }
     return result
@@ -299,6 +299,7 @@ export const uploadService = {
         s3Key,
         file.mimeType.split(';')[0]!.trim(),
         presignTtl,
+        { cacheControl: 'public, max-age=31536000, immutable' },
       )
       const publicUrl = storageService.getCdnOrS3PublicUrl(s3Key)
       result.push({

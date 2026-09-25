@@ -57,7 +57,9 @@ export const agencyCoinsellerService = {
     }
     const ext = mime.split('/')[1]
     const s3Key = `agency/price-images/${agencyUserId}/${Date.now()}.${ext}`
-    const uploadUrl = await storageService.getPresignedPutUrl(s3Key, mime, PENDING_IMAGE_TTL)
+    const uploadUrl = await storageService.getPresignedPutUrl(s3Key, mime, PENDING_IMAGE_TTL, {
+      cacheControl: 'public, max-age=31536000, immutable',
+    })
     await redisClient.set(pendingImageKey(agencyUserId), s3Key, 'EX', PENDING_IMAGE_TTL)
     return { uploadUrl, s3Key }
   },
