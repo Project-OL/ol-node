@@ -106,7 +106,7 @@ export type LevelApplyResult = {
   newCumulative: bigint
 }
 
-/** Write fresh snapshot to Redis after a successful applyCredit (call post-commit). */
+/** Drop the cached snapshot after a successful applyCredit (call post-commit). */
 export async function syncLevelCacheFromApplyResult(
   userId: string,
   levelType: LevelType,
@@ -232,6 +232,12 @@ export const walletLevelService = {
     return { newLevel, previousLevel, newCumulative }
   },
 
+  /**
+   * Post-commit: build the snapshot for the API response and DELETE the cached one.
+   * Never SET here - a delayed SET from an earlier commit could overwrite a newer
+   * total (ol-node-rest and Live-server both write this row), and would pin
+   * `leveledUp: true` in the cache for the whole TTL. The next read reloads from DB.
+   */
   async refreshCache(
     userId: string,
     levelType: LevelType,
@@ -241,17 +247,7 @@ export const walletLevelService = {
   ): Promise<LevelSnapshot> {
     const thresholds = await getThresholds(levelType)
     const snapshot = buildSnapshot(newCumulative, newLevel, previousLevel, thresholds)
-
-    const redisKey =
-      levelType === LevelType.WEALTH
-        ? RedisKeys.userWealthLevel(userId)
-        : RedisKeys.userLivestreamLevel(userId)
-
-    try {
-      await redisClient.set(redisKey, JSON.stringify(snapshot), 'EX', USER_LEVEL_TTL)
-    } catch {
-      // ignore
-    }
+    await walletLevelService.invalidateCache(userId, levelType)
     return snapshot
   },
 

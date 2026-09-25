@@ -103,10 +103,14 @@ export const walletUserLevelRepository = {
     })
   },
 
-  /** Level rows for many users in one round-trip (batch display enrichment). */
+  /**
+   * Level rows for many users in one round-trip (batch display enrichment).
+   * Primary, not replica: the result is written to the 300s `level:*` cache right
+   * after a spend DELs it, so replica lag would pin a pre-spend level for the TTL.
+   */
   async getByUsersForTypes(userIds: string[], levelTypes: LevelType[]) {
     if (userIds.length === 0) return []
-    return prismaRead.walletUserLevel.findMany({
+    return prisma.walletUserLevel.findMany({
       where: { userId: { in: userIds }, levelType: { in: levelTypes } },
     })
   },
