@@ -84,6 +84,11 @@ export const adminLedgerPeriodQuerySchema = z.object({
 
 export type AdminLedgerPeriodQuery = z.infer<typeof adminLedgerPeriodQuerySchema>
 
+/** `/ledger/pnl` adds an optional redemption-rate override (basis points) for expected profit. */
+export const adminLedgerPnlQuerySchema = adminLedgerPeriodQuerySchema.extend({
+  redemptionRateBp: z.coerce.number().int().min(0).max(10000).optional(),
+})
+
 export const adminLedgerBreakageInvestigateQuerySchema = z.object({
   at: z.string().datetime().optional(),
 })
