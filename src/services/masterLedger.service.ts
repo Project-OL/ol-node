@@ -500,6 +500,42 @@ async function gameHouseEdgeUnits(
   return { wagers, payouts, refunds, edge: wagers - payouts - refunds }
 }
 
+/**
+ * Reward units minted into customer wallets: login, weekly top-up, platform and VIP
+ * coin rewards plus streak / platform point rewards. The operating P&L expenses these
+ * the moment they are credited; the redemption estimate counts them as units issued.
+ */
+async function rewardMintUnits(house: HouseAccounts, from?: Date, to?: Date): Promise<bigint> {
+  const coin = (txType: CoinTxType) =>
+    sumCoin({
+      direction: LedgerDirection.CREDIT,
+      txTypes: [txType],
+      currency: WalletCurrencyType.COIN,
+      from,
+      to,
+      owner: 'customer',
+      house,
+    })
+  const parts = await Promise.all([
+    coin(CoinTxType.DAILY_LOGIN),
+    coin(CoinTxType.WEEKLY_TOPUP),
+    coin(CoinTxType.PLATFORM_REWARD),
+    coin(CoinTxType.VIP_REWARD),
+    sumPoint({
+      direction: LedgerDirection.CREDIT,
+      txTypes: [PointTxType.LIVESTREAM_STREAK_REWARD, PointTxType.PLATFORM_REWARD],
+      from,
+      to,
+      owner: 'customer',
+      house,
+    }),
+  ])
+  return parts.reduce((a, b) => a + b, 0n)
+}
+
+/** Trailing window the redemption rate is measured over. */
+const REDEMPTION_WINDOW_MS = 365 * 24 * 60 * 60 * 1000
+
 export const masterLedgerService = {
   unitsToUsd,
 
@@ -940,11 +976,7 @@ export const masterLedgerService = {
       pointExchangeOut,
       coinExchangeIn,
       tradingExchangeIn,
-      dailyLogin,
-      weeklyTopup,
-      platformRewardCoins,
-      vipReward,
-      streak,
+      rewardCost,
       promoCoins,
       promoPoints,
       promoTrading,
@@ -1021,50 +1053,7 @@ export const masterLedgerService = {
         from,
         to,
       }),
-      sumCoin({
-        direction: LedgerDirection.CREDIT,
-        txTypes: [CoinTxType.DAILY_LOGIN],
-        currency: WalletCurrencyType.COIN,
-        from,
-        to,
-        owner: 'customer',
-        house,
-      }),
-      sumCoin({
-        direction: LedgerDirection.CREDIT,
-        txTypes: [CoinTxType.WEEKLY_TOPUP],
-        currency: WalletCurrencyType.COIN,
-        from,
-        to,
-        owner: 'customer',
-        house,
-      }),
-      sumCoin({
-        direction: LedgerDirection.CREDIT,
-        txTypes: [CoinTxType.PLATFORM_REWARD],
-        currency: WalletCurrencyType.COIN,
-        from,
-        to,
-        owner: 'customer',
-        house,
-      }),
-      sumCoin({
-        direction: LedgerDirection.CREDIT,
-        txTypes: [CoinTxType.VIP_REWARD],
-        currency: WalletCurrencyType.COIN,
-        from,
-        to,
-        owner: 'customer',
-        house,
-      }),
-      sumPoint({
-        direction: LedgerDirection.CREDIT,
-        txTypes: [PointTxType.LIVESTREAM_STREAK_REWARD, PointTxType.PLATFORM_REWARD],
-        from,
-        to,
-        owner: 'customer',
-        house,
-      }),
+      rewardMintUnits(house, from, to),
       sumCoin({
         direction: LedgerDirection.CREDIT,
         txTypes: [CoinTxType.ADJUSTMENT],
@@ -1189,7 +1178,6 @@ export const masterLedgerService = {
     const conversionSpread = pointExchangeOut - coinExchangeIn - tradingExchangeIn
     const customNet = customGift - customRefund
     const promoAdminMints = promoCoins + promoPoints + promoTrading + promoDiamonds
-    const rewardCost = dailyLogin + weeklyTopup + platformRewardCoins + vipReward + streak
     const adminClawback =
       adminClawbackCoin + adminClawbackTrading + adminClawbackPoint + adminClawbackDiamond
     // Net float reduction caused by the withdrawal subsystem, minus the fiat the
@@ -1375,7 +1363,49 @@ export const masterLedgerService = {
     ]
   },
 
-  async dashboard(params: { from?: Date; to?: Date; grain?: LedgerGrain; at?: Date }) {
+  /**
+   * Share of units put into customer wallets that later left as company fiat, over the
+   * trailing year ending at `windowTo`:
+   *
+   *   company payouts ÷ (gross sales + rewards + promotional mints + treasury giveaways)
+   *
+   * Units are fungible, so a withdrawal cannot be traced back to the reward that funded it;
+   * one platform-wide rate stands in for "how much of what we issue ever becomes cash".
+   * Units still sitting in wallets have not paid out yet, so a fast-growing float pulls the
+   * rate down — read it as an estimate, not a measurement.
+   */
+  async redemptionRate(windowTo: Date, house: HouseAccounts) {
+    const windowFrom = new Date(windowTo.getTime() - REDEMPTION_WINDOW_MS)
+    const [imputed, rewards] = await Promise.all([
+      this.imputedCash(windowFrom, windowTo, house),
+      rewardMintUnits(house, windowFrom, windowTo),
+    ])
+    const { grossSaleUnits, payouts, treasuryGiveaway, promoAdminMints } = imputed._internal
+    const issued = grossSaleUnits + rewards + treasuryGiveaway + promoAdminMints
+    let rateBp: number | null = null
+    if (issued > 0n) {
+      const raw = (payouts * 10000n) / issued
+      rateBp = Number(raw > 10000n ? 10000n : raw < 0n ? 0n : raw)
+    }
+    return {
+      windowFrom: windowFrom.toISOString(),
+      windowTo: windowTo.toISOString(),
+      issuedUnits: issued.toString(),
+      issuedUsd: unitsToUsd(issued),
+      payoutUnits: payouts.toString(),
+      payoutUsd: unitsToUsd(payouts),
+      rateBp,
+    }
+  },
+
+  async dashboard(params: {
+    from?: Date
+    to?: Date
+    grain?: LedgerGrain
+    at?: Date
+    /** Operator override for the expected-profit redemption rate, 0–10000 bp. */
+    redemptionRateBp?: number
+  }) {
     const period = resolveLedgerPeriod({
       from: params.from,
       to: params.to,
@@ -1383,14 +1413,18 @@ export const masterLedgerService = {
     })
     const at = params.at ?? period.to
     const house = await ledgerAccountRoleService.getHouseAccounts()
+    // Month / quarter / year periods end in the future; the estimate stops at today.
+    const now = new Date()
+    const rateWindowTo = period.to.getTime() > now.getTime() ? startOfUtcDay(now) : period.to
 
-    const [stock, pnl, imputed, cash, openingFloat, memo] = await Promise.all([
+    const [stock, pnl, imputed, cash, openingFloat, memo, rateEstimate] = await Promise.all([
       this.stock(at, house),
       this.operatingPnl(period.from, period.to, house),
       this.imputedCash(period.from, period.to, house),
       companyCashService.periodCash({ from: period.from, to: period.to }),
       floatAt(period.from, house),
       this.unitFlowMemo(period.from, period.to, house),
+      this.redemptionRate(rateWindowTo, house),
     ])
 
     // gross sales − company payouts = Δ customer float + operating profit
@@ -1400,6 +1434,44 @@ export const masterLedgerService = {
     const lhs = imputed._internal.grossSaleUnits - imputed._internal.payouts
     const rhs = deltaFloat + BigInt(pnl.operatingProfitUnits)
     const reconciliationDelta = lhs - rhs
+
+    // Three reads of the same period, differing only in when a unit handed to a customer
+    // counts as a cost:
+    //   cash      — only when it leaves as company fiat (sales − payouts; equals operating + Δ float)
+    //   operating — the moment it is credited (every reward assumed eventually paid out)
+    //   expected  — at the redemption rate: operating + Δ float × (1 − rate)
+    // rate = 0 gives cash and rate = 1 gives operating, so expected always sits between them.
+    const operatingUnits = BigInt(pnl.operatingProfitUnits)
+    const cashProfit = lhs
+    const override = params.redemptionRateBp
+    const rateSource: 'override' | 'estimated' | 'unavailable' =
+      override !== undefined ? 'override' : rateEstimate.rateBp !== null ? 'estimated' : 'unavailable'
+    // No history to estimate from → fall back to the conservative operating figure.
+    const rateBp = override ?? rateEstimate.rateBp ?? 10000
+    const unredeemedAdjustment = (deltaFloat * BigInt(10000 - rateBp)) / 10000n
+    const expectedProfit = operatingUnits + unredeemedAdjustment
+    let givenAway = 0n
+    for (const l of pnl.costs) givenAway -= BigInt(l.units)
+
+    const profitViews = {
+      cashProfitUnits: cashProfit.toString(),
+      cashProfitUsd: unitsToUsd(cashProfit),
+      operatingProfitUnits: pnl.operatingProfitUnits,
+      operatingProfitUsd: pnl.operatingProfitUsd,
+      expectedProfitUnits: expectedProfit.toString(),
+      expectedProfitUsd: unitsToUsd(expectedProfit),
+      /** Rewards, promotional mints and treasury giveaways credited this period. */
+      givenAwayUnits: givenAway.toString(),
+      givenAwayUsd: unitsToUsd(givenAway),
+      deltaCustomerFloatUnits: deltaFloat.toString(),
+      deltaCustomerFloatUsd: unitsToUsd(deltaFloat),
+      /** Share of Δ float not expected to be paid out; added back onto operating profit. */
+      unredeemedAdjustmentUnits: unredeemedAdjustment.toString(),
+      unredeemedAdjustmentUsd: unitsToUsd(unredeemedAdjustment),
+      redemptionRateBp: rateBp,
+      redemptionRateSource: rateSource,
+      redemptionEstimate: rateEstimate,
+    }
 
     const { _internal, ...imputedPublic } = imputed
 
@@ -1440,6 +1512,7 @@ export const masterLedgerService = {
       stock,
       pnl,
       imputed: imputedPublic,
+      profitViews,
       reconciliation: {
         ok: reconciliationDelta === 0n,
         delta: reconciliationDelta.toString(),

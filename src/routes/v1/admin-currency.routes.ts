@@ -19,6 +19,7 @@ import {
   adminHouseAccountsQuerySchema,
   adminLedgerBreakageInvestigateQuerySchema,
   adminLedgerPeriodQuerySchema,
+  adminLedgerPnlQuerySchema,
   adminLedgerReconciliationInvestigateQuerySchema,
   adminTreasuryFlowClassifyBodySchema,
   adminTreasuryFlowsQuerySchema,
@@ -140,11 +141,11 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Currency'],
         description:
-          'Period operating P&L, cash P&L, inventory, and identity (today/yesterday/month/quarter/year/custom up to 730 days).',
+          'Period operating P&L, cash P&L, inventory, and identity (today/yesterday/month/quarter/year/custom up to 730 days). `profitViews` compares cash, operating, and expected (redemption-adjusted) profit; `redemptionRateBp` (0–10000) overrides the estimated rate.',
       },
     },
     async (request, reply) => {
-      const parsed = adminLedgerPeriodQuerySchema.safeParse(request.query ?? {})
+      const parsed = adminLedgerPnlQuerySchema.safeParse(request.query ?? {})
       if (!parsed.success) {
         throw new AppError(
           400,
@@ -158,6 +159,7 @@ export default async function adminCurrencyRoutes(app: FastifyInstance) {
           to: parsed.data.to ? new Date(parsed.data.to) : undefined,
           grain: parsed.data.grain,
           at: parsed.data.at ? new Date(parsed.data.at) : undefined,
+          redemptionRateBp: parsed.data.redemptionRateBp,
         }),
       )
     },
