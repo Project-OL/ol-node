@@ -38,6 +38,7 @@ import { formatUserName } from '../utils/user-display'
 import { allocateUniqueUsername, assertDisplayNameAvailable } from '../utils/user-identity-unique'
 import { restrictedIdentityWordsService } from './restrictedIdentityWords.service'
 import { avatarModerationService } from './avatar-moderation.service'
+import { avatarResizeService } from './avatar-resize.service'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 import { normalizeAuthIdentifier, normalizeEmail } from '../utils/auth-identifier'
 
@@ -251,11 +252,14 @@ export const authV2Service = {
       throw new AppError(409, 'Profile already completed', 'PROFILE_ALREADY_COMPLETE')
     const dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : undefined
     const lastName = data.lastName && data.lastName.trim() !== '' ? data.lastName : null
-    const avatarUrl = data.avatarUrl && data.avatarUrl.trim() !== '' ? data.avatarUrl.trim() : null
+    let avatarUrl = data.avatarUrl && data.avatarUrl.trim() !== '' ? data.avatarUrl.trim() : null
     await restrictedIdentityWordsService.assertNamePartsNotRestricted(data.firstName, lastName)
     await assertDisplayNameAvailable(data.firstName, lastName, userId)
     if (avatarUrl) {
       await avatarModerationService.assertAvatarUrlNotNude(userId, avatarUrl)
+      // Presigned upload stored the phone's full-size photo; save a 512px WebP copy
+      // instead. Best-effort: null keeps the original URL.
+      avatarUrl = (await avatarResizeService.shrinkOwnedAvatarUrl(userId, avatarUrl)) ?? avatarUrl
     }
     await userRepository.updateProfile(userId, {
       firstName: data.firstName,

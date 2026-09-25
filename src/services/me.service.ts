@@ -43,6 +43,7 @@ import { livePhotoService } from './livePhoto.service'
 import { faceVerificationRepository } from '../repositories/faceVerification.repository'
 import { videoCallSettingsService } from './video-call.service'
 import { avatarModerationService } from './avatar-moderation.service'
+import { avatarResizeService } from './avatar-resize.service'
 import { singleflight } from '../utils/singleflight'
 
 const displayNameSchema = z
@@ -436,13 +437,15 @@ export const meService = {
         throw new AppError(400, 'Avatar must be JPEG, PNG, or WEBP', 'INVALID_FILE_TYPE')
       }
       await avatarModerationService.assertAvatarBytesNotNude(avatarBuffer)
-      const ext = extensionForImageMime(mime)
+      // Moderation above sees the original; what we store is capped at 512px WebP.
+      const resized = await avatarResizeService.shrinkBuffer(avatarBuffer)
+      const ext = resized ? resized.ext : extensionForImageMime(mime)
       const key = `avatars/${userId}/v${Date.now()}.${ext}`
       try {
         await storageService.putObjectBuffer({
           key,
-          body: avatarBuffer,
-          contentType: mime,
+          body: resized ? resized.buffer : avatarBuffer,
+          contentType: resized ? resized.contentType : mime,
         })
       } catch (e) {
         if (e instanceof AppError) throw e
