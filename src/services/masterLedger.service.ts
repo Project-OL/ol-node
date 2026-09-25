@@ -513,6 +513,11 @@ async function returnsToHouseUnits(house: HouseAccounts, from?: Date, to?: Date)
  * This is the operating counterpart to a wager leaving customer float: float drops by
  * the wager and rises by the payout, and this line moves by the same amounts with the
  * opposite sign, which is what keeps the reconciliation identity closed.
+ *
+ * Rounds where a house account is itself the player (someone playing from the treasury /
+ * game-house login) move diamonds house → house, so they are excluded: the player legs on
+ * house wallets are subtracted from the matching house legs. Left in, they made the edge
+ * disagree with customer float by the house's own net winnings.
  */
 async function gameHouseEdgeUnits(
   house: HouseAccounts,
@@ -530,17 +535,34 @@ async function gameHouseEdgeUnits(
       owner: 'house',
       house,
     })
-  const [wagers, payouts, refunds] = await Promise.all([
+  const [wagersIn, payoutsOut, refundsOut, selfWagers, selfWins, selfRefunds] = await Promise.all([
     leg(LedgerDirection.CREDIT, CoinTxType.GAME_WAGER_IN),
     leg(LedgerDirection.DEBIT, CoinTxType.GAME_RESULT_OUT),
     leg(LedgerDirection.DEBIT, CoinTxType.GAME_REFUND_OUT),
+    leg(LedgerDirection.DEBIT, CoinTxType.GAME_WAGER_OUT),
+    leg(LedgerDirection.CREDIT, CoinTxType.GAME_RESULT_IN),
+    leg(LedgerDirection.CREDIT, CoinTxType.GAME_REFUND_IN),
   ])
+  const wagers = wagersIn - selfWagers
+  const payouts = payoutsOut - selfWins
+  const refunds = refundsOut - selfRefunds
   return { wagers, payouts, refunds, edge: wagers - payouts - refunds }
 }
 
 /**
+ * Point rewards the platform mints. Normal / Royal Host rewards were missing until
+ * 2026-09-25, which left the reconciliation short by exactly the host rewards claimed.
+ */
+const REWARD_POINT_TX = [
+  PointTxType.LIVESTREAM_STREAK_REWARD,
+  PointTxType.PLATFORM_REWARD,
+  PointTxType.NORMAL_HOST_REWARD,
+  PointTxType.ROYAL_HOST_REWARD,
+]
+
+/**
  * Reward units minted into customer wallets: login, weekly top-up, platform and VIP
- * coin rewards plus streak / platform point rewards. The operating P&L expenses these
+ * coin rewards plus streak / platform / Normal Host / Royal Host point rewards. The operating P&L expenses these
  * the moment they are credited; the redemption estimate counts them as units issued.
  */
 async function rewardMintUnits(house: HouseAccounts, from?: Date, to?: Date): Promise<bigint> {
@@ -561,7 +583,7 @@ async function rewardMintUnits(house: HouseAccounts, from?: Date, to?: Date): Pr
     coin(CoinTxType.VIP_REWARD),
     sumPoint({
       direction: LedgerDirection.CREDIT,
-      txTypes: [PointTxType.LIVESTREAM_STREAK_REWARD, PointTxType.PLATFORM_REWARD],
+      txTypes: REWARD_POINT_TX,
       from,
       to,
       owner: 'customer',
@@ -1356,7 +1378,7 @@ export const masterLedgerService = {
       }),
       sumPoint({
         direction: LedgerDirection.CREDIT,
-        txTypes: [PointTxType.LIVESTREAM_STREAK_REWARD, PointTxType.PLATFORM_REWARD],
+        txTypes: REWARD_POINT_TX,
         from,
         to,
         owner: 'customer',

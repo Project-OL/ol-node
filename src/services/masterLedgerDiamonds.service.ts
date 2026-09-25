@@ -212,7 +212,9 @@ export const masterLedgerDiamondsService = {
       else b.userNet += signed
 
       // House legs carry the settlement totals; the user legs mirror them exactly, so
-      // reading one side only keeps every figure single-counted.
+      // reading one side only keeps every figure single-counted. A player leg on a house
+      // wallet means a house account played its own game — that round is house → house,
+      // so it is backed out of the matching house leg (same rule as `gameHouseEdgeUnits`).
       if (row.is_house) {
         if (row.tx_type === 'GAME_WAGER_IN') {
           b.wagered += units
@@ -223,6 +225,15 @@ export const masterLedgerDiamondsService = {
         } else if (row.tx_type === 'GAME_REFUND_OUT') {
           b.refunded += units
           b.roundLegCount += Number(row.cnt)
+        } else if (row.tx_type === 'GAME_WAGER_OUT') {
+          b.wagered -= units
+          b.roundLegCount -= Number(row.cnt)
+        } else if (row.tx_type === 'GAME_RESULT_IN') {
+          b.won -= units
+          b.roundLegCount -= Number(row.cnt)
+        } else if (row.tx_type === 'GAME_REFUND_IN') {
+          b.refunded -= units
+          b.roundLegCount -= Number(row.cnt)
         }
       }
 
