@@ -128,22 +128,96 @@ export function resolveLedgerPeriod(params: {
 type Owner = 'customer' | 'house' | 'any'
 
 /**
- * Wallet-owner filter. An empty house registry means every account is a
- * customer, so the `notIn` clause is omitted rather than emitting `NOT IN ()`.
- */
-function ownerFilter(owner: Owner, house: HouseAccounts): { userId?: Prisma.UuidFilter } {
-  const ids = [...house.allIds]
-  if (owner === 'any' || ids.length === 0) {
-    return owner === 'house' ? { userId: { in: ids } } : {}
-  }
-  return owner === 'house' ? { userId: { in: ids } } : { userId: { notIn: ids } }
-}
-
-/**
  * Admin diamond adjustments. `adminCurrency.service` writes `GAME_ADJUSTMENT` on the
  * DIAMOND wallet; plain `ADJUSTMENT` is matched too so hand-written corrections count.
  */
 const ADMIN_DIAMOND_TX = [CoinTxType.ADJUSTMENT, CoinTxType.GAME_ADJUSTMENT]
+
+/** One grouped bucket of ledger legs. `promo` mirrors `metadata.promotional = true`. */
+type LedgerTotalsRow = {
+  tx_type: string
+  direction: string
+  currency: string
+  is_house: boolean
+  promo: boolean
+  units: bigint
+}
+
+type LedgerTotals = { coin: LedgerTotalsRow[]; point: LedgerTotalsRow[] }
+
+/**
+ * Neither ledger table has a `created_at` index, so every separate SUM was a full scan —
+ * a dashboard fired ~70 of them concurrently. Instead each (window, house set) is scanned
+ * once per table, grouped finely enough that every {@link sumCoin} / {@link sumPoint}
+ * becomes an in-memory filter. The promise is shared for a few seconds so the period,
+ * stock and redemption-rate readers of one `/ledger/pnl` call reuse each other's scans.
+ */
+const LEDGER_TOTALS_TTL_MS = 10_000
+const ledgerTotalsMemo = new Map<string, { at: number; value: Promise<LedgerTotals> }>()
+
+function ledgerTotals(house: HouseAccounts, from?: Date, to?: Date): Promise<LedgerTotals> {
+  const ids = [...house.allIds].sort()
+  const key = `${from?.getTime() ?? ''}|${to?.getTime() ?? ''}|${ids.join(',')}`
+  const now = Date.now()
+  for (const [k, v] of ledgerTotalsMemo) {
+    if (now - v.at > LEDGER_TOTALS_TTL_MS) ledgerTotalsMemo.delete(k)
+  }
+  const hit = ledgerTotalsMemo.get(key)
+  if (hit) return hit.value
+  const value = loadLedgerTotals(ids, from, to)
+  value.catch(() => ledgerTotalsMemo.delete(key))
+  ledgerTotalsMemo.set(key, { at: now, value })
+  return value
+}
+
+async function loadLedgerTotals(ids: string[], from?: Date, to?: Date): Promise<LedgerTotals> {
+  const houseIds =
+    ids.length === 0
+      ? Prisma.sql`ARRAY[]::uuid[]`
+      : Prisma.sql`ARRAY[${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))}]::uuid[]`
+  const window = Prisma.sql`
+    ${from ? Prisma.sql`AND e.created_at >= ${from}` : Prisma.empty}
+    ${to ? Prisma.sql`AND e.created_at < ${to}` : Prisma.empty}`
+  const grouped = (table: Prisma.Sql) => Prisma.sql`
+    SELECT e.tx_type::text AS tx_type,
+           e.direction::text AS direction,
+           w.currency_type::text AS currency,
+           (w.user_id = ANY(${houseIds})) AS is_house,
+           COALESCE(e.metadata -> 'promotional' = 'true'::jsonb, false) AS promo,
+           SUM(e.amount)::bigint AS units
+    FROM ${table} e
+    JOIN wallets w ON w.id = e.wallet_id
+    WHERE true ${window}
+    GROUP BY 1, 2, 3, 4, 5`
+  const [coin, point] = await Promise.all([
+    prismaRead.$queryRaw<LedgerTotalsRow[]>(grouped(Prisma.sql`coin_ledger_entries`)),
+    prismaRead.$queryRaw<LedgerTotalsRow[]>(grouped(Prisma.sql`point_ledger_entries`)),
+  ])
+  return { coin, point }
+}
+
+function pickTotals(
+  rows: LedgerTotalsRow[],
+  params: {
+    direction: LedgerDirection
+    txTypes: string[]
+    currency?: WalletCurrencyType
+    promotionalOnly?: boolean
+    owner: Owner
+  },
+): bigint {
+  let sum = 0n
+  for (const r of rows) {
+    if (r.direction !== params.direction) continue
+    if (!params.txTypes.includes(r.tx_type)) continue
+    if (params.currency && r.currency !== params.currency) continue
+    if (params.promotionalOnly && !r.promo) continue
+    if (params.owner === 'house' && !r.is_house) continue
+    if (params.owner === 'customer' && r.is_house) continue
+    sum += BigInt(r.units)
+  }
+  return sum
+}
 
 async function sumCoin(params: {
   direction: LedgerDirection
@@ -155,20 +229,11 @@ async function sumCoin(params: {
   owner?: Owner
   house?: HouseAccounts
 }): Promise<bigint> {
-  const createdAt = dateFilter(params.from, params.to)
-  const owner = params.owner ?? 'any'
-  const ownerWhere = params.house ? ownerFilter(owner, params.house) : {}
-  const agg = await prismaRead.coinLedgerEntry.aggregate({
-    where: {
-      direction: params.direction,
-      txType: { in: params.txTypes },
-      wallet: { currencyType: params.currency, ...ownerWhere },
-      ...(createdAt ? { createdAt } : {}),
-      ...(params.promotionalOnly ? { metadata: { path: ['promotional'], equals: true } } : {}),
-    },
-    _sum: { amount: true },
-  })
-  return agg._sum.amount ?? 0n
+  // Without a house set the owner filter never applied, so any owner reads as 'any'.
+  const owner = params.house ? (params.owner ?? 'any') : 'any'
+  const house = params.house ?? (await ledgerAccountRoleService.getHouseAccounts())
+  const totals = await ledgerTotals(house, params.from, params.to)
+  return pickTotals(totals.coin, { ...params, owner })
 }
 
 async function sumPoint(params: {
@@ -180,20 +245,10 @@ async function sumPoint(params: {
   owner?: Owner
   house?: HouseAccounts
 }): Promise<bigint> {
-  const createdAt = dateFilter(params.from, params.to)
-  const owner = params.owner ?? 'any'
-  const ownerWhere = params.house ? ownerFilter(owner, params.house) : {}
-  const agg = await prismaRead.pointLedgerEntry.aggregate({
-    where: {
-      direction: params.direction,
-      txType: { in: params.txTypes },
-      ...(Object.keys(ownerWhere).length > 0 ? { wallet: ownerWhere } : {}),
-      ...(createdAt ? { createdAt } : {}),
-      ...(params.promotionalOnly ? { metadata: { path: ['promotional'], equals: true } } : {}),
-    },
-    _sum: { amount: true },
-  })
-  return agg._sum.amount ?? 0n
+  const owner = params.house ? (params.owner ?? 'any') : 'any'
+  const house = params.house ?? (await ledgerAccountRoleService.getHouseAccounts())
+  const totals = await ledgerTotals(house, params.from, params.to)
+  return pickTotals(totals.point, { ...params, owner })
 }
 
 /**
@@ -288,31 +343,14 @@ async function loadWalletBalancesAt(at: Date): Promise<WalletBalRow[]> {
   return [...coinRows, ...pointRows]
 }
 
-async function ledgerNetAt(at: Date): Promise<bigint> {
-  const [coinCredit, coinDebit, pointCredit, pointDebit] = await Promise.all([
-    prismaRead.coinLedgerEntry.aggregate({
-      where: { direction: LedgerDirection.CREDIT, createdAt: { lt: at } },
-      _sum: { amount: true },
-    }),
-    prismaRead.coinLedgerEntry.aggregate({
-      where: { direction: LedgerDirection.DEBIT, createdAt: { lt: at } },
-      _sum: { amount: true },
-    }),
-    prismaRead.pointLedgerEntry.aggregate({
-      where: { direction: LedgerDirection.CREDIT, createdAt: { lt: at } },
-      _sum: { amount: true },
-    }),
-    prismaRead.pointLedgerEntry.aggregate({
-      where: { direction: LedgerDirection.DEBIT, createdAt: { lt: at } },
-      _sum: { amount: true },
-    }),
-  ])
-  return (
-    (coinCredit._sum.amount ?? 0n) -
-    (coinDebit._sum.amount ?? 0n) +
-    (pointCredit._sum.amount ?? 0n) -
-    (pointDebit._sum.amount ?? 0n)
-  )
+/** All-time credits − debits across every coin and point leg before `at`. */
+async function ledgerNetAt(at: Date, house: HouseAccounts): Promise<bigint> {
+  const totals = await ledgerTotals(house, undefined, at)
+  let net = 0n
+  for (const r of [...totals.coin, ...totals.point]) {
+    net += r.direction === LedgerDirection.CREDIT ? BigInt(r.units) : -BigInt(r.units)
+  }
+  return net
 }
 
 /** Raw unit buckets at an instant, split house vs customer. */
@@ -352,7 +390,7 @@ export const ZERO_FLOAT: FloatBuckets = {
 
 /** Full wallet scan at `at`. Prefer {@link floatAt} so snapshots are reused. */
 export async function computeFloatAt(at: Date, house: HouseAccounts): Promise<FloatBuckets> {
-  const [rows, ledgerNet] = await Promise.all([loadWalletBalancesAt(at), ledgerNetAt(at)])
+  const [rows, ledgerNet] = await Promise.all([loadWalletBalancesAt(at), ledgerNetAt(at, house)])
 
   const b: FloatBuckets = { ...ZERO_FLOAT, ledgerNet }
   for (const r of rows) {
@@ -934,36 +972,37 @@ export const masterLedgerService = {
       },
     ] as const
 
-    const splitLines: { id: string; label: string; units: bigint }[] = []
-    for (const p of splitPairs) {
-      const [coins, host, agency] = await Promise.all([
-        sumCoin({
-          direction: LedgerDirection.DEBIT,
-          txTypes: [p.coinType],
-          currency: WalletCurrencyType.COIN,
-          from,
-          to,
-        }),
-        sumPoint({
-          direction: LedgerDirection.CREDIT,
-          txTypes: [p.pointType],
-          from,
-          to,
-          owner: 'customer',
-          house,
-        }),
-        sumAgencyCommission({ hostTxType: p.pointType, from, to, house }),
-      ])
-      splitLines.push({
-        id: p.id,
-        label: p.label,
-        units: profitFromCoinToPointSplit({
-          coinsSpent: coins,
-          hostPoints: host,
-          agencyCommissionPoints: agency,
-        }).rawCoins,
-      })
-    }
+    const splitLines: { id: string; label: string; units: bigint }[] = await Promise.all(
+      splitPairs.map(async (p) => {
+        const [coins, host, agency] = await Promise.all([
+          sumCoin({
+            direction: LedgerDirection.DEBIT,
+            txTypes: [p.coinType],
+            currency: WalletCurrencyType.COIN,
+            from,
+            to,
+          }),
+          sumPoint({
+            direction: LedgerDirection.CREDIT,
+            txTypes: [p.pointType],
+            from,
+            to,
+            owner: 'customer',
+            house,
+          }),
+          sumAgencyCommission({ hostTxType: p.pointType, from, to, house }),
+        ])
+        return {
+          id: p.id,
+          label: p.label,
+          units: profitFromCoinToPointSplit({
+            coinsSpent: coins,
+            hostPoints: host,
+            agencyCommissionPoints: agency,
+          }).rawCoins,
+        }
+      }),
+    )
 
     const [
       store,
