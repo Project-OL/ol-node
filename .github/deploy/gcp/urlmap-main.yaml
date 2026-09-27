@@ -1,0 +1,26 @@
+defaultService: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-backend
+hostRules:
+- hosts:
+  - '*'
+  pathMatcher: live-matcher
+- hosts:
+  - admins3jinyu.offoolive.com
+  - priviledge.offoolive.com
+  pathMatcher: admin-matcher
+name: ol-node-rest-urlmap
+pathMatchers:
+- defaultService: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-backend
+  name: live-matcher
+  pathRules:
+  - paths:
+    - /api/live-stream
+    - /api/live-stream/*
+    - /api/video-call
+    - /api/video-call/*
+    - /hls/*
+    - /live-health
+    - /socket.io
+    - /socket.io/*
+    service: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-live-backend
+- defaultService: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-admin-backend
+  name: admin-matcher

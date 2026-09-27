@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # GCE startup script: turn a blank Ubuntu 24.04 image into a working ol-node-rest +
-# live-server node, with no manual steps.
+# live-server + ol-admin (nginx, static) node, with no manual steps.
 #
 # Why this exists
 # ---------------
@@ -22,6 +22,17 @@
 #                               anything else (default) -> API + live only
 #   metadata start-processes  = "false"  -> provision everything but start nothing
 #                               anything else (default) -> start processes
+#   metadata release-bucket   = "gs://..." -> where */latest.tgz live
+#                               (default gs://ol-node-rest-releases; bucket names are
+#                               global, so a new project needs its own)
+#   metadata admin-hostnames  = "a.example b.example" -> nginx server_name for the admin
+#                               portal (default admins3jinyu + priviledge .offoolive.com)
+#
+# The admin portal (ol-admin) is a static Vite build served by nginx on :8080, the
+# port behind the MIG's `admin` named port. It is set up even when
+# start-processes=false: it is plain static files with no Redis/DB state, so serving
+# it cannot disturb production. A missing admin release only warns - the API and
+# live-server must not be held hostage by the admin bundle.
 #
 # Workers are opt-in because every repeatable BullMQ cron (rich-tier rollover, ledger
 # audit, expiry sweeps) would otherwise fire once per instance the autoscaler adds.
@@ -41,11 +52,12 @@ set -euo pipefail
 exec > >(tee -a /var/log/ol-bootstrap.log) 2>&1
 echo "=== ol bootstrap starting $(date -u +%FT%TZ) ==="
 
-BUCKET="gs://ol-node-rest-releases"
 APP_USER="olapp"
 APP_ROOT="/opt/ol/apps"
 LOG_DIR="/opt/ol/logs"
 NODE_MAJOR="20"
+ADMIN_DOCROOT="/var/www/admins3jinyu.offoolive.com"
+ADMIN_PORT="8080"
 
 meta() {
   curl -s -f -H "Metadata-Flavor: Google" \
@@ -54,8 +66,14 @@ meta() {
 
 RUN_WORKERS="$(meta run-workers)"
 START_PROCESSES="$(meta start-processes)"
+BUCKET="$(meta release-bucket)"
+BUCKET="${BUCKET:-gs://ol-node-rest-releases}"
+ADMIN_HOSTNAMES="$(meta admin-hostnames)"
+ADMIN_HOSTNAMES="${ADMIN_HOSTNAMES:-admins3jinyu.offoolive.com priviledge.offoolive.com}"
 echo "run-workers metadata     : '${RUN_WORKERS:-<unset>}'"
 echo "start-processes metadata : '${START_PROCESSES:-<unset, defaults to start>}'"
+echo "release bucket           : '$BUCKET'"
+echo "admin hostnames          : '$ADMIN_HOSTNAMES'"
 
 # ---------------------------------------------------------------- 1. base packages
 if ! command -v node >/dev/null 2>&1; then
@@ -76,6 +94,14 @@ echo "node $(node --version) / npm $(npm --version)"
 
 command -v pm2 >/dev/null 2>&1 || npm install -g pm2 --silent
 
+if ! command -v nginx >/dev/null 2>&1; then
+  echo "--- installing nginx ---"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq nginx
+fi
+echo "$(nginx -v 2>&1)"
+
 # ---------------------------------------------------------------- 2. user + layout
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /bin/bash "$APP_USER"
 mkdir -p "$APP_ROOT/ol-node-rest" "$APP_ROOT/live-server" "$LOG_DIR"
@@ -93,6 +119,58 @@ fetch_release() {
 }
 fetch_release ol-node-rest
 fetch_release live-server
+
+# ---------------------------------------------------------------- 3b. admin portal
+# Same layout as the hand-built VM (2026-09-20): one server block on :8080 for both
+# portal hostnames, one shared docroot. The SUPER_ADMIN-vs-everyone split is enforced
+# by the API from the Origin header, not by nginx, so both names serve the same build.
+# try_files falls back to index.html for Vue Router's history mode.
+echo "--- configuring nginx for the admin portal ---"
+mkdir -p "$ADMIN_DOCROOT"
+cat > /etc/nginx/sites-available/admin-portal.conf <<NGINX
+server {
+  listen ${ADMIN_PORT} default_server;
+  listen [::]:${ADMIN_PORT} default_server;
+  server_name ${ADMIN_HOSTNAMES};
+  root ${ADMIN_DOCROOT};
+  index index.html;
+  location / {
+    try_files \$uri \$uri/ /index.html;
+  }
+}
+NGINX
+ln -sfn /etc/nginx/sites-available/admin-portal.conf /etc/nginx/sites-enabled/admin-portal.conf
+# The distro default site listens on :80; nothing routes there and it is not on the old VM.
+rm -f /etc/nginx/sites-enabled/default
+
+# Extract into a stage dir and only swap it in when it contains index.html, so a bad
+# or missing tarball never blanks a docroot that was serving.
+fetch_admin() {
+  local tmp
+  tmp="$(mktemp -d)"
+  echo "--- fetching ol-admin release ---"
+  if ! gcloud storage cp "$BUCKET/ol-admin/latest.tgz" "$tmp/admin.tgz" --quiet; then
+    echo "WARNING: $BUCKET/ol-admin/latest.tgz not found - admin portal has no files; its LB backend will stay UNHEALTHY"
+    rm -rf "$tmp"
+    return 0
+  fi
+  mkdir -p "$tmp/stage"
+  tar -xzf "$tmp/admin.tgz" -C "$tmp/stage"
+  if [ ! -f "$tmp/stage/index.html" ]; then
+    echo "WARNING: ol-admin release has no index.html - leaving $ADMIN_DOCROOT untouched"
+    rm -rf "$tmp"
+    return 0
+  fi
+  find "$ADMIN_DOCROOT" -mindepth 1 -delete
+  cp -a "$tmp/stage"/. "$ADMIN_DOCROOT"/
+  rm -rf "$tmp"
+}
+fetch_admin
+chown -R "$APP_USER:$APP_USER" "$ADMIN_DOCROOT"
+
+nginx -t
+systemctl enable nginx >/dev/null 2>&1
+systemctl restart nginx
 
 # ---------------------------------------------------------------- 4. secrets
 # Written 0600 and owned by the app user; never logged.
@@ -133,7 +211,7 @@ start_app() {
   "
 }
 if [ "$START_PROCESSES" = "false" ]; then
-  echo "=== start-processes=false: provisioned but NOT starting anything ==="
+  echo "=== start-processes=false: provisioned but NOT starting any pm2 app (nginx/admin is up) ==="
   echo "=== ol bootstrap finished (provision-only) $(date -u +%FT%TZ) ==="
   exit 0
 fi
