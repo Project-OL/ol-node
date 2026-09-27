@@ -108,6 +108,71 @@ function resolveCurrentTier(
   return best
 }
 
+/**
+ * Cheapest tier above `currentTier` whose hour cap covers `hourSlot` — the target the user
+ * must reach to claim it. Hour caps aren't validated as ascending, so a lower tier the user
+ * already passed may cover the slot; those are skipped since they can't be the next target.
+ */
+function lowestTierCoveringSlot(
+  tiers: NormalHostTierBigInt[],
+  hourSlot: number,
+  currentTier: NormalHostTierBigInt | null,
+): NormalHostTierBigInt | null {
+  let best: NormalHostTierBigInt | null = null
+  for (const tier of tiers) {
+    if (tier.hourCapHours < hourSlot) continue
+    if (currentTier && tier.thresholdPoints <= currentTier.thresholdPoints) continue
+    if (!best || tier.thresholdPoints < best.thresholdPoints) best = tier
+  }
+  return best
+}
+
+/**
+ * 100000n → "100K", 1500000n → "1.5M". Rounds UP to one decimal so a "receive X more"
+ * figure never understates what's still needed (1440000n → "1.5M", 999999n → "1M").
+ */
+function formatCompactPoints(points: bigint): string {
+  if (points < 1_000n) return points.toString()
+  const units: Array<[bigint, string]> = [
+    [1_000n, 'K'],
+    [1_000_000n, 'M'],
+    [1_000_000_000n, 'B'],
+  ]
+  for (let i = 0; i < units.length; i++) {
+    const [size, suffix] = units[i]!
+    const tenths = (points * 10n + size - 1n) / size
+    if (tenths >= 10_000n && i < units.length - 1) continue
+    const whole = tenths / 10n
+    const frac = tenths % 10n
+    return `${whole}${frac > 0n ? `.${frac}` : ''}${suffix}`
+  }
+  return points.toString()
+}
+
+function tierTargetNotMetError(
+  target: NormalHostTierBigInt,
+  earningsByWindowDays: Map<number, bigint>,
+): AppError {
+  const earned = earningsByWindowDays.get(target.windowDays) ?? 0n
+  const remaining = target.thresholdPoints > earned ? target.thresholdPoints - earned : 0n
+  const days = target.windowDays === 1 ? '24 hours' : `${target.windowDays} days`
+  return new AppError(
+    403,
+    `Unlock the ${formatCompactPoints(target.thresholdPoints)} receiving target first` +
+      (remaining > 0n
+        ? ` — receive ${formatCompactPoints(remaining)} more within the last ${days}`
+        : ''),
+    'NORMAL_HOST_THRESHOLD_NOT_MET',
+    {
+      reason: 'TIER_TARGET_NOT_MET',
+      requiredPoints: target.thresholdPoints.toString(),
+      earnedPoints: earned.toString(),
+      remainingPoints: remaining.toString(),
+      windowDays: target.windowDays,
+    },
+  )
+}
+
 function buildTierList(tiers: NormalHostTierBigInt[]): NormalHostTierListItemDto[] {
   return tiers.map((t) => ({
     thresholdPoints: t.thresholdPoints.toString(),
@@ -278,8 +343,20 @@ export const normalHostRewardService = {
       computeEarningsByWindow(userId, config.tiersBigInt, now),
     ])
     const currentTier = resolveCurrentTier(config.tiersBigInt, earningsByWindow)
-    if (!currentTier) {
-      throw new AppError(403, 'No qualifying tier right now', 'NORMAL_HOST_THRESHOLD_NOT_MET')
+    if (!currentTier || hourSlot > currentTier.hourCapHours) {
+      // Name the exact receiving target that unlocks THIS slot, not a generic "no tier".
+      const target = lowestTierCoveringSlot(config.tiersBigInt, hourSlot, currentTier)
+      if (!target) {
+        if (currentTier) {
+          throw new AppError(
+            403,
+            'This hour slot is not available on your current tier',
+            'NORMAL_HOST_THRESHOLD_NOT_MET',
+          )
+        }
+        throw new AppError(400, 'Invalid hour slot', 'INVALID_REQUEST')
+      }
+      throw tierTargetNotMetError(target, earningsByWindow)
     }
     const unlockedSlots = Math.min(Math.floor(secondsToday / 3600), currentTier.hourCapHours)
     if (hourSlot > unlockedSlots) {
