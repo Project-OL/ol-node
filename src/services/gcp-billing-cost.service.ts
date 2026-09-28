@@ -58,11 +58,13 @@ async function fetchCostByService(
     query,
     params: { from: from.toISOString(), to: to.toISOString() },
   })
-  const byService: CostByServiceRow[] = rows.map((r: { service: string; amount: number; currency: string }) => ({
-    service: r.service ?? 'Unknown',
-    amount: Number(r.amount ?? 0),
-    unit: r.currency ?? 'USD',
-  }))
+  const byService: CostByServiceRow[] = rows.map(
+    (r: { service: string; amount: number; currency: string }) => ({
+      service: r.service ?? 'Unknown',
+      amount: Number(r.amount ?? 0),
+      unit: r.currency ?? 'USD',
+    }),
+  )
   const total = byService.reduce((sum, s) => sum + s.amount, 0)
   return { total, currency: byService[0]?.unit ?? 'USD', byService }
 }

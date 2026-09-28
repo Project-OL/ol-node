@@ -340,10 +340,7 @@ export const faceRegistrationRepository = {
    * Admin Accept / accept-duplicate close-out: mark a specific failed (or INDEX_PENDING)
    * session as INDEXED so it leaves the Needs Attention worklist.
    */
-  async markSessionIndexed(
-    sessionId: string,
-    tx?: Prisma.TransactionClient,
-  ): Promise<void> {
+  async markSessionIndexed(sessionId: string, tx?: Prisma.TransactionClient): Promise<void> {
     const db = getDb(tx)
     await db.faceRegistrationSession.update({
       where: { id: sessionId },

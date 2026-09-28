@@ -1,4 +1,9 @@
-import { AGENCY_COINSELLER_LIST_CACHE_TTL, AGENCY_RANKING_CACHE_TTL, RedisKeys, redisClient } from '../config/redis'
+import {
+  AGENCY_COINSELLER_LIST_CACHE_TTL,
+  AGENCY_RANKING_CACHE_TTL,
+  RedisKeys,
+  redisClient,
+} from '../config/redis'
 import { prisma, prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
 import { agencyRepository } from '../repositories/agency.repository'
@@ -441,7 +446,12 @@ export const agencyRankingService = {
     const payload = { items, nextCursor }
 
     try {
-      await redisClient.set(cacheKey, JSON.stringify(payload), 'EX', AGENCY_COINSELLER_LIST_CACHE_TTL)
+      await redisClient.set(
+        cacheKey,
+        JSON.stringify(payload),
+        'EX',
+        AGENCY_COINSELLER_LIST_CACHE_TTL,
+      )
     } catch {
       /* ignore */
     }

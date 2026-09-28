@@ -67,7 +67,10 @@ describe('avatarModerationService', () => {
         avatarModerationService.assertAvatarBytesNotNude(Buffer.from('jpeg')),
       ).resolves.toBeUndefined()
       await expect(
-        avatarModerationService.assertAvatarUrlNotNude(userId, 'https://lh3.googleusercontent.com/a/x'),
+        avatarModerationService.assertAvatarUrlNotNude(
+          userId,
+          'https://lh3.googleusercontent.com/a/x',
+        ),
       ).resolves.toBeUndefined()
       expect(checkImageBytesForNudity).not.toHaveBeenCalled()
       expect(checkImageForNudity).not.toHaveBeenCalled()
@@ -113,7 +116,11 @@ describe('avatarModerationService', () => {
 
     it('fail-opens on Rekognition circuit / infra errors (does not block PATCH)', async () => {
       checkImageBytesForNudity.mockRejectedValueOnce(
-        new AppError(502, 'Face recognition service temporarily unavailable', 'REKOGNITION_CIRCUIT_OPEN'),
+        new AppError(
+          502,
+          'Face recognition service temporarily unavailable',
+          'REKOGNITION_CIRCUIT_OPEN',
+        ),
       )
       await expect(
         avatarModerationService.assertAvatarBytesNotNude(Buffer.from('jpeg')),
@@ -151,7 +158,9 @@ describe('avatarModerationService', () => {
       headObjectMetadata.mockRejectedValueOnce(
         new AppError(400, 'Uploaded object not found', 'INVALID_MEDIA_OBJECT'),
       )
-      await expect(avatarModerationService.assertAvatarUrlNotNude(userId, url)).resolves.toBeUndefined()
+      await expect(
+        avatarModerationService.assertAvatarUrlNotNude(userId, url),
+      ).resolves.toBeUndefined()
       expect(checkImageForNudity).not.toHaveBeenCalled()
     })
 
@@ -159,7 +168,9 @@ describe('avatarModerationService', () => {
       headObjectMetadata.mockRejectedValueOnce(
         new AppError(502, 'File storage temporarily unavailable', 'S3_METADATA_FAILED'),
       )
-      await expect(avatarModerationService.assertAvatarUrlNotNude(userId, url)).resolves.toBeUndefined()
+      await expect(
+        avatarModerationService.assertAvatarUrlNotNude(userId, url),
+      ).resolves.toBeUndefined()
       expect(checkImageForNudity).not.toHaveBeenCalled()
     })
 
@@ -168,7 +179,9 @@ describe('avatarModerationService', () => {
         isNudityDetected: true,
         labels: [{ label: 'Explicit Nudity', confidence: 88 }],
       })
-      await expect(avatarModerationService.assertAvatarUrlNotNude(userId, url)).rejects.toMatchObject({
+      await expect(
+        avatarModerationService.assertAvatarUrlNotNude(userId, url),
+      ).rejects.toMatchObject({
         code: AVATAR_NUDITY_ERROR_CODE,
       })
       expect(deleteObject).toHaveBeenCalledWith(key)
@@ -176,21 +189,31 @@ describe('avatarModerationService', () => {
 
     it('allows a clean owned CDN avatar URL', async () => {
       checkImageForNudity.mockResolvedValueOnce({ isNudityDetected: false, labels: [] })
-      await expect(avatarModerationService.assertAvatarUrlNotNude(userId, url)).resolves.toBeUndefined()
+      await expect(
+        avatarModerationService.assertAvatarUrlNotNude(userId, url),
+      ).resolves.toBeUndefined()
       expect(deleteObject).not.toHaveBeenCalled()
     })
 
     it('allows a clean owned virtual-hosted S3 avatar URL', async () => {
       checkImageForNudity.mockResolvedValueOnce({ isNudityDetected: false, labels: [] })
-      await expect(avatarModerationService.assertAvatarUrlNotNude(userId, s3Url)).resolves.toBeUndefined()
+      await expect(
+        avatarModerationService.assertAvatarUrlNotNude(userId, s3Url),
+      ).resolves.toBeUndefined()
       expect(checkImageForNudity).toHaveBeenCalledWith(key, { forceEnabled: true })
     })
 
     it('fail-opens on Rekognition infra error during URL scan', async () => {
       checkImageForNudity.mockRejectedValueOnce(
-        new AppError(502, 'Face recognition service temporarily unavailable', 'REKOGNITION_CIRCUIT_OPEN'),
+        new AppError(
+          502,
+          'Face recognition service temporarily unavailable',
+          'REKOGNITION_CIRCUIT_OPEN',
+        ),
       )
-      await expect(avatarModerationService.assertAvatarUrlNotNude(userId, url)).resolves.toBeUndefined()
+      await expect(
+        avatarModerationService.assertAvatarUrlNotNude(userId, url),
+      ).resolves.toBeUndefined()
       expect(deleteObject).not.toHaveBeenCalled()
     })
   })

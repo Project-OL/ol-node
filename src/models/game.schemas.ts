@@ -2,7 +2,11 @@ import { z } from 'zod'
 
 export const GameCatalogQuerySchema = z.object({
   // BAISHUN game_list_type: 2 = game, 3 = showroom (default).
-  gameListType: z.coerce.number().int().refine((v) => v === 2 || v === 3).optional(),
+  gameListType: z.coerce
+    .number()
+    .int()
+    .refine((v) => v === 2 || v === 3)
+    .optional(),
 })
 
 export const GameLaunchParamsSchema = z.object({

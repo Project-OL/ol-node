@@ -354,7 +354,9 @@ export const meService = {
     let touchedVideoCalls = false
 
     if (fields.acceptVideoCalls !== undefined || fields.isVideoCallEnabled !== undefined) {
-      const raw = String(fields.acceptVideoCalls ?? fields.isVideoCallEnabled).trim().toLowerCase()
+      const raw = String(fields.acceptVideoCalls ?? fields.isVideoCallEnabled)
+        .trim()
+        .toLowerCase()
       const boolVal = raw === 'true' || raw === '1'
       await videoCallSettingsService.setAcceptVideoCalls(userId, boolVal)
       touchedVideoCalls = true

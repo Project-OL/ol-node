@@ -145,11 +145,7 @@ export const adminUserDetailRepository = {
    * same definition as Live-server `getHostStatsService` (period=this_week).
    * When `effective_duration_seconds` is still 0 (failed/missing write), use wall-clock.
    */
-  async sumEffectiveLiveSecondsInRange(
-    userId: string,
-    start: Date,
-    end: Date,
-  ): Promise<number> {
+  async sumEffectiveLiveSecondsInRange(userId: string, start: Date, end: Date): Promise<number> {
     const rows = await prismaRead.$queryRaw<Array<{ total: bigint | number | null }>>`
       SELECT COALESCE(SUM(
         CASE

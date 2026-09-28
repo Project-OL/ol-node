@@ -329,26 +329,26 @@ export const agencyAdminService = {
 
     const [owner, kycRow, totalEarnings, monthEarnings, earningHostsCount, tradingBalance] =
       await Promise.all([
-      prismaRead.user.findUnique({
-        where: { id: agencyUserId },
-        select: {
-          id: true,
-          username: true,
-          firstName: true,
-          lastName: true,
-          publicId: true,
-          defaultPublicId: true,
-          currentVipPublicId: true,
-          country: true,
-          faceProfile: { select: { status: true, s3KeyReference: true } },
-        },
-      }),
-      agencyApplicationKycRepository.getKycForAdminReview(agencyUserId),
-      agencyCommissionRepository.sumAgencyDailyEarningsAllTime(agencyUserId),
-      agencyCommissionRepository.sumAgencyDailyEarnings(agencyUserId, monthStart, monthEnd),
-      agencyRepository.countHostsWithCommission(agencyUserId),
-      coinTradingRepository.getTradingBalance(agencyUserId),
-    ])
+        prismaRead.user.findUnique({
+          where: { id: agencyUserId },
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            publicId: true,
+            defaultPublicId: true,
+            currentVipPublicId: true,
+            country: true,
+            faceProfile: { select: { status: true, s3KeyReference: true } },
+          },
+        }),
+        agencyApplicationKycRepository.getKycForAdminReview(agencyUserId),
+        agencyCommissionRepository.sumAgencyDailyEarningsAllTime(agencyUserId),
+        agencyCommissionRepository.sumAgencyDailyEarnings(agencyUserId, monthStart, monthEnd),
+        agencyRepository.countHostsWithCommission(agencyUserId),
+        coinTradingRepository.getTradingBalance(agencyUserId),
+      ])
 
     if (!owner) throw new AppError(404, 'Agency owner not found', 'USER_NOT_FOUND')
 
@@ -401,10 +401,7 @@ export const agencyAdminService = {
     }
   },
 
-  async updateKycContact(
-    identifier: string,
-    data: { phone?: string; email?: string },
-  ) {
+  async updateKycContact(identifier: string, data: { phone?: string; email?: string }) {
     const agency = await resolveAgencyByIdentifier(identifier)
     return agencyKycService.updateAdminKycContact(agency.userId, data)
   },

@@ -734,9 +734,14 @@ export const supportAdminService = {
 
     const safeFileName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
     const key = `support/messages/${input.ticketId}/${Date.now()}_${safeFileName}`
-    const uploadUrl = await storageService.getPresignedPutUrl(key, input.mimeType, PRESIGN_TTL_SEC, {
-      cacheControl: 'public, max-age=31536000, immutable',
-    })
+    const uploadUrl = await storageService.getPresignedPutUrl(
+      key,
+      input.mimeType,
+      PRESIGN_TTL_SEC,
+      {
+        cacheControl: 'public, max-age=31536000, immutable',
+      },
+    )
     const publicUrl = storageService.getCdnOrS3PublicUrl(key)
     return { uploadUrl, publicUrl, key }
   },

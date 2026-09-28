@@ -93,7 +93,11 @@ async function upsertFlagAndMaybeNotify(
   now: Date,
 ): Promise<void> {
   const existing = await prisma.gcpInfraFlag.findFirst({
-    where: { resourceKey: resource.resourceKey, metric: candidate.metric, status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
+    where: {
+      resourceKey: resource.resourceKey,
+      metric: candidate.metric,
+      status: { in: ['OPEN', 'ACKNOWLEDGED'] },
+    },
     orderBy: { createdAt: 'desc' },
   })
 
@@ -137,11 +141,17 @@ async function upsertFlagAndMaybeNotify(
   if (shouldNotify) {
     const { subject, text, html } = flagEmailBody(resource, candidate)
     await notifySuperAdmins(subject, text, html)
-    log.info({ flagId, resourceKey: resource.resourceKey, metric: candidate.metric }, 'GCP infra flag notified')
+    log.info(
+      { flagId, resourceKey: resource.resourceKey, metric: candidate.metric },
+      'GCP infra flag notified',
+    )
   }
 }
 
-async function autoResolveClearedFlags(resourceKey: string, currentMetrics: string[]): Promise<void> {
+async function autoResolveClearedFlags(
+  resourceKey: string,
+  currentMetrics: string[],
+): Promise<void> {
   // A metric that no longer appears in this run's candidate list is healthy again —
   // auto-resolve any open flag for it rather than leaving it stuck OPEN forever.
   await prisma.gcpInfraFlag.updateMany({
@@ -171,7 +181,10 @@ export async function runGcpInfraMonitorJob(): Promise<void> {
       })
 
       if ('error' in metrics) {
-        log.warn({ resourceKey: resource.resourceKey, error: metrics.error }, 'GCP metrics collection error')
+        log.warn(
+          { resourceKey: resource.resourceKey, error: metrics.error },
+          'GCP metrics collection error',
+        )
         continue
       }
 

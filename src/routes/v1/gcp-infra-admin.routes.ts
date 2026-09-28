@@ -30,15 +30,11 @@ export default async function gcpInfraAdminRoutes(app: FastifyInstance) {
     return reply.send(await gcpInfraAdminService.listResourcesWithLatestUsage())
   })
 
-  app.get(
-    '/gcp-infra/resources/:resourceKey/history',
-    { preHandler },
-    async (request, reply) => {
-      const { resourceKey } = request.params as { resourceKey: string }
-      const query = parseRequest(gcpInfraResourceHistoryQuerySchema, request.query ?? {})
-      return reply.send(await gcpInfraAdminService.getResourceHistory(resourceKey, query.range))
-    },
-  )
+  app.get('/gcp-infra/resources/:resourceKey/history', { preHandler }, async (request, reply) => {
+    const { resourceKey } = request.params as { resourceKey: string }
+    const query = parseRequest(gcpInfraResourceHistoryQuerySchema, request.query ?? {})
+    return reply.send(await gcpInfraAdminService.getResourceHistory(resourceKey, query.range))
+  })
 
   app.get('/gcp-infra/resources/:resourceKey/config', { preHandler }, async (request, reply) => {
     const { resourceKey } = request.params as { resourceKey: string }

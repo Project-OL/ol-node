@@ -121,12 +121,18 @@ export const gcpInfraAdminService = {
     return prisma.gcpResourceConfig.update({
       where: { resourceKey },
       data: {
-        ...(update.targetTierFor2x !== undefined ? { targetTierFor2x: update.targetTierFor2x } : {}),
-        ...(update.suggestedNextTier !== undefined ? { suggestedNextTier: update.suggestedNextTier } : {}),
+        ...(update.targetTierFor2x !== undefined
+          ? { targetTierFor2x: update.targetTierFor2x }
+          : {}),
+        ...(update.suggestedNextTier !== undefined
+          ? { suggestedNextTier: update.suggestedNextTier }
+          : {}),
         ...(update.estimatedMonthlyCostUsd !== undefined
           ? { estimatedMonthlyCostUsd: update.estimatedMonthlyCostUsd }
           : {}),
-        ...(update.runbookMarkdown !== undefined ? { runbookMarkdown: update.runbookMarkdown } : {}),
+        ...(update.runbookMarkdown !== undefined
+          ? { runbookMarkdown: update.runbookMarkdown }
+          : {}),
         thresholdsJson: (mergedThresholds ?? {}) as Prisma.InputJsonValue,
       },
     })

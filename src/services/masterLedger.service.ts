@@ -1506,7 +1506,11 @@ export const masterLedgerService = {
     const cashProfit = lhs
     const override = params.redemptionRateBp
     const rateSource: 'override' | 'estimated' | 'unavailable' =
-      override !== undefined ? 'override' : rateEstimate.rateBp !== null ? 'estimated' : 'unavailable'
+      override !== undefined
+        ? 'override'
+        : rateEstimate.rateBp !== null
+          ? 'estimated'
+          : 'unavailable'
     // No history to estimate from → fall back to the conservative operating figure.
     const rateBp = override ?? rateEstimate.rateBp ?? 10000
     const unredeemedAdjustment = (deltaFloat * BigInt(10000 - rateBp)) / 10000n

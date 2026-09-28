@@ -58,7 +58,13 @@ export const avatarResizeService = {
         cacheControl: 'public, max-age=31536000, immutable',
       })
       logger.info(
-        { userId, key, newKey, sourceBytes: source.byteLength, resizedBytes: resized.buffer.byteLength },
+        {
+          userId,
+          key,
+          newKey,
+          sourceBytes: source.byteLength,
+          resizedBytes: resized.buffer.byteLength,
+        },
         'avatar resized',
       )
       return storageService.getCdnOrS3PublicUrl(newKey)

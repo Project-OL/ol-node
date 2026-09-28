@@ -114,7 +114,9 @@ async function queryLatestMean(filter: string): Promise<number | null> {
 }
 
 /** Cloud SQL: CPU/memory/disk utilization (0-1, converted to %) + current connection count. */
-export async function collectCloudSqlMetrics(instanceId: string): Promise<MetricResult | FetchError> {
+export async function collectCloudSqlMetrics(
+  instanceId: string,
+): Promise<MetricResult | FetchError> {
   if (!isGcpInfraMonitorConfigured()) return { error: 'GCP_PROJECT_ID not configured' }
   const projectId = gcpProjectId() as string
   const databaseId = `${projectId}:${instanceId}`

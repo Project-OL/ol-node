@@ -462,10 +462,14 @@ export const otpDeliveryAuditService = {
         currentRates:
           entry.country === 'UNKNOWN'
             ? { whatsapp: defaults.whatsappMinor, sms: defaults.smsMinor }
-            : { whatsapp: currentRateFor('whatsapp', entry.country), sms: currentRateFor('sms', entry.country) },
+            : {
+                whatsapp: currentRateFor('whatsapp', entry.country),
+                sms: currentRateFor('sms', entry.country),
+              },
       }))
       .sort((a, b) => {
-        if (b.totalChargeMinor !== a.totalChargeMinor) return b.totalChargeMinor - a.totalChargeMinor
+        if (b.totalChargeMinor !== a.totalChargeMinor)
+          return b.totalChargeMinor - a.totalChargeMinor
         return a.country.localeCompare(b.country)
       })
 
