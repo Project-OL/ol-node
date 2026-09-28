@@ -17,14 +17,15 @@ vi.mock('../../src/services/audit.service', () => ({
 }))
 
 const getPresignedPutUrl = vi.fn()
-const getPublicUrl = vi.fn()
+// Media/thumbnail URLs are CDN-first (falls back to S3 when no CDN is configured).
+const getCdnOrS3PublicUrl = vi.fn()
 const deleteObject = vi.fn()
 const getObjectBuffer = vi.fn()
 const putObjectBuffer = vi.fn()
 vi.mock('../../src/services/storage.service', () => ({
   storageService: {
     getPresignedPutUrl: (...args: unknown[]) => getPresignedPutUrl(...args),
-    getPublicUrl: (...args: unknown[]) => getPublicUrl(...args),
+    getCdnOrS3PublicUrl: (...args: unknown[]) => getCdnOrS3PublicUrl(...args),
     deleteObject: (...args: unknown[]) => deleteObject(...args),
     getObjectBuffer: (...args: unknown[]) => getObjectBuffer(...args),
     putObjectBuffer: (...args: unknown[]) => putObjectBuffer(...args),
@@ -138,6 +139,8 @@ describe('postService', () => {
         expect.stringMatching(/^posts\/user-1\/.+\.mp4$/),
         'video/mp4',
         600,
+        // keys are content-addressed (uuid), so the CDN may cache them forever
+        expect.objectContaining({ cacheControl: 'public, max-age=31536000, immutable' }),
       )
       expect(result.mediaKey).toMatch(/^posts\/user-1\/.+\.mp4$/)
       expect(result.uploadUrl).toBe('https://s3/video-upload-url')
@@ -234,7 +237,7 @@ describe('postService', () => {
       try {
         const mediaKey = `posts/${userId}/abc.jpg`
         const now = new Date()
-        getPublicUrl.mockReturnValue('https://cdn/posts/key.jpg')
+        getCdnOrS3PublicUrl.mockReturnValue('https://cdn/posts/key.jpg')
         createPostRepo.mockResolvedValue({
           id: postId,
           userId,
@@ -312,7 +315,7 @@ describe('postService', () => {
         const now = new Date()
         getObjectBuffer.mockResolvedValue(Buffer.from('video'))
         createJpegThumbnail.mockResolvedValue(Buffer.from('thumb'))
-        getPublicUrl.mockImplementation((key: string) => `https://cdn/${key}`)
+        getCdnOrS3PublicUrl.mockImplementation((key: string) => `https://cdn/${key}`)
         createPostRepo.mockResolvedValue({
           id: postId,
           userId,

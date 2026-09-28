@@ -26,6 +26,21 @@ vi.mock('../../src/config/database', () => ({
   },
 }))
 
+// Per-country WhatsApp/SMS overrides (5e926c0). Redis cache always misses so the repo is read.
+const costRatesFindAll = vi.fn()
+vi.mock('../../src/repositories/otpCostRate.repository', () => ({
+  otpCostRateRepository: { findAll: (...args: unknown[]) => costRatesFindAll(...args) },
+}))
+vi.mock('../../src/config/redis', () => ({
+  OTP_COST_RATES_TTL: 300,
+  RedisKeys: { otpCostRates: () => 'otp:cost-rates' },
+  redisClient: {
+    get: vi.fn().mockResolvedValue(null),
+    setex: vi.fn().mockResolvedValue('OK'),
+    del: vi.fn().mockResolvedValue(1),
+  },
+}))
+
 vi.mock('../../src/config/env', () => ({
   env: {
     OTP_COST_CURRENCY: 'INR',
@@ -43,17 +58,17 @@ vi.mock('../../src/utils/rootLogger', () => ({
   },
 }))
 
-const {
-  chargeMinorForMeans,
-  meansFromProvider,
-  otpDeliveryAuditService,
-  utcMonthRange,
-} = await import('../../src/services/otp-delivery-audit.service')
+const { meansFromProvider, otpDeliveryAuditService, resolveOtpCharge } =
+  await import('../../src/services/otp-delivery-audit.service')
+const { utcMonthRange } = await import('../../src/utils/utc-month-range')
+
+const IN_WHATSAPP_OVERRIDE = { means: 'whatsapp', country: 'IN', rateMinor: 40, currency: 'INR' }
 
 describe('otpDeliveryAuditService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     findUniqueUser.mockResolvedValue(null)
+    costRatesFindAll.mockResolvedValue([])
   })
 
   it('maps providers to means', () => {
@@ -62,11 +77,21 @@ describe('otpDeliveryAuditService', () => {
     expect(meansFromProvider('msg91_sms')).toBe('sms')
   })
 
-  it('resolves configured charge by means', () => {
-    expect(chargeMinorForMeans('email')).toBe(2)
-    expect(chargeMinorForMeans('whatsapp')).toBe(25)
-    expect(chargeMinorForMeans('sms')).toBe(15)
-    expect(chargeMinorForMeans('none')).toBe(0)
+  it('resolves the flat env charge when no country override exists', async () => {
+    expect(await resolveOtpCharge('email', 'IN')).toEqual({ chargeMinor: 2, currency: 'INR' })
+    expect(await resolveOtpCharge('whatsapp', 'IN')).toEqual({ chargeMinor: 25, currency: 'INR' })
+    expect(await resolveOtpCharge('sms', null)).toEqual({ chargeMinor: 15, currency: 'INR' })
+    expect(await resolveOtpCharge('none')).toEqual({ chargeMinor: 0, currency: 'INR' })
+  })
+
+  it('a per-country override wins for WhatsApp/SMS, email stays flat', async () => {
+    costRatesFindAll.mockResolvedValue([IN_WHATSAPP_OVERRIDE])
+    expect(await resolveOtpCharge('whatsapp', ' in ')).toEqual({ chargeMinor: 40, currency: 'INR' })
+    // no SMS override for IN -> flat default
+    expect(await resolveOtpCharge('sms', 'IN')).toEqual({ chargeMinor: 15, currency: 'INR' })
+    // other country -> flat default
+    expect(await resolveOtpCharge('whatsapp', 'AE')).toEqual({ chargeMinor: 25, currency: 'INR' })
+    expect(await resolveOtpCharge('email', 'IN')).toEqual({ chargeMinor: 2, currency: 'INR' })
   })
 
   it('builds UTC month ranges', () => {
@@ -97,6 +122,23 @@ describe('otpDeliveryAuditService', () => {
         chargeCurrency: 'INR',
         country: 'IN',
       }),
+    )
+  })
+
+  it('records the country override charge at send time', async () => {
+    costRatesFindAll.mockResolvedValue([IN_WHATSAPP_OVERRIDE])
+    otpDeliveryAuditService.record({
+      purpose: 'login',
+      means: 'whatsapp',
+      provider: 'msg91_whatsapp',
+      status: 'success',
+      targetType: 'phone',
+      targetMasked: '******3210',
+      country: 'IN',
+    })
+    await vi.waitFor(() => expect(create).toHaveBeenCalled())
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ means: 'whatsapp', chargeMinor: 40, chargeCurrency: 'INR' }),
     )
   })
 
@@ -148,6 +190,7 @@ describe('otpDeliveryAuditService', () => {
   })
 
   it('costsByCountry pivots means into table rows', async () => {
+    costRatesFindAll.mockResolvedValue([IN_WHATSAPP_OVERRIDE])
     costsByCountryAndMeansInRange.mockResolvedValue([
       { country: 'IN', means: 'whatsapp', _count: { _all: 3 }, _sum: { chargeMinor: 75 } },
       { country: 'IN', means: 'sms', _count: { _all: 1 }, _sum: { chargeMinor: 15 } },
@@ -163,6 +206,8 @@ describe('otpDeliveryAuditService', () => {
         sms: { count: 1, chargeMinor: 15 },
         totalCount: 4,
         totalChargeMinor: 90,
+        // rate a send would cost today: IN WhatsApp override, SMS flat default
+        currentRates: { whatsapp: 40, sms: 15 },
       },
       {
         country: 'UNKNOWN',
@@ -171,6 +216,7 @@ describe('otpDeliveryAuditService', () => {
         sms: { count: 0, chargeMinor: 0 },
         totalCount: 2,
         totalChargeMinor: 4,
+        currentRates: { whatsapp: 25, sms: 15 },
       },
     ])
     expect(result.totalChargeMinor).toBe(94)

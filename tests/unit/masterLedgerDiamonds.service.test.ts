@@ -121,16 +121,37 @@ describe('masterLedgerDiamondsService.dailyReport', () => {
     expect(r.days[0].closingUserHeldUnits).toBe('-5000')
   })
 
-  it('does not let a house-role user leg inflate settlement', async () => {
-    // A GAME_HOUSE account that also plays would emit user-leg tx types on a house wallet.
-    // Those must not be read as settlement either — only the three house-leg types count.
+  it('nets out a round the house plays against itself (house -> house)', async () => {
+    // A GAME_HOUSE account that also plays emits the player-leg types on a house wallet.
+    // That round moves diamonds house -> house, so it is backed out of the matching house
+    // leg and contributes nothing (f1ca4ad: this was the -16,050 of the Sep delta).
     mockQueries([
       row('2026-09-01', 'GAME_WAGER_IN', 'CREDIT', true, 2_000n),
       row('2026-09-01', 'GAME_WAGER_OUT', 'DEBIT', true, 2_000n),
     ])
     const r = await masterLedgerDiamondsService.dailyReport(PERIOD)
-    expect(r.totals.wageredUnits).toBe('2000')
-    expect(r.totals.profitUnits).toBe('2000')
+    expect(r.totals.wageredUnits).toBe('0')
+    expect(r.totals.profitUnits).toBe('0')
+    expect(r.totals.roundLegCount).toBe(0)
+  })
+
+  it('keeps a real player round intact when the house also self-plays that day', async () => {
+    mockQueries([
+      // real user round: 5,000 staked, 1,000 paid out
+      row('2026-09-01', 'GAME_WAGER_OUT', 'DEBIT', false, 5_000n),
+      row('2026-09-01', 'GAME_WAGER_IN', 'CREDIT', true, 5_000n),
+      row('2026-09-01', 'GAME_RESULT_OUT', 'DEBIT', true, 1_000n),
+      row('2026-09-01', 'GAME_RESULT_IN', 'CREDIT', false, 1_000n),
+      // house self-play: 2,000 staked, 500 won back
+      row('2026-09-01', 'GAME_WAGER_OUT', 'DEBIT', true, 2_000n),
+      row('2026-09-01', 'GAME_WAGER_IN', 'CREDIT', true, 2_000n),
+      row('2026-09-01', 'GAME_RESULT_OUT', 'DEBIT', true, 500n),
+      row('2026-09-01', 'GAME_RESULT_IN', 'CREDIT', true, 500n),
+    ])
+    const r = await masterLedgerDiamondsService.dailyReport(PERIOD)
+    expect(r.totals.wageredUnits).toBe('5000')
+    expect(r.totals.wonByUsersUnits).toBe('1000')
+    expect(r.totals.profitUnits).toBe('4000')
   })
 
   it('treats conversion as float-neutral and never as profit', async () => {

@@ -26,10 +26,13 @@ vi.mock("../../src/services/user-level.service", () => ({
 }));
 
 vi.mock("../../src/config/database", () => ({
-  prismaRead: {
+  // Owner row is read from the primary (fresh VIP id); KYC contact from the read client.
+  prisma: {
     user: {
       findUnique: (...args: unknown[]) => userFindUnique(...args),
     },
+  },
+  prismaRead: {
     agencyApplicationKyc: {
       findUnique: (...args: unknown[]) => kycFindUnique(...args),
     },

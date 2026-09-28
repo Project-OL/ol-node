@@ -9,24 +9,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const queryRaw = vi.fn()
-const coinAggregate = vi.fn()
-const pointAggregate = vi.fn()
 
 vi.mock('../../src/config/database', () => ({
   prisma: {},
   prismaRead: {
     get $queryRaw() {
       return queryRaw
-    },
-    coinLedgerEntry: {
-      get aggregate() {
-        return coinAggregate
-      },
-    },
-    pointLedgerEntry: {
-      get aggregate() {
-        return pointAggregate
-      },
     },
   },
 }))
@@ -53,28 +41,39 @@ function wallet(currency: string, user_id: string, balance: bigint, is_agent = f
 }
 
 /**
- * `loadWalletBalancesAt` issues the coin-side query then the point-side query;
- * `ledgerNetAt` then runs coin credit/debit and point credit/debit aggregates.
+ * `loadWalletBalancesAt` reads per-wallet `balance_after` from coin + point ledgers;
+ * `ledgerNetAt` reads grouped credit/debit totals (fdc1018: one grouped scan per ledger
+ * instead of ~70 aggregates). Route each $queryRaw by the SQL it runs, not by call order,
+ * because both run concurrently under Promise.all.
  */
+function sqlText(q: unknown): string {
+  const o = q as { sql?: string; text?: string; strings?: string[] }
+  return o.sql ?? o.text ?? o.strings?.join('?') ?? ''
+}
+
 function mockLedger(coinRows: WalletRow[], pointRows: WalletRow[], ledgerNet: bigint) {
   queryRaw.mockReset()
-  coinAggregate.mockReset()
-  pointAggregate.mockReset()
-  queryRaw.mockImplementationOnce(async () => coinRows).mockImplementationOnce(async () => pointRows)
-  // Express the whole net as a single coin credit; the identity only reads the sum.
-  coinAggregate
-    .mockImplementationOnce(async () => ({ _sum: { amount: ledgerNet } }))
-    .mockImplementationOnce(async () => ({ _sum: { amount: 0n } }))
-  pointAggregate
-    .mockImplementationOnce(async () => ({ _sum: { amount: 0n } }))
-    .mockImplementationOnce(async () => ({ _sum: { amount: 0n } }))
+  queryRaw.mockImplementation(async (q: unknown) => {
+    const sql = sqlText(q)
+    const isPoint = sql.includes('point_ledger_entries')
+    if (sql.includes('balance_after')) return isPoint ? pointRows : coinRows
+    if (sql.includes('GROUP BY')) {
+      // Express the whole net as one customer coin credit; the identity only reads the sum.
+      return isPoint
+        ? []
+        : [{ tx_type: 'COIN_PURCHASE', direction: 'CREDIT', currency: 'COIN', is_house: false, promo: false, units: ledgerNet }]
+    }
+    throw new Error(`unexpected query: ${sql.slice(0, 80)}`)
+  })
 }
+
+// ledgerTotals memoizes by timestamp; give every computeFloatAt call its own instant.
+let tick = Date.UTC(2026, 8, 1)
+const nextAt = () => new Date((tick += 1000))
 
 describe('computeFloatAt — diamond liability', () => {
   beforeEach(() => {
     queryRaw.mockReset()
-    coinAggregate.mockReset()
-    pointAggregate.mockReset()
   })
 
   it('counts a user holding coins and diamonds once each, not twice', async () => {
@@ -83,7 +82,7 @@ describe('computeFloatAt — diamond liability', () => {
       [],
       5_000n,
     )
-    const b = await computeFloatAt(new Date(), houseAccounts())
+    const b = await computeFloatAt(nextAt(), houseAccounts())
 
     expect(b.customerCoins).toBe(3_000n)
     expect(b.customerDiamonds).toBe(2_000n)
@@ -94,14 +93,14 @@ describe('computeFloatAt — diamond liability', () => {
   it('treats buying diamonds as float-neutral, not as new liability', async () => {
     // Before: 10,000 coins. After buying 4,000 diamonds: 6,000 coins + 4,000 diamonds.
     mockLedger([wallet('COIN', USER_ID, 10_000n)], [], 10_000n)
-    const before = await computeFloatAt(new Date(), houseAccounts())
+    const before = await computeFloatAt(nextAt(), houseAccounts())
 
     mockLedger(
       [wallet('COIN', USER_ID, 6_000n), wallet('DIAMOND', USER_ID, 4_000n)],
       [],
       10_000n,
     )
-    const after = await computeFloatAt(new Date(), houseAccounts())
+    const after = await computeFloatAt(nextAt(), houseAccounts())
 
     expect(after.customerTotal).toBe(before.customerTotal)
     expect(after.identityDelta).toBe(0n)
@@ -113,7 +112,7 @@ describe('computeFloatAt — diamond liability', () => {
       [],
       10_000n,
     )
-    const b = await computeFloatAt(new Date(), houseAccounts())
+    const b = await computeFloatAt(nextAt(), houseAccounts())
 
     expect(b.customerDiamonds).toBe(1_000n)
     expect(b.customerTotal).toBe(1_000n)
@@ -125,14 +124,14 @@ describe('computeFloatAt — diamond liability', () => {
 
   it('moves a wager from customer float to house inventory without changing the total', async () => {
     mockLedger([wallet('DIAMOND', USER_ID, 5_000n)], [], 5_000n)
-    const before = await computeFloatAt(new Date(), houseAccounts())
+    const before = await computeFloatAt(nextAt(), houseAccounts())
 
     mockLedger(
       [wallet('DIAMOND', USER_ID, 2_000n), wallet('DIAMOND', HOUSE_ID, 3_000n)],
       [],
       5_000n,
     )
-    const after = await computeFloatAt(new Date(), houseAccounts())
+    const after = await computeFloatAt(nextAt(), houseAccounts())
 
     expect(before.customerTotal).toBe(5_000n)
     expect(after.customerTotal).toBe(2_000n)
@@ -144,12 +143,12 @@ describe('computeFloatAt — diamond liability', () => {
   it('regression: a diamond wallet outside the scan breaks the identity by its balance', async () => {
     // What the bug looked like — ledger net includes the diamond credit, the scan does not.
     mockLedger([wallet('COIN', USER_ID, 0n)], [], 6_120n)
-    const b = await computeFloatAt(new Date(), houseAccounts())
+    const b = await computeFloatAt(nextAt(), houseAccounts())
     expect(b.identityDelta).toBe(-6_120n)
 
     // With the diamond wallet scanned, the identity closes.
     mockLedger([wallet('COIN', USER_ID, 0n), wallet('DIAMOND', HOUSE_ID, 6_120n)], [], 6_120n)
-    const fixed = await computeFloatAt(new Date(), houseAccounts())
+    const fixed = await computeFloatAt(nextAt(), houseAccounts())
     expect(fixed.identityDelta).toBe(0n)
   })
 
@@ -159,7 +158,7 @@ describe('computeFloatAt — diamond liability', () => {
       [wallet('POINT', USER_ID, 700n), wallet('POINT', 'agent-1', 200n, true)],
       1_000n,
     )
-    const b = await computeFloatAt(new Date(), houseAccounts())
+    const b = await computeFloatAt(nextAt(), houseAccounts())
 
     expect(b.customerHostPoints).toBe(700n)
     expect(b.customerAgencyPoints).toBe(200n)

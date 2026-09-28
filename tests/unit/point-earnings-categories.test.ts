@@ -47,18 +47,20 @@ describe('point earnings categories', () => {
     expect(types).toHaveLength(2)
   })
 
-  it('expands platform_reward category to payroll processing reward, platform reward, and livestream streak reward', () => {
-    // Host commission platformRewards (2026-08-10): LIVESTREAM_STREAK_REWARD
-    // (first-7-days livestream daily claims) added to this category.
+  it('expands platform_reward category to payroll, platform and host reward types', () => {
+    // LIVESTREAM_STREAK_REWARD added 2026-08-10 (first-7-days livestream claims); payroll
+    // takeover inventory and the Royal/Normal Host rewards joined the rewards section later.
     const types = resolvePointHistoryTxTypes(['platform_reward'])
-    expect(types).toEqual(
-      expect.arrayContaining([
+    expect([...types].sort()).toEqual(
+      [
         PointTxType.PAYROLL_PROCESSING_REWARD,
+        PointTxType.PAYROLL_TAKEOVER_INVENTORY,
         PointTxType.PLATFORM_REWARD,
         PointTxType.LIVESTREAM_STREAK_REWARD,
-      ]),
+        PointTxType.ROYAL_HOST_REWARD,
+        PointTxType.NORMAL_HOST_REWARD,
+      ].sort(),
     )
-    expect(types).toHaveLength(3)
   })
 
   it('expands transfer category to agent point transfer and transfer out only', () => {

@@ -84,6 +84,14 @@ vi.mock('../../src/services/audit.service', () => ({
   auditService: { log: vi.fn().mockResolvedValue(undefined) },
 }))
 
+// Logging in during the deletion grace period cancels the scheduled deletion.
+const cancelIfScheduledOnLogin = vi.fn()
+vi.mock('../../src/services/account-deletion.service', () => ({
+  accountDeletionService: {
+    cancelIfScheduledOnLogin: (...a: unknown[]) => cancelIfScheduledOnLogin(...a),
+  },
+}))
+
 const { sessionService } = await import('../../src/services/session.service')
 
 describe('sessionService one active session per (userId, deviceId)', () => {
@@ -116,6 +124,27 @@ describe('sessionService one active session per (userId, deviceId)', () => {
     revokeAllByUserId.mockReset()
     updateRefreshTokenAndBumpVersion.mockReset()
     upsertDevice.mockClear()
+    cancelIfScheduledOnLogin.mockReset()
+    cancelIfScheduledOnLogin.mockResolvedValue(false)
+  })
+
+  it('login cancels a scheduled account deletion and reports it', async () => {
+    cancelIfScheduledOnLogin.mockResolvedValue(true)
+    loginCreateOrReuseSession.mockResolvedValueOnce({
+      session: {
+        id: '22222222-2222-4222-8222-222222222222',
+        tokenVersion: 0,
+        deviceId: 'device-a',
+        userId: baseParams.userId,
+      },
+      refreshToken: 'rt-cancel',
+      revokedSessionIds: [],
+      reused: false,
+    })
+
+    const out = await sessionService.createSession(baseParams)
+    expect(cancelIfScheduledOnLogin).toHaveBeenCalledWith(baseParams.userId)
+    expect(out.accountDeletionCancelled).toBe(true)
   })
 
   it('retries login on Prisma unique violation (P2002)', async () => {

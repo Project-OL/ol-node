@@ -35,3 +35,6 @@ jobs:
           DATABASE_URL: postgresql://localhost:5432/test
           REDIS_URL: redis://localhost:6379
           JWT_ACCESS_SECRET: test-secret-at-least-32-characters-long
+          # Required by src/config/env.ts (min 3 chars); without it every test that loads the
+          # env module exits with code 1. Unit tests never call Rekognition.
+          REKOGNITION_COLLECTION_ID: ci-test-collection
