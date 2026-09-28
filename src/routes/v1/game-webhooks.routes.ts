@@ -38,13 +38,20 @@ function sendBaishunSuccess(reply: FastifyReply, data: unknown, extra?: Record<s
 export async function gameWebhooksRoutes(app: FastifyInstance) {
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {
-      const code = error.code ? (BAISHUN_ERROR_CODE_MAP[error.code] ?? BAISHUN_DEFAULT_ERROR_CODE) : BAISHUN_DEFAULT_ERROR_CODE
-      return reply.status(200).send({ code, message: error.message, unique_id: uniqueId(), data: {} })
+      const code = error.code
+        ? (BAISHUN_ERROR_CODE_MAP[error.code] ?? BAISHUN_DEFAULT_ERROR_CODE)
+        : BAISHUN_DEFAULT_ERROR_CODE
+      return reply
+        .status(200)
+        .send({ code, message: error.message, unique_id: uniqueId(), data: {} })
     }
     request.log.error({ err: error }, 'Unhandled error in game-webhooks route')
-    return reply
-      .status(200)
-      .send({ code: BAISHUN_DEFAULT_ERROR_CODE, message: 'Internal error', unique_id: uniqueId(), data: {} })
+    return reply.status(200).send({
+      code: BAISHUN_DEFAULT_ERROR_CODE,
+      message: 'Internal error',
+      unique_id: uniqueId(),
+      data: {},
+    })
   })
 
   app.post(
@@ -92,7 +99,10 @@ export async function gameWebhooksRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = BaishunUpdateSsTokenSchema.parse(request.body)
       const result = await baishunSessionService.updateSsToken({ ssToken: body.ss_token })
-      return sendBaishunSuccess(reply, { ss_token: result.ssToken, expire_date: result.expireDateMs })
+      return sendBaishunSuccess(reply, {
+        ss_token: result.ssToken,
+        expire_date: result.expireDateMs,
+      })
     },
   )
 

@@ -14,41 +14,29 @@ describe('parseOwnedAvatarS3Key', () => {
   })
 
   it('extracts key from CloudFront URL', () => {
-    expect(
-      parseOwnedAvatarS3Key(`https://cdn.example.com/avatars/${userId}/v1.webp`, userId),
-    ).toBe(`avatars/${userId}/v1.webp`)
+    expect(parseOwnedAvatarS3Key(`https://cdn.example.com/avatars/${userId}/v1.webp`, userId)).toBe(
+      `avatars/${userId}/v1.webp`,
+    )
   })
 
   it('ignores query strings', () => {
     expect(
-      parseOwnedAvatarS3Key(
-        `https://cdn.example.com/avatars/${userId}/file.png?x=1`,
-        userId,
-      ),
+      parseOwnedAvatarS3Key(`https://cdn.example.com/avatars/${userId}/file.png?x=1`, userId),
     ).toBe(`avatars/${userId}/file.png`)
   })
 
   it('rejects another user prefix', () => {
     expect(
-      parseOwnedAvatarS3Key(
-        'https://cdn.example.com/avatars/other-user/file.jpg',
-        userId,
-      ),
+      parseOwnedAvatarS3Key('https://cdn.example.com/avatars/other-user/file.jpg', userId),
     ).toBeNull()
   })
 
   it('rejects nested paths and traversal', () => {
     expect(
-      parseOwnedAvatarS3Key(
-        `https://cdn.example.com/avatars/${userId}/nested/file.jpg`,
-        userId,
-      ),
+      parseOwnedAvatarS3Key(`https://cdn.example.com/avatars/${userId}/nested/file.jpg`, userId),
     ).toBeNull()
     expect(
-      parseOwnedAvatarS3Key(
-        `https://cdn.example.com/avatars/${userId}/../secret.jpg`,
-        userId,
-      ),
+      parseOwnedAvatarS3Key(`https://cdn.example.com/avatars/${userId}/../secret.jpg`, userId),
     ).toBeNull()
   })
 
@@ -64,6 +52,8 @@ describe('parseOwnedAvatarS3Key', () => {
   it('rejects non-avatar URLs and invalid URLs', () => {
     expect(parseOwnedAvatarS3Key('https://google.com/photo.jpg', userId)).toBeNull()
     expect(parseOwnedAvatarS3Key('not-a-url', userId)).toBeNull()
-    expect(parseOwnedAvatarS3Key(`https://cdn.example.com/messaging/${userId}/x.jpg`, userId)).toBeNull()
+    expect(
+      parseOwnedAvatarS3Key(`https://cdn.example.com/messaging/${userId}/x.jpg`, userId),
+    ).toBeNull()
   })
 })

@@ -78,6 +78,8 @@ vi.mock('../../src/services/otp-delivery-config.service', () => ({
 
 const envState = vi.hoisted(() => ({
   OTP_DELIVERY_ENABLED: true,
+  // Gated since c9cc15d (2026-08-29); default false. Tests that need the fallback enable it.
+  OTP_WHATSAPP_SMS_FALLBACK_ENABLED: false,
   OTP_COST_CURRENCY: 'INR',
   OTP_COST_EMAIL_MINOR: 2,
   OTP_COST_WHATSAPP_MINOR: 25,
@@ -95,6 +97,7 @@ describe('otpDeliveryService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     envState.OTP_DELIVERY_ENABLED = true
+    envState.OTP_WHATSAPP_SMS_FALLBACK_ENABLED = false
     redisIncr.mockResolvedValue(1)
     redisExpire.mockResolvedValue(1)
     whatsappSend.mockResolvedValue({
@@ -203,7 +206,25 @@ describe('otpDeliveryService', () => {
     )
   })
 
-  it('falls back to SMS when WhatsApp delivery fails', async () => {
+  it('does not fall back to SMS when WhatsApp fails and the fallback flag is off (default)', async () => {
+    whatsappSend.mockResolvedValue({ success: false, error: 'template rejected' })
+
+    await expect(
+      otpDeliveryService.send({ otp: '12345', targetIdentifier: '9876543210', purpose: 'signup' }),
+    ).rejects.toMatchObject({ code: 'OTP_DELIVERY_FAILED', statusCode: 502 })
+
+    expect(whatsappSend).toHaveBeenCalledTimes(1)
+    expect(smsSend).not.toHaveBeenCalled()
+    expect(deliveryAuditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ means: 'whatsapp', status: 'failed' }),
+    )
+    expect(deliveryAuditRecord).not.toHaveBeenCalledWith(
+      expect.objectContaining({ routeReason: 'fallback_to_sms' }),
+    )
+  })
+
+  it('falls back to SMS when WhatsApp delivery fails and the fallback flag is on', async () => {
+    envState.OTP_WHATSAPP_SMS_FALLBACK_ENABLED = true
     whatsappSend.mockResolvedValue({
       success: false,
       error: 'template rejected',
@@ -317,7 +338,8 @@ describe('otpDeliveryService', () => {
     )
   })
 
-  it('throws OTP_DELIVERY_FAILED when all phone providers fail', async () => {
+  it('throws OTP_DELIVERY_FAILED when all phone providers fail (fallback on)', async () => {
+    envState.OTP_WHATSAPP_SMS_FALLBACK_ENABLED = true
     whatsappSend.mockResolvedValue({
       success: false,
       error: 'whatsapp failed',

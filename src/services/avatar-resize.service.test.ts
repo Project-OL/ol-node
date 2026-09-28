@@ -69,10 +69,18 @@ describe('avatarResizeService.shrinkOwnedAvatarUrl', () => {
     expect(url).toBe(`https://cdn.example.com/${put.key}`)
   })
 
-  it('leaves third-party and other users\' URLs alone', async () => {
-    expect(await avatarResizeService.shrinkOwnedAvatarUrl(userId, 'https://lh3.googleusercontent.com/a/x.jpg')).toBeNull()
+  it("leaves third-party and other users' URLs alone", async () => {
     expect(
-      await avatarResizeService.shrinkOwnedAvatarUrl(userId, 'https://cdn.example.com/avatars/someone-else/p.jpg'),
+      await avatarResizeService.shrinkOwnedAvatarUrl(
+        userId,
+        'https://lh3.googleusercontent.com/a/x.jpg',
+      ),
+    ).toBeNull()
+    expect(
+      await avatarResizeService.shrinkOwnedAvatarUrl(
+        userId,
+        'https://cdn.example.com/avatars/someone-else/p.jpg',
+      ),
     ).toBeNull()
     expect(getObjectBuffer).not.toHaveBeenCalled()
   })
@@ -86,7 +94,10 @@ describe('avatarResizeService.shrinkOwnedAvatarUrl', () => {
   it('never throws: storage failure keeps the original URL', async () => {
     getObjectBuffer.mockRejectedValue(new Error('S3 down'))
     await expect(
-      avatarResizeService.shrinkOwnedAvatarUrl(userId, `https://cdn.example.com/avatars/${userId}/p.jpg`),
+      avatarResizeService.shrinkOwnedAvatarUrl(
+        userId,
+        `https://cdn.example.com/avatars/${userId}/p.jpg`,
+      ),
     ).resolves.toBeNull()
     expect(putObjectBuffer).not.toHaveBeenCalled()
   })

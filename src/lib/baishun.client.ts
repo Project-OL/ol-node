@@ -33,13 +33,14 @@ export type BaishunGameInfo = {
 }
 
 function signature(appKey: string, nonce: string, timestampSec: number): string {
-  return crypto
-    .createHash('md5')
-    .update(`${nonce}${appKey}${timestampSec}`)
-    .digest('hex')
+  return crypto.createHash('md5').update(`${nonce}${appKey}${timestampSec}`).digest('hex')
 }
 
-function commonParams(appKey: string): { signature_nonce: string; timestamp: number; signature: string } {
+function commonParams(appKey: string): {
+  signature_nonce: string
+  timestamp: number
+  signature: string
+} {
   const nonce = crypto.randomBytes(8).toString('hex')
   const timestamp = Math.floor(Date.now() / 1000)
   return { signature_nonce: nonce, timestamp, signature: signature(appKey, nonce, timestamp) }
@@ -88,10 +89,7 @@ function unwrap<T>(data: { code: number; message?: string; data: T }): T {
 }
 
 export const baishunClient = {
-  async getGameList(
-    creds: BaishunCredentials,
-    gameListType: 2 | 3,
-  ): Promise<BaishunGameInfo[]> {
+  async getGameList(creds: BaishunCredentials, gameListType: 2 | 3): Promise<BaishunGameInfo[]> {
     return withRetry(async () => {
       const client = clientFor(creds)
       const { data } = await client.post('/v1/api/gamelist', {
@@ -118,10 +116,7 @@ export const baishunClient = {
   },
 
   /** Buy-in mode games only (§4.3). Not called by the default flow. */
-  async getBalanceInfo(
-    creds: BaishunCredentials,
-    userId: string,
-  ): Promise<{ cur_coin: number }> {
+  async getBalanceInfo(creds: BaishunCredentials, userId: string): Promise<{ cur_coin: number }> {
     return withRetry(async () => {
       const client = clientFor(creds)
       const { data } = await client.post('/v2/api/balance_info', {

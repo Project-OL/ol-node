@@ -71,9 +71,7 @@ function resolveAcceptability(input: {
   if (!(ACCEPTABLE_FAILED_SESSION_STATUSES as string[]).includes(input.status)) {
     return { canAccept: false, acceptBlockedReason: 'NOT_TERMINAL_FAILURE' }
   }
-  const hasImage = Boolean(
-    input.failureImageS3Key?.trim() || input.profileS3KeyReference?.trim(),
-  )
+  const hasImage = Boolean(input.failureImageS3Key?.trim() || input.profileS3KeyReference?.trim())
   if (!hasImage) {
     return { canAccept: false, acceptBlockedReason: 'NO_IMAGE' }
   }
@@ -717,8 +715,7 @@ export const faceVerificationAdminService = {
       throw new AppError(409, 'Face profile is already indexed', 'FACE_ALREADY_INDEXED')
     }
 
-    const sourceKey =
-      session.failureImageS3Key?.trim() || existing?.s3KeyReference?.trim() || null
+    const sourceKey = session.failureImageS3Key?.trim() || existing?.s3KeyReference?.trim() || null
     if (!sourceKey) {
       throw new AppError(
         422,

@@ -49,10 +49,9 @@ export const updateAcceptVideoCallsSchema = z
     acceptVideoCalls: booleanCoerce.optional(),
     isVideoCallEnabled: booleanCoerce.optional(),
   })
-  .refine(
-    (d) => d.acceptVideoCalls !== undefined || d.isVideoCallEnabled !== undefined,
-    { message: 'acceptVideoCalls is required' },
-  )
+  .refine((d) => d.acceptVideoCalls !== undefined || d.isVideoCallEnabled !== undefined, {
+    message: 'acceptVideoCalls is required',
+  })
   .transform((d) => ({
     acceptVideoCalls: (d.acceptVideoCalls ?? d.isVideoCallEnabled)!,
   }))

@@ -76,7 +76,10 @@ export default async function otpDeliveryAdminRoutes(app: FastifyInstance) {
       const adminUserId = request.adminUser?.id
       if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
       const body = parseRequest(adminOtpCountryRateUpsertSchema, request.body ?? {})
-      const rate = await otpDeliveryAuditService.setCountryRate({ ...body, updatedByUserId: adminUserId })
+      const rate = await otpDeliveryAuditService.setCountryRate({
+        ...body,
+        updatedByUserId: adminUserId,
+      })
       return reply.send(rate)
     },
   )

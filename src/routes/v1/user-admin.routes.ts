@@ -398,7 +398,10 @@ export default async function userAdminRoutes(app: FastifyInstance) {
           'INVALID_REQUEST',
         )
       }
-      const result = await agencyKycService.updateAdminKycContact(request.params.userId, parsed.data)
+      const result = await agencyKycService.updateAdminKycContact(
+        request.params.userId,
+        parsed.data,
+      )
       auditService.logAdminFromRequest(request, {
         actionType: 'ADMIN_AGENCY_KYC_CONTACT_UPDATED',
         targetUserId: request.params.userId,

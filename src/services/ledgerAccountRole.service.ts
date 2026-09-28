@@ -217,9 +217,7 @@ export const ledgerAccountRoleService = {
         'MULTIPLE_ROLES_SPECIFY_ONE',
       )
     }
-    const existing = params.role
-      ? roles.find((r) => r.role === params.role)
-      : roles[0]
+    const existing = params.role ? roles.find((r) => r.role === params.role) : roles[0]
     if (!existing) throw new AppError(404, 'House account role not found', 'ROLE_NOT_FOUND')
 
     if (!params.force) {

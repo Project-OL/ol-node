@@ -906,7 +906,11 @@ export const withdrawalService = {
       await enqueuePayrollSla(assignmentIdOut, expiresAtOut)
       const assignment = await prismaRead.withdrawalPayrollAssignment.findUnique({
         where: { id: assignmentIdOut },
-        select: { agencyUserId: true, withdrawalId: true, withdrawal: { select: { amountPoints: true } } },
+        select: {
+          agencyUserId: true,
+          withdrawalId: true,
+          withdrawal: { select: { amountPoints: true } },
+        },
       })
       if (assignment) {
         await bustPayrollSummaryCache(assignment.agencyUserId)

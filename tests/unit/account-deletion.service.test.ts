@@ -2,16 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AppError } from '../../src/middlewares/errorHandler'
 
 const findByUserId = vi.fn()
-const create = vi.fn()
+const upsertSchedule = vi.fn()
 const update = vi.fn()
 const findForDeletion = vi.fn()
 vi.mock('../../src/repositories/account-deletion.repository', () => ({
   accountDeletionRepository: {
     findByUserId: (...args: unknown[]) => findByUserId(...args),
-    create: (...args: unknown[]) => create(...args),
+    upsertSchedule: (...args: unknown[]) => upsertSchedule(...args),
     update: (...args: unknown[]) => update(...args),
     findForDeletion: (...args: unknown[]) => findForDeletion(...args),
   },
+}))
+
+// Grace/deletion windows are admin-configured; pin them so the test does not hit Redis/DB.
+const getPeriods = vi.fn()
+vi.mock('../../src/services/accountDeletionConfig.service', () => ({
+  accountDeletionConfigService: { getPeriods: (...args: unknown[]) => getPeriods(...args) },
 }))
 
 const userUpdate = vi.fn()
@@ -97,26 +103,19 @@ beforeEach(() => {
   vi.clearAllMocks()
   verifyCurrentPassword.mockResolvedValue(undefined)
   auditLog.mockResolvedValue(undefined)
+  getPeriods.mockResolvedValue({ gracePeriodDays: 30, deletionPeriodDays: 45 })
 })
 
 describe('accountDeletionService.scheduleDeletion', () => {
   it('schedules deletion and revokes all sessions', async () => {
     findByUserId.mockResolvedValue(null)
-    const now = new Date()
-    const deactivationUntil = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-    const deletionAt = new Date(now.getTime() + 45 * 24 * 60 * 60 * 1000)
-    create.mockResolvedValue({
-      userId,
-      scheduledAt: now,
-      deactivationUntil,
-      deletionAt,
-    })
+    upsertSchedule.mockResolvedValue(undefined)
 
     const result = await accountDeletionService.scheduleDeletion(userId, 'MyP@ssw0rd!', 'Privacy')
 
     expect(verifyCurrentPassword).toHaveBeenCalledWith(userId, 'MyP@ssw0rd!')
     expect(findByUserId).toHaveBeenCalledWith(userId)
-    expect(create).toHaveBeenCalledWith(
+    expect(upsertSchedule).toHaveBeenCalledWith(
       expect.objectContaining({
         userId,
         reason: 'Privacy',
@@ -145,7 +144,7 @@ describe('accountDeletionService.scheduleDeletion', () => {
       accountDeletionService.scheduleDeletion(userId, 'Wrong'),
     ).rejects.toMatchObject({ code: 'SECURITY_PASSWORD_INCORRECT', statusCode: 403 })
 
-    expect(create).not.toHaveBeenCalled()
+    expect(upsertSchedule).not.toHaveBeenCalled()
   })
 
   it('throws DELETION_ALREADY_SCHEDULED when already scheduled', async () => {
@@ -155,7 +154,7 @@ describe('accountDeletionService.scheduleDeletion', () => {
       accountDeletionService.scheduleDeletion(userId, 'MyP@ssw0rd!'),
     ).rejects.toMatchObject({ code: 'DELETION_ALREADY_SCHEDULED', statusCode: 409 })
 
-    expect(create).not.toHaveBeenCalled()
+    expect(upsertSchedule).not.toHaveBeenCalled()
   })
 })
 

@@ -17,7 +17,10 @@ export const ADMIN_MANAGED_TAGS = {
 
 /** Normalize tag text the same way the Flutter badge matcher does (`coin seller` / `coin_seller` / `coinseller`). */
 export function normalizeCoinsellerTagKey(tag: string): string {
-  return tag.trim().toLowerCase().replace(/[_\s]+/g, '')
+  return tag
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, '')
 }
 
 export function isCoinsellerAdminTag(tag: string): boolean {

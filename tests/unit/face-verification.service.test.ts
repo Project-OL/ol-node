@@ -93,6 +93,15 @@ vi.mock('../../src/repositories/faceVerification.repository', () => ({
   faceVerificationRepository: repo,
 }))
 
+// getMyFaceProfile also reads the latest registration attempt, so a fresh in-flight or
+// failed attempt is not hidden behind a stale profile (face-registration-liveness-flow.md).
+const findLatestRegistrationForUser = vi.fn()
+vi.mock('../../src/repositories/faceRegistration.repository', () => ({
+  faceRegistrationRepository: {
+    findLatestForUser: (...a: unknown[]) => findLatestRegistrationForUser(...a),
+  },
+}))
+
 vi.mock('../../src/repositories/agencyApplicationKyc.repository', () => ({
   agencyApplicationKycRepository: {
     setFaceVerified: vi.fn().mockResolvedValue(undefined),
@@ -122,6 +131,7 @@ describe('faceVerificationService', () => {
     repo.recordAttempt.mockResolvedValue({ id: 'attempt-1' })
     repo.createPendingProfile.mockResolvedValue({ id: 'profile-1' })
     checkForNudity.mockResolvedValue({ isNudityDetected: false, labels: [] })
+    findLatestRegistrationForUser.mockResolvedValue(null)
     getOrCreateLivenessConfig.mockResolvedValue({
       id: 1,
       livenessRequired: false,
@@ -215,5 +225,38 @@ describe('faceVerificationService', () => {
     expect(res.referenceImageUrl).toBeNull()
     expect(res.status).toBe('REVOKED')
     expect(res.hasReference).toBe(false)
+  })
+  it('getMyFaceProfile reports PENDING_INDEX while a fresh registration is still processing', async () => {
+    const { faceVerificationService } = await import('../../src/services/face-verification.service')
+    repo.getProfileByUserId.mockResolvedValue(null)
+    findLatestRegistrationForUser.mockResolvedValue({
+      id: 's1',
+      status: 'PROCESSING',
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    })
+    const res = await faceVerificationService.getMyFaceProfile('u1')
+    expect(res.status).toBe('PENDING_INDEX')
+    expect(res.canReRegister).toBe(false)
+  })
+
+  it('getMyFaceProfile ignores a registration attempt older than the profile', async () => {
+    const { faceVerificationService } = await import('../../src/services/face-verification.service')
+    repo.getProfileByUserId.mockResolvedValue({
+      id: 'p1',
+      userId: 'u1',
+      status: 'INDEXED',
+      rekognitionFaceId: 'f1',
+      s3KeyReference: 'face/register/u1/abc.jpg',
+      indexedAt: new Date('2026-09-02T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-02T00:00:00.000Z'),
+      lastVerifiedAt: null,
+    })
+    findLatestRegistrationForUser.mockResolvedValue({
+      id: 's-old',
+      status: 'PROCESSING',
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+    })
+    const res = await faceVerificationService.getMyFaceProfile('u1')
+    expect(res.status).toBe('INDEXED')
   })
 })

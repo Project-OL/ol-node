@@ -144,12 +144,14 @@ export const videoCallSettingsService = {
 
     const row = await videoCallRepository.upsertSettings(userId, input)
     if (input.acceptVideoCalls !== undefined) {
-      await cacheRedisService.del(
-        RedisKeys.userMe(userId),
-        RedisKeys.userMeAssembled(userId),
-        RedisKeys.userProfile(userId),
-        RedisKeys.userSearchCard(userId),
-      ).catch(() => {})
+      await cacheRedisService
+        .del(
+          RedisKeys.userMe(userId),
+          RedisKeys.userMeAssembled(userId),
+          RedisKeys.userProfile(userId),
+          RedisKeys.userSearchCard(userId),
+        )
+        .catch(() => {})
     }
     return withAllowedPrices(userId, toPublicSettings(userId, row))
   },
@@ -159,12 +161,14 @@ export const videoCallSettingsService = {
     acceptVideoCalls: boolean,
   ): Promise<VideoCallSettingsDto> {
     const row = await videoCallRepository.upsertSettings(userId, { acceptVideoCalls })
-    await cacheRedisService.del(
-      RedisKeys.userMe(userId),
-      RedisKeys.userMeAssembled(userId),
-      RedisKeys.userProfile(userId),
-      RedisKeys.userSearchCard(userId),
-    ).catch(() => {})
+    await cacheRedisService
+      .del(
+        RedisKeys.userMe(userId),
+        RedisKeys.userMeAssembled(userId),
+        RedisKeys.userProfile(userId),
+        RedisKeys.userSearchCard(userId),
+      )
+      .catch(() => {})
     return withAllowedPrices(userId, toPublicSettings(userId, row))
   },
 }

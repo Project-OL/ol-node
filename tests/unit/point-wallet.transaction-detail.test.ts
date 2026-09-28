@@ -22,6 +22,7 @@ vi.mock("../../src/repositories/point-ledger.repository", () => ({
 }));
 
 const userFindMany = vi.fn();
+const userFindUnique = vi.fn();
 const payrollConfigFindUnique = vi.fn();
 const withdrawalFindUnique = vi.fn();
 vi.mock("../../src/config/database", () => ({
@@ -29,6 +30,8 @@ vi.mock("../../src/config/database", () => ({
   prismaRead: {
     user: {
       findMany: (...a: unknown[]) => userFindMany(...a),
+      // viewer country -> which local currency the amount is shown in
+      findUnique: (...a: unknown[]) => userFindUnique(...a),
     },
     payrollConfig: {
       findUnique: (...a: unknown[]) => payrollConfigFindUnique(...a),
@@ -48,8 +51,10 @@ vi.mock("../../src/services/audit.service", () => ({
 vi.mock("../../src/services/user-level.service", () => ({
   walletLevelService: {},
 }));
+// FX rates now come from the cached payroll config snapshot.
+const getPayrollConfig = vi.fn();
 vi.mock("../../src/services/withdrawal.service", () => ({
-  withdrawalService: {},
+  withdrawalService: { getPayrollConfig: (...a: unknown[]) => getPayrollConfig(...a) },
 }));
 
 import { pointWalletService } from "../../src/services/point-wallet.service";
@@ -64,6 +69,39 @@ beforeEach(() => {
   getOrCreate.mockResolvedValue({ id: WALLET_ID, userId: USER_ID });
   payrollConfigFindUnique.mockResolvedValue({ inrPerUsd: { toString: () => "86" } });
   withdrawalFindUnique.mockResolvedValue(null);
+  userFindUnique.mockResolvedValue({ country: null });
+  getPayrollConfig.mockResolvedValue({ inrPerUsd: 86, nprPerUsd: 150, countryRates: [], feeTiers: [] });
+});
+
+describe("pointWalletService.getTransactionDetail local currency", () => {
+  it("shows the amount in NPR for a viewer in Nepal", async () => {
+    userFindUnique.mockResolvedValue({ country: "Nepal" });
+    findByIdForWallet.mockResolvedValue({
+      id: ENTRY_ID,
+      walletId: WALLET_ID,
+      direction: LedgerDirection.CREDIT,
+      txType: PointTxType.GIFT_RECEIVE,
+      amount: 60_000n,
+      balanceAfter: 60_000n,
+      refId: null,
+      counterpartyId: null,
+      description: null,
+      metadata: null,
+      idempotencyKey: "idem-np",
+      createdAt: new Date("2026-06-01T12:00:00.000Z"),
+    });
+    userFindMany.mockResolvedValue([
+      { id: USER_ID, username: "np", firstName: null, lastName: null, avatarUrl: null, publicId: 1n },
+    ]);
+
+    const out = await pointWalletService.getTransactionDetail(USER_ID, ENTRY_ID);
+
+    // 60,000 points = $6.00; payroll snapshot nprPerUsd = 150
+    expect(out.amountDetails).toMatchObject({
+      usdAmount: "6.00",
+      localCurrency: { code: "NPR", amount: "900.00", usdBasis: "6.00" },
+    });
+  });
 });
 
 describe("pointWalletService.getTransactionDetail", () => {

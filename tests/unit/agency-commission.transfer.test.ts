@@ -42,6 +42,7 @@ vi.mock("../../src/repositories/faceVerification.repository", () => ({
 }));
 
 const prismaAgencyFindUnique = vi.fn();
+const prismaUserFindUnique = vi.fn();
 const prismaAgentTransferFindUnique = vi.fn();
 const prismaAgentTransferFindUniqueTx = vi.fn();
 const prismaTransaction = vi.fn();
@@ -57,10 +58,20 @@ vi.mock("../../src/config/database", () => ({
     agency: {
       findUnique: (...a: unknown[]) => prismaAgencyFindUnique(...a),
     },
+    // sender country -> which local currency the response quotes
+    user: {
+      findUnique: (...a: unknown[]) => prismaUserFindUnique(...a),
+    },
     agentPointTransfer: {
       findUnique: (...a: unknown[]) => prismaAgentTransferFindUnique(...a),
     },
   },
+}));
+
+// FX for the response's local-currency fields comes from the payroll config snapshot.
+const getPayrollConfig = vi.fn();
+vi.mock("../../src/services/withdrawal.service", () => ({
+  withdrawalService: { getPayrollConfig: (...a: unknown[]) => getPayrollConfig(...a) },
 }));
 
 import { agencyCommissionService } from "../../src/services/agencyCommission.service";
@@ -69,6 +80,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   isIndexedForUser.mockResolvedValue(true);
   prismaAgencyFindUnique.mockResolvedValue({ userId: "a2" });
+  prismaUserFindUnique.mockResolvedValue({ country: "India" });
+  getPayrollConfig.mockResolvedValue({ inrPerUsd: 86, nprPerUsd: 150, countryRates: [], feeTiers: [] });
   prismaAgentTransferFindUnique.mockResolvedValue(null);
   prismaAgentTransferFindUniqueTx.mockResolvedValue(null);
   prismaTransaction.mockImplementation(async (fn: (t: unknown) => unknown) => {
@@ -149,6 +162,9 @@ describe("agencyCommissionService.transferPointsToAgent", () => {
     });
 
     expect(out.transferId).toEqual(expect.any(String));
+    // 200,000 points = $20.00 -> INR at 86/USD for an Indian sender
+    expect(out).toMatchObject({ points: "200000", usdAmount: "20.00", localCurrencyCode: "INR" });
+    expect(Number(out.localCurrencyAmount)).toBe(1720);
     expect(debit).toHaveBeenCalledWith(
       "a1",
       200_000n,

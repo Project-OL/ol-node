@@ -47,6 +47,45 @@ vi.mock('../../src/config/env', () => ({
   env: { REKOGNITION_COLLECTION_ID: 'test-collection' },
 }))
 
+// The admin service also manages registration sessions (stuck-session clearing, manual
+// index). Mock the repository and the DB module so importing it needs no DATABASE_URL.
+vi.mock('../../src/repositories/faceRegistration.repository', () => ({
+  faceRegistrationRepository: {
+    clearStuckSessionsForUser: vi.fn().mockResolvedValue([]),
+    listStuckSessions: vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    findOpenSessionsForUser: vi.fn().mockResolvedValue([]),
+    findLatestForUser: vi.fn().mockResolvedValue(null),
+    findByIdForUser: vi.fn().mockResolvedValue(null),
+    markSessionIndexed: vi.fn().mockResolvedValue(undefined),
+    updateSession: vi.fn().mockResolvedValue(undefined),
+    appendAudit: vi.fn().mockResolvedValue(undefined),
+  },
+}))
+vi.mock('../../src/config/database', () => ({ prisma: {}, prismaRead: {} }))
+
+// Remaining collaborators of the admin service — none are exercised by the revoke path's
+// assertions, but importing the real modules would open Redis / need the full env.
+vi.mock('../../src/repositories/user.repository', () => ({ userRepository: {} }))
+vi.mock('../../src/config/redis', () => ({
+  redisClient: { del: vi.fn().mockResolvedValue(1), get: vi.fn().mockResolvedValue(null) },
+  RedisKeys: new Proxy({}, { get: () => (...a: unknown[]) => `k:${a.join(':')}` }),
+}))
+vi.mock('../../src/queues/face-registration.queue', () => ({
+  enqueueFaceRegistrationVerification: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../../src/services/storage.service', () => ({ storageService: {} }))
+const afterFaceProfileRevoked = vi.fn().mockResolvedValue(undefined)
+vi.mock('../../src/services/face-profile-invalidate', () => ({
+  afterFaceProfileRevoked: (...a: unknown[]) => afterFaceProfileRevoked(...a),
+}))
+vi.mock('../../src/services/faceRegistration.service', () => ({ faceRegistrationService: {} }))
+vi.mock('../../src/services/me.service', () => ({
+  meService: { invalidateUserCaches: vi.fn().mockResolvedValue(undefined) },
+}))
+vi.mock('../../src/utils/ws-publisher', () => ({
+  publishServerFrameToUser: vi.fn().mockResolvedValue(undefined),
+}))
+
 const { faceVerificationAdminService } = await import(
   '../../src/services/face-verification-admin.service'
 )
@@ -100,6 +139,9 @@ describe('faceVerificationAdminService', () => {
       expect(createRevocationRecord).toHaveBeenCalledWith(
         expect.objectContaining({ revokedByAdminId: adminId }),
       )
+      // /me must reflect the revocation immediately for both users
+      expect(afterFaceProfileRevoked).toHaveBeenCalledWith(userId)
+      expect(afterFaceProfileRevoked).toHaveBeenCalledWith(duplicateUserId)
     })
 
     it('throws when primary profile missing', async () => {
