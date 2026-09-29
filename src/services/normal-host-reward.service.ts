@@ -65,9 +65,12 @@ export type NormalHostRewardStatusDto =
       eligible: true
       rewardDate: string
       streamedSecondsToday: number
-      /** When today's tier was evaluated (today 00:00 UTC). It holds until `nextEvaluationAt`. */
+      /**
+       * Today 00:00 UTC: start of the tier window's current day. The tier can rise any time
+       * today as receiving arrives, and never drops below the tier held at this instant.
+       */
       tierEvaluatedAt: string
-      /** Next 00:00 UTC — when receiving shown in `nextTier` can change the tier. */
+      /** Next 00:00 UTC — the oldest day leaves the window; the only time the tier can drop. */
       nextEvaluationAt: string
       hasTier: false
       nextTier: NormalHostNextTierDto
@@ -160,13 +163,13 @@ function formatCompactPoints(points: bigint): string {
 }
 
 /**
- * `earningsByWindowDays` is live receiving (up to now), so the "more" figure is what the
- * host can still act on today; the tier itself only moves at `unlocksAt` (next 00:00 UTC).
+ * `earningsByWindowDays` is receiving so far in the tier window (00:00 UTC `windowDays`
+ * back → now). Reaching a target applies immediately, so `remaining` is normally > 0 here;
+ * the "reached" branch only covers a race with a gift landing mid-request.
  */
 function tierTargetNotMetError(
   target: NormalHostTierBigInt,
   earningsByWindowDays: Map<number, bigint>,
-  unlocksAt: Date,
 ): AppError {
   const earned = earningsByWindowDays.get(target.windowDays) ?? 0n
   const remaining = target.thresholdPoints > earned ? target.thresholdPoints - earned : 0n
@@ -176,8 +179,8 @@ function tierTargetNotMetError(
     403,
     remaining > 0n
       ? `Unlock the ${targetLabel} receiving target first — receive ` +
-          `${formatCompactPoints(remaining)} more within the last ${days}. Targets are checked daily at 00:00 UTC`
-      : `You've reached the ${targetLabel} receiving target — it unlocks at 00:00 UTC`,
+          `${formatCompactPoints(remaining)} more within the last ${days}`
+      : `You've reached the ${targetLabel} receiving target — please try again`,
     'NORMAL_HOST_THRESHOLD_NOT_MET',
     {
       reason: 'TIER_TARGET_NOT_MET',
@@ -185,7 +188,6 @@ function tierTargetNotMetError(
       earnedPoints: earned.toString(),
       remainingPoints: remaining.toString(),
       windowDays: target.windowDays,
-      unlocksAt: unlocksAt.toISOString(),
     },
   )
 }
@@ -218,23 +220,39 @@ async function loadEligibilityAndInputs(userId: string) {
   return { eligible, config }
 }
 
-/** Qualifying receiving over each distinct tier window, ending at `end`. */
+/**
+ * Qualifying receiving over each distinct tier window: from 00:00 UTC `windowDays` days
+ * before `end`'s day, up to `end`. The start only moves at 00:00 UTC, so during a day the
+ * sums only grow (a tier can rise) and a day's receiving drops out at 00:00 (the only time
+ * a tier can fall). With `end` = a UTC midnight this is the completed-days window.
+ */
 async function computeEarningsByWindow(
   userId: string,
   tiers: NormalHostTierBigInt[],
   end: Date,
 ): Promise<Map<number, bigint>> {
+  const dayStart = utcStartOfDay(end)
   const distinctWindows = [...new Set(tiers.map((t) => t.windowDays))]
   const sums = await Promise.all(
     distinctWindows.map((days) =>
       normalHostRewardRepository.getQualifyingEarningsForRange(
         userId,
-        new Date(end.getTime() - days * 86_400_000),
+        addUtcDays(dayStart, -days),
         end,
       ),
     ),
   )
   return new Map(distinctWindows.map((days, i) => [days, sums[i]!]))
+}
+
+/** Higher-threshold of two tiers (`a` wins ties, so the recorded day tier is kept). */
+function higherTier(
+  a: NormalHostTierBigInt | null,
+  b: NormalHostTierBigInt | null,
+): NormalHostTierBigInt | null {
+  if (!a) return b
+  if (!b) return a
+  return b.thresholdPoints > a.thresholdPoints ? b : a
 }
 
 function dailyTierRow(
@@ -259,12 +277,11 @@ function dailyTierRow(
 }
 
 /**
- * The tier for `rewardDate` (a UTC midnight): receiving over each window ending at that
- * 00:00 UTC, fixed for the whole day so it can neither drop nor rise mid-day as the
- * rolling window slides. The row is written by the 00:00 UTC job; if the job hasn't
+ * The day's **floor** tier for `rewardDate` (a UTC midnight): receiving over each window
+ * ending at that 00:00 UTC. The live tier can only rise above it during the day (see
+ * {@link computeEarningsByWindow}); the floor guarantees it never drops mid-day, even if
+ * an admin edits the ladder. The row is written by the 00:00 UTC job; if the job hasn't
  * reached this user yet, it is computed and written here with the same inputs.
- * The tier's rate and hour cap are snapshotted too, so an admin config change mid-day
- * takes effect from the next day.
  */
 async function getDayTier(
   userId: string,
@@ -319,14 +336,18 @@ export const normalHostRewardService = {
     const now = new Date()
     const rewardDate = utcStartOfDay(now)
     const nextEvaluation = addUtcDays(rewardDate, 1)
-    // Tier is fixed at today's 00:00 UTC; live receiving (`earningsByWindow`) only drives
-    // the progress toward the tier that will apply from the next 00:00 UTC.
-    const [secondsToday, earningsByWindow, claims, currentTier] = await Promise.all([
+    // Tier = higher of today's 00:00 floor and the tier reached so far today (window
+    // 00:00 UTC N days back → now), so it can rise during the day but never fall.
+    const [secondsToday, earningsByWindow, claims, dayFloor] = await Promise.all([
       streamedSecondsToday(userId, rewardDate),
       computeEarningsByWindow(userId, config.tiersBigInt, now),
       normalHostRewardRepository.getClaimsForDate(userId, rewardDate),
       getDayTier(userId, rewardDate, config.tiersBigInt),
     ])
+    const currentTier = higherTier(
+      dayFloor,
+      resolveCurrentTier(config.tiersBigInt, earningsByWindow),
+    )
     const evaluation = {
       tierEvaluatedAt: rewardDate.toISOString(),
       nextEvaluationAt: nextEvaluation.toISOString(),
@@ -437,11 +458,14 @@ export const normalHostRewardService = {
 
     const now = new Date()
     const rewardDate = utcStartOfDay(now)
-    // Pays today's tier, fixed at 00:00 UTC — same value getStatus showed all day.
-    const [secondsToday, currentTier] = await Promise.all([
+    // Pays the higher of today's 00:00 floor and the tier reached so far today — the same
+    // tier getStatus shows at this moment.
+    const [secondsToday, dayFloor, liveEarnings] = await Promise.all([
       streamedSecondsToday(userId, rewardDate),
       getDayTier(userId, rewardDate, config.tiersBigInt),
+      computeEarningsByWindow(userId, config.tiersBigInt, now),
     ])
+    const currentTier = higherTier(dayFloor, resolveCurrentTier(config.tiersBigInt, liveEarnings))
     if (!currentTier || hourSlot > currentTier.hourCapHours) {
       // Name the exact receiving target that unlocks THIS slot, not a generic "no tier".
       const target = lowestTierCoveringSlot(config.tiersBigInt, hourSlot, currentTier)
@@ -455,8 +479,7 @@ export const normalHostRewardService = {
         }
         throw new AppError(400, 'Invalid hour slot', 'INVALID_REQUEST')
       }
-      const liveEarnings = await computeEarningsByWindow(userId, config.tiersBigInt, now)
-      throw tierTargetNotMetError(target, liveEarnings, addUtcDays(rewardDate, 1))
+      throw tierTargetNotMetError(target, liveEarnings)
     }
     const unlockedSlots = Math.min(Math.floor(secondsToday / 3600), currentTier.hourCapHours)
     if (hourSlot > unlockedSlots) {

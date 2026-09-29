@@ -80,15 +80,25 @@ export function agencyCommissionWindowTotalMinutes(cfg: {
 }
 
 /**
- * Half-open UTC timestamp window `[from, toExclusive)` ending at `now` for tier math.
- * Duration = days/hours/minutes from `agency_commission_config` (exact minutes, not calendar days).
+ * Half-open UTC window `[from, toExclusive)` for agency tier math, `toExclusive` = `now`.
+ *
+ * Whole-day durations (hours = minutes = 0, the production setting) are **anchored to UTC
+ * midnight**: `from` = 00:00 UTC of `now`'s day minus `days`. The start only moves at
+ * 00:00 UTC, so during a day the total can only grow (tier can rise) and the oldest day's
+ * receiving drops out at 00:00 (the only time it can fall). At `now` = a UTC midnight this
+ * is exactly the completed-days window used for the daily evaluation.
+ *
+ * Durations with an hours/minutes part (short QA windows) stay an exact timestamp window
+ * `[now − duration, now)` — anchoring a 5-minute window to midnight would make it a day.
  */
 export function resolveAgencyCommissionRollingWindowBounds(
   cfg: { days: number; hours: number; minutes: number },
   now: Date = utcNow(),
 ): { from: Date; toExclusive: Date; totalMinutes: number } {
   const totalMinutes = agencyCommissionWindowTotalMinutes(cfg)
-  const from = new Date(now.getTime() - totalMinutes * 60_000)
+  const wholeDays = totalMinutes % (24 * 60) === 0
+  const anchor = wholeDays ? utcStartOfDay(now) : now
+  const from = new Date(anchor.getTime() - totalMinutes * 60_000)
   return { from, toExclusive: now, totalMinutes }
 }
 
