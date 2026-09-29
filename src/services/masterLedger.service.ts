@@ -31,7 +31,8 @@ import { ledgerFloatSnapshotRepository } from '../repositories/ledgerFloatSnapsh
  *
  * Promo grants and reward mints cancel out of that identity (they raise float
  * and lower operating profit equally), so a non-zero delta means a real problem
- * — most often a house account that was never registered.
+ * — most often a house account that was never registered, or an admin
+ * reallocation with only one of its two legs tagged.
  */
 
 export type LedgerGrain = 'today' | 'yesterday' | 'month' | 'quarter' | 'year' | 'custom'
@@ -133,13 +134,27 @@ type Owner = 'customer' | 'house' | 'any'
  */
 const ADMIN_DIAMOND_TX = [CoinTxType.ADJUSTMENT, CoinTxType.GAME_ADJUSTMENT]
 
-/** One grouped bucket of ledger legs. `promo` mirrors `metadata.promotional = true`. */
+/**
+ * Admin adjustments tagged `metadata.reallocation = true` move existing value between
+ * two customers by hand (debit one, credit the other) — e.g. doing an agent's transfer
+ * for them. Untagged, the credit reads as a direct admin sale and the debit as a
+ * clawback, overstating both cash and operating profit by the amount moved. Tagged legs
+ * are left out of both lines; tag both legs, or the reconciliation delta shows the
+ * unmatched half.
+ */
+type Reallocation = 'exclude' | 'only'
+
+/**
+ * One grouped bucket of ledger legs. `promo` mirrors `metadata.promotional = true`;
+ * `realloc` mirrors `metadata.reallocation = true` (see {@link Reallocation}).
+ */
 type LedgerTotalsRow = {
   tx_type: string
   direction: string
   currency: string
   is_house: boolean
   promo: boolean
+  realloc: boolean
   units: bigint
 }
 
@@ -184,11 +199,12 @@ async function loadLedgerTotals(ids: string[], from?: Date, to?: Date): Promise<
            w.currency_type::text AS currency,
            (w.user_id = ANY(${houseIds})) AS is_house,
            COALESCE(e.metadata -> 'promotional' = 'true'::jsonb, false) AS promo,
+           COALESCE(e.metadata -> 'reallocation' = 'true'::jsonb, false) AS realloc,
            SUM(e.amount)::bigint AS units
     FROM ${table} e
     JOIN wallets w ON w.id = e.wallet_id
     WHERE true ${window}
-    GROUP BY 1, 2, 3, 4, 5`
+    GROUP BY 1, 2, 3, 4, 5, 6`
   const [coin, point] = await Promise.all([
     prismaRead.$queryRaw<LedgerTotalsRow[]>(grouped(Prisma.sql`coin_ledger_entries`)),
     prismaRead.$queryRaw<LedgerTotalsRow[]>(grouped(Prisma.sql`point_ledger_entries`)),
@@ -203,6 +219,7 @@ function pickTotals(
     txTypes: string[]
     currency?: WalletCurrencyType
     promotionalOnly?: boolean
+    reallocation?: Reallocation
     owner: Owner
   },
 ): bigint {
@@ -212,6 +229,8 @@ function pickTotals(
     if (!params.txTypes.includes(r.tx_type)) continue
     if (params.currency && r.currency !== params.currency) continue
     if (params.promotionalOnly && !r.promo) continue
+    if (params.reallocation === 'exclude' && r.realloc) continue
+    if (params.reallocation === 'only' && !r.realloc) continue
     if (params.owner === 'house' && !r.is_house) continue
     if (params.owner === 'customer' && r.is_house) continue
     sum += BigInt(r.units)
@@ -226,6 +245,7 @@ async function sumCoin(params: {
   from?: Date
   to?: Date
   promotionalOnly?: boolean
+  reallocation?: Reallocation
   owner?: Owner
   house?: HouseAccounts
 }): Promise<bigint> {
@@ -242,6 +262,7 @@ async function sumPoint(params: {
   from?: Date
   to?: Date
   promotionalOnly?: boolean
+  reallocation?: Reallocation
   owner?: Owner
   house?: HouseAccounts
 }): Promise<bigint> {
@@ -593,6 +614,40 @@ async function rewardMintUnits(house: HouseAccounts, from?: Date, to?: Date): Pr
   return parts.reduce((a, b) => a + b, 0n)
 }
 
+/** Units credited to customers by admin reallocations — memo only, see {@link Reallocation}. */
+async function adminReallocationUnits(
+  house: HouseAccounts,
+  from?: Date,
+  to?: Date,
+): Promise<bigint> {
+  const coin = (currency: WalletCurrencyType, txTypes: CoinTxType[]) =>
+    sumCoin({
+      direction: LedgerDirection.CREDIT,
+      txTypes,
+      currency,
+      from,
+      to,
+      reallocation: 'only',
+      owner: 'customer',
+      house,
+    })
+  const parts = await Promise.all([
+    coin(WalletCurrencyType.COIN, [CoinTxType.ADJUSTMENT]),
+    coin(WalletCurrencyType.TRADING_COIN, [CoinTxType.ADJUSTMENT]),
+    coin(WalletCurrencyType.DIAMOND, ADMIN_DIAMOND_TX),
+    sumPoint({
+      direction: LedgerDirection.CREDIT,
+      txTypes: [PointTxType.ADJUSTMENT],
+      from,
+      to,
+      reallocation: 'only',
+      owner: 'customer',
+      house,
+    }),
+  ])
+  return parts.reduce((a, b) => a + b, 0n)
+}
+
 /** Trailing window the redemption rate is measured over. */
 const REDEMPTION_WINDOW_MS = 365 * 24 * 60 * 60 * 1000
 
@@ -801,6 +856,7 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.COIN,
         from,
         to,
+        reallocation: 'exclude',
         owner: 'customer',
         house,
       }),
@@ -810,6 +866,7 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.TRADING_COIN,
         from,
         to,
+        reallocation: 'exclude',
         owner: 'customer',
         house,
       }),
@@ -818,6 +875,7 @@ export const masterLedgerService = {
         txTypes: [PointTxType.ADJUSTMENT],
         from,
         to,
+        reallocation: 'exclude',
         owner: 'customer',
         house,
       }),
@@ -827,6 +885,7 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.DIAMOND,
         from,
         to,
+        reallocation: 'exclude',
         owner: 'customer',
         house,
       }),
@@ -1167,6 +1226,7 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.COIN,
         from,
         to,
+        reallocation: 'exclude',
         owner: 'customer',
         house,
       }),
@@ -1176,6 +1236,7 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.TRADING_COIN,
         from,
         to,
+        reallocation: 'exclude',
         owner: 'customer',
         house,
       }),
@@ -1184,6 +1245,7 @@ export const masterLedgerService = {
         txTypes: [PointTxType.ADJUSTMENT],
         from,
         to,
+        reallocation: 'exclude',
         owner: 'customer',
         house,
       }),
@@ -1227,12 +1289,14 @@ export const masterLedgerService = {
         currency: WalletCurrencyType.DIAMOND,
         from,
         to,
+        reallocation: 'exclude',
         owner: 'customer',
         house,
       }),
     ])
 
     const payouts = await companyPayoutUnits(from, to)
+    const adminReallocated = await adminReallocationUnits(house, from, to)
     const game = await gameHouseEdgeUnits(house, from, to)
 
     const storeUnits = profitFromFullCoinSink(BigInt(store._sum.coinsPaid ?? 0))
@@ -1307,6 +1371,11 @@ export const masterLedgerService = {
         line('gameWagers', 'Diamonds wagered into the game house', game.wagers),
         line('gameWinPayouts', 'Diamonds paid out as game wins', game.payouts),
         line('gameRefunds', 'Diamonds refunded on cancelled rounds', game.refunds),
+        line(
+          'adminReallocations',
+          'Admin reallocations between customers (excluded from sales and clawbacks)',
+          adminReallocated,
+        ),
       ],
       operatingProfitUnits: operating.toString(),
       operatingProfitUsd: unitsToUsd(operating),

@@ -33,6 +33,12 @@ import { processRichTierRolloverJob } from '../jobs/rich-tier-rollover.job'
 import { ROYAL_HOST_JOB_MASTER, ROYAL_HOST_EVAL_QUEUE } from '../queues/royalHost.constants'
 import { processRoyalHostWeeklyEvalJob } from '../jobs/royal-host-weekly-eval.job'
 import {
+  NORMAL_HOST_DAILY_TIER_JOB,
+  NORMAL_HOST_DAILY_TIER_QUEUE,
+} from '../queues/normalHost.constants'
+import { processNormalHostDailyTierJob } from '../jobs/normal-host-daily-tier.job'
+import { utcDateString, utcStartOfDay } from '../utils/datetime'
+import {
   VIP_MEMBERSHIP_EXPIRY_JOB,
   VIP_MEMBERSHIP_EXPIRY_QUEUE,
 } from '../queues/vip-membership.constants'
@@ -330,6 +336,41 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
     { connection, concurrency: env.WORKER_CONCURRENCY_DEFAULT },
   )
 
+  const normalHostDailyTierQueue = new Queue(NORMAL_HOST_DAILY_TIER_QUEUE, { connection })
+  await normalHostDailyTierQueue.add(
+    NORMAL_HOST_DAILY_TIER_JOB,
+    {},
+    {
+      repeat: { pattern: '0 0 * * *', tz: 'UTC' },
+      jobId: 'normal-host-daily-tier-repeatable-utc',
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    },
+  )
+  // Catch-up for today in case workers were down at 00:00 UTC (idempotent: first write wins).
+  const today = utcDateString(utcStartOfDay(new Date()))
+  await normalHostDailyTierQueue.add(
+    NORMAL_HOST_DAILY_TIER_JOB,
+    { rewardDate: today },
+    {
+      jobId: `normal-host-daily-tier-catchup-${today}`,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    },
+  )
+
+  const normalHostDailyTierWorker = new Worker(
+    NORMAL_HOST_DAILY_TIER_QUEUE,
+    async (job: Job<{ rewardDate?: string }>) => {
+      await processNormalHostDailyTierJob(job)
+    },
+    { connection, concurrency: 1 },
+  )
+
   const vipMembershipExpiryWorker = new Worker(
     VIP_MEMBERSHIP_EXPIRY_QUEUE,
     async (job: Job<{ userId: string }>) => {
@@ -542,6 +583,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   publicIdPregenWorker.on('failed', onFail('Public ID pregen'))
   richTierRolloverWorker.on('failed', onFail('Rich tier rollover'))
   royalHostEvalWorker.on('failed', onFail('Royal Host weekly eval'))
+  normalHostDailyTierWorker.on('failed', onFail('Normal Host daily tier'))
   vipMembershipExpiryWorker.on('failed', onFail('VIP membership expiry'))
   agencyLeaveWorker.on('failed', onFail('Agency leave auto-approve'))
   agencyLevelRecomputeWorker.on('failed', onFail('Agency level recompute'))
@@ -575,6 +617,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await richTierRolloverQueue.close()
       await royalHostEvalWorker.close()
       await royalHostEvalQueue.close()
+      await normalHostDailyTierWorker.close()
+      await normalHostDailyTierQueue.close()
       await publicIdPregenWorker.close()
       await storeItemExpiryWorker.close()
       await supportAutocloseWorker.close()

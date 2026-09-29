@@ -482,9 +482,12 @@ export const agencyAdminService = {
       includeHostEarnings: env.AGENCY_TIER_INCLUDE_HOST_EARNINGS,
       includeAgencyCommission: env.AGENCY_TIER_INCLUDE_AGENCY_COMMISSION,
     }
+    // Level is evaluated from the window ending at today's 00:00 UTC (fixed for the day).
+    const evaluatedAt = utcStartOfDay(new Date())
     const { from, toExclusive, totalMinutes } =
-      await agencyCommissionConfigService.resolveRollingWindowBounds()
-    const { fromDay, toDay } = await agencyCommissionConfigService.resolveRollingWindowDays()
+      await agencyCommissionConfigService.resolveRollingWindowBounds(evaluatedAt)
+    const { fromDay, toDay } =
+      await agencyCommissionConfigService.resolveRollingWindowDays(evaluatedAt)
     const cfg = await agencyCommissionConfigService.getConfig()
     return {
       ok: true as const,
