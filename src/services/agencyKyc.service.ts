@@ -314,7 +314,11 @@ export const agencyKycService = {
     if (!review.contactSubmitted) missing.push('CONTACT_INFO')
     if (!review.faceVerified) missing.push('FACE_AUTH')
     if (missing.length) {
-      const labels = { GOVT_ID: 'government ID', CONTACT_INFO: 'contact info', FACE_AUTH: 'face verification' }
+      const labels = {
+        GOVT_ID: 'government ID',
+        CONTACT_INFO: 'contact info',
+        FACE_AUTH: 'face verification',
+      }
       throw new AppError(
         422,
         `KYC incomplete: missing ${missing.map((m) => labels[m]).join(', ')}`,
