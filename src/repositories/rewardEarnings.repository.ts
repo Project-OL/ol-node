@@ -34,3 +34,31 @@ export async function getQualifyingRewardEarningsForRange(
   `
   return row?.total ?? 0n
 }
+
+/**
+ * {@link getQualifyingRewardEarningsForRange} for every user at once, keyed by user id.
+ * Users with no qualifying earnings in `[start, end)` are absent.
+ */
+export async function getQualifyingRewardEarningsByUserForRange(
+  start: Date,
+  end: Date,
+): Promise<Map<string, bigint>> {
+  const rows = await prismaRead.$queryRaw<Array<{ user_id: string; total: bigint }>>`
+    SELECT w.user_id::text AS user_id, SUM(ple.amount)::bigint AS total
+    FROM point_ledger_entries ple
+    INNER JOIN wallets w ON w.id = ple.wallet_id
+    WHERE w.currency_type = 'POINT'
+      AND ple.direction = 'CREDIT'
+      AND ple.created_at >= ${start}
+      AND ple.created_at < ${end}
+      AND (
+        ple.tx_type = 'VIDEO_CALL'
+        OR (
+          ple.tx_type = 'GIFT_RECEIVE'
+          AND COALESCE(ple.metadata->>'context', 'livestream') <> 'direct'
+        )
+      )
+    GROUP BY w.user_id
+  `
+  return new Map(rows.map((r) => [r.user_id, BigInt(r.total)]))
+}

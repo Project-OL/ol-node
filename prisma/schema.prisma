@@ -151,6 +151,7 @@ model User {
   royalHostRewardClaims         RoyalHostRewardClaim[]
   royalHostWeeklyEvaluations    RoyalHostWeeklyEvaluation[]
   normalHostRewardClaims        NormalHostRewardClaim[]
+  normalHostDailyTiers          NormalHostDailyTier[]
   customGiftRequests            CustomGiftRequest[]
   questionnaireAttempts         UserQuestionnaireAttempt[]
   faceProfile                   UserFaceProfile?
@@ -1430,6 +1431,29 @@ model NormalHostRewardClaim {
   @@id([userId, rewardDate, hourSlot])
   @@index([userId, rewardDate(sort: Desc)])
   @@map("normal_host_reward_claims")
+}
+
+/// A user's Normal Host tier for one UTC day, evaluated from receiving up to that day's
+/// 00:00 UTC and fixed for the whole day. Tier columns are null when no tier qualified.
+/// Written by the 00:00 UTC job, or on first read when the job hasn't reached the user.
+model NormalHostDailyTier {
+  userId           String   @map("user_id") @db.Uuid
+  rewardDate       DateTime @map("reward_date") @db.Date
+  thresholdPoints  BigInt?  @map("threshold_points")
+  hourlyRatePoints BigInt?  @map("hourly_rate_points")
+  hourCapHours     Int?     @map("hour_cap_hours")
+  windowDays       Int?     @map("window_days")
+  /// Qualifying receiving per window length at 00:00 UTC, e.g. {"7":"1102800","30":"1310000"}.
+  earningsByWindow Json     @map("earnings_by_window")
+  /// 'job' (00:00 UTC run) or 'lazy' (first read of the day).
+  source           String   @db.VarChar(10)
+  computedAt       DateTime @default(now()) @map("computed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, rewardDate])
+  @@index([rewardDate])
+  @@map("normal_host_daily_tiers")
 }
 
 model PointLedgerEntry {
