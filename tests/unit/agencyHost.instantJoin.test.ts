@@ -11,6 +11,7 @@ const enforcePauseGate = vi.fn();
 const onAgencyMutation = vi.fn();
 const cacheDel = vi.fn();
 const userFindUnique = vi.fn();
+const agentApplicationFindUnique = vi.fn();
 const transaction = vi.fn();
 
 vi.mock("../../src/repositories/agency.repository", () => ({
@@ -54,6 +55,9 @@ vi.mock("../../src/config/database", () => ({
     user: {
       findUnique: (...args: unknown[]) => userFindUnique(...args),
     },
+    agencyAgentApplication: {
+      findUnique: (...args: unknown[]) => agentApplicationFindUnique(...args),
+    },
     $transaction: (...args: unknown[]) => transaction(...args),
   },
 }));
@@ -71,6 +75,7 @@ beforeEach(() => {
     currentAgencyId: null,
     isAgent: false,
   });
+  agentApplicationFindUnique.mockResolvedValue(null);
   getRecentExitForHost.mockResolvedValue(null);
   findLatestRejectedApplication.mockResolvedValue(null);
   enforcePauseGate.mockResolvedValue(undefined);
@@ -123,6 +128,25 @@ describe("agencyHostService.applyToAgency (instant join)", () => {
       statusCode: 409,
       code: "ALREADY_IN_AGENCY",
     });
+  });
+
+  it("rejects while the user's own agency application is under review", async () => {
+    agentApplicationFindUnique.mockResolvedValue({ status: "PENDING" });
+
+    await expect(
+      agencyHostService.applyToAgency("host-1", "34216592"),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "AGENCY_APPLICATION_PENDING",
+    });
+    expect(createAcceptedApplication).not.toHaveBeenCalled();
+  });
+
+  it("allows joining once the user's agency application was rejected", async () => {
+    agentApplicationFindUnique.mockResolvedValue({ status: "REJECTED" });
+
+    const result = await agencyHostService.applyToAgency("host-1", "34216592");
+    expect(result).toEqual({ ok: true, immediate: true });
   });
 
   it("rejects when agency is paused", async () => {

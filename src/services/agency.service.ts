@@ -245,10 +245,18 @@ export const agencyService = {
       select: { agencyBarredAt: true, currentAgencyId: true },
     })
     if (applicant?.currentAgencyId) {
-      throw new AppError(409, 'Applicant is already a host in an agency', 'ALREADY_IN_AGENCY')
+      throw new AppError(
+        409,
+        'Cannot approve: this user is a host in another agency. They must leave that agency before their agency application can be approved.',
+        'ALREADY_IN_AGENCY',
+      )
     }
     if (applicant?.agencyBarredAt) {
-      throw new AppError(403, 'User is barred from operating an agency', 'AGENCY_BARRED')
+      throw new AppError(
+        403,
+        'Cannot approve: this user is barred from operating an agency. Unbar them first.',
+        'AGENCY_BARRED',
+      )
     }
 
     let initialLevel = 'D'

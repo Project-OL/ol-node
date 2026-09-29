@@ -19,6 +19,24 @@ function assertApplicationNotTerminal(application: { status: string } | null) {
   }
 }
 
+export const HOST_CANNOT_APPLY_MESSAGE =
+  'You are a host in an agency, so you cannot apply to open your own agency. Please leave your current agency first, then apply.'
+
+/**
+ * A user can't be a host and an agency owner at once. Reads the primary so a host who joined a
+ * moment ago can't slip through replica lag. The message is shown as-is by ol_app's global
+ * Dio snackbar (it reads `message`), so keep it user-facing and never use a 401 here.
+ */
+async function assertNotHostInAgency(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { currentAgencyId: true },
+  })
+  if (user?.currentAgencyId) {
+    throw new AppError(409, HOST_CANNOT_APPLY_MESSAGE, 'ALREADY_IN_AGENCY')
+  }
+}
+
 async function bustAgencyKycCaches(userId: string) {
   const agency = await agencyRepository.getAgencyByUserId(userId)
   if (agency) {
@@ -36,11 +54,14 @@ function govtIdPublicUrl(s3Key: string | null | undefined) {
 }
 
 export const agencyKycService = {
+  assertNotHostInAgency,
+
   async getPresignedGovtIdUrl(userId: string, mimeType: string, opts?: { admin?: boolean }) {
     if (opts?.admin) {
       const user = await userRepository.findById(userId)
       if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     } else {
+      await assertNotHostInAgency(userId)
       const application = await agencyAgentApplicationRepository.findByUserId(userId)
       assertApplicationNotTerminal(application)
     }
@@ -55,6 +76,7 @@ export const agencyKycService = {
 
   async confirmGovtIdUpload(userId: string, s3Key: string, opts?: { admin?: boolean }) {
     if (!opts?.admin) {
+      await assertNotHostInAgency(userId)
       const application = await agencyAgentApplicationRepository.findByUserId(userId)
       assertApplicationNotTerminal(application)
     }
@@ -160,6 +182,7 @@ export const agencyKycService = {
   },
 
   async submitContactInfo(userId: string, payload: { phone: string; email: string }) {
+    await assertNotHostInAgency(userId)
     const application = await agencyAgentApplicationRepository.findByUserId(userId)
     assertApplicationNotTerminal(application)
 
@@ -181,13 +204,7 @@ export const agencyKycService = {
     const user = await userRepository.findById(userId)
     if (!user) throw new AppError(404, 'User not found', 'USER_NOT_FOUND')
     if (user.isAgent) throw new AppError(400, 'Already an agent', 'ALREADY_AGENT')
-    if (user.currentAgencyId) {
-      throw new AppError(
-        409,
-        'Leave your current agency before applying to create your own',
-        'ALREADY_IN_AGENCY',
-      )
-    }
+    await assertNotHostInAgency(userId)
     if (user.agencyBarredAt) {
       throw new AppError(403, 'User is barred from operating an agency', 'AGENCY_BARRED')
     }
@@ -297,7 +314,13 @@ export const agencyKycService = {
     if (!review.contactSubmitted) missing.push('CONTACT_INFO')
     if (!review.faceVerified) missing.push('FACE_AUTH')
     if (missing.length) {
-      throw new AppError(422, 'KYC incomplete', 'KYC_INCOMPLETE', { missing })
+      const labels = { GOVT_ID: 'government ID', CONTACT_INFO: 'contact info', FACE_AUTH: 'face verification' }
+      throw new AppError(
+        422,
+        `KYC incomplete: missing ${missing.map((m) => labels[m]).join(', ')}`,
+        'KYC_INCOMPLETE',
+        { missing },
+      )
     }
   },
 }
