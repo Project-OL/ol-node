@@ -40,6 +40,9 @@ export default async function agencyKycRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const userId = request.userId
       if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      // ol_app loads this when the Agency Application screen opens, so a host gets the
+      // "leave your agency first" message up front instead of after filling in KYC.
+      await agencyKycService.assertNotHostInAgency(userId)
       const data = await agencyAgentApplicationService.getMyApplication(userId)
       return reply.send(data)
     },

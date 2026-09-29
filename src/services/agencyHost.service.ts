@@ -233,6 +233,23 @@ export const agencyHostService = {
     if (hostUser.currentAgencyId) {
       throw new AppError(409, 'Already in an agency', 'ALREADY_IN_AGENCY')
     }
+    // An open application to own an agency can't be approved once the user is a host, so
+    // don't let them become one while it is still under review.
+    const ownApplication = await prisma.agencyAgentApplication.findUnique({
+      where: { userId: hostUserId },
+      select: { status: true },
+    })
+    if (
+      ownApplication &&
+      ownApplication.status !== 'APPROVED' &&
+      ownApplication.status !== 'REJECTED'
+    ) {
+      throw new AppError(
+        409,
+        'You have applied to open your own agency, so you cannot join another agency as a host while that application is under review.',
+        'AGENCY_APPLICATION_PENDING',
+      )
+    }
 
     await assertJoinCooldown(hostUserId)
 
