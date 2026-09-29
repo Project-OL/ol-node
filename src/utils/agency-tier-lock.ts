@@ -62,6 +62,19 @@ export function matchAgencyLevel(
   return newLevel
 }
 
+/**
+ * Whichever of two levels has the higher `minWindowPoints`. A level missing from the
+ * ladder ranks lowest; on a tie `a` wins.
+ */
+export function higherLevel(
+  a: string,
+  b: string,
+  levels: Array<{ level: string; minWindowPoints: bigint }>,
+): string {
+  const rank = (lvl: string) => levels.find((l) => l.level === lvl)?.minWindowPoints ?? -1n
+  return rank(b) > rank(a) ? b : a
+}
+
 export function serializeAgencyTierLock(
   lock: AgencyTierLockState,
   now: Date,

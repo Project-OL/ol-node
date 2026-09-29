@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 /**
- * Normal Host tier is evaluated once per UTC day from receiving up to 00:00 UTC and held
- * for the whole day (2026-09-29). Before, it was re-evaluated on every request over a
- * window ending "now", so a host could claim hour 1 at 7K and see hour 2 drop to 3.5K
- * minutes later as old gifts slid out of the 7-day window.
+ * Normal Host tier window runs from 00:00 UTC N days back to now (2026-09-29). The start
+ * only moves at 00:00 UTC, so during a day the tier can rise but never drop; the tier
+ * recorded at 00:00 is a floor. Before, the window ended "now" and slid with it, so a host
+ * could claim hour 1 at 7K and see hour 2 drop to 3.5K minutes later.
  */
 
 const NOW = new Date('2026-09-29T11:08:00.000Z')
@@ -69,8 +69,11 @@ vi.mock('../../src/repositories/normalHostReward.repository', () => ({
       }
       return n
     },
+    // Strict: only answers windows that START at 00:00 UTC `days` before today, so an
+    // un-anchored (sliding) window reads as zero and fails the assertions.
     getQualifyingEarningsForRange: async (_u: string, start: Date, end: Date) => {
-      const days = Math.round((end.getTime() - start.getTime()) / 86_400_000)
+      const days = (DAY.getTime() - start.getTime()) / 86_400_000
+      if (!Number.isInteger(days)) return 0n
       const src = end.getTime() === DAY.getTime() ? state.atDayStart : state.live
       return src.get(days) ?? 0n
     },
@@ -123,29 +126,30 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('Normal Host daily tier (fixed at 00:00 UTC)', () => {
-  it('evaluates the tier from receiving up to 00:00 UTC, not up to now', async () => {
-    state.atDayStart.set(7, 324_000n) // 300K tier at 00:00
-    state.live.set(7, 1_102_800n) // would be 1M live
+describe('Normal Host tier: window from 00:00 UTC N days back to now', () => {
+  it('rises during the day as receiving arrives (floor 300K at 00:00 → 1M now)', async () => {
+    state.atDayStart.set(7, 324_000n) // 300K at 00:00
+    state.live.set(7, 1_102_800n) // Sep 22 00:00 → now, incl. today's gifts
 
     const s = await normalHostRewardService.getStatus(USER)
 
-    expect(s.eligible && s.hasTier && s.currentTier.thresholdPoints).toBe('300000')
     if (!s.eligible || !s.hasTier) throw new Error('expected a tier')
-    expect(s.slots.map((x) => x.pointsAmount)).toEqual(['2000', '2000'])
+    expect(s.currentTier.thresholdPoints).toBe('1000000')
+    expect(s.slots.map((x) => x.pointsAmount)).toEqual(['7000', '7000'])
     expect(s.tierEvaluatedAt).toBe(DAY.toISOString())
     expect(s.nextEvaluationAt).toBe('2026-09-30T00:00:00.000Z')
-    // progress toward tomorrow still uses live receiving
-    expect(s.nextTier?.thresholdPoints).toBe('500000')
-    expect(s.nextTier?.earnedPoints).toBe('1102800')
-    expect((state.dailyTiers.get(key(USER, DAY)) as Row).source).toBe('lazy')
+    expect(s.nextTier).toBeNull() // 1M is the top of this test ladder
+    // the 00:00 floor is still recorded for the day
+    const row = state.dailyTiers.get(key(USER, DAY)) as Row
+    expect(row.thresholdPoints).toBe(300000n)
+    expect(row.source).toBe('lazy')
   })
 
-  it('keeps the recorded tier for the day even after live receiving drops', async () => {
+  it('never drops below the 00:00 floor during the day', async () => {
     state.atDayStart.set(7, 1_102_800n)
-    await normalHostRewardService.getStatus(USER) // records 1M for today
+    await normalHostRewardService.getStatus(USER) // records the 1M floor for today
 
-    state.atDayStart.set(7, 0n) // would no longer qualify if re-evaluated
+    state.atDayStart.set(7, 0n) // e.g. an admin ladder edit / data change mid-day
     state.live.set(7, 0n)
     const s = await normalHostRewardService.getStatus(USER)
 
@@ -154,24 +158,33 @@ describe('Normal Host daily tier (fixed at 00:00 UTC)', () => {
     expect(s.slots.map((x) => x.pointsAmount)).toEqual(['7000', '7000'])
   })
 
-  it("pays a claim at the day's tier rate", async () => {
+  it('pays a claim at the tier reached so far today', async () => {
     state.atDayStart.set(7, 324_000n)
     state.live.set(7, 1_102_800n)
 
     const res = await normalHostRewardService.claimReward(USER, 2)
 
-    expect(res.pointsAmount).toBe('2000')
-    expect(state.credits).toEqual([{ userId: USER, amount: 2000n }])
+    expect(res.pointsAmount).toBe('7000')
+    expect(state.credits).toEqual([{ userId: USER, amount: 7000n }])
   })
 
-  it('says the target unlocks at 00:00 UTC when it is already reached live', async () => {
-    state.atDayStart.set(30, 50_000n) // no tier today
-    state.live.set(30, 120_000n)
+  it('names the remaining receiving when no tier is reached yet', async () => {
+    state.atDayStart.set(30, 50_000n)
+    state.live.set(30, 60_000n)
 
     await expect(normalHostRewardService.claimReward(USER, 1)).rejects.toMatchObject({
-      message: "You've reached the 100K receiving target — it unlocks at 00:00 UTC",
-      details: { remainingPoints: '0', unlocksAt: '2026-09-30T00:00:00.000Z' },
+      message: 'Unlock the 100K receiving target first — receive 40K more within the last 30 days',
+      details: { remainingPoints: '40000', earnedPoints: '60000' },
     })
+  })
+
+  it('a target reached mid-day applies immediately', async () => {
+    state.atDayStart.set(30, 50_000n) // no tier at 00:00
+    state.live.set(30, 120_000n) // 100K reached today
+
+    const res = await normalHostRewardService.claimReward(USER, 1)
+
+    expect(res.pointsAmount).toBe('1000')
   })
 
   it("shows claims made above today's cap (pre-lock claims) instead of hiding them", async () => {
