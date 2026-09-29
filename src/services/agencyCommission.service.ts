@@ -26,6 +26,7 @@ import {
   resolveCommissionPeriod,
   utcDateString,
   utcNow,
+  utcStartOfDay,
 } from '../utils/datetime'
 import { enqueueAgencyRecomputeMaster as publishAgencyRecomputeMasterJob } from '../queues/agency-commission.queue'
 import { walletService } from './wallet.service'
@@ -673,9 +674,13 @@ export const agencyCommissionService = {
   },
 
   /**
-   * Match agency commission tier to the env-configured rolling-window metric
-   * (see {@link resolveTierWindowTotal}). While an admin tier lock is active,
-   * matching uses actual + signed bonus with a floor at the assigned tier.
+   * Evaluate the agency's level for the UTC day. The level (and so the commission rate)
+   * is matched against the rolling-window metric ending at **today's 00:00 UTC**
+   * (see {@link resolveTierWindowTotal}) and then held for the whole day; receiving during
+   * the day counts toward the next day's level. While an admin tier lock is active at
+   * 00:00, matching uses actual + signed bonus with a floor at the assigned tier.
+   * `currentWindowTotalPoints` is the live total (progress), refreshed on every credit by
+   * {@link refreshWindowProgress}.
    */
   async recomputeAgencyLevel(
     agencyUserId: string,
@@ -685,6 +690,7 @@ export const agencyCommissionService = {
 
     for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
       const now = utcNow()
+      const evaluatedAt = utcStartOfDay(now)
 
       const cur = await prisma.agency.findUnique({
         where: { userId: agencyUserId },
@@ -705,37 +711,35 @@ export const agencyCommissionService = {
         }
       }
 
-      const { total: actual } = await this.resolveTierWindowTotal(agencyUserId, {
-        preferPrimary: true,
-        now,
-      })
+      const [{ total: atDayStart }, { total: live }] = await Promise.all([
+        this.resolveTierWindowTotal(agencyUserId, { preferPrimary: true, now: evaluatedAt }),
+        this.resolveTierWindowTotal(agencyUserId, { preferPrimary: true, now }),
+      ])
       const levels = await agencyCommissionRepository.getLevelConfig()
       const lockLevelRow = cur?.tierLockLevel
         ? (levels.find((l) => l.level === cur.tierLockLevel) ?? null)
         : null
       const { effective, lockActive } = effectiveTierWindowTotal({
-        actual,
+        actual: atDayStart,
         lock: {
           tierLockLevel: cur?.tierLockLevel ?? null,
           tierLockUntil: cur?.tierLockUntil ?? null,
           tierLockBonusPoints: cur?.tierLockBonusPoints ?? null,
         },
         lockLevelMinWindowPoints: lockLevelRow?.minWindowPoints ?? null,
-        now,
+        now: evaluatedAt,
       })
       const newLevel = matchAgencyLevel(effective, levels)
 
-      // Compare-and-swap on lastLevelRecomputedAt (bumped on every real write,
-      // including live-credit calls which pass skipDailyDedupe): if another
-      // concurrent recompute committed since we read `cur` above, `count` is 0
-      // and we retry from a fresh read instead of overwriting its result with
-      // data we computed from now-stale state (lost-update under concurrent
-      // commission credits to the same agency).
+      // Compare-and-swap on lastLevelRecomputedAt (bumped only by level evaluations and
+      // admin tier locks, not by progress refreshes): if another concurrent evaluation
+      // committed since we read `cur` above, `count` is 0 and we retry from a fresh read
+      // instead of overwriting its result with data computed from now-stale state.
       const { count } = await prisma.agency.updateMany({
         where: { userId: agencyUserId, lastLevelRecomputedAt: cur?.lastLevelRecomputedAt ?? null },
         data: {
           currentLevel: newLevel,
-          currentWindowTotalPoints: actual,
+          currentWindowTotalPoints: live,
           lastLevelRecomputedAt: now,
           ...(lockActive
             ? {}
@@ -760,18 +764,46 @@ export const agencyCommissionService = {
   },
 
   /**
-   * Post-commit after applyCommission (or reverse): refresh window total + tier.
-   * Uses primary DB; skips same-day dedupe so live credits always update.
-   * Commission for the credit that just landed already used the pre-update tier.
-   * Always busts agent commission / dashboard caches even if tier recompute fails,
+   * Refresh `currentWindowTotalPoints` (live progress) without touching the day's level.
+   * If the level hasn't been evaluated yet today (nightly job disabled, late, or failed
+   * for this agency), run the daily evaluation instead so levels still move once a day.
+   */
+  async refreshWindowProgress(agencyUserId: string): Promise<void> {
+    const now = utcNow()
+    const cur = await prisma.agency.findUnique({
+      where: { userId: agencyUserId },
+      select: { lastLevelRecomputedAt: true },
+    })
+    if (!cur) return
+    if (
+      !cur.lastLevelRecomputedAt ||
+      utcDateString(cur.lastLevelRecomputedAt) !== utcDateString(now)
+    ) {
+      await this.recomputeAgencyLevel(agencyUserId)
+      return
+    }
+    const { total } = await this.resolveTierWindowTotal(agencyUserId, {
+      preferPrimary: true,
+      now,
+    })
+    await prisma.agency.update({
+      where: { userId: agencyUserId },
+      data: { currentWindowTotalPoints: total },
+    })
+  },
+
+  /**
+   * Post-commit after applyCommission (or reverse): refresh the live window total.
+   * The level stays fixed for the UTC day (see {@link recomputeAgencyLevel}), so a
+   * credit never changes the commission rate mid-day.
+   * Always busts agent commission / dashboard caches even if the refresh fails,
    * so `/agency/dashboard/*` does not serve a stale 30s Redis snapshot.
    */
   async afterCommissionCreditCommit(agencyUserId: string | null | undefined): Promise<void> {
     if (!agencyUserId) return
     try {
-      await this.recomputeAgencyLevel(agencyUserId, { skipDailyDedupe: true })
+      await this.refreshWindowProgress(agencyUserId)
     } finally {
-      // recomputeAgencyLevel also busts on success; keep this for failed recomputes.
       await this.bustAgentCommissionCaches(agencyUserId)
     }
   },
