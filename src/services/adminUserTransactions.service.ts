@@ -29,6 +29,7 @@ import {
 } from '../utils/admin-withdrawal-revert'
 import { prismaRead } from '../config/database'
 import type { AdminCoinRevertVia } from './adminTransactions.service'
+import { loadLedgerRevertStates } from './adminTransactionReversal.service'
 
 function parseTradingTypes(filters?: string[]): CoinTxType[] | undefined {
   if (!filters?.length) return undefined
@@ -62,7 +63,10 @@ async function attachCoinRevertFlags<T extends HistoryRow>(
     return rows.map((r) => ({ ...r, canRevert: false as const, revertVia: null }))
   }
 
-  const transfers = await coinTradingRepository.findTransfersByLedgerEntryIds(rows.map((r) => r.id))
+  const [transfers, revertStates] = await Promise.all([
+    coinTradingRepository.findTransfersByLedgerEntryIds(rows.map((r) => r.id)),
+    loadLedgerRevertStates({ coinLedgerIds: rows.map((r) => r.id) }),
+  ])
   const transferByLedger = new Map<string, (typeof transfers)[number]>()
   for (const t of transfers) {
     transferByLedger.set(t.senderLedgerEntryId, t)
@@ -82,12 +86,14 @@ async function attachCoinRevertFlags<T extends HistoryRow>(
       ledgerEntryId: row.id,
       counterpartyId: typeof row.counterpartyId === 'string' ? row.counterpartyId : null,
       tradingTransfer,
+      revertState: revertStates.get(row.id) ?? null,
     })
 
     return {
       ...row,
       canRevert,
       revertVia,
+      reversal: revertStates.get(row.id)?.reversal ?? null,
       // Keep nested shape admin UI already normalizes.
       coinTradingTransfer: tradingTransfer
         ? {
@@ -115,13 +121,19 @@ async function attachPointRevertFlags<
         .map((r) => r.refId as string),
     ),
   ]
-  const withdrawals =
+  const [withdrawals, revertStates] = await Promise.all([
     withdrawalIds.length > 0
-      ? await prismaRead.withdrawal.findMany({
+      ? prismaRead.withdrawal.findMany({
           where: { id: { in: withdrawalIds } },
           select: { id: true, status: true, processedAt: true },
         })
-      : []
+      : [],
+    loadLedgerRevertStates({
+      pointLedgerIds: rows
+        .filter((r) => typeof r.counterpartyId === 'string' && r.counterpartyId)
+        .map((r) => r.id),
+    }),
+  ])
   const withdrawalMap = new Map(withdrawals.map((w) => [w.id, w]))
 
   return rows.map((row) => {
@@ -149,8 +161,10 @@ async function attachPointRevertFlags<
       canRevert: resolvePointLedgerRevertability({
         txType: row.txType as PointTxType,
         counterpartyId: typeof row.counterpartyId === 'string' ? row.counterpartyId : null,
+        revertState: revertStates.get(row.id) ?? null,
       }),
       revertVia: null,
+      reversal: revertStates.get(row.id)?.reversal ?? null,
     }
   })
 }

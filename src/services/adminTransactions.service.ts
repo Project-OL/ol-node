@@ -3,6 +3,7 @@ import {
   LedgerDirection,
   LevelType,
   PointTxType,
+  Prisma,
   WalletCurrencyType,
 } from '@prisma/client'
 import { randomUUID } from 'crypto'
@@ -25,7 +26,21 @@ import {
 import { auditService } from './audit.service'
 import { coinWalletService } from './coin-wallet.service'
 import { pointWalletService } from './point-wallet.service'
-import { coinTradingService } from './coinTrading.service'
+import { coinTradingService, walletTypeFromTransferRecord } from './coinTrading.service'
+import {
+  assertForceAllowed,
+  assertNotReverted,
+  computeRecovery,
+  findReversalRecord,
+  insertReversalRecord,
+  isReversalLedgerRow,
+  loadCoinTradingTransferReversals,
+  loadLedgerRevertStates,
+  readAvailableBalance,
+  type ReversalSummary,
+  type RevertMode,
+  type RevertSourceKind,
+} from './adminTransactionReversal.service'
 import { withdrawalService } from './withdrawal.service'
 import { walletService } from './wallet.service'
 import { syncLevelCacheFromApplyResult, walletLevelService } from './user-level.service'
@@ -64,8 +79,11 @@ const POINT_WALLET_SOURCE_PEER_TYPES = new Set<PointTxType>([
 export function resolvePointLedgerRevertability(params: {
   txType: PointTxType
   counterpartyId: string | null | undefined
+  /** From `loadLedgerRevertStates`; reversal legs and already-reverted rows are not revertable. */
+  revertState?: { isReversalRow: boolean; reversal: ReversalSummary | null } | null
 }): boolean {
   if (!params.counterpartyId) return false
+  if (params.revertState?.isReversalRow || params.revertState?.reversal) return false
   if (COIN_FUNDED_POINT_TX_TYPES.has(params.txType)) return false
   return POINT_WALLET_SOURCE_PEER_TYPES.has(params.txType)
 }
@@ -196,6 +214,137 @@ function resolvePeerParties(entry: {
   return { senderUserId: entry.walletUserId, receiverUserId: entry.counterpartyId }
 }
 
+/** Caller context shared by every revert endpoint. */
+type RevertCallParams = {
+  adminUserId: string
+  /** `request.adminUser.role` — `mode: 'force'` requires SUPER_ADMIN. */
+  adminRole?: string
+  reason: string
+  idempotencyKey?: string
+  mode?: RevertMode
+  /** Preview only: eligibility checks + receiver balance, no money moves. */
+  dryRun?: boolean
+}
+
+const REVERSAL_ROW_MESSAGE = 'This row is itself a reversal and cannot be reverted'
+
+/** `dryRun` response: what a full revert needs vs what a force revert would recover. */
+function buildRevertPreview(params: {
+  currencyType: WalletCurrencyType
+  original: bigint
+  available: bigint
+  adminRole?: string
+}) {
+  const { recovered, shortfall, sufficient } = computeRecovery({
+    original: params.original,
+    available: params.available,
+    mode: 'force',
+  })
+  return {
+    ok: true as const,
+    dryRun: true as const,
+    currency: params.currencyType,
+    originalAmount: params.original.toString(),
+    receiverAvailable: params.available.toString(),
+    recoverable: recovered.toString(),
+    shortfall: shortfall.toString(),
+    sufficient,
+    forceAllowed: params.adminRole === 'SUPER_ADMIN',
+  }
+}
+
+/**
+ * Amount to move, read after the wallets are locked. `full` returns the original (the debit then
+ * fails with INSUFFICIENT_* if the receiver is short); `force` caps at what the receiver has.
+ */
+async function recoveryUnderLock(
+  tx: Prisma.TransactionClient,
+  receiverUserId: string,
+  currencyType: WalletCurrencyType,
+  original: bigint,
+  mode: RevertMode,
+): Promise<{ recovered: bigint; shortfall: bigint }> {
+  if (mode === 'full') return { recovered: original, shortfall: 0n }
+  const available = await readAvailableBalance(tx, receiverUserId, currencyType)
+  const { recovered, shortfall } = computeRecovery({ original, available, mode })
+  if (recovered <= 0n) {
+    throw new AppError(409, 'Receiver has nothing left to recover', 'NOTHING_TO_RECOVER')
+  }
+  return { recovered, shortfall }
+}
+
+function forceAuditDetails(
+  mode: RevertMode,
+  r: { recovered: bigint; shortfall: bigint; forced: boolean },
+) {
+  return {
+    mode,
+    forced: r.forced,
+    recoveredAmount: r.recovered.toString(),
+    shortfallAmount: r.shortfall.toString(),
+  }
+}
+
+function forceResultFields(r: { recovered: bigint; shortfall: bigint; forced: boolean }) {
+  return {
+    forced: r.forced,
+    recoveredAmount: r.recovered.toString(),
+    shortfallAmount: r.shortfall.toString(),
+  }
+}
+
+/**
+ * Revert unit for a point peer row. An agent point transfer (both rows share `refId` = transfer
+ * id) is one unit whatever row was clicked; parties and amount come from the transfer record.
+ */
+async function resolvePointPeerSource(entry: {
+  id: string
+  txType: PointTxType
+  refId: string | null
+  direction: LedgerDirection
+  amount: bigint
+  counterpartyId: string | null
+  wallet: { userId: string }
+}): Promise<{
+  kind: RevertSourceKind
+  id: string
+  senderUserId: string
+  receiverUserId: string
+  amount: bigint
+  legacyLedgerIds: string[]
+}> {
+  if (
+    entry.txType === PointTxType.AGENT_POINT_TRANSFER &&
+    entry.refId &&
+    UUID_RE.test(entry.refId)
+  ) {
+    const transfer = await prismaRead.agentPointTransfer.findUnique({ where: { id: entry.refId } })
+    if (transfer) {
+      return {
+        kind: 'AGENT_POINT_TRANSFER',
+        id: transfer.id,
+        senderUserId: transfer.senderAgentUserId,
+        receiverUserId: transfer.recipientAgentUserId,
+        amount: transfer.points,
+        legacyLedgerIds: [transfer.senderLedgerEntryId, transfer.recipientLedgerEntryId],
+      }
+    }
+  }
+  const { senderUserId, receiverUserId } = resolvePeerParties({
+    direction: entry.direction,
+    walletUserId: entry.wallet.userId,
+    counterpartyId: entry.counterpartyId,
+  })
+  return {
+    kind: 'POINT_LEDGER',
+    id: entry.id,
+    senderUserId,
+    receiverUserId,
+    amount: entry.amount,
+    legacyLedgerIds: [entry.id],
+  }
+}
+
 export const adminTransactionsService = {
   async listCoinTransactions(query: AdminTransactionsListQuery) {
     const parties = await resolvePartyFilters(query)
@@ -306,6 +455,7 @@ export const adminTransactionsService = {
       limit: query.limit,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
+    const reversals = await loadCoinTradingTransferReversals(page)
     return {
       entries: page.map((t) => ({
         id: t.id,
@@ -322,7 +472,8 @@ export const adminTransactionsService = {
         reversedBy: null,
         reversedByAdminId: t.reversedByAdminId,
         createdAt: t.createdAt.toISOString(),
-        canRevert: t.reversedAt == null,
+        canRevert: t.reversedAt == null && !reversals.has(t.id),
+        reversal: reversals.get(t.id) ?? null,
       })),
       nextCursor,
       hasMore,
@@ -504,37 +655,39 @@ export const adminTransactionsService = {
   },
 
   /**
-   * Revert a **TRADING_COIN** ledger peer transfer:
-   * 1) debit receiver  2) credit sender. Fails if receiver lacks balance.
+   * Revert a **TRADING_COIN** ledger peer row that has no coin-trading transfer record:
+   * 1) debit receiver  2) credit sender.
    *
-   * Personal COIN ledger rows are not revertible via this route (`NOT_REVERTABLE`).
-   * Use `POST …/coin-trading-transfers/:transferId/revert` or gift revert instead.
+   * Personal COIN rows, and any row linked to a coin-trading transfer, are `NOT_REVERTABLE` here —
+   * use `POST …/coin-trading-transfers/:transferId/revert` (`details.transferId` says which).
+   * Reversal legs are never revertable. `dryRun` previews; `mode: 'force'` (SUPER_ADMIN)
+   * recovers what the receiver still has.
    */
-  async revertCoinLedgerEntry(params: {
-    ledgerEntryId: string
-    adminUserId: string
-    reason: string
-    idempotencyKey?: string
-  }) {
+  async revertCoinLedgerEntry(params: { ledgerEntryId: string } & RevertCallParams) {
+    const mode = params.mode ?? 'full'
     const entry = await adminTransactionsRepository.findCoinLedgerById(params.ledgerEntryId)
     if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
 
-    if (entry.wallet.currencyType !== WalletCurrencyType.TRADING_COIN) {
-      const linkedTransfers = await coinTradingRepository.findTransfersByLedgerEntryIds([entry.id])
-      const linked = linkedTransfers[0]
+    const linkedTransfers = await coinTradingRepository.findTransfersByLedgerEntryIds([entry.id])
+    const linked = linkedTransfers[0]
+    if (linked) {
+      // Always the transfer path — reverting one leg here would bypass the transfer's own state.
       throw new AppError(
         400,
-        linked
-          ? 'Personal coin ledger rows are not revertible here — use POST /admin/transactions/coin-trading-transfers/:transferId/revert'
-          : 'Only TRADING_COIN ledger peer rows are revertible via this endpoint',
+        'This row belongs to a coin-trading transfer — use POST /admin/transactions/coin-trading-transfers/:transferId/revert',
         'NOT_REVERTABLE',
-        linked ? { transferId: linked.id } : undefined,
+        { transferId: linked.id },
       )
     }
-
-    const existing = await adminTransactionsRepository.findExistingCoinReversal(entry.id)
-    if (existing) {
-      throw new AppError(409, 'Ledger entry already reverted', 'ALREADY_REVERTED')
+    if (entry.wallet.currencyType !== WalletCurrencyType.TRADING_COIN) {
+      throw new AppError(
+        400,
+        'Only TRADING_COIN ledger peer rows are revertible via this endpoint',
+        'NOT_REVERTABLE',
+      )
+    }
+    if (isReversalLedgerRow(entry)) {
+      throw new AppError(400, REVERSAL_ROW_MESSAGE, 'NOT_REVERTABLE')
     }
 
     const { senderUserId, receiverUserId } = resolvePeerParties({
@@ -542,9 +695,31 @@ export const adminTransactionsService = {
       walletUserId: entry.wallet.userId,
       counterpartyId: entry.counterpartyId,
     })
+    await assertNotReverted({
+      sourceKind: 'COIN_LEDGER',
+      sourceId: entry.id,
+      legacyLedgerIds: [entry.id],
+      legacyCurrency: 'coin',
+    })
+
     const currencyType = WalletCurrencyType.TRADING_COIN
-    const amount = entry.amount
+    const original = entry.amount
+    if (params.dryRun) {
+      return buildRevertPreview({
+        currencyType,
+        original,
+        available: await readAvailableBalance(prisma, receiverUserId, currencyType),
+        adminRole: params.adminRole,
+      })
+    }
+    assertForceAllowed(mode, params.adminRole)
     const baseKey = params.idempotencyKey?.trim() || `admin-revert:coin:${entry.id}:${randomUUID()}`
+    const metadata = {
+      adminUserId: params.adminUserId,
+      source: 'admin_transaction_revert',
+      originalLedgerEntryId: entry.id,
+      reason: params.reason,
+    }
 
     try {
       const result = await prisma.$transaction(
@@ -560,46 +735,63 @@ export const adminTransactionsService = {
           const senderWallet = await walletRepository.getOrCreate(senderUserId, currencyType, tx)
           await lockWalletsInOrder(tx, [receiverWallet, senderWallet])
 
+          const { recovered, shortfall } = await recoveryUnderLock(
+            tx,
+            receiverUserId,
+            currencyType,
+            original,
+            mode,
+          )
+          const forced = shortfall > 0n
+
           const debit = await coinWalletService.debit(
             receiverUserId,
-            amount,
+            recovered,
             CoinTxType.TRADING_TRANSFER_REVERSAL,
             tx,
             {
               idempotencyKey: `admin-revert:coin:${entry.id}:debit`,
-              description: `Admin revert debit: ${params.reason}`.slice(0, 500),
+              description:
+                `Admin revert debit${forced ? ' (partial)' : ''}: ${params.reason}`.slice(0, 500),
               counterpartyId: senderUserId,
               currencyType,
               applyWealthXp: false,
-              metadata: {
-                adminUserId: params.adminUserId,
-                source: 'admin_transaction_revert',
-                originalLedgerEntryId: entry.id,
-                reason: params.reason,
-              },
+              freezeCheck: false,
+              metadata,
             },
           )
           const credit = await coinWalletService.credit(
             senderUserId,
-            amount,
+            recovered,
             CoinTxType.TRADING_TRANSFER_REVERSAL,
             tx,
             {
               idempotencyKey: `admin-revert:coin:${entry.id}:credit`,
-              description: `Admin revert credit: ${params.reason}`.slice(0, 500),
+              description:
+                `Admin revert credit${forced ? ' (partial)' : ''}: ${params.reason}`.slice(0, 500),
               counterpartyId: receiverUserId,
               currencyType,
               applyWealthCredit: false,
-              metadata: {
-                adminUserId: params.adminUserId,
-                source: 'admin_transaction_revert',
-                originalLedgerEntryId: entry.id,
-                reason: params.reason,
-              },
+              metadata,
             },
           )
+          await insertReversalRecord(tx, {
+            sourceKind: 'COIN_LEDGER',
+            sourceId: entry.id,
+            currency: currencyType,
+            senderUserId,
+            receiverUserId,
+            originalAmount: original,
+            recoveredAmount: recovered,
+            shortfallAmount: shortfall,
+            forced,
+            reason: params.reason,
+            adminUserId: params.adminUserId,
+            debitLedgerEntryId: debit.ledgerEntryId,
+            creditLedgerEntryId: credit.ledgerEntryId,
+          })
 
-          return { debit, credit }
+          return { debit, credit, recovered, shortfall, forced }
         },
         { timeout: TX_TIMEOUT_MS },
       )
@@ -610,19 +802,22 @@ export const adminTransactionsService = {
       auditService.logAdmin({
         adminUserId: params.adminUserId,
         targetUserId: receiverUserId,
-        actionType: 'ADMIN_TRANSACTION_REVERT_COIN',
+        actionType: result.forced
+          ? 'ADMIN_TRANSACTION_FORCE_REVERT'
+          : 'ADMIN_TRANSACTION_REVERT_COIN',
         actionStatus: 'success',
         actionDetails: {
           originalLedgerEntryId: entry.id,
           senderUserId,
           receiverUserId,
-          amount: amount.toString(),
+          amount: original.toString(),
           currencyType,
           reason: params.reason,
           debitLedgerEntryId: result.debit.ledgerEntryId,
           creditLedgerEntryId: result.credit.ledgerEntryId,
           wealthXpReversed: false,
           idempotencyKey: baseKey,
+          ...forceAuditDetails(mode, result),
         },
         destination: `Revert coin ledger ${entry.id}`,
       })
@@ -632,10 +827,11 @@ export const adminTransactionsService = {
         originalLedgerEntryId: entry.id,
         senderUserId,
         receiverUserId,
-        amount: amount.toString(),
+        amount: original.toString(),
         currencyType,
         debitLedgerEntryId: result.debit.ledgerEntryId,
         creditLedgerEntryId: result.credit.ledgerEntryId,
+        ...forceResultFields(result),
         sideEffects: {
           wealthXpReversed: false,
           livestreamXpReversed: false,
@@ -655,12 +851,14 @@ export const adminTransactionsService = {
     }
   },
 
-  async revertPointLedgerEntry(params: {
-    ledgerEntryId: string
-    adminUserId: string
-    reason: string
-    idempotencyKey?: string
-  }) {
+  /**
+   * Revert a point-wallet peer transfer. An agent point transfer is keyed by its transfer id, so its
+   * sender row and receiver row are one revertable unit. Withdrawal rows forward to the withdrawal
+   * reverse (no dryRun amounts, no force). `dryRun` previews; `mode: 'force'` (SUPER_ADMIN)
+   * recovers what the receiver still has.
+   */
+  async revertPointLedgerEntry(params: { ledgerEntryId: string } & RevertCallParams) {
+    const mode = params.mode ?? 'full'
     const entry = await adminTransactionsRepository.findPointLedgerById(params.ledgerEntryId)
     if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
 
@@ -669,6 +867,22 @@ export const adminTransactionsService = {
       entry.refId &&
       UUID_RE.test(entry.refId)
     ) {
+      if (params.dryRun) {
+        return {
+          ok: true as const,
+          dryRun: true as const,
+          via: 'withdrawal' as const,
+          sufficient: true,
+          forceAllowed: false,
+        }
+      }
+      if (mode === 'force') {
+        throw new AppError(
+          400,
+          'Force reverse is not available for withdrawals',
+          'FORCE_NOT_SUPPORTED',
+        )
+      }
       const row = await withdrawalService.adminReverseWithdrawal(
         params.adminUserId,
         entry.refId,
@@ -681,6 +895,9 @@ export const adminTransactionsService = {
       }
     }
 
+    if (isReversalLedgerRow(entry)) {
+      throw new AppError(400, REVERSAL_ROW_MESSAGE, 'NOT_REVERTABLE')
+    }
     if (
       !resolvePointLedgerRevertability({
         txType: entry.txType,
@@ -696,19 +913,34 @@ export const adminTransactionsService = {
       )
     }
 
-    const existing = await adminTransactionsRepository.findExistingPointReversal(entry.id)
-    if (existing) {
-      throw new AppError(409, 'Ledger entry already reverted', 'ALREADY_REVERTED')
-    }
-
-    const { senderUserId, receiverUserId } = resolvePeerParties({
-      direction: entry.direction,
-      walletUserId: entry.wallet.userId,
-      counterpartyId: entry.counterpartyId,
+    const source = await resolvePointPeerSource(entry)
+    await assertNotReverted({
+      sourceKind: source.kind,
+      sourceId: source.id,
+      legacyLedgerIds: source.legacyLedgerIds,
+      legacyCurrency: 'point',
     })
-    const amount = entry.amount
+    const { senderUserId, receiverUserId } = source
+    const original = source.amount
+
+    if (params.dryRun) {
+      return buildRevertPreview({
+        currencyType: WalletCurrencyType.POINT,
+        original,
+        available: await readAvailableBalance(prisma, receiverUserId, WalletCurrencyType.POINT),
+        adminRole: params.adminRole,
+      })
+    }
+    assertForceAllowed(mode, params.adminRole)
     const baseKey =
       params.idempotencyKey?.trim() || `admin-revert:point:${entry.id}:${randomUUID()}`
+    const metadata = {
+      adminUserId: params.adminUserId,
+      source: 'admin_transaction_revert',
+      originalLedgerEntryId: entry.id,
+      ...(source.kind === 'AGENT_POINT_TRANSFER' ? { agentPointTransferId: source.id } : {}),
+      reason: params.reason,
+    }
 
     try {
       const result = await prisma.$transaction(
@@ -728,40 +960,42 @@ export const adminTransactionsService = {
           )
           await lockWalletsInOrder(tx, [receiverWallet, senderWallet])
 
+          const { recovered, shortfall } = await recoveryUnderLock(
+            tx,
+            receiverUserId,
+            WalletCurrencyType.POINT,
+            original,
+            mode,
+          )
+          const forced = shortfall > 0n
+
           const debit = await pointWalletService.debit(
             receiverUserId,
-            amount,
+            recovered,
             PointTxType.ADJUSTMENT,
             tx,
             {
               idempotencyKey: `admin-revert:point:${entry.id}:debit`,
-              description: `Admin revert debit: ${params.reason}`.slice(0, 500),
+              description:
+                `Admin revert debit${forced ? ' (partial)' : ''}: ${params.reason}`.slice(0, 500),
               counterpartyId: senderUserId,
               availabilityCheck: true,
-              metadata: {
-                adminUserId: params.adminUserId,
-                source: 'admin_transaction_revert',
-                originalLedgerEntryId: entry.id,
-                reason: params.reason,
-              },
+              freezeCheck: false,
+              metadata,
             },
           )
           const credit = await pointWalletService.creditInTransaction(
             senderUserId,
-            amount,
+            recovered,
             PointTxType.ADJUSTMENT,
             tx,
             {
               idempotencyKey: `admin-revert:point:${entry.id}:credit`,
-              description: `Admin revert credit: ${params.reason}`.slice(0, 500),
+              description:
+                `Admin revert credit${forced ? ' (partial)' : ''}: ${params.reason}`.slice(0, 500),
               counterpartyId: receiverUserId,
               applyLivestreamLevel: false,
-              metadata: {
-                adminUserId: params.adminUserId,
-                source: 'admin_transaction_revert',
-                originalLedgerEntryId: entry.id,
-                reason: params.reason,
-              },
+              metadata,
             },
           )
 
@@ -772,7 +1006,8 @@ export const adminTransactionsService = {
             commissionPoints: null as string | null,
           }
 
-          // Side effects were applied on the original host CREDIT row.
+          // Side effects were applied on the original host CREDIT row. (Unreachable today:
+          // coin-funded earning types are rejected above; kept for legacy peer types.)
           if (
             entry.direction === LedgerDirection.CREDIT &&
             LIVESTREAM_REVERT_POINT_TYPES.has(entry.txType)
@@ -781,7 +1016,7 @@ export const adminTransactionsService = {
               tx,
               receiverUserId,
               LevelType.LIVESTREAM,
-              amount,
+              recovered,
             )
             commission = await agencyCommissionService.reverseCommission(
               { hostLedgerEntryId: entry.id, reason: params.reason },
@@ -789,13 +1024,29 @@ export const adminTransactionsService = {
             )
           }
 
-          return { debit, credit, livestreamResult, commission }
+          await insertReversalRecord(tx, {
+            sourceKind: source.kind,
+            sourceId: source.id,
+            currency: WalletCurrencyType.POINT,
+            senderUserId,
+            receiverUserId,
+            originalAmount: original,
+            recoveredAmount: recovered,
+            shortfallAmount: shortfall,
+            forced,
+            reason: params.reason,
+            adminUserId: params.adminUserId,
+            debitLedgerEntryId: debit.ledgerEntryId,
+            creditLedgerEntryId: credit.ledgerEntryId,
+          })
+
+          return { debit, credit, livestreamResult, commission, recovered, shortfall, forced }
         },
         { timeout: TX_TIMEOUT_MS },
       )
 
-      await walletService.adjustPointBalanceCache(receiverUserId, -amount)
-      await walletService.adjustPointBalanceCache(senderUserId, amount)
+      await walletService.adjustPointBalanceCache(receiverUserId, -result.recovered)
+      await walletService.adjustPointBalanceCache(senderUserId, result.recovered)
       await syncLevelCacheFromApplyResult(
         receiverUserId,
         LevelType.LIVESTREAM,
@@ -808,13 +1059,17 @@ export const adminTransactionsService = {
       auditService.logAdmin({
         adminUserId: params.adminUserId,
         targetUserId: receiverUserId,
-        actionType: 'ADMIN_TRANSACTION_REVERT_POINT',
+        actionType: result.forced
+          ? 'ADMIN_TRANSACTION_FORCE_REVERT'
+          : 'ADMIN_TRANSACTION_REVERT_POINT',
         actionStatus: 'success',
         actionDetails: {
           originalLedgerEntryId: entry.id,
+          sourceKind: source.kind,
+          sourceId: source.id,
           senderUserId,
           receiverUserId,
-          amount: amount.toString(),
+          amount: original.toString(),
           reason: params.reason,
           debitLedgerEntryId: result.debit.ledgerEntryId,
           creditLedgerEntryId: result.credit.ledgerEntryId,
@@ -822,6 +1077,7 @@ export const adminTransactionsService = {
           agencyCommissionReversed: result.commission.reversed,
           commissionPoints: result.commission.commissionPoints,
           idempotencyKey: baseKey,
+          ...forceAuditDetails(mode, result),
         },
         destination: `Revert point ledger ${entry.id}`,
       })
@@ -831,9 +1087,10 @@ export const adminTransactionsService = {
         originalLedgerEntryId: entry.id,
         senderUserId,
         receiverUserId,
-        amount: amount.toString(),
+        amount: original.toString(),
         debitLedgerEntryId: result.debit.ledgerEntryId,
         creditLedgerEntryId: result.credit.ledgerEntryId,
+        ...forceResultFields(result),
         sideEffects: {
           wealthXpReversed: false,
           livestreamXpReversed: Boolean(result.livestreamResult),
@@ -860,14 +1117,12 @@ export const adminTransactionsService = {
    * Livestream Streak). A DEBIT is reverted with a clean credit back (no XP
    * — unlike the generic "Add Points" admin endpoint, which always grants
    * livestream XP); a CREDIT (e.g. a claimed reward) is reverted with a
-   * debit gated on the user actually having the balance to give it back.
+   * debit gated on the user actually having the balance to give it back, or with
+   * `mode: 'force'` (SUPER_ADMIN) only what the user still has.
+   * Rows with a counterparty (peer legs) and reversal legs are rejected.
    */
-  async revertSingleWalletPointEntry(params: {
-    ledgerEntryId: string
-    adminUserId: string
-    reason: string
-    idempotencyKey?: string
-  }) {
+  async revertSingleWalletPointEntry(params: { ledgerEntryId: string } & RevertCallParams) {
+    const mode = params.mode ?? 'full'
     const entry = await adminTransactionsRepository.findPointLedgerById(params.ledgerEntryId)
     if (!entry) throw new AppError(404, 'Ledger entry not found', 'LEDGER_ENTRY_NOT_FOUND')
 
@@ -878,14 +1133,41 @@ export const adminTransactionsService = {
         'NOT_REVERTABLE',
       )
     }
-
-    const existing = await adminTransactionsRepository.findExistingSingleWalletReversal(entry.id)
-    if (existing) {
-      throw new AppError(409, 'Ledger entry already reverted', 'ALREADY_REVERTED')
+    if (isReversalLedgerRow(entry)) {
+      throw new AppError(400, REVERSAL_ROW_MESSAGE, 'NOT_REVERTABLE')
+    }
+    if (entry.counterpartyId) {
+      throw new AppError(
+        400,
+        'This row has a counterparty — it is part of a peer transfer, not a single-wallet entry',
+        'NOT_REVERTABLE',
+      )
     }
 
+    await assertNotReverted({
+      sourceKind: 'POINT_SINGLE',
+      sourceId: entry.id,
+      legacyLedgerIds: [entry.id],
+      legacyCurrency: 'point-single',
+    })
+
     const userId = entry.wallet.userId
-    const amount = entry.amount
+    const original = entry.amount
+    const isCreditBack = entry.direction === LedgerDirection.DEBIT
+
+    if (params.dryRun) {
+      // Crediting back a debit always succeeds; only clawing back a credit can be short.
+      return buildRevertPreview({
+        currencyType: WalletCurrencyType.POINT,
+        original,
+        available: isCreditBack
+          ? original
+          : await readAvailableBalance(prisma, userId, WalletCurrencyType.POINT),
+        adminRole: params.adminRole,
+      })
+    }
+    assertForceAllowed(mode, params.adminRole)
+
     const idempotencyKey = `admin-revert:point-single:${entry.id}:reverse`
     const metadata = {
       adminUserId: params.adminUserId,
@@ -897,10 +1179,10 @@ export const adminTransactionsService = {
     try {
       const result = await prisma.$transaction(
         async (tx) => {
-          if (entry.direction === LedgerDirection.DEBIT) {
+          if (isCreditBack) {
             const credit = await pointWalletService.creditInTransaction(
               userId,
-              amount,
+              original,
               PointTxType.ADJUSTMENT,
               tx,
               {
@@ -910,38 +1192,93 @@ export const adminTransactionsService = {
                 metadata,
               },
             )
-            return { direction: LedgerDirection.CREDIT, ...credit }
+            await insertReversalRecord(tx, {
+              sourceKind: 'POINT_SINGLE',
+              sourceId: entry.id,
+              currency: WalletCurrencyType.POINT,
+              senderUserId: userId,
+              receiverUserId: userId,
+              originalAmount: original,
+              recoveredAmount: original,
+              shortfallAmount: 0n,
+              forced: false,
+              reason: params.reason,
+              adminUserId: params.adminUserId,
+              creditLedgerEntryId: credit.ledgerEntryId,
+            })
+            return {
+              direction: LedgerDirection.CREDIT,
+              ...credit,
+              recovered: original,
+              shortfall: 0n,
+              forced: false,
+            }
           }
 
-          const debit = await pointWalletService.debit(userId, amount, PointTxType.ADJUSTMENT, tx, {
-            idempotencyKey,
-            description: `Admin revert debit: ${params.reason}`.slice(0, 500),
-            availabilityCheck: true,
-            metadata,
+          const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT, tx)
+          await lockWalletsInOrder(tx, [wallet])
+          const { recovered, shortfall } = await recoveryUnderLock(
+            tx,
+            userId,
+            WalletCurrencyType.POINT,
+            original,
+            mode,
+          )
+          const forced = shortfall > 0n
+          const debit = await pointWalletService.debit(
+            userId,
+            recovered,
+            PointTxType.ADJUSTMENT,
+            tx,
+            {
+              idempotencyKey,
+              description:
+                `Admin revert debit${forced ? ' (partial)' : ''}: ${params.reason}`.slice(0, 500),
+              availabilityCheck: true,
+              freezeCheck: false,
+              metadata,
+            },
+          )
+          await insertReversalRecord(tx, {
+            sourceKind: 'POINT_SINGLE',
+            sourceId: entry.id,
+            currency: WalletCurrencyType.POINT,
+            senderUserId: userId,
+            receiverUserId: userId,
+            originalAmount: original,
+            recoveredAmount: recovered,
+            shortfallAmount: shortfall,
+            forced,
+            reason: params.reason,
+            adminUserId: params.adminUserId,
+            debitLedgerEntryId: debit.ledgerEntryId,
           })
-          return { direction: LedgerDirection.DEBIT, ...debit }
+          return { direction: LedgerDirection.DEBIT, ...debit, recovered, shortfall, forced }
         },
         { timeout: TX_TIMEOUT_MS },
       )
 
       await walletService.adjustPointBalanceCache(
         userId,
-        result.direction === LedgerDirection.CREDIT ? amount : -amount,
+        result.direction === LedgerDirection.CREDIT ? result.recovered : -result.recovered,
       )
 
       auditService.logAdmin({
         adminUserId: params.adminUserId,
         targetUserId: userId,
-        actionType: 'ADMIN_WALLET_REVERT_SINGLE_POINT',
+        actionType: result.forced
+          ? 'ADMIN_TRANSACTION_FORCE_REVERT'
+          : 'ADMIN_WALLET_REVERT_SINGLE_POINT',
         actionStatus: 'success',
         actionDetails: {
           originalLedgerEntryId: entry.id,
           originalTxType: entry.txType,
           userId,
-          amount: amount.toString(),
+          amount: original.toString(),
           reason: params.reason,
           reversalLedgerEntryId: result.ledgerEntryId,
           idempotencyKey,
+          ...forceAuditDetails(mode, result),
         },
         destination: `Revert single-wallet point ledger ${entry.id}`,
       })
@@ -951,8 +1288,9 @@ export const adminTransactionsService = {
         originalLedgerEntryId: entry.id,
         userId,
         originalDirection: entry.direction,
-        amount: amount.toString(),
+        amount: original.toString(),
         reversalLedgerEntryId: result.ledgerEntryId,
+        ...forceResultFields(result),
       }
     } catch (err) {
       if (err instanceof AppError && err.code === 'INSUFFICIENT_POINTS') {
@@ -983,30 +1321,54 @@ export const adminTransactionsService = {
     )
   },
 
-  /** Coin-trading transfer revert — debit recipient first, then credit sender. */
-  async revertCoinTradingTransfer(params: {
-    transferId: string
-    adminUserId: string
-    reason: string
-  }) {
+  /**
+   * Coin-trading transfer revert — debit recipient first, then credit sender.
+   * `dryRun` previews; `mode: 'force'` (SUPER_ADMIN) recovers what the recipient still has.
+   */
+  async revertCoinTradingTransfer(params: { transferId: string } & RevertCallParams) {
+    const mode = params.mode ?? 'full'
     const transfer = await coinTradingRepository.getTransferById(params.transferId)
     if (!transfer) throw new AppError(404, 'Transfer not found', 'TRANSFER_NOT_FOUND')
-    if (transfer.reversedAt) {
+    const existing = await findReversalRecord('COIN_TRADING_TRANSFER', transfer.id)
+    if (transfer.reversedAt || existing) {
       throw new AppError(409, 'Transfer already reversed', 'TRANSFER_ALREADY_REVERSED')
     }
 
-    await coinTradingService.reverseTransfer(params.adminUserId, params.transferId, params.reason)
+    if (params.dryRun) {
+      return buildRevertPreview({
+        currencyType: walletTypeFromTransferRecord(transfer.recipientWalletType),
+        original: transfer.coinsCredited,
+        available: await readAvailableBalance(
+          prisma,
+          transfer.recipientUserId,
+          walletTypeFromTransferRecord(transfer.recipientWalletType),
+        ),
+        adminRole: params.adminRole,
+      })
+    }
+    assertForceAllowed(mode, params.adminRole)
+
+    const outcome = await coinTradingService.reverseTransfer(
+      params.adminUserId,
+      params.transferId,
+      params.reason,
+      { mode },
+    )
 
     auditService.logAdmin({
       adminUserId: params.adminUserId,
       targetUserId: transfer.recipientUserId,
-      actionType: 'ADMIN_TRANSACTION_REVERT_TRADING_TRANSFER',
+      actionType: outcome.forced
+        ? 'ADMIN_TRANSACTION_FORCE_REVERT'
+        : 'ADMIN_TRANSACTION_REVERT_TRADING_TRANSFER',
       actionStatus: 'success',
       actionDetails: {
         transferId: transfer.id,
         reason: params.reason,
         senderAgentUserId: transfer.senderAgentUserId,
         recipientUserId: transfer.recipientUserId,
+        amount: transfer.coinsCredited.toString(),
+        ...forceAuditDetails(mode, outcome),
       },
       destination: `Revert trading transfer ${transfer.id}`,
     })
@@ -1016,9 +1378,10 @@ export const adminTransactionsService = {
       transferId: transfer.id,
       senderUserId: transfer.senderAgentUserId,
       receiverUserId: transfer.recipientUserId,
-      tradingCoinsCreditedToSender: transfer.tradingCoinsDebited.toString(),
-      coinsDebitedFromReceiver: transfer.coinsCredited.toString(),
+      tradingCoinsCreditedToSender: outcome.recovered.toString(),
+      coinsDebitedFromReceiver: outcome.recovered.toString(),
       recipientWalletType: transfer.recipientWalletType,
+      ...forceResultFields(outcome),
     }
   },
 }
@@ -1105,6 +1468,14 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
     transferByLedger.set(t.senderLedgerEntryId, t)
     transferByLedger.set(t.recipientLedgerEntryId, t)
   }
+  const revertStates = await loadLedgerRevertStates({
+    coinLedgerIds: page
+      .filter(
+        (e) =>
+          e.wallet.currencyType === WalletCurrencyType.TRADING_COIN || transferByLedger.has(e.id),
+      )
+      .map((e) => e.id),
+  })
 
   const giftRowsForAgency = [
     ...new Map(
@@ -1274,7 +1645,9 @@ async function enrichCoinLedgerRows(page: CoinLedgerRow[]) {
         tradingTransfer: tradingTransfer
           ? { id: tradingTransfer.id, reversedAt: tradingTransfer.reversedAt }
           : null,
+        revertState: revertStates.get(e.id) ?? null,
       }),
+      reversal: revertStates.get(e.id)?.reversal ?? null,
     }
   })
 }
@@ -1295,16 +1668,29 @@ export function resolveCoinLedgerRevertability(params: {
   ledgerEntryId: string
   counterpartyId: string | null
   tradingTransfer: { id: string; reversedAt: Date | null } | null
+  /** From `loadLedgerRevertStates`; absent means "not known reverted". */
+  revertState?: { isReversalRow: boolean; reversal: ReversalSummary | null } | null
 }): { canRevert: boolean; revertVia: AdminCoinRevertVia | null } {
-  // Agent→user (or peer) transfer funded by TRADING_COIN — preferred dedicated path.
-  if (params.tradingTransfer && params.tradingTransfer.reversedAt == null) {
-    return {
-      canRevert: true,
-      revertVia: {
-        endpoint: 'coin_trading_transfer',
-        id: params.tradingTransfer.id,
-      },
+  const alreadyReverted = Boolean(params.revertState?.reversal)
+
+  // Agent→user (or peer) transfer funded by TRADING_COIN — the only revert path for its rows.
+  // Once the transfer is reversed its rows are never revertable (no fall-through to coin_ledger).
+  if (params.tradingTransfer) {
+    if (params.tradingTransfer.reversedAt == null && !alreadyReverted) {
+      return {
+        canRevert: true,
+        revertVia: {
+          endpoint: 'coin_trading_transfer',
+          id: params.tradingTransfer.id,
+        },
+      }
     }
+    return { canRevert: false, revertVia: null }
+  }
+
+  // Reversal legs and already-reverted rows.
+  if (params.revertState?.isReversalRow || alreadyReverted) {
+    return { canRevert: false, revertVia: null }
   }
 
   // TRADING_COIN peer movement (implementation still needs a peer to reverse).
@@ -1355,6 +1741,16 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
         })
       : []
   const withdrawalMap = new Map(withdrawals.map((w) => [w.id, w]))
+
+  const revertStates = await loadLedgerRevertStates({
+    pointLedgerIds: page
+      .filter(
+        (e) =>
+          resolvePointLedgerRevertability({ txType: e.txType, counterpartyId: e.counterpartyId }) ||
+          SINGLE_WALLET_REVERTABLE_TX_TYPES.has(e.txType),
+      )
+      .map((e) => e.id),
+  })
 
   const counterpartyDetailsMap = await buildAdminCounterpartyDetailsMap(
     page.map((e) => ({
@@ -1429,10 +1825,12 @@ async function enrichPointLedgerRows(page: PointLedgerRow[]) {
         : resolvePointLedgerRevertability({
             txType: e.txType,
             counterpartyId: e.counterpartyId,
+            revertState: revertStates.get(e.id) ?? null,
           }),
       revertVia: withdrawalCanRevert
         ? ({ endpoint: 'withdrawal', id: withdrawal!.id } satisfies AdminCoinRevertVia)
         : null,
+      reversal: revertStates.get(e.id)?.reversal ?? null,
     }
   })
 }

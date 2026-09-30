@@ -58,9 +58,23 @@ export const adminPlatformProfitSummaryQuerySchema = z.object({
 
 export type AdminPlatformProfitSummaryQuery = z.infer<typeof adminPlatformProfitSummaryQuerySchema>
 
-export const adminTransactionRevertBodySchema = z.object({
-  reason: z.string().min(1).max(1000),
-  idempotencyKey: z.string().min(1).max(128).optional(),
-})
+export const adminTransactionRevertBodySchema = z
+  .object({
+    /** Required unless `dryRun` (a preview runs before the admin has typed a reason). */
+    reason: z.string().trim().max(1000).optional(),
+    idempotencyKey: z.string().min(1).max(128).optional(),
+    /**
+     * `full` (default): all-or-nothing, 402 if the receiver is short.
+     * `force` (SUPER_ADMIN only): recover what the receiver still has; the rest is recorded as
+     * shortfall and the transaction counts as reverted (final).
+     */
+    mode: z.enum(['full', 'force']).optional(),
+    /** Preview only: run the checks and return receiver balance / recoverable / shortfall. */
+    dryRun: z.boolean().optional(),
+  })
+  .refine((b) => b.dryRun === true || (b.reason != null && b.reason.length > 0), {
+    message: 'reason is required',
+    path: ['reason'],
+  })
 
 export type AdminTransactionRevertBody = z.infer<typeof adminTransactionRevertBodySchema>

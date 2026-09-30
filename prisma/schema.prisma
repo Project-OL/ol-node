@@ -1616,6 +1616,34 @@ model CoinTradingTransfer {
   @@map("coin_trading_transfers")
 }
 
+/// One row per admin-reverted source. `(sourceKind, sourceId)` is unique and the row is written in
+/// the same transaction as the reversal debit/credit, so a source can be reverted only once.
+/// `sourceKind`: COIN_TRADING_TRANSFER | AGENT_POINT_TRANSFER (sourceId = transfer id) or
+/// POINT_LEDGER | COIN_LEDGER | POINT_SINGLE (sourceId = ledger entry id).
+/// `forced` = partial "force reverse": recovered what the receiver had, `shortfallAmount` unrecovered.
+model AdminTransactionReversal {
+  id                  String   @id @default(uuid()) @db.Uuid
+  sourceKind          String   @map("source_kind") @db.VarChar(32)
+  sourceId            String   @map("source_id") @db.Uuid
+  currency            String   @db.VarChar(20)
+  senderUserId        String   @map("sender_user_id") @db.Uuid
+  receiverUserId      String   @map("receiver_user_id") @db.Uuid
+  originalAmount      BigInt   @map("original_amount")
+  recoveredAmount     BigInt   @map("recovered_amount")
+  shortfallAmount     BigInt   @map("shortfall_amount")
+  forced              Boolean  @default(false)
+  reason              String   @db.Text
+  /// `system_admins.id` — no FK (same pattern as `coin_trading_transfers.reversed_by_user_id`).
+  adminUserId         String   @map("admin_user_id") @db.Uuid
+  debitLedgerEntryId  String?  @map("debit_ledger_entry_id") @db.Uuid
+  creditLedgerEntryId String?  @map("credit_ledger_entry_id") @db.Uuid
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@unique([sourceKind, sourceId])
+  @@index([receiverUserId, createdAt(sort: Desc)])
+  @@map("admin_transaction_reversals")
+}
+
 model CoinTradingTopupRate {
   id          String   @id @default(uuid()) @db.Uuid
   minUsd      Decimal  @map("min_usd") @db.Decimal(12, 2)

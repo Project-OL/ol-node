@@ -571,6 +571,11 @@ export const coinWalletService = {
        * change or trading-coin reversals.
        */
       applyWealthXp?: boolean
+      /**
+       * When true (default), reject if the user's coin / trading-coin wallet is frozen. Set false
+       * for admin reversals, which claw back from a wallet that is often frozen for that reason.
+       */
+      freezeCheck?: boolean
     },
   ): Promise<{
     ledgerEntryId: string
@@ -609,7 +614,9 @@ export const coinWalletService = {
       )
     }
     await walletRepository.lockForUpdate(tx, wallet.id)
-    await assertCoinDebitAllowedInTx(tx, userId, currencyType)
+    if (options.freezeCheck !== false) {
+      await assertCoinDebitAllowedInTx(tx, userId, currencyType)
+    }
     const last = await tx.coinLedgerEntry.findFirst({
       where: { walletId: wallet.id },
       orderBy: { createdAt: 'desc' },
