@@ -18,6 +18,7 @@ import { buildUserDisplayName, formatUserName, resolveDisplayPublicId } from '..
 import { agencyHostConfigService } from './agencyHostConfig.service'
 import { auditService } from './audit.service'
 import { agencyHostJoinNotifier } from './agencyHostJoinNotifier.service'
+import { agencyHostLeaveNotifier } from './agencyHostLeaveNotifier.service'
 
 type HostEarningsAgg = {
   hostEarnings: bigint
@@ -133,12 +134,12 @@ async function finalizeAgencyHostExit(
   reason: AgencyHostHistoryReason,
   tx: Prisma.TransactionClient,
   metadata?: Prisma.InputJsonValue,
-) {
+): Promise<boolean> {
   const row = await tx.agencyHost.findUnique({
     where: { hostUserId },
   })
   if (!row || row.agencyUserId !== agencyUserId) {
-    return
+    return false
   }
 
   await agencyHostRepository.insertHistory(
@@ -158,6 +159,7 @@ async function finalizeAgencyHostExit(
     data: { currentAgencyId: null },
   })
   await agencyRepository.incrementHostCount(agencyUserId, -1, tx)
+  return true
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -424,9 +426,9 @@ export const agencyHostService = {
     const immediateLeave = joinedMs < IMMEDIATE_LEAVE_MS || !faceVerified
 
     if (immediateLeave) {
-      await prisma.$transaction(
+      const exited = await prisma.$transaction(
         async (tx) => {
-          await finalizeAgencyHostExit(
+          return finalizeAgencyHostExit(
             membership.agencyUserId,
             hostUserId,
             'LEAVE_AUTO_APPROVED',
@@ -440,6 +442,13 @@ export const agencyHostService = {
         { timeout: TX_MS },
       )
       await agencyService.onAgencyMutation(membership.agencyUserId)
+      if (exited) {
+        await agencyHostLeaveNotifier.notifyHostLeft({
+          agencyUserId: membership.agencyUserId,
+          hostUserId,
+          joinedAt: membership.joinedAt,
+        })
+      }
       return { ok: true as const, immediate: true as const }
     }
 
@@ -461,6 +470,13 @@ export const agencyHostService = {
 
     await enqueueLeaveAutoApprove(created.id, autoAt)
     await agencyService.onAgencyMutation(membership.agencyUserId)
+    await agencyHostLeaveNotifier.notifyLeaveApplied({
+      agencyUserId: membership.agencyUserId,
+      hostUserId,
+      applicationId: created.id,
+      autoApproveAt: autoAt,
+      reason,
+    })
     return {
       ok: true as const,
       immediate: false as const,

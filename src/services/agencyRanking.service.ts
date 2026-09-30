@@ -351,6 +351,7 @@ export const agencyRankingService = {
   /**
    * Discovery list of agencies whose owner TRADING_COIN balance meets the coinseller threshold.
    * Country-scoped like ranking; same item shape (including `rank` as page position).
+   * Order: most trading coins sold (net of admin reversals) first; ties → agency approved earlier.
    */
   async getCoinsellerListing(params: {
     limit: number

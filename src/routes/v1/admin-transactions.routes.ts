@@ -26,6 +26,18 @@ function parseProfitSummaryQuery(query: unknown) {
   return parsed.data
 }
 
+/** Caller context for revert services: role (force needs SUPER_ADMIN), mode, dryRun. */
+function revertContext(request: FastifyRequest, body: ReturnType<typeof parseRevertBody>) {
+  return {
+    adminUserId: request.adminUser!.id,
+    adminRole: request.adminUser!.role,
+    reason: body.reason ?? '',
+    idempotencyKey: body.idempotencyKey,
+    mode: body.mode,
+    dryRun: body.dryRun,
+  }
+}
+
 function parseRevertBody(body: unknown) {
   const parsed = adminTransactionRevertBodySchema.safeParse(body ?? {})
   if (!parsed.success) {
@@ -212,7 +224,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Transactions'],
         description:
-          'Revert a TRADING_COIN peer ledger entry only: debit receiver, then credit sender. Personal COIN rows return NOT_REVERTABLE — use gift or coin-trading-transfer revert instead.',
+          'Revert a TRADING_COIN peer ledger entry only: debit receiver, then credit sender. Personal COIN rows and rows linked to a coin-trading transfer return NOT_REVERTABLE (details.transferId) — use the coin-trading-transfer revert instead. Body `{ reason, mode?: "full"|"force", dryRun?: boolean }`: dryRun previews receiver balance / recoverable / shortfall (reason optional); mode "force" (SUPER_ADMIN) recovers what the receiver still has and records the shortfall. One revert per transaction (409 ALREADY_REVERTED).',
       },
     },
     async (request, reply) => {
@@ -220,9 +232,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       return reply.send(
         await adminTransactionsService.revertCoinLedgerEntry({
           ledgerEntryId: request.params.ledgerEntryId,
-          adminUserId: request.adminUser!.id,
-          reason: body.reason,
-          idempotencyKey: body.idempotencyKey,
+          ...revertContext(request, body),
         }),
       )
     },
@@ -234,7 +244,8 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       preHandler: preAuth,
       schema: {
         tags: ['Admin', 'Transactions'],
-        description: 'Revert a point peer ledger entry: debit receiver, then credit sender.',
+        description:
+          'Revert a point peer ledger entry (an agent point transfer is one unit, whichever row is clicked): debit receiver, then credit sender. Body `{ reason, mode?: "full"|"force", dryRun?: boolean }`: dryRun previews receiver balance / recoverable / shortfall (reason optional); mode "force" (SUPER_ADMIN) recovers what the receiver still has and records the shortfall. One revert per transaction (409 ALREADY_REVERTED).',
       },
     },
     async (request, reply) => {
@@ -242,9 +253,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       return reply.send(
         await adminTransactionsService.revertPointLedgerEntry({
           ledgerEntryId: request.params.ledgerEntryId,
-          adminUserId: request.adminUser!.id,
-          reason: body.reason,
-          idempotencyKey: body.idempotencyKey,
+          ...revertContext(request, body),
         }),
       )
     },
@@ -257,7 +266,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Transactions'],
         description:
-          'Revert a single-wallet (no counterparty) point ledger entry: an admin ADJUSTMENT correction, or a claimed Normal/Royal Host or Livestream Streak reward. A DEBIT is credited back cleanly (no livestream XP); a CREDIT is debited back only if the user still has the balance to cover it.',
+          'Revert a single-wallet (no counterparty) point ledger entry: an admin ADJUSTMENT correction, or a claimed Normal/Royal Host or Livestream Streak reward. A DEBIT is credited back cleanly (no livestream XP); a CREDIT is debited back only if the user still has the balance to cover it. Body `{ reason, mode?: "full"|"force", dryRun?: boolean }`: dryRun previews receiver balance / recoverable / shortfall (reason optional); mode "force" (SUPER_ADMIN) recovers what the receiver still has and records the shortfall. One revert per transaction (409 ALREADY_REVERTED).',
       },
     },
     async (request, reply) => {
@@ -265,9 +274,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       return reply.send(
         await adminTransactionsService.revertSingleWalletPointEntry({
           ledgerEntryId: request.params.ledgerEntryId,
-          adminUserId: request.adminUser!.id,
-          reason: body.reason,
-          idempotencyKey: body.idempotencyKey,
+          ...revertContext(request, body),
         }),
       )
     },
@@ -280,7 +287,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Admin', 'Transactions'],
         description:
-          'Revert a coin-trading transfer: debit recipient wallet first, then credit agent trading coins.',
+          'Revert a coin-trading transfer: debit recipient wallet first, then credit agent trading coins. Body `{ reason, mode?: "full"|"force", dryRun?: boolean }`: dryRun previews receiver balance / recoverable / shortfall (reason optional); mode "force" (SUPER_ADMIN) recovers what the receiver still has and records the shortfall. One revert per transaction (409 ALREADY_REVERTED).',
       },
     },
     async (request, reply) => {
@@ -288,8 +295,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
       return reply.send(
         await adminTransactionsService.revertCoinTradingTransfer({
           transferId: request.params.transferId,
-          adminUserId: request.adminUser!.id,
-          reason: body.reason,
+          ...revertContext(request, body),
         }),
       )
     },
@@ -311,7 +317,7 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
         await adminTransactionsService.revertGiftTransaction({
           giftTransactionId: request.params.giftTransactionId,
           adminUserId: request.adminUser!.id,
-          reason: body.reason,
+          reason: body.reason ?? '',
         }),
       )
     },

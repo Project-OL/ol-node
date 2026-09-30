@@ -39,6 +39,12 @@ import { enrichLedgerEntries } from '../utils/ledger-transaction-enrichment'
 import { pointLedgerRepository } from '../repositories/point-ledger.repository'
 import { isUniqueViolation, withSerializationRetry } from '../utils/txRetry'
 import { lockWalletsInOrder } from '../utils/wallet-lock-order'
+import {
+  computeRecovery,
+  insertReversalRecord,
+  readAvailableBalance,
+  type RevertMode,
+} from './adminTransactionReversal.service'
 
 const TX_TIMEOUT_MS = 20_000
 
@@ -201,7 +207,7 @@ function resolveRecipientWalletType(
   return WalletCurrencyType.TRADING_COIN
 }
 
-function walletTypeFromTransferRecord(recipientWalletType: string): WalletCurrencyType {
+export function walletTypeFromTransferRecord(recipientWalletType: string): WalletCurrencyType {
   return recipientWalletType === 'TRADING'
     ? WalletCurrencyType.TRADING_COIN
     : WalletCurrencyType.COIN
@@ -893,12 +899,25 @@ export const coinTradingService = {
     }
     return transfer
   },
-  async reverseTransfer(adminUserId: string, transferId: string, reason: string) {
+  /**
+   * Admin reversal: debit the recipient, credit the agent's trading coins (1:1).
+   * `mode: 'force'` recovers only what the recipient still has (the caller enforces SUPER_ADMIN).
+   * Writes the once-only `admin_transaction_reversals` row in the same transaction, so this and
+   * `POST /admin/transactions/coin-trading-transfers/:id/revert` can never both reverse one transfer.
+   */
+  async reverseTransfer(
+    adminUserId: string,
+    transferId: string,
+    reason: string,
+    opts?: { mode?: RevertMode },
+  ): Promise<{ recovered: bigint; shortfall: bigint; forced: boolean }> {
+    const mode = opts?.mode ?? 'full'
     const transfer = await coinTradingRepository.getTransferById(transferId)
     if (!transfer) throw new AppError(404, 'Transfer not found', 'TRANSFER_NOT_FOUND')
     if (transfer.reversedAt)
       throw new AppError(409, 'Transfer already reversed', 'TRANSFER_ALREADY_REVERSED')
     const recipientWalletType = walletTypeFromTransferRecord(transfer.recipientWalletType)
+    let outcome = { recovered: transfer.coinsCredited, shortfall: 0n, forced: false }
     try {
       await prisma.$transaction(
         async (tx) => {
@@ -918,27 +937,50 @@ export const coinTradingService = {
           )
           await lockWalletsInOrder(tx, [recipientWallet, senderWallet])
 
-          // Debit receiver first, then credit sender (ledger/reversal record order).
-          await coinWalletService.debit(
+          // Authoritative amount, read under the wallet lock (force takes what is left).
+          const available = await readAvailableBalance(
+            tx,
             transfer.recipientUserId,
-            transfer.coinsCredited,
+            recipientWalletType,
+          )
+          const { recovered, shortfall } = computeRecovery({
+            original: transfer.coinsCredited,
+            available,
+            mode,
+          })
+          if (recovered <= 0n) {
+            throw new AppError(409, 'Recipient has nothing left to recover', 'NOTHING_TO_RECOVER')
+          }
+          outcome = { recovered, shortfall, forced: shortfall > 0n }
+
+          // Debit receiver first, then credit sender (ledger/reversal record order).
+          // Transfers are 1:1 (coinsCredited === tradingCoinsDebited), so the agent gets back
+          // exactly what was recovered. freezeCheck off: clawback must work on a frozen wallet.
+          const debit = await coinWalletService.debit(
+            transfer.recipientUserId,
+            recovered,
             CoinTxType.TRADING_TRANSFER_REVERSAL,
             tx,
             {
               idempotencyKey: `trading-reversal:${transfer.id}:recipient`,
-              description: 'Admin fraud reversal debit',
+              description: outcome.forced
+                ? 'Admin fraud reversal debit (partial)'
+                : 'Admin fraud reversal debit',
               currencyType: recipientWalletType,
               applyWealthXp: false,
+              freezeCheck: false,
             },
           )
-          await coinWalletService.credit(
+          const credit = await coinWalletService.credit(
             transfer.senderAgentUserId,
-            transfer.tradingCoinsDebited,
+            recovered,
             CoinTxType.TRADING_TRANSFER_REVERSAL,
             tx,
             {
               idempotencyKey: `trading-reversal:${transfer.id}:sender`,
-              description: 'Admin fraud reversal credit',
+              description: outcome.forced
+                ? 'Admin fraud reversal credit (partial)'
+                : 'Admin fraud reversal credit',
               applyWealthCredit: false,
               currencyType: WalletCurrencyType.TRADING_COIN,
             },
@@ -947,6 +989,21 @@ export const coinTradingService = {
             { id: transfer.id, reversedByAdminId: adminUserId, reason },
             tx,
           )
+          await insertReversalRecord(tx, {
+            sourceKind: 'COIN_TRADING_TRANSFER',
+            sourceId: transfer.id,
+            currency: recipientWalletType,
+            senderUserId: transfer.senderAgentUserId,
+            receiverUserId: transfer.recipientUserId,
+            originalAmount: transfer.coinsCredited,
+            recoveredAmount: recovered,
+            shortfallAmount: shortfall,
+            forced: outcome.forced,
+            reason,
+            adminUserId,
+            debitLedgerEntryId: debit.ledgerEntryId,
+            creditLedgerEntryId: credit.ledgerEntryId,
+          })
         },
         { timeout: TX_TIMEOUT_MS },
       )
@@ -985,8 +1042,12 @@ export const coinTradingService = {
         recipientUserId: transfer.recipientUserId,
         agencyUserId: transfer.senderAgentUserId,
         reason,
+        forced: outcome.forced,
+        recovered: outcome.recovered.toString(),
+        shortfall: outcome.shortfall.toString(),
       },
     })
+    return outcome
   },
   async getTradingBalance(agentUserId: string) {
     const key = RedisKeys.ctBalance(agentUserId)

@@ -83,7 +83,10 @@ export function resolveAdminActivityDestination(
       resourceId: targetUserId,
     }
   }
-  if (actionType.startsWith('ADMIN_TRANSACTION_REVERT')) {
+  if (
+    actionType.startsWith('ADMIN_TRANSACTION_REVERT') ||
+    actionType === 'ADMIN_TRANSACTION_FORCE_REVERT'
+  ) {
     return {
       label: giftTransactionId
         ? `Gift ${giftTransactionId}`

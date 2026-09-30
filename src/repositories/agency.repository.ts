@@ -330,8 +330,12 @@ export const agencyRepository = {
   },
 
   /**
-   * Agencies whose owner TRADING_COIN balance is at/above `minTradingBalance`.
-   * Same sort/cursor model as {@link listForRanking}; country-scoped when provided.
+   * Agencies whose owner TRADING_COIN balance is at/above `minTradingBalance`, country-scoped.
+   *
+   * Sort: lifetime trading coins **sold** (coin-trading transfers sent by the owner, net of admin
+   * reversals — a fully reversed transfer counts 0, a force/partial reversal only the unrecovered
+   * part) DESC; ties → agency approved earlier first (`agencies.created_at` = approval time),
+   * then `user_id` for a stable order across offset pages.
    */
   async listForCoinsellerListing(params: {
     limit: number
@@ -374,9 +378,26 @@ export const agencyRepository = {
         ORDER BY cle.created_at DESC, cle.id DESC
         LIMIT 1
       ) bal ON true
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+          SUM(
+            t.trading_coins_debited
+            - COALESCE(
+                r.recovered_amount,
+                CASE WHEN t.reversed_at IS NOT NULL THEN t.trading_coins_debited ELSE 0 END
+              )
+          ),
+          0
+        ) AS sold
+        FROM coin_trading_transfers t
+        LEFT JOIN admin_transaction_reversals r
+          ON r.source_kind = 'COIN_TRADING_TRANSFER'
+         AND r.source_id = t.id
+        WHERE t.sender_agent_user_id = a.user_id
+      ) sales ON true
       WHERE LOWER(TRIM(u.country)) = LOWER(TRIM(${country}))
         AND bal.balance_after >= ${params.minTradingBalance}
-      ORDER BY a.total_hosts_count DESC, a.default_public_id DESC
+      ORDER BY sales.sold DESC, a.created_at ASC, a.user_id ASC
       OFFSET ${params.skip}
       LIMIT ${params.limit + 1}
     `
