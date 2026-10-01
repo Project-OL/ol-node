@@ -3,7 +3,7 @@ import { auditService } from './audit.service'
 import { authIdentifierRepository } from '../repositories/auth-identifier.repository'
 import { detectOtpTarget } from './otp-delivery.service'
 import { msg91Provider } from './providers/msg91.provider'
-import { sesProvider } from './providers/ses.provider'
+import { emailProvider } from './providers/email.provider'
 import { rootLogger } from '../utils/rootLogger'
 
 const noticeLog = rootLogger.child({ module: 'account-deletion-notice' })
@@ -95,7 +95,7 @@ export const accountDeletionNoticeService = {
 
     if (email) {
       const body = buildEmailBody(deletionAtLabel)
-      const result = await sesProvider.sendTransactionalEmail({
+      const result = await emailProvider.sendTransactionalEmail({
         email,
         subject: body.subject,
         text: body.text,

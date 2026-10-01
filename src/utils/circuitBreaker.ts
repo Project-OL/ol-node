@@ -155,6 +155,12 @@ export const sesCircuitBreaker = new CircuitBreaker({
   halfOpenTimeoutMs: 3_000,
 })
 
+export const resendCircuitBreaker = new CircuitBreaker({
+  failureThreshold: 5,
+  openDurationMs: 15_000,
+  halfOpenTimeoutMs: 3_000,
+})
+
 /**
  * Classifies a thrown Prisma/DB error as an infrastructure failure (connection
  * refused/reset, pool timeout, engine crash) vs. an expected business-logic

@@ -73,6 +73,7 @@ describe('otpDeliveryAuditService', () => {
 
   it('maps providers to means', () => {
     expect(meansFromProvider('ses_email')).toBe('email')
+    expect(meansFromProvider('resend_email')).toBe('email')
     expect(meansFromProvider('msg91_whatsapp')).toBe('whatsapp')
     expect(meansFromProvider('msg91_sms')).toBe('sms')
   })

@@ -10,8 +10,9 @@ vi.mock('../../src/services/providers/msg91.provider', () => ({
 }))
 
 const emailSend = vi.fn()
-vi.mock('../../src/services/providers/ses.provider', () => ({
-  sesProvider: {
+vi.mock('../../src/services/providers/email.provider', () => ({
+  emailProvider: {
+    name: 'ses_email',
     sendOtpEmail: (...args: unknown[]) => emailSend(...args),
   },
 }))

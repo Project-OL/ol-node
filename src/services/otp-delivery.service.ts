@@ -13,7 +13,7 @@ import { auditService } from './audit.service'
 import { meansFromProvider, otpDeliveryAuditService } from './otp-delivery-audit.service'
 import { otpDeliveryConfigService } from './otp-delivery-config.service'
 import { msg91Provider } from './providers/msg91.provider'
-import { sesProvider } from './providers/ses.provider'
+import { emailProvider } from './providers/email.provider'
 import type { OtpProviderName, OtpProviderResult } from './providers/provider.types'
 
 const otpDeliveryLog = rootLogger.child({ module: 'otp-delivery' })
@@ -380,17 +380,17 @@ export const otpDeliveryService = {
       purpose: params.purpose,
       target: target.masked,
       targetType: target.type,
-      deliveryProvider: target.type === 'email' ? 'ses_email' : 'msg91_whatsapp',
+      deliveryProvider: target.type === 'email' ? emailProvider.name : 'msg91_whatsapp',
     })
 
     if (target.type === 'email') {
-      const result = await sesProvider.sendOtpEmail({
+      const result = await emailProvider.sendOtpEmail({
         email: target.value,
         otp: params.otp,
         purpose: params.purpose,
       })
       logProviderResult({
-        provider: 'ses_email',
+        provider: emailProvider.name,
         purpose: params.purpose,
         target: target.masked,
         targetType: target.type,
@@ -398,7 +398,7 @@ export const otpDeliveryService = {
       })
       if (result.success) {
         logDeliverySucceeded({
-          provider: 'ses_email',
+          provider: emailProvider.name,
           purpose: params.purpose,
           target: target.masked,
           targetType: target.type,
@@ -407,7 +407,7 @@ export const otpDeliveryService = {
         auditDelivery({
           actionType: 'OTP_EMAIL_SENT',
           status: 'success',
-          provider: 'ses_email',
+          provider: emailProvider.name,
           purpose: params.purpose,
           target: target.masked,
           messageId: result.providerMessageId,
@@ -415,8 +415,8 @@ export const otpDeliveryService = {
         otpDeliveryAuditService.record({
           userId: params.userId,
           purpose: params.purpose,
-          means: meansFromProvider('ses_email'),
-          provider: 'ses_email',
+          means: meansFromProvider(emailProvider.name),
+          provider: emailProvider.name,
           status: 'success',
           targetType: 'email',
           targetMasked: target.masked,
@@ -429,7 +429,7 @@ export const otpDeliveryService = {
       auditDelivery({
         actionType: 'OTP_DELIVERY_FAILED',
         status: 'failed',
-        provider: 'ses_email',
+        provider: emailProvider.name,
         purpose: params.purpose,
         target: target.masked,
         error: result.error,
@@ -437,8 +437,8 @@ export const otpDeliveryService = {
       otpDeliveryAuditService.record({
         userId: params.userId,
         purpose: params.purpose,
-        means: meansFromProvider('ses_email'),
-        provider: 'ses_email',
+        means: meansFromProvider(emailProvider.name),
+        provider: emailProvider.name,
         status: 'failed',
         targetType: 'email',
         targetMasked: target.masked,
@@ -451,7 +451,7 @@ export const otpDeliveryService = {
           purpose: params.purpose,
           target: target.masked,
           targetType: target.type,
-          deliveryProvider: 'ses_email',
+          deliveryProvider: emailProvider.name,
           error: result.error,
         },
         'error',

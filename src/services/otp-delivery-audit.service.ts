@@ -16,7 +16,7 @@ export type { OtpDeliveryAuditStatus, OtpDeliveryMeans }
 const BILLABLE_MEANS = ['email', 'whatsapp', 'sms'] as const
 
 export function meansFromProvider(provider: OtpProviderName): Exclude<OtpDeliveryMeans, 'none'> {
-  if (provider === 'ses_email') return 'email'
+  if (provider === 'ses_email' || provider === 'resend_email') return 'email'
   if (provider === 'msg91_whatsapp') return 'whatsapp'
   return 'sms'
 }
