@@ -2,6 +2,7 @@ import { SendEmailCommand, SESClient } from '@aws-sdk/client-ses'
 import { env } from '../../config/env'
 import type { EmailOtpParams, OtpProviderResult, TransactionalEmailParams } from './provider.types'
 import { sesCircuitBreaker } from '../../utils/circuitBreaker'
+import { buildOtpEmailBody, OTP_EMAIL_SUBJECT } from './otp-email-body'
 
 const sesClient = new SESClient({
   region: env.AWS_REGION,
@@ -14,24 +15,8 @@ const sesClient = new SESClient({
       : undefined,
 })
 
-function buildEmailBody(otp: string): { text: string; html: string } {
-  const text = `Your OTP is:
-
-${otp}
-
-This OTP expires in 5 minutes.`
-
-  const html = `
-<!doctype html>
-<html>
-  <body>
-    <p>Your OTP is:</p>
-    <p style="font-size:24px;font-weight:700;letter-spacing:4px;">${otp}</p>
-    <p>This OTP expires in 5 minutes.</p>
-  </body>
-</html>`.trim()
-
-  return { text, html }
+function fromEmail(): string | undefined {
+  return env.EMAIL_FROM ?? env.SES_FROM_EMAIL
 }
 
 function errorMessage(error: unknown): string {
@@ -45,17 +30,17 @@ export const sesProvider = {
       return { success: false, error: 'SES temporarily unavailable' }
     }
     try {
-      const body = buildEmailBody(params.otp)
+      const body = buildOtpEmailBody(params.otp)
       const response = await sesClient.send(
         new SendEmailCommand({
-          Source: env.SES_FROM_EMAIL,
+          Source: fromEmail(),
           Destination: {
             ToAddresses: [params.email],
           },
           Message: {
             Subject: {
               Charset: 'UTF-8',
-              Data: 'Your OffooLive Verification Code',
+              Data: OTP_EMAIL_SUBJECT,
             },
             Body: {
               Text: {
@@ -80,8 +65,9 @@ export const sesProvider = {
   },
 
   async sendTransactionalEmail(params: TransactionalEmailParams): Promise<OtpProviderResult> {
-    if (!env.SES_FROM_EMAIL) {
-      return { success: false, error: 'SES_FROM_EMAIL is not configured' }
+    const source = fromEmail()
+    if (!source) {
+      return { success: false, error: 'EMAIL_FROM / SES_FROM_EMAIL is not configured' }
     }
     if (sesCircuitBreaker.shouldSkip()) {
       return { success: false, error: 'SES temporarily unavailable' }
@@ -89,7 +75,7 @@ export const sesProvider = {
     try {
       const response = await sesClient.send(
         new SendEmailCommand({
-          Source: env.SES_FROM_EMAIL,
+          Source: source,
           Destination: {
             ToAddresses: [params.email],
           },

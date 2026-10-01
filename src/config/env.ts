@@ -332,6 +332,11 @@ const envSchema = z
     SES_FROM_EMAIL: z.string().email().optional(),
     SES_ACCESS_KEY_ID: z.string().optional(),
     SES_SECRET_ACCESS_KEY: z.string().optional(),
+    /** Which provider sends email (OTP + transactional). `ses` keeps the AWS SES path. */
+    EMAIL_PROVIDER: z.enum(['ses', 'resend']).default('ses'),
+    /** Sender address for all email providers; falls back to SES_FROM_EMAIL when unset. */
+    EMAIL_FROM: z.string().email().optional(),
+    RESEND_API_KEY: z.string().optional(),
     /**
      * Configured OTP delivery cost snapshot (minor units, e.g. paise for INR).
      * Captured onto each otp_delivery_audits row at send time for historical accuracy.
@@ -549,11 +554,12 @@ const envSchema = z
         'MSG91_WHATSAPP_SENDER',
         'MSG91_SENDER_ID',
         'MSG91_DLT_ENTITY_ID',
-        'SES_FROM_EMAIL',
-        'SES_ACCESS_KEY_ID',
-        'SES_SECRET_ACCESS_KEY',
-        'AWS_REGION',
       ]
+      if (val.EMAIL_PROVIDER === 'resend') {
+        requiredDeliveryVars.push('RESEND_API_KEY')
+      } else {
+        requiredDeliveryVars.push('SES_ACCESS_KEY_ID', 'SES_SECRET_ACCESS_KEY', 'AWS_REGION')
+      }
       for (const key of requiredDeliveryVars) {
         if (!val[key]) {
           ctx.addIssue({
@@ -562,6 +568,13 @@ const envSchema = z
             message: `${key} is required when OTP_DELIVERY_ENABLED=true`,
           })
         }
+      }
+      if (!val.EMAIL_FROM && !val.SES_FROM_EMAIL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['EMAIL_FROM'],
+          message: 'EMAIL_FROM (or SES_FROM_EMAIL) is required when OTP_DELIVERY_ENABLED=true',
+        })
       }
     }
   })

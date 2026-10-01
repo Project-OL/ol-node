@@ -1,6 +1,8 @@
 import type { OtpPurpose } from '../../models/types'
 
-export type OtpProviderName = 'msg91_whatsapp' | 'msg91_sms' | 'ses_email'
+export type EmailProviderName = 'ses_email' | 'resend_email'
+
+export type OtpProviderName = 'msg91_whatsapp' | 'msg91_sms' | EmailProviderName
 
 export interface OtpProviderResult {
   success: boolean

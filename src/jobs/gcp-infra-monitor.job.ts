@@ -11,7 +11,7 @@ import { env } from '../config/env'
 import { isGcpInfraMonitorConfigured } from '../config/gcp'
 import { rootLogger } from '../utils/rootLogger'
 import { systemAdminRepository } from '../repositories/systemAdmin.repository'
-import { sesProvider } from '../services/providers/ses.provider'
+import { emailProvider } from '../services/providers/email.provider'
 import {
   collectCloudSqlMetrics,
   collectRedisMetrics,
@@ -56,7 +56,7 @@ async function notifySuperAdmins(subject: string, text: string, html: string): P
   }
   for (const admin of superAdmins) {
     try {
-      const result = await sesProvider.sendTransactionalEmail({
+      const result = await emailProvider.sendTransactionalEmail({
         email: admin.email,
         subject,
         text,
