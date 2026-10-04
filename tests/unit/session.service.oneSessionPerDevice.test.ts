@@ -337,6 +337,7 @@ describe('sessionService one active session per (userId, deviceId)', () => {
       deviceId: 'd',
       refreshTokenHash: oldHash,
       tokenVersion: 0,
+      expiresAt: new Date(Date.now() + 86_400_000),
       user: {
         id: baseParams.userId,
         publicId: BigInt(1),
@@ -358,5 +359,42 @@ describe('sessionService one active session per (userId, deviceId)', () => {
     expect(redisSet).toHaveBeenCalled()
     const redisPayload = JSON.parse(redisSet.mock.calls.at(-1)![1] as string)
     expect(redisPayload.sessionTokenVersion).toBe(1)
+    // Session still unexpired: linked-accounts cache is left alone.
+    expect(redisDel).not.toHaveBeenCalledWith('device:d:linked')
+  })
+
+  it('refresh slides expiresAt forward and clears linked-accounts cache when it had lapsed', async () => {
+    const sid = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+    const oldRt = signRefresh({ userId: baseParams.userId, sessionId: sid, jti: sid })
+    const oldHash = crypto.createHash('sha256').update(oldRt).digest('hex')
+
+    findByRefreshTokenHash.mockResolvedValue({
+      id: sid,
+      userId: baseParams.userId,
+      deviceId: 'dev-x',
+      refreshTokenHash: oldHash,
+      tokenVersion: 3,
+      // Old fixed 7-day window already passed, but the refresh JWT is still valid.
+      expiresAt: new Date(Date.now() - 3_600_000),
+      user: {
+        id: baseParams.userId,
+        publicId: BigInt(1),
+        passwordSet: true,
+        firstName: 'T',
+        lastName: 'U',
+        username: 'tu',
+        avatarUrl: null,
+      },
+    })
+    updateRefreshTokenAndBumpVersion.mockResolvedValue({ sessionTokenVersion: 4 })
+
+    const before = Date.now()
+    await sessionService.rotateRefresh(oldRt, '127.0.0.1')
+
+    const newExpiry = updateRefreshTokenAndBumpVersion.mock.calls.at(-1)![2] as Date
+    expect(newExpiry).toBeInstanceOf(Date)
+    // At least the old 7-day window ahead of now.
+    expect(newExpiry.getTime()).toBeGreaterThanOrEqual(before + 7 * 86_400_000)
+    expect(redisDel).toHaveBeenCalledWith('device:dev-x:linked')
   })
 })

@@ -15,8 +15,20 @@ import { auditService } from './audit.service'
 import { cacheService } from './cache.service'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
 
-const REFRESH_DAYS = 7
-const REFRESH_SEC = REFRESH_DAYS * 24 * 60 * 60
+const MIN_SESSION_SEC = 7 * 24 * 60 * 60
+/**
+ * Session lifetime tracks the refresh JWT lifetime (sliding: every refresh re-extends
+ * sessions.expires_at). Linked-accounts, the per-user session cap and admin device views all
+ * filter on expires_at, so a shorter fixed window hid accounts that could still refresh.
+ * Never shorter than the old fixed 7 days; an unparseable env value also falls back to 7 days.
+ */
+const REFRESH_SEC = /^\d+\s*[smhd]$/i.test(env.JWT_REFRESH_EXPIRES_IN.trim())
+  ? Math.max(parseJwtExpiresToSeconds(env.JWT_REFRESH_EXPIRES_IN), MIN_SESSION_SEC)
+  : MIN_SESSION_SEC
+
+function sessionExpiresAt(): Date {
+  return new Date(Date.now() + REFRESH_SEC * 1000)
+}
 const USER_TV_CACHE_SEC = 3600
 const LOGIN_TX_MAX_ATTEMPTS = 3
 
@@ -175,7 +187,7 @@ export const sessionService = {
     )
     priorPromise.catch(() => {}) // avoid an unhandled rejection when the login tx throws first
 
-    const expiresAt = new Date(Date.now() + REFRESH_DAYS * 24 * 60 * 60 * 1000)
+    const expiresAt = sessionExpiresAt()
 
     let loginOutcome:
       | Awaited<ReturnType<typeof sessionRepository.loginCreateOrReuseSession>>
@@ -334,7 +346,14 @@ export const sessionService = {
       const { sessionTokenVersion } = await sessionRepository.updateRefreshTokenAndBumpVersion(
         session.id,
         newHash,
+        sessionExpiresAt(),
       )
+
+      // A session past its old expires_at was hidden from the device's linked-accounts list;
+      // drop the cached list so it reappears now that the expiry has slid forward.
+      if (session.expiresAt.getTime() <= Date.now()) {
+        await cacheService.delete(RedisKeys.deviceLinkedAccounts(session.deviceId))
+      }
 
       const user = session.user
       const publicId = Number(user.publicId)
