@@ -49,8 +49,8 @@ const envSchema = z
     REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().default(3000),
 
     JWT_ACCESS_SECRET: z.string().min(32),
-    JWT_ACCESS_EXPIRES_IN: z.string().default('8m'),
-    JWT_REFRESH_EXPIRES_IN: z.string().default('30d'),
+    JWT_ACCESS_EXPIRES_IN: z.string().default('1d'),
+    JWT_REFRESH_EXPIRES_IN: z.string().default('99d'),
     JWT_REFRESH_SECRET: z.string().min(32).optional(), // if not set, uses JWT_ACCESS_SECRET (not recommended for prod)
 
     ADMIN_JWT_SECRET: z.string().min(32),

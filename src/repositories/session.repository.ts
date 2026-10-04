@@ -324,16 +324,22 @@ export const sessionRepository = {
     return { sessionTokenVersion: row.tokenVersion }
   },
 
-  /** In-place refresh rotation: new hash + bump session tokenVersion (invalidates old access JWTs for this session). */
+  /**
+   * In-place refresh rotation: new hash + bump session tokenVersion (invalidates old access JWTs
+   * for this session), and slide expiresAt / lastActiveAt forward.
+   */
   async updateRefreshTokenAndBumpVersion(
     sessionId: string,
     newRefreshTokenHash: string,
+    expiresAt: Date,
   ): Promise<{ sessionTokenVersion: number }> {
     const row = await prisma.session.update({
       where: { id: sessionId },
       data: {
         refreshTokenHash: newRefreshTokenHash,
         tokenVersion: { increment: 1 },
+        expiresAt,
+        lastActiveAt: new Date(),
       },
       select: { tokenVersion: true },
     })
