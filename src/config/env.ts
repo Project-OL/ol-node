@@ -368,6 +368,8 @@ const envSchema = z
 
     REQUEST_BODY_LIMIT_BYTES: z.coerce.number().default(1_048_576), // 1MB
     MAX_UPLOAD_SIZE_BYTES: z.coerce.number().default(10_485_760), // 10MB
+    /** Android APK uploads go browser → bucket via presigned PUT, so the API body limits don't apply. */
+    APK_MAX_UPLOAD_SIZE_BYTES: z.coerce.number().default(314_572_800), // 300MB
 
     /** Max UTF-8 bytes for one inbound WebSocket text frame (Phase 4). */
     WS_MAX_INCOMING_BYTES: z.coerce.number().default(65_536),

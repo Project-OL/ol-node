@@ -2177,6 +2177,34 @@ model SupportConfig {
   @@map("support_config")
 }
 
+/// Singleton: store links + current Android APK shown on the marketing site (offoolive.com).
+model AppDownloadConfig {
+  id                   Int            @id @default(1)
+  /// TestFlight join link today; App Store link once the app is published.
+  iosUrl               String?        @map("ios_url")
+  playStoreUrl         String?        @map("play_store_url")
+  currentApkReleaseId  String?        @map("current_apk_release_id") @db.Uuid
+  currentApkRelease    AppApkRelease? @relation(fields: [currentApkReleaseId], references: [id], onDelete: SetNull)
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+  updatedByAdminId     String?        @map("updated_by_admin_id") @db.Uuid
+
+  @@map("app_download_config")
+}
+
+/// Every uploaded APK. Objects are never deleted, so an older release can be made current again.
+model AppApkRelease {
+  id                String              @id @default(uuid()) @db.Uuid
+  s3Key             String              @unique @map("s3_key")
+  versionName       String              @map("version_name") @db.VarChar(40)
+  sizeBytes         BigInt              @map("size_bytes")
+  uploadedByAdminId String?             @map("uploaded_by_admin_id") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at")
+  configs           AppDownloadConfig[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("app_apk_releases")
+}
+
 /// Singleton: Face Liveness gates (legacy register block + Amplify STS credentials required).
 /// Admin `GET|PUT /admin/system-settings/face-liveness`. First create seeds from env.
 model FaceLivenessConfig {

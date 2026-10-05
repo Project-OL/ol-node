@@ -97,6 +97,7 @@ import { webhooksRoutes } from './routes/v1/webhooks.routes'
 import bannerRoutes from './routes/v1/banner.routes'
 import bannerAdminRoutes from './routes/v1/banner-admin.routes'
 import customGiftRoutes from './routes/v1/custom-gift.routes'
+import appLinksRoutes from './routes/v1/app-links.routes'
 import customGiftAdminRoutes from './routes/v1/custom-gift-admin.routes'
 import systemSettingsAdminRoutes from './routes/v1/system-settings-admin.routes'
 import adminViewRoutes from './routes/v1/admin-view.routes'
@@ -323,6 +324,7 @@ export async function buildApp() {
   await app.register(livePhotoRoutes, { prefix: `${prefix}/live-photo` })
   await app.register(bannerRoutes, { prefix: `${prefix}/banners` })
   await app.register(customGiftRoutes, { prefix: `${prefix}/custom-gifts` })
+  await app.register(appLinksRoutes, { prefix: `${prefix}/app-links` })
 
   if (env.WS_EMBED_IN_API) {
     app.log.warn(

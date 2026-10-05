@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
+import { authenticateAdmin, requireAdminRole } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import {
   HostRevenueSharesUpdateSchema,
@@ -11,6 +11,12 @@ import {
   ReplaceRichTierConfigSchema,
 } from '../../models/system-rates-admin.schemas'
 import { SupportConfigUpdateSchema } from '../../models/supportConfig.schemas'
+import {
+  ApkCurrentReleaseBodySchema,
+  ApkReleaseCreateBodySchema,
+  ApkUploadUrlBodySchema,
+  AppLinksUpdateSchema,
+} from '../../models/appDownloadConfig.schemas'
 import { MessagingConfigUpdateSchema } from '../../models/messagingConfig.schemas'
 import { FaceLivenessConfigUpdateSchema } from '../../models/faceLivenessConfig.schemas'
 import { AdminAuthConfigUpdateSchema } from '../../models/adminAuthConfig.schemas'
@@ -23,6 +29,7 @@ import { ReplaceRestrictedIdentityWordsSchema } from '../../models/restrictedIde
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
 import { messagingConfigService } from '../../services/messagingConfig.service'
 import { supportConfigService } from '../../services/supportConfig.service'
+import { appDownloadConfigService } from '../../services/appDownloadConfig.service'
 import { faceLivenessConfigService } from '../../services/faceLivenessConfig.service'
 import { adminAuthConfigService } from '../../services/adminAuthConfig.service'
 import { agencyHostConfigService } from '../../services/agencyHostConfig.service'
@@ -50,6 +57,10 @@ import { addUtcDays, utcStartOfWeek } from '../../utils/datetime'
  * GET|PUT /v1/admin/system-settings/rich-tier
  * GET|PUT /v1/admin/system-settings/messaging
  * GET|PUT /v1/admin/system-settings/support
+ * GET|PUT /v1/admin/system-settings/app-links                     (SUPER_ADMIN)
+ * POST    /v1/admin/system-settings/app-links/apk/upload-url      (SUPER_ADMIN)
+ * POST    /v1/admin/system-settings/app-links/apk/releases        (SUPER_ADMIN)
+ * PUT     /v1/admin/system-settings/app-links/apk/current         (SUPER_ADMIN)
  * GET|PUT /v1/admin/system-settings/face-liveness
  * GET|PUT /v1/admin/system-settings/admin-auth
  * GET|PUT /v1/admin/system-settings/agency-host
@@ -243,6 +254,65 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       auditService.logAdminFromRequest(request, {
         actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
         actionDetails: { settingKey: 'support' },
+      })
+      return reply.send(result)
+    },
+  )
+
+  const superAdminOnly = [authenticateAdmin, requireAdminRole('SUPER_ADMIN')]
+
+  app.get('/system-settings/app-links', { preHandler: superAdminOnly }, async (_request, reply) => {
+    return reply.send(await appDownloadConfigService.getAdminConfig())
+  })
+
+  app.put('/system-settings/app-links', { preHandler: superAdminOnly }, async (request, reply) => {
+    const adminUserId = request.adminUser?.id
+    if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+    const body = AppLinksUpdateSchema.parse(request.body ?? {})
+    const result = await appDownloadConfigService.updateLinks(adminUserId, body)
+    auditService.logAdminFromRequest(request, {
+      actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+      actionDetails: { settingKey: 'app-links' },
+    })
+    return reply.send(result)
+  })
+
+  app.post(
+    '/system-settings/app-links/apk/upload-url',
+    { preHandler: superAdminOnly },
+    async (request, reply) => {
+      const body = ApkUploadUrlBodySchema.parse(request.body ?? {})
+      return reply.send(await appDownloadConfigService.getApkUploadUrl(body))
+    },
+  )
+
+  app.post(
+    '/system-settings/app-links/apk/releases',
+    { preHandler: superAdminOnly },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = ApkReleaseCreateBodySchema.parse(request.body ?? {})
+      const result = await appDownloadConfigService.createRelease(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'app-links', apkKey: body.key, versionName: body.versionName },
+      })
+      return reply.status(201).send(result)
+    },
+  )
+
+  app.put(
+    '/system-settings/app-links/apk/current',
+    { preHandler: superAdminOnly },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = ApkCurrentReleaseBodySchema.parse(request.body ?? {})
+      const result = await appDownloadConfigService.setCurrentRelease(adminUserId, body.releaseId)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'app-links', currentApkReleaseId: body.releaseId },
       })
       return reply.send(result)
     },

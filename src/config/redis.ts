@@ -390,6 +390,8 @@ export const RedisKeys = {
   messagingConfig: () => 'messaging:config',
   /** Support ticket PENDING_REVIEW contest window (admin system settings). */
   supportConfig: () => 'support:config',
+  /** Public store links + current APK for the marketing site. */
+  appDownloadConfig: () => 'app-download:config',
   faceLivenessConfig: () => 'face-liveness:config',
   /** Admin/CSA login lockout threshold + duration (admin system settings). */
   adminAuthConfig: () => 'admin-auth:config',
@@ -617,6 +619,7 @@ export const PAYOUT_RAIL_CONFIG_TTL = 300
 /** Shared message edit/delete action window singleton. */
 export const MESSAGING_CONFIG_TTL = 300
 export const SUPPORT_CONFIG_TTL = 300
+export const APP_DOWNLOAD_CONFIG_TTL = 300
 /** Face Liveness admin gates singleton. */
 export const FACE_LIVENESS_CONFIG_TTL = 300
 /** Admin/CSA login lockout config singleton. */
