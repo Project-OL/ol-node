@@ -282,6 +282,7 @@ export const giftAdminRepository = {
     vapUrl?: string | null
     displayOrder?: number
     vipOnly?: boolean
+    isLucky?: boolean
     categoryId?: string | null
     tags?: string[]
   }) {
@@ -296,6 +297,7 @@ export const giftAdminRepository = {
         vapUrl: data.vapUrl ?? null,
         displayOrder: data.displayOrder ?? 0,
         vipOnly: data.vipOnly ?? false,
+        isLucky: data.isLucky ?? false,
         categoryId: data.categoryId ?? null,
         tags: data.tags?.length ? { create: data.tags.map((tag) => ({ tag })) } : undefined,
       },
@@ -315,6 +317,7 @@ export const giftAdminRepository = {
       vapUrl?: string | null
       displayOrder?: number
       vipOnly?: boolean
+      isLucky?: boolean
       isActive?: boolean
       categoryId?: string | null
       tags?: string[]
@@ -336,6 +339,7 @@ export const giftAdminRepository = {
           ...(data.vapUrl !== undefined ? { vapUrl: data.vapUrl } : {}),
           ...(data.displayOrder !== undefined ? { displayOrder: data.displayOrder } : {}),
           ...(data.vipOnly !== undefined ? { vipOnly: data.vipOnly } : {}),
+          ...(data.isLucky !== undefined ? { isLucky: data.isLucky } : {}),
           ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
           ...(data.categoryId !== undefined ? { categoryId: data.categoryId } : {}),
           ...(data.tags ? { tags: { create: data.tags.map((tag) => ({ tag })) } } : {}),
