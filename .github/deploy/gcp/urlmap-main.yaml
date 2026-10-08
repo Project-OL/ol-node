@@ -21,6 +21,7 @@ pathMatchers:
     - /live-health
     - /socket.io
     - /socket.io/*
+    - /api/v1/admin/live/*
     service: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-live-backend
 - defaultService: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-admin-backend
   name: admin-matcher
