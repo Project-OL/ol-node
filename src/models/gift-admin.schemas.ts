@@ -49,6 +49,7 @@ export const CreateGiftAdminBodySchema = z.object({
   categoryId: z.string().uuid().nullable().optional(),
   displayOrder: z.coerce.number().int().min(0).optional(),
   vipOnly: z.coerce.boolean().optional(),
+  isLucky: z.coerce.boolean().optional(),
 })
 
 export const CreateGiftAdminMultipartFieldsSchema = z.object({
@@ -72,6 +73,12 @@ export const CreateGiftAdminMultipartFieldsSchema = z.object({
     if (v === 'false' || v === false) return false
     return v
   }, z.boolean().optional()),
+  isLucky: z.preprocess((v) => {
+    if (v === '' || v === undefined) return undefined
+    if (v === 'true' || v === true) return true
+    if (v === 'false' || v === false) return false
+    return v
+  }, z.boolean().optional()),
 })
 
 export const PatchGiftAdminBodySchema = z.object({
@@ -84,6 +91,7 @@ export const PatchGiftAdminBodySchema = z.object({
   categoryId: z.string().uuid().nullable().optional(),
   displayOrder: z.coerce.number().int().min(0).optional(),
   vipOnly: z.boolean().optional(),
+  isLucky: z.boolean().optional(),
   isActive: z.boolean().optional(),
 })
 
@@ -106,6 +114,12 @@ export const PatchGiftAdminMultipartFieldsSchema = z.object({
     z.coerce.number().int().min(0).optional(),
   ),
   vipOnly: z.preprocess((v) => {
+    if (v === '' || v === undefined) return undefined
+    if (v === 'true' || v === true) return true
+    if (v === 'false' || v === false) return false
+    return v
+  }, z.boolean().optional()),
+  isLucky: z.preprocess((v) => {
     if (v === '' || v === undefined) return undefined
     if (v === 'true' || v === true) return true
     if (v === 'false' || v === false) return false

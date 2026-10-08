@@ -221,6 +221,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
           categoryId: f.categoryId ?? null,
           displayOrder: f.displayOrder,
           vipOnly: f.vipOnly,
+          isLucky: f.isLucky,
         })
         auditService.logAdminFromRequest(request, {
           actionType: 'ADMIN_GIFT_CREATED',
@@ -270,6 +271,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         if (f.coinCost !== undefined) patch.coinCost = f.coinCost
         if (f.displayOrder !== undefined) patch.displayOrder = f.displayOrder
         if (f.vipOnly !== undefined) patch.vipOnly = f.vipOnly
+        if (f.isLucky !== undefined) patch.isLucky = f.isLucky
         if (f.isActive !== undefined) patch.isActive = f.isActive
         if (f.categoryId !== undefined) patch.categoryId = f.categoryId
         if (f.displayImageUrl !== undefined) patch.displayImageUrl = f.displayImageUrl

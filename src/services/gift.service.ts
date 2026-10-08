@@ -5,9 +5,10 @@ import { AppError } from '../middlewares/errorHandler'
 import { giftGalleryService } from './gift-gallery.service'
 import { giftThumbnailService } from './gift-thumbnail.service'
 
-async function invalidateGiftCaches(affectedTags: string[]) {
+async function invalidateGiftCaches(affectedTags: string[], giftId?: string) {
   try {
     await redisClient.del(RedisKeys.giftList(), 'gifts:list:vip', 'gifts:list:novip', 'gifts:list')
+    if (giftId) await redisClient.del(liveGiftInfoKey(giftId))
     for (const tag of affectedTags) {
       await redisClient.del(
         RedisKeys.giftByTag(tag),
@@ -22,18 +23,32 @@ async function invalidateGiftCaches(affectedTags: string[]) {
   }
 }
 
+/**
+ * Live-server caches each gift with its joined category under `gift:info:<giftId>`
+ * (shared Redis) and decides lucky vs normal sends from it, so a gift or category
+ * edit here must drop that copy too, or Live-server keeps the old price/category.
+ */
+export function liveGiftInfoKey(giftId: string): string {
+  return `gift:info:${giftId}`
+}
+
+async function deleteByPattern(pattern: string) {
+  let cursor = '0'
+  do {
+    const [next, keys] = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 200)
+    cursor = next
+    if (keys.length > 0) {
+      await redisClient.del(...keys)
+    }
+  } while (cursor !== '0')
+}
+
 async function invalidateAllGiftListCaches() {
   try {
     await redisClient.del(RedisKeys.giftList(), 'gifts:list:vip', 'gifts:list:novip', 'gifts:list')
-    const pattern = 'gifts:tag:*'
-    let cursor = '0'
-    do {
-      const [next, keys] = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 200)
-      cursor = next
-      if (keys.length > 0) {
-        await redisClient.del(...keys)
-      }
-    } while (cursor !== '0')
+    await deleteByPattern('gifts:tag:*')
+    // Category edits change the category every cached gift carries.
+    await deleteByPattern('gift:info:*')
     await giftGalleryService.invalidateActiveMonthCaches()
   } catch {
     // best-effort
@@ -156,7 +171,7 @@ export const giftService = {
       : input
     const g = await giftRepository.updateWithTags(giftId, patch)
     const newTags = input.tags ?? oldTags
-    await invalidateGiftCaches([...new Set([...oldTags, ...newTags])])
+    await invalidateGiftCaches([...new Set([...oldTags, ...newTags])], giftId)
     return g
   },
 
@@ -164,12 +179,12 @@ export const giftService = {
     const existing = await giftRepository.findById(giftId)
     if (!existing) throw new AppError(404, 'Gift not found', 'NOT_FOUND')
     const g = await giftRepository.softDelete(giftId)
-    await invalidateGiftCaches(existing.tags.map((t: { tag: string }) => t.tag))
+    await invalidateGiftCaches(existing.tags.map((t: { tag: string }) => t.tag), giftId)
     return g
   },
 
   async invalidateCachesForGift(g: GiftWithTags) {
-    await invalidateGiftCaches(g.tags.map((t) => t.tag))
+    await invalidateGiftCaches(g.tags.map((t) => t.tag), g.id)
   },
 
   async invalidateAllGiftCaches() {

@@ -33,6 +33,9 @@ function mapGiftAdminRow(g: GiftWithCategoryAndTags, timesSent: number) {
     coinCost: g.coinCost,
     displayOrder: g.displayOrder,
     vipOnly: g.vipOnly,
+    // Live-server sends a gift through the lucky (RTP draw) path when this is true OR
+    // its category is named/slugged "lucky".
+    isLucky: g.isLucky,
     timesSent,
     status: g.isActive ? ('active' as const) : ('disabled' as const),
     createdAt: g.createdAt.toISOString(),
@@ -122,6 +125,7 @@ export const giftAdminService = {
     categoryId?: string | null
     displayOrder?: number
     vipOnly?: boolean
+    isLucky?: boolean
   }) {
     if (input.categoryId) {
       const cat = await giftCategoryRepository.findById(input.categoryId)
@@ -147,6 +151,7 @@ export const giftAdminService = {
       categoryId: input.categoryId ?? null,
       displayOrder: input.displayOrder,
       vipOnly: input.vipOnly ?? false,
+      isLucky: input.isLucky ?? false,
     })
 
     await giftService.invalidateCachesForGift(g)
@@ -165,6 +170,7 @@ export const giftAdminService = {
       categoryId?: string | null
       displayOrder?: number
       vipOnly?: boolean
+      isLucky?: boolean
       isActive?: boolean
     },
   ) {

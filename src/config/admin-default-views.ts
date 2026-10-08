@@ -371,6 +371,9 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
   ],
   LiveModerationView: [
     'GET /admin/live-moderation',
+    // Served by Live-server (live.offoolive.com/api/v1/admin/live/failures), which
+    // gates on the same admin_views table.
+    'GET /admin/live/failures',
     'GET /admin/users/:id/live-moderation',
     'POST /admin/users/:id/host-stream-suspension/clear',
     'GET /admin/live-streams/active',
