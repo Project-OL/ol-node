@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
 import { getQualifyingRewardEarningsForRange } from './rewardEarnings.repository'
+import { ROYAL_HOST_TAG } from '../utils/royalHostTag'
 
 export const royalHostRewardRepository = {
   async getClaimsForWeek(userId: string, weekStart: Date) {
@@ -25,13 +26,19 @@ export const royalHostRewardRepository = {
 
   getQualifyingEarningsForRange: getQualifyingRewardEarningsForRange,
 
-  /** Keyset-cursor scan of users currently tagged 'royal host', ordered by id. */
+  /**
+   * Keyset-cursor scan of users currently tagged 'royal host', ordered by id. Matches the tag
+   * trimmed and case-insensitively, like `hasRoyalHostTag`, so "Royal Host" is evaluated too.
+   */
   async listTaggedUsers({ cursor, limit }: { cursor: string; limit: number }): Promise<string[]> {
     const cursorClause = cursor === '' ? Prisma.sql`TRUE` : Prisma.sql`u.id > ${cursor}::uuid`
     const rows = await prismaRead.$queryRaw<Array<{ id: string }>>`
       SELECT u.id
       FROM users u
-      WHERE 'royal host' = ANY(u.admin_tags)
+      WHERE EXISTS (
+          SELECT 1 FROM unnest(u.admin_tags) AS t(tag)
+          WHERE lower(btrim(t.tag)) = ${ROYAL_HOST_TAG}
+        )
         AND ${cursorClause}
       ORDER BY u.id
       LIMIT ${limit}
