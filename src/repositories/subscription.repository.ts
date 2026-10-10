@@ -37,6 +37,20 @@ export type TopCreatorQueryRow = Prisma.UserGetPayload<{
   select: typeof topCreatorBySubscriberSelect
 }>
 
+/**
+ * Who can see a creator's subscriber content right now: ACTIVE (renewing), or CANCELLED
+ * but still inside the period already paid for. GRACE/EXPIRED never have access.
+ * Lists, counts and leaderboards keep using ACTIVE only (they mean "renewing subscribers").
+ */
+function paidAccessWhere(): Prisma.CreatorSubscriptionWhereInput {
+  return {
+    OR: [
+      { status: CreatorSubscriptionStatus.ACTIVE },
+      { status: CreatorSubscriptionStatus.CANCELLED, nextRenewalAt: { gt: new Date() } },
+    ],
+  }
+}
+
 const userListSelect = {
   id: true,
   publicId: true,
@@ -68,13 +82,22 @@ export const subscriptionRepository = {
     })
   },
 
+  /** Creators whose content the subscriber can currently see (see `paidAccessWhere`). */
   async getActiveSubscriptions(subscriberId: string): Promise<{ creatorId: string }[]> {
     return prismaRead.creatorSubscription.findMany({
-      where: { subscriberId, status: CreatorSubscriptionStatus.ACTIVE },
+      where: { subscriberId, ...paidAccessWhere() },
       select: { creatorId: true },
     })
   },
 
+  /** How many creators the subscriber can currently see (see `paidAccessWhere`). */
+  async countPaidAccess(subscriberId: string): Promise<number> {
+    return prismaRead.creatorSubscription.count({
+      where: { subscriberId, ...paidAccessWhere() },
+    })
+  },
+
+  /** Pairs with current paid access (see `paidAccessWhere`), for the access-check DB fallback. */
   async findActivePairs(
     subscriberId: string,
     creatorIds: string[],
@@ -84,21 +107,36 @@ export const subscriptionRepository = {
       where: {
         subscriberId,
         creatorId: { in: creatorIds },
-        status: CreatorSubscriptionStatus.ACTIVE,
+        ...paidAccessWhere(),
       },
       select: { creatorId: true, nextRenewalAt: true },
     })
   },
 
+  /** True while the subscriber has paid access (see `paidAccessWhere`). */
   async isActivePair(subscriberId: string, creatorId: string): Promise<boolean> {
     const count = await prismaRead.creatorSubscription.count({
       where: {
         subscriberId,
         creatorId,
-        status: CreatorSubscriptionStatus.ACTIVE,
+        ...paidAccessWhere(),
       },
     })
     return count > 0
+  },
+
+  /** CANCELLED → ACTIVE without touching `nextRenewalAt`; null if it isn't (still) resumable. */
+  async resumeCancelledWithinPeriod(id: string): Promise<CreatorSubscription | null> {
+    const { count } = await prisma.creatorSubscription.updateMany({
+      where: {
+        id,
+        status: CreatorSubscriptionStatus.CANCELLED,
+        nextRenewalAt: { gt: new Date() },
+      },
+      data: { status: CreatorSubscriptionStatus.ACTIVE, graceUntil: null },
+    })
+    if (count === 0) return null
+    return prisma.creatorSubscription.findUnique({ where: { id } })
   },
 
   async listActiveCreatorsForSubscriber(

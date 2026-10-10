@@ -22,8 +22,12 @@ const getActiveSubscriptions = vi.fn()
 const queryTopCreatorsByCountry = vi.fn()
 const queryTopCreatorsGlobal = vi.fn()
 const queryTopCreatorsByPostCount = vi.fn()
+const resumeCancelledWithinPeriod = vi.fn()
+const countPaidAccess = vi.fn()
 vi.mock('../../src/repositories/subscription.repository', () => ({
   subscriptionRepository: {
+    resumeCancelledWithinPeriod: (...a: unknown[]) => resumeCancelledWithinPeriod(...a),
+    countPaidAccess: (...a: unknown[]) => countPaidAccess(...a),
     findByPair: (...a: unknown[]) => findByPair(...a),
     findActivePairs: (...a: unknown[]) => findActivePairs(...a),
     findById: (...a: unknown[]) => findById(...a),
@@ -82,8 +86,10 @@ vi.mock('../../src/repositories/user.repository', () => ({
 
 const upsertPairInTx = vi.fn()
 const deletePair = vi.fn()
+const upsertPair = vi.fn()
 vi.mock('../../src/repositories/userSubscriber.repository', () => ({
   userSubscriberRepository: {
+    upsertPair: (...a: unknown[]) => upsertPair(...a),
     upsertPairInTx: (...a: unknown[]) => upsertPairInTx(...a),
     deletePair: (...a: unknown[]) => deletePair(...a),
   },
@@ -276,6 +282,107 @@ describe('subscriptionService', () => {
     expect(cancelSubscriptionGraceJob).toHaveBeenCalledWith('sub-1')
     expect(redisDel).toHaveBeenCalledWith('sub:access:fan-1:creator-1')
     expect(deletePair).toHaveBeenCalledWith('fan-1', 'creator-1')
+  })
+
+  it('cancelSubscription inside the paid period stops renewal but keeps access until period end', async () => {
+    const periodEnd = new Date(Date.now() + 10 * 24 * 3600 * 1000)
+    findByPair.mockResolvedValue({
+      id: 'sub-1',
+      subscriberId: 'fan-1',
+      creatorId: 'creator-1',
+      status: CreatorSubscriptionStatus.ACTIVE,
+      nextRenewalAt: periodEnd,
+      graceUntil: null,
+    })
+    updateById.mockResolvedValue({})
+
+    await subscriptionService.cancelSubscription('fan-1', 'creator-1')
+
+    expect(updateById).toHaveBeenCalledWith(
+      'sub-1',
+      expect.objectContaining({ status: CreatorSubscriptionStatus.CANCELLED }),
+    )
+    expect(cancelSubscriptionRenewalJob).toHaveBeenCalledWith('sub-1')
+    expect(redisDel).not.toHaveBeenCalledWith('sub:access:fan-1:creator-1')
+    const [key, value, mode, ttl] = redisSet.mock.calls[0]!
+    expect([key, value, mode]).toEqual(['sub:access:fan-1:creator-1', '1', 'EX'])
+    expect(ttl as number).toBeGreaterThan(9 * 24 * 3600)
+    expect(ttl as number).toBeLessThanOrEqual(10 * 24 * 3600)
+  })
+
+  it('cancelSubscription during GRACE removes access (renewal was never paid)', async () => {
+    findByPair.mockResolvedValue({
+      id: 'sub-1',
+      subscriberId: 'fan-1',
+      creatorId: 'creator-1',
+      status: CreatorSubscriptionStatus.GRACE,
+      nextRenewalAt: new Date(Date.now() - 24 * 3600 * 1000),
+      graceUntil: new Date(Date.now() + 2 * 24 * 3600 * 1000),
+    })
+    updateById.mockResolvedValue({})
+
+    await subscriptionService.cancelSubscription('fan-1', 'creator-1')
+
+    expect(cancelSubscriptionGraceJob).toHaveBeenCalledWith('sub-1')
+    expect(redisDel).toHaveBeenCalledWith('sub:access:fan-1:creator-1')
+    expect(redisSet).not.toHaveBeenCalled()
+  })
+
+  it('cancelSubscription on an already cancelled subscription is 404', async () => {
+    findByPair.mockResolvedValue({
+      id: 'sub-1',
+      status: CreatorSubscriptionStatus.CANCELLED,
+      nextRenewalAt: new Date(Date.now() + 24 * 3600 * 1000),
+    })
+    await expect(
+      subscriptionService.cancelSubscription('fan-1', 'creator-1'),
+    ).rejects.toMatchObject({ statusCode: 404 })
+    expect(updateById).not.toHaveBeenCalled()
+  })
+
+  it('createSubscription after a cancel inside the paid period resumes without charging', async () => {
+    const periodEnd = new Date(Date.now() + 10 * 24 * 3600 * 1000)
+    findByPair.mockResolvedValue({
+      id: 'sub-1',
+      subscriberId: 'fan-1',
+      creatorId: 'creator-1',
+      status: CreatorSubscriptionStatus.CANCELLED,
+      nextRenewalAt: periodEnd,
+      graceUntil: null,
+    })
+    resumeCancelledWithinPeriod.mockResolvedValue({
+      id: 'sub-1',
+      subscriberId: 'fan-1',
+      creatorId: 'creator-1',
+      status: CreatorSubscriptionStatus.ACTIVE,
+      nextRenewalAt: periodEnd,
+      graceUntil: null,
+    })
+
+    const row = await subscriptionService.createSubscription('fan-1', 'creator-1')
+
+    expect(row.status).toBe(CreatorSubscriptionStatus.ACTIVE)
+    expect(row.nextRenewalAt).toEqual(periodEnd)
+    expect(debitForCreatorSubscription).not.toHaveBeenCalled()
+    expect(creditInTransaction).not.toHaveBeenCalled()
+    expect(upsertPair).toHaveBeenCalledWith('fan-1', 'creator-1')
+    expect(enqueueSubscriptionRenewal).toHaveBeenCalledWith('sub-1', periodEnd)
+  })
+
+  it('createSubscription after the paid period has ended charges a new period', async () => {
+    findByPair.mockResolvedValue({
+      id: 'sub-1',
+      subscriberId: 'fan-1',
+      creatorId: 'creator-1',
+      status: CreatorSubscriptionStatus.CANCELLED,
+      nextRenewalAt: new Date(Date.now() - 60_000),
+      graceUntil: null,
+    })
+
+    await subscriptionService.createSubscription('fan-1', 'creator-1')
+
+    expect(resumeCancelledWithinPeriod).not.toHaveBeenCalled()
+    expect(debitForCreatorSubscription).toHaveBeenCalled()
   })
 
   it('checkAccess Redis hit skips DB', async () => {
@@ -488,15 +595,21 @@ describe('subscriptionService', () => {
     expect(cancelSubscriptionGraceJob).toHaveBeenCalledWith('sub-1')
   })
 
-  it('getSubscriptionStatus returns active count only', async () => {
-    prismaReadCount.mockResolvedValue(2)
+  it('getSubscriptionStatus counts paid access (incl. cancelled within the paid month)', async () => {
+    countPaidAccess.mockResolvedValue(2)
 
     const result = await subscriptionService.getSubscriptionStatus('fan-1')
 
     expect(result).toEqual({ hasActiveSubscriptions: true, activeCount: 2 })
-    expect(prismaReadCount).toHaveBeenCalledWith({
-      where: { subscriberId: 'fan-1', status: CreatorSubscriptionStatus.ACTIVE },
-    })
+    expect(countPaidAccess).toHaveBeenCalledWith('fan-1')
+  })
+
+  it('getSubscriptionStatus is false when nothing is paid for', async () => {
+    countPaidAccess.mockResolvedValue(0)
+
+    const result = await subscriptionService.getSubscriptionStatus('fan-1')
+
+    expect(result).toEqual({ hasActiveSubscriptions: false, activeCount: 0 })
   })
 
   it('getTopCreatorsByCountry skips country pool and uses global fallbacks when profile country missing', async () => {

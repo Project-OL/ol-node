@@ -247,10 +247,15 @@ describe('subscription + guardian wallet flow', () => {
     // findByPair lookup (pre-creation) sees nothing, and the second sees the
     // already-created row but in a non-blocking (CANCELLED) status so the duplicate-
     // subscription check doesn't fire while the idempotency key still varies per call.
+    // Its paid period has already ended: a cancel inside the period would resume for free.
     findByPair.mockImplementation(async () => {
       const row = subscriptionRows[0]
       if (!row) return null
-      return { ...row, status: CreatorSubscriptionStatus.CANCELLED }
+      return {
+        ...row,
+        status: CreatorSubscriptionStatus.CANCELLED,
+        nextRenewalAt: new Date(Date.now() - 60_000),
+      }
     })
     upsertActiveInTx.mockImplementation(async (_tx, params) => {
       const row = {
