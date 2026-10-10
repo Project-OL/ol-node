@@ -39,7 +39,7 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Subscriptions'],
         description:
-          'Check if subscriberId currently has an active paid subscription to creatorId.',
+          'Check if subscriberId currently has paid access to creatorId (ACTIVE, or cancelled but still inside the paid period).',
         querystring: {
           type: 'object',
           required: ['subscriberId', 'creatorId'],
@@ -229,7 +229,7 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       schema: {
         tags: ['Subscriptions'],
         description:
-          'Subscribe to a creator (debits coins, starts 30-day renewal schedule). Duplicate active subscription returns 409.',
+          'Subscribe to a creator (debits coins, starts 30-day renewal schedule). Duplicate active subscription returns 409. A subscription cancelled within its paid period is resumed without a new charge (renewals restart at the existing nextRenewalAt).',
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -263,7 +263,8 @@ export default async function subscriptionRoutes(app: FastifyInstance) {
       preHandler: mutatePre,
       schema: {
         tags: ['Subscriptions'],
-        description: 'Cancel paid subscription to a creator (stops renewals, removes access).',
+        description:
+          'Cancel paid subscription to a creator: stops future renewals; access continues until the end of the period already paid for (nextRenewalAt).',
         params: {
           type: 'object',
           required: ['creatorId'],

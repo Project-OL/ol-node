@@ -102,21 +102,14 @@ async function setSubscriptionAccess(
 }
 
 /**
- * Stop future renewals when users block each other. Paid access remains until `nextRenewalAt`.
+ * Stop future renewals; paid access remains until `nextRenewalAt` (already in the past for
+ * GRACE, so a GRACE subscription loses access straight away). Used by user cancel and block.
  */
-async function stopRenewalDueToBlockKeepingAccess(
-  subscriberId: string,
-  creatorId: string,
+async function stopRenewalKeepingAccess(
+  sub: { id: string; subscriberId: string; creatorId: string; nextRenewalAt: Date },
+  reason: 'cancelled' | 'block',
 ): Promise<void> {
-  const sub = await subscriptionRepository.findByPair(subscriberId, creatorId)
-  if (!sub) return
-  if (
-    sub.status !== CreatorSubscriptionStatus.ACTIVE &&
-    sub.status !== CreatorSubscriptionStatus.GRACE
-  ) {
-    return
-  }
-
+  const { subscriberId, creatorId } = sub
   await subscriptionRepository.updateById(sub.id, {
     status: CreatorSubscriptionStatus.CANCELLED,
     graceUntil: null,
@@ -134,12 +127,27 @@ async function stopRenewalDueToBlockKeepingAccess(
   await invalidateSubscriberCountCache(creatorId)
   await invalidateTopCreatorsCachesForCreator(creatorId)
 
-  console.info('[Subscription] renewal stopped due to block', {
+  console.info(`[Subscription] renewal stopped (${reason}), access kept until period end`, {
     subscriptionId: sub.id,
     subscriberId,
     creatorId,
     accessUntil: sub.nextRenewalAt.toISOString(),
   })
+}
+
+async function stopRenewalDueToBlockKeepingAccess(
+  subscriberId: string,
+  creatorId: string,
+): Promise<void> {
+  const sub = await subscriptionRepository.findByPair(subscriberId, creatorId)
+  if (!sub) return
+  if (
+    sub.status !== CreatorSubscriptionStatus.ACTIVE &&
+    sub.status !== CreatorSubscriptionStatus.GRACE
+  ) {
+    return
+  }
+  await stopRenewalKeepingAccess(sub, 'block')
 }
 
 async function invalidateSubscriberCountCache(creatorId: string): Promise<void> {
@@ -233,12 +241,14 @@ async function loadTopCreators(
 }
 
 export const subscriptionService = {
+  /**
+   * Counts paid access, not only renewing subs: a subscription cancelled inside its paid month
+   * still unlocks content, so the app's Explore tab must keep showing the subscribed feed.
+   */
   async getSubscriptionStatus(
     userId: string,
   ): Promise<{ hasActiveSubscriptions: boolean; activeCount: number }> {
-    const count = await prismaRead.creatorSubscription.count({
-      where: { subscriberId: userId, status: CreatorSubscriptionStatus.ACTIVE },
-    })
+    const count = await subscriptionRepository.countPaidAccess(userId)
     return { hasActiveSubscriptions: count > 0, activeCount: count }
   },
 
@@ -342,6 +352,31 @@ export const subscriptionService = {
         throw new AppError(409, 'Already subscribed to this creator', 'SUBSCRIPTION_DUPLICATE')
       }
 
+      // Cancelled but still inside the paid month: resume renewals instead of charging again.
+      if (
+        existing &&
+        existing.status === CreatorSubscriptionStatus.CANCELLED &&
+        existing.nextRenewalAt.getTime() > Date.now()
+      ) {
+        const resumed = await subscriptionRepository.resumeCancelledWithinPeriod(existing.id)
+        if (resumed) {
+          await userSubscriberRepository.upsertPair(subscriberId, creatorId)
+          await setSubscriptionAccess(subscriberId, creatorId, resumed.nextRenewalAt)
+          await invalidateSubscriberCountCache(creatorId)
+          await invalidateTopCreatorsCachesForCreator(creatorId)
+          await cancelSubscriptionRenewalJob(resumed.id)
+          await enqueueSubscriptionRenewal(resumed.id, resumed.nextRenewalAt)
+          console.info('[Subscription] resumed within paid period (no charge)', {
+            subscriptionId: resumed.id,
+            subscriberId,
+            creatorId,
+            nextRenewalAt: resumed.nextRenewalAt.toISOString(),
+          })
+          return resumed
+        }
+        // Period ended between the read and the update: fall through to a normal paid subscribe.
+      }
+
       const nextRenewalAt = new Date(Date.now() + SUBSCRIPTION_PERIOD_MS)
       const idempotencyKey = `sub:create:${subscriberId}:${creatorId}:${existing?.id ?? 'none'}:${existing?.nextRenewalAt?.toISOString() ?? 'none'}`
       const shares = await hostRevenueShareConfigService.getShares()
@@ -437,18 +472,8 @@ export const subscriptionService = {
       throw new AppError(404, 'Subscription not active', 'NOT_FOUND')
     }
 
-    await subscriptionRepository.updateById(sub.id, {
-      status: CreatorSubscriptionStatus.CANCELLED,
-      graceUntil: null,
-    })
-    await cancelSubscriptionRenewalJob(sub.id)
-    await cancelSubscriptionGraceJob(sub.id)
-    await redisClient.del(RedisKeys.subscriptionAccess(subscriberId, creatorId))
-    await userSubscriberRepository.deletePair(subscriberId, creatorId)
-    await invalidateSubscriberCountCache(creatorId)
-    await invalidateTopCreatorsCachesForCreator(creatorId)
-
-    console.info('[Subscription] cancelled', { subscriptionId: sub.id, subscriberId, creatorId })
+    // The month already paid for stays usable; only the next renewal is stopped.
+    await stopRenewalKeepingAccess(sub, 'cancelled')
   },
 
   /** Cancel renewal/grace for subscriptions in either direction; keep access until period end. */
