@@ -231,6 +231,23 @@ describe("giftTransactionService.sendGift", () => {
     expect($transaction).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["the isLucky flag", { isLucky: true, category: null }],
+    ["a Lucky category name", { isLucky: false, category: { name: "Lucky", slug: "x" } }],
+    ["a lucky category slug", { isLucky: false, category: { name: "Draw", slug: "LUCKY" } }],
+  ])("rejects a lucky gift (by %s) before charging", async (_label, lucky) => {
+    findById.mockResolvedValue({ id: "g1", name: "Clover", coinCost: 250, isActive: true, tags: [], ...lucky });
+    await expect(
+      giftTransactionService.sendGift({
+        senderUserId: "s1",
+        receiverUserId: "r1",
+        giftId: "g1",
+        context: "direct",
+      }),
+    ).rejects.toMatchObject({ statusCode: 400, code: "LUCKY_GIFT_NOT_ALLOWED" });
+    expect($transaction).not.toHaveBeenCalled();
+  });
+
   it("rolls back when coin balance insufficient", async () => {
     findById.mockResolvedValue({
       id: "g1",

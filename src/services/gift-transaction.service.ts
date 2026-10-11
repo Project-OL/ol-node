@@ -25,6 +25,7 @@ import { vipMembershipService } from './vip-membership.service'
 import { fanSpendIncrementForGift } from './vip-membership.helpers'
 import { utcDayFromTimestamp } from '../utils/datetime'
 import { assertNotBlockedEitherWay } from '../utils/block-relationship'
+import { isLuckyGift } from '../utils/lucky-gift'
 import { rootLogger } from '../utils/rootLogger'
 import { giftSendMetrics } from './giftSend.metrics'
 import { isSerializationAbort, isUniqueViolation } from '../utils/txRetry'
@@ -87,6 +88,12 @@ async function executeSendGift(params: SendGiftParams, idemBase: string) {
   const gift = await giftRepository.findById(params.giftId)
   if (!gift || !gift.isActive) {
     throw new AppError(404, 'Gift not found', 'NOT_FOUND')
+  }
+
+  // The lucky draw (RTP pool, 4% host share) only exists in Live-server's live-stream send;
+  // this path would bill a lucky gift as a plain one. GET /gifts already hides them.
+  if (isLuckyGift(gift)) {
+    throw new AppError(400, 'Lucky gifts can only be sent in live', 'LUCKY_GIFT_NOT_ALLOWED')
   }
 
   const senderHasActiveVipMembership = await vipMembershipService.hasActive(params.senderUserId)
