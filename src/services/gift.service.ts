@@ -7,11 +7,13 @@ import { giftThumbnailService } from './gift-thumbnail.service'
 
 async function invalidateGiftCaches(affectedTags: string[], giftId?: string) {
   try {
-    await redisClient.del(RedisKeys.giftList(), 'gifts:list:vip', 'gifts:list:novip', 'gifts:list')
+    // List pages are cached per page/limit, so every page key has to go.
+    await deleteByPattern('gifts:list*')
     if (giftId) await redisClient.del(liveGiftInfoKey(giftId))
     for (const tag of affectedTags) {
+      await deleteByPattern(`gifts:tag:v3:${tag}:*`)
       await redisClient.del(
-        RedisKeys.giftByTag(tag),
+        `gifts:tag:v2:${tag}`,
         `gifts:tag:${tag}:vip`,
         `gifts:tag:${tag}:novip`,
         `gifts:tag:${tag}`,
@@ -45,7 +47,7 @@ async function deleteByPattern(pattern: string) {
 
 async function invalidateAllGiftListCaches() {
   try {
-    await redisClient.del(RedisKeys.giftList(), 'gifts:list:vip', 'gifts:list:novip', 'gifts:list')
+    await deleteByPattern('gifts:list*')
     await deleteByPattern('gifts:tag:*')
     // Category edits change the category every cached gift carries.
     await deleteByPattern('gift:info:*')
@@ -85,7 +87,9 @@ export const giftService = {
    */
   async listPublic(query: { tag?: string; page: number; limit: number }) {
     const skip = (query.page - 1) * query.limit
-    const cacheKey = query.tag ? RedisKeys.giftByTag(query.tag) : RedisKeys.giftList()
+    const cacheKey = query.tag
+      ? RedisKeys.giftByTag(query.tag, query.page, query.limit)
+      : RedisKeys.giftList(query.page, query.limit)
 
     try {
       const raw = await redisClient.get(cacheKey)
