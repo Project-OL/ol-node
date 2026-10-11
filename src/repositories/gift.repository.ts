@@ -29,6 +29,23 @@ export const giftRepository = {
   }): Promise<{ items: GiftWithTags[]; total: number }> {
     const where: Prisma.GiftWhereInput = {
       isActive: true,
+      // Lucky gifts only work through Live-server's lucky-gift send (RTP draw, 4% host share);
+      // the normal send path would bill them as plain gifts, so keep them out of this catalog.
+      // Same rule as Live-server's isLuckyGift(): the flag OR a category named/slugged "lucky".
+      isLucky: false,
+      OR: [
+        { categoryId: null },
+        {
+          category: {
+            is: {
+              NOT: [
+                { name: { equals: 'lucky', mode: 'insensitive' } },
+                { slug: { equals: 'lucky', mode: 'insensitive' } },
+              ],
+            },
+          },
+        },
+      ],
       ...(params.tag ? { tags: { some: { tag: params.tag } } } : {}),
     }
 
