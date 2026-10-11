@@ -16,6 +16,7 @@ import type { BindBankInput } from '../models/paymentMethod.schemas'
 import type { PayoutRailPublicDto } from './withdrawalPayoutRailConfig.service'
 import { withdrawalPayoutRailConfigService } from './withdrawalPayoutRailConfig.service'
 import { isUniqueViolation } from '../utils/txRetry'
+import { validateBankFields } from '../utils/bank-field-rules'
 
 export { maskAccountNumber, maskEmail, maskPaymentMethodForDisplay }
 
@@ -57,13 +58,19 @@ export const userPaymentMethodService = {
   },
 
   async bindBank(userId: string, body: BindBankInput, securityPassword: string) {
-    await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
     await withdrawalPayoutRailConfigService.assertRailEnabled('BANK')
+    // Field checks run before the PIN so a form mistake never counts as a failed PIN attempt.
+    const rules = await withdrawalPayoutRailConfigService.getBankFieldRules()
+    const { values, issues } = validateBankFields(body, rules)
+    if (issues.length > 0) {
+      throw new AppError(400, issues[0].message, 'INVALID_REQUEST', { issues })
+    }
+    await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
     try {
-      await userPaymentMethodRepository.upsertBank(userId, body)
+      await userPaymentMethodRepository.upsertBank(userId, values)
     } catch (err) {
       if (!isUniqueViolation(err)) throw err
-      await userPaymentMethodRepository.upsertBank(userId, body)
+      await userPaymentMethodRepository.upsertBank(userId, values)
     }
     await redisClient.del(RedisKeys.userPaymentMethods(userId))
   },
@@ -119,7 +126,7 @@ export const userPaymentMethodService = {
       }
     })
 
-    return { methods }
+    return { methods, bankFields: rails.bankFields }
   },
 
   /** Full unmasked details for the owning user (`GET /payment-methods`). */

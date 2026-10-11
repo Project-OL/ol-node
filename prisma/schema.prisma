@@ -2149,6 +2149,8 @@ model WithdrawalPayoutRailConfig {
   bankFeeRateBp   Int      @default(600) @map("bank_fee_rate_bp")
   bankArrivalTime String   @default("3-5 business days") @map("bank_arrival_time") @db.VarChar(200)
   bankEnabled     Boolean  @default(true) @map("bank_enabled")
+  /// Per-field `{ required, validate }` toggles for the BANK bind form; null = defaults (src/utils/bank-field-rules.ts).
+  bankFieldRules  Json?    @map("bank_field_rules")
   updatedAt       DateTime @updatedAt @map("updated_at")
   updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
 

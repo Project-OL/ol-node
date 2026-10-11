@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
-import type { BindBankInput } from '../models/paymentMethod.schemas'
+import type { BankFieldValues } from '../utils/bank-field-rules'
 
 export type MethodType = 'EPAY' | 'BANK'
 
@@ -63,21 +63,29 @@ export const userPaymentMethodRepository = {
     })
   },
 
-  async upsertBank(userId: string, data: BindBankInput) {
-    const holderName = `${data.firstName} ${data.lastName}`.trim()
-    return this.upsert({
-      userId,
-      methodType: 'BANK',
-      accountHolderFirstName: data.firstName,
-      accountHolderLastName: data.lastName,
-      bankAccountHolder: holderName,
-      bankName: data.bankName,
+  /**
+   * Full overwrite of the BANK row: fields left blank are stored as null (unlike `upsert`,
+   * whose `?? undefined` keeps the old value), so re-binding can clear an optional field.
+   */
+  async upsertBank(userId: string, data: BankFieldValues) {
+    const holderName = [data.firstName, data.lastName].filter(Boolean).join(' ')
+    const fields = {
+      accountHolderFirstName: data.firstName ?? null,
+      accountHolderLastName: data.lastName ?? null,
+      bankAccountHolder: holderName || null,
+      bankName: data.bankName ?? null,
       branch: data.branch ?? null,
-      bankIfscCode: data.ifscCode,
-      bankAccountNumber: data.accountNumber,
+      bankIfscCode: data.ifscCode ?? null,
+      bankAccountNumber: data.accountNumber ?? null,
       upiNumber: data.upiId ?? null,
       registeredEmail: data.email ?? null,
       registeredPhone: data.phone ?? null,
+      lastUsedAt: new Date(),
+    }
+    return prisma.userPaymentMethod.upsert({
+      where: { userId_methodType: { userId, methodType: 'BANK' } },
+      create: { userId, methodType: 'BANK', ...fields },
+      update: fields,
     })
   },
 

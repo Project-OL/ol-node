@@ -4,6 +4,7 @@ import { AppError } from '../../middlewares/errorHandler'
 import { userPaymentMethodService } from '../../services/userPaymentMethod.service'
 import { rateLimitPmBind } from '../../middlewares/rateLimitAuth'
 import { BindEpaySchema, BindBankSchema } from '../../models/paymentMethod.schemas'
+import { parseRequest } from '../../utils/zod-request'
 
 export async function paymentMethodRoutes(app: FastifyInstance) {
   app.get(
@@ -19,7 +20,7 @@ export async function paymentMethodRoutes(app: FastifyInstance) {
     '/epay',
     { preHandler: [authenticate, rateLimitPmBind] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const body = BindEpaySchema.parse(request.body ?? {})
+      const body = parseRequest(BindEpaySchema, request.body ?? {})
       const pwd = (request.headers['x-security-password'] as string | undefined)?.trim() ?? ''
       if (!pwd) {
         throw new AppError(400, 'X-Security-Password header required', 'SECURITY_PASSWORD_REQUIRED')
@@ -33,7 +34,7 @@ export async function paymentMethodRoutes(app: FastifyInstance) {
     '/bank',
     { preHandler: [authenticate, rateLimitPmBind] },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const body = BindBankSchema.parse(request.body ?? {})
+      const body = parseRequest(BindBankSchema, request.body ?? {})
       const pwd = (request.headers['x-security-password'] as string | undefined)?.trim() ?? ''
       if (!pwd) {
         throw new AppError(400, 'X-Security-Password header required', 'SECURITY_PASSWORD_REQUIRED')
