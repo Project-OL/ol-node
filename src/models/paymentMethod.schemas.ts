@@ -23,7 +23,7 @@ export const BindEpaySchema = z.object({
         invalid_type_error: 'ePay email must be text',
       })
       .max(255, 'ePay email must be at most 255 characters')
-      .email('Enter a valid ePay email address (e.g. name@example.com)'),
+      .email('Invalid ePay email address'),
   ),
 })
 

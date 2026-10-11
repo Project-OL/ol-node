@@ -53,6 +53,8 @@ type FieldDef = {
   minLength: number
   maxLength: number
   format: string
+  /** Short message for the app's global error pop-up (shown ~1 s) when the format check fails. */
+  invalidMessage: string
   pattern: RegExp
   /** Applied after trimming, before any check, and to the stored value. */
   normalize?: (v: string) => string
@@ -68,6 +70,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 1,
     maxLength: 100,
     format: "Letters, spaces and . ' - only",
+    invalidMessage: 'First name can only have letters',
     pattern: PERSON_NAME,
   },
   lastName: {
@@ -76,6 +79,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 1,
     maxLength: 100,
     format: "Letters, spaces and . ' - only",
+    invalidMessage: 'Last name can only have letters',
     pattern: PERSON_NAME,
   },
   bankName: {
@@ -84,6 +88,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 2,
     maxLength: 150,
     format: "Letters, numbers, spaces and & . , ' ( ) / - only",
+    invalidMessage: 'Bank name has invalid characters',
     pattern: BANK_TEXT,
   },
   branch: {
@@ -92,6 +97,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 1,
     maxLength: 150,
     format: "Letters, numbers, spaces and & . , ' ( ) / - only",
+    invalidMessage: 'Branch has invalid characters',
     pattern: BANK_TEXT,
   },
   ifscCode: {
@@ -100,6 +106,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 4,
     maxLength: 20,
     format: '11 characters: 4 letters, then 0, then 6 letters or digits (e.g. PUNB0178400)',
+    invalidMessage: 'Invalid IFSC code (e.g. PUNB0178400)',
     pattern: /^[A-Z]{4}0[A-Z0-9]{6}$/,
     normalize: (v) => v.replace(/\s+/g, '').toUpperCase(),
   },
@@ -109,6 +116,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 5,
     maxLength: 30,
     format: '9 to 18 digits only',
+    invalidMessage: 'Account number must be 9-18 digits',
     pattern: /^[0-9]{9,18}$/,
     normalize: (v) => v.replace(/[\s-]+/g, ''),
   },
@@ -118,6 +126,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 3,
     maxLength: 50,
     format: 'name@bank (e.g. 9876543210@ybl)',
+    invalidMessage: 'Invalid UPI ID (e.g. name@ybl)',
     pattern: /^[A-Za-z0-9._-]{2,}@[A-Za-z][A-Za-z0-9]{1,}$/,
     normalize: (v) => v.replace(/\s+/g, ''),
   },
@@ -127,6 +136,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 3,
     maxLength: 255,
     format: 'A valid email address (e.g. name@example.com)',
+    invalidMessage: 'Invalid email address',
     pattern: /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/,
     normalize: (v) => v.toLowerCase(),
   },
@@ -136,6 +146,7 @@ export const BANK_FIELD_DEFS: Record<BankFieldKey, FieldDef> = {
     minLength: 7,
     maxLength: 30,
     format: '7 to 15 digits, optional leading + (spaces, dashes and brackets are ignored)',
+    invalidMessage: 'Invalid phone number',
     pattern: /^\+?[0-9]{7,15}$/,
     normalize: (v) => v.replace(/[\s()-]+/g, ''),
   },
@@ -219,19 +230,19 @@ export function validateBankFields(
     if (value.length > def.maxLength) {
       issues.push({
         path: key,
-        message: `${def.label} must be at most ${def.maxLength} characters`,
+        message: `${def.label} is too long (max ${def.maxLength})`,
       })
       continue
     }
     if (rule.validate) {
       if (!def.pattern.test(value)) {
-        issues.push({ path: key, message: `${def.label} format is invalid: ${def.format}` })
+        issues.push({ path: key, message: def.invalidMessage })
         continue
       }
     } else if (value.length < def.minLength) {
       issues.push({
         path: key,
-        message: `${def.label} must be at least ${def.minLength} characters`,
+        message: `${def.label} is too short (min ${def.minLength})`,
       })
       continue
     }
@@ -244,7 +255,7 @@ export function validateBankFields(
     !values.upiId &&
     !issues.some((i) => i.path === 'accountNumber' || i.path === 'upiId')
   ) {
-    issues.push({ path: 'accountNumber|upiId', message: 'Enter a bank account number or a UPI ID' })
+    issues.push({ path: 'accountNumber|upiId', message: 'Enter account number or UPI ID' })
   }
 
   return { values, issues }

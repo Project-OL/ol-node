@@ -64,7 +64,9 @@ describe('bank field rules', () => {
     )
     const paths = issues.map((i) => i.path)
     expect(paths).toEqual(['ifscCode', 'accountNumber', 'upiId', 'email', 'phone'])
-    expect(issues[0].message).toContain('IFSC code format is invalid')
+    expect(issues[0].message).toBe('Invalid IFSC code (e.g. PUNB0178400)')
+    // The app's global Dio error pop-up shows `message` for ~1 s: keep every message short.
+    for (const i of issues) expect(i.message.length).toBeLessThanOrEqual(45)
   })
 
   it('flags missing required fields', () => {
@@ -87,7 +89,7 @@ describe('bank field rules', () => {
   it('enforces DB max length even with validate off', () => {
     const rules = applyBankFieldRuleUpdates(defaultBankFieldRules(), { upiId: { validate: false } })
     const { issues } = validateBankFields({ ...valid, upiId: 'a'.repeat(51) }, rules)
-    expect(issues).toEqual([{ path: 'upiId', message: 'UPI ID must be at most 50 characters' }])
+    expect(issues).toEqual([{ path: 'upiId', message: 'UPI ID is too long (max 50)' }])
   })
 
   it('needs an account number or UPI ID even when both are optional', () => {
@@ -95,7 +97,7 @@ describe('bank field rules', () => {
       accountNumber: { required: false },
     })
     const { issues } = validateBankFields({ ...valid, accountNumber: undefined }, rules)
-    expect(issues).toEqual([{ path: 'accountNumber|upiId', message: 'Enter a bank account number or a UPI ID' }])
+    expect(issues).toEqual([{ path: 'accountNumber|upiId', message: 'Enter account number or UPI ID' }])
     expect(validateBankFields({ ...valid, accountNumber: undefined, upiId: 'asha@ybl' }, rules).issues).toEqual([])
   })
 })
