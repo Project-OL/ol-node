@@ -228,9 +228,13 @@ export const RedisKeys = {
   userLivestreamLevel: (userId: string) => `level:stream:${userId}`,
   levelConfigWealth: () => `level:config:wealth`,
   levelConfigStream: () => `level:config:stream`,
-  /** Full active gift catalog (includes vipOnly + category). Legacy keys without `:v2` are invalidated on write. */
-  giftList: () => `gifts:list:v2`,
-  giftByTag: (tag: string) => `gifts:tag:v2:${tag}`,
+  /**
+   * One page of the active gift catalog (includes vipOnly + category). Keyed by page/limit:
+   * the old single `:v2` key served page 1 for every page, so clients scrolled forever.
+   * All `gifts:list:*` / `gifts:tag:*` keys are pattern-invalidated on write.
+   */
+  giftList: (page: number, limit: number) => `gifts:list:v3:${page}:${limit}`,
+  giftByTag: (tag: string, page: number, limit: number) => `gifts:tag:v3:${tag}:${page}:${limit}`,
   /** Global gallery structure for a UTC month (admin-defined template). */
   giftGalleryTemplate: (year: number, month: number) => `gallery:template:${year}:${month}`,
   /** Per-host merged payload (template + that host's progress). */
