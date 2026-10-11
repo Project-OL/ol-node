@@ -1,6 +1,15 @@
 import { redisClient, RedisKeys, PAYOUT_RAIL_CONFIG_TTL } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { withdrawalPayoutRailConfigRepository } from '../repositories/withdrawalPayoutRailConfig.repository'
+import {
+  applyBankFieldRuleUpdates,
+  resolveBankFieldRules,
+  toBankFieldRuleDtos,
+  type BankFieldKey,
+  type BankFieldRule,
+  type BankFieldRuleDto,
+  type BankFieldRules,
+} from '../utils/bank-field-rules'
 
 export type PayoutRailPublicDto = {
   epay: {
@@ -15,6 +24,8 @@ export type PayoutRailPublicDto = {
     arrivalTime: string
     enabled: boolean
   }
+  /** BANK bind-form field rules (required / format toggles), in form order. */
+  bankFields: BankFieldRuleDto[]
   updatedAt: string
 }
 
@@ -34,11 +45,13 @@ function serialize(row: {
   bankFeeRateBp: number
   bankArrivalTime: string
   bankEnabled: boolean
+  bankFieldRules: unknown
   updatedAt: Date
 }): PayoutRailPublicDto {
   return {
     epay: toRailDto(row.epayFeeRateBp, row.epayArrivalTime, row.epayEnabled),
     bank: toRailDto(row.bankFeeRateBp, row.bankArrivalTime, row.bankEnabled),
+    bankFields: toBankFieldRuleDtos(resolveBankFieldRules(row.bankFieldRules)),
     updatedAt: row.updatedAt.toISOString(),
   }
 }
@@ -57,7 +70,8 @@ export const withdrawalPayoutRailConfigService = {
         if (parsed.bank && typeof parsed.bank.enabled !== 'boolean') {
           parsed.bank.enabled = true
         }
-        return parsed
+        // Warm cache written before `bankFields` existed: treat as a miss and reload.
+        if (Array.isArray(parsed.bankFields)) return parsed
       }
     } catch {
       /* miss */
@@ -90,11 +104,20 @@ export const withdrawalPayoutRailConfigService = {
     }
   },
 
+  /** Active BANK field rules as a keyed map (for server-side validation). */
+  async getBankFieldRules(): Promise<BankFieldRules> {
+    const config = await withdrawalPayoutRailConfigService.getPublicConfig()
+    const map: Partial<Record<BankFieldKey, BankFieldRule>> = {}
+    for (const f of config.bankFields) map[f.field] = { required: f.required, validate: f.validate }
+    return resolveBankFieldRules(map)
+  },
+
   async updateConfig(
     adminUserId: string,
     updates: {
       epay?: { feeRateBp?: number; arrivalTime?: string; enabled?: boolean }
       bank?: { feeRateBp?: number; arrivalTime?: string; enabled?: boolean }
+      bankFields?: Partial<Record<BankFieldKey, Partial<BankFieldRule>>>
     },
   ): Promise<PayoutRailPublicDto> {
     const current = await withdrawalPayoutRailConfigRepository.getOrCreate()
@@ -134,6 +157,12 @@ export const withdrawalPayoutRailConfigService = {
       bankFeeRateBp: data.bankFeeRateBp ?? current.bankFeeRateBp,
       bankArrivalTime: data.bankArrivalTime ?? current.bankArrivalTime,
       bankEnabled: data.bankEnabled ?? current.bankEnabled,
+      ...(updates.bankFields && {
+        bankFieldRules: applyBankFieldRuleUpdates(
+          resolveBankFieldRules(current.bankFieldRules),
+          updates.bankFields,
+        ),
+      }),
       updatedByUserId: adminUserId,
     })
 
