@@ -67,6 +67,12 @@ export function errorHandler(
       if (sec > 0) reply.header('Retry-After', String(sec))
     }
     const errCode = error.code ?? 'ERROR'
+    // Request logs carry only the status; the code is what tells one 4xx from another.
+    if (!clientError) {
+      const logFields = { statusCode: error.statusCode, code: errCode }
+      if (error.statusCode >= 500) reply.log.error(logFields, error.message)
+      else reply.log.info(logFields, error.message)
+    }
     return reply.status(error.statusCode).send({
       statusCode: error.statusCode,
       error: errCode,

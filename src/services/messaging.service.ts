@@ -100,6 +100,7 @@ type ReadDebounceEntry = {
 
 const readReceiptDebounce = new Map<string, ReadDebounceEntry>()
 const messagingLog = rootLogger.child({ module: 'messaging' })
+const USER_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export type CanUserMessageOptions = {
   /**
@@ -377,7 +378,20 @@ export const messagingService = {
     conversation: Awaited<ReturnType<typeof conversationRepository.createConversation>>
     isNew: boolean
   }> {
-    const recipient = await userSearchService.searchByPublicId(recipientPublicId, initiatorId)
+    const { prisma } = await import('../config/database')
+    // Shipped app builds send the recipient's user UUID here when a live-room user
+    // card never got a public id. Resolve it to the public id so every check below
+    // (search, block, privacy, self) runs exactly as for a numeric id.
+    let recipientRef = recipientPublicId
+    if (USER_UUID_RE.test(recipientPublicId.trim())) {
+      const byId = await prisma.user.findUnique({
+        where: { id: recipientPublicId.trim() },
+        select: { publicId: true },
+      })
+      if (!byId) throw new AppError(404, 'User not found', 'NOT_FOUND')
+      recipientRef = String(byId.publicId)
+    }
+    const recipient = await userSearchService.searchByPublicId(recipientRef, initiatorId)
     if (!recipient) {
       throw new AppError(404, 'User not found', 'NOT_FOUND')
     }
@@ -390,7 +404,6 @@ export const messagingService = {
     })
 
     const { makeDirectPairKey } = await import('../utils/direct-pair-key')
-    const { prisma } = await import('../config/database')
     const { isUniqueViolation } = await import('../utils/txRetry')
     const pairKey = makeDirectPairKey(initiatorId, recipientId)
 
