@@ -104,6 +104,21 @@ const envSchema = z
     GCP_BILLING_BQ_DATASET: z.string().optional(),
     /** Hours an unresolved GCP infra flag waits before re-emailing SUPER_ADMINs. */
     GCP_INFRA_ALERT_RENOTIFY_HOURS: z.coerce.number().int().positive().default(6),
+    /** INF-22: low-usage ("consider downgrading") flags re-email at most this often (default weekly). */
+    GCP_INFRA_LOW_USAGE_RENOTIFY_HOURS: z.coerce.number().int().positive().default(168),
+    /**
+     * INF-22: extra recipients for GCP infra flag emails, comma-separated, in addition to every
+     * active SUPER_ADMIN (e.g. the ops inbox offooliveinfo@gmail.com).
+     */
+    GCP_INFRA_ALERT_EXTRA_EMAILS: z
+      .string()
+      .optional()
+      .transform((v) =>
+        (v ?? '')
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter((s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)),
+      ),
 
     /**
      * Object-storage overrides for S3-compatible providers (Cloudflare R2 on GCP).

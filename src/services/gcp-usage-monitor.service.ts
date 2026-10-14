@@ -188,6 +188,42 @@ export type ThresholdConfig = {
   connectionsCrit?: number
   eventLoopLagWarnMs?: number
   eventLoopLagCritMs?: number
+  /**
+   * INF-22: low-usage ("consider downgrading") rule. Flags `memLowPct` when memory has stayed at or
+   * below this percentage for `memLowDays` days (default 7) of hourly snapshots.
+   */
+  memLowPct?: number
+  memLowDays?: number
+}
+
+/** Snapshots per day the low-usage rule needs before it trusts a window (hourly job, some slack). */
+export const LOW_USAGE_MIN_SNAPSHOTS_PER_DAY = 20
+export const LOW_USAGE_DEFAULT_DAYS = 7
+
+/**
+ * INF-22: decide the low-usage flag from the memPct values of the last `memLowDays` days.
+ * Pure (the job loads the snapshots), so it is unit-tested directly.
+ */
+export function evaluateLowUsage(
+  memPctSamples: Array<number | null | undefined>,
+  thresholds: ThresholdConfig,
+): FlagCandidate | null {
+  const low = thresholds.memLowPct
+  if (low === undefined || low === null) return null
+  const days = thresholds.memLowDays ?? LOW_USAGE_DEFAULT_DAYS
+  const values = memPctSamples.filter(
+    (v): v is number => typeof v === 'number' && Number.isFinite(v),
+  )
+  if (values.length < days * LOW_USAGE_MIN_SNAPSHOTS_PER_DAY) return null // not enough history yet
+  const max = Math.max(...values)
+  if (max > low) return null
+  return {
+    metric: 'memLowPct',
+    value: max,
+    threshold: low,
+    severity: 'WARNING',
+    message: `Memory utilization has stayed at or below ${low}% for ${days} days (peak ${max}%). Consider downgrading to save cost.`,
+  }
 }
 
 export type FlagCandidate = {
@@ -204,6 +240,7 @@ const METRIC_LABELS: Record<string, string> = {
   diskPct: 'Disk utilization',
   connections: 'Connection count',
   eventLoopLagMs: 'Event-loop lag (mean)',
+  memLowPct: 'Memory utilization (low)',
 }
 
 function evalOne(
@@ -268,6 +305,7 @@ export const gcpUsageMonitorService = {
   collectCloudSqlMetrics,
   collectRedisMetrics,
   evaluateThresholds,
+  evaluateLowUsage,
   isConfigured: isGcpInfraMonitorConfigured,
   renotifyHours: () => env.GCP_INFRA_ALERT_RENOTIFY_HOURS,
 }

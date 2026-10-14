@@ -16,6 +16,7 @@ import {
   collectCloudSqlMetrics,
   collectRedisMetrics,
   collectVmMetrics,
+  evaluateLowUsage,
   evaluateThresholds,
   type FlagCandidate,
   type ThresholdConfig,
@@ -48,25 +49,33 @@ async function collectForResource(resource: GcpResourceConfig) {
   }
 }
 
+/** Every active SUPER_ADMIN plus GCP_INFRA_ALERT_EXTRA_EMAILS (INF-22), deduplicated, lower-cased. */
+export function infraAlertRecipients(superAdminEmails: string[], extra: string[]): string[] {
+  return [
+    ...new Set([...superAdminEmails, ...extra].map((e) => e.trim().toLowerCase()).filter(Boolean)),
+  ]
+}
+
 async function notifySuperAdmins(subject: string, text: string, html: string): Promise<void> {
   const superAdmins = await systemAdminRepository.findAllByRole('SUPER_ADMIN', 'ACTIVE')
-  if (superAdmins.length === 0) {
-    log.warn('No active SUPER_ADMINs found — GCP infra flag email not sent to anyone')
+  const recipients = infraAlertRecipients(
+    superAdmins.map((a) => a.email),
+    env.GCP_INFRA_ALERT_EXTRA_EMAILS,
+  )
+  if (recipients.length === 0) {
+    log.warn(
+      'No SUPER_ADMIN or extra recipient configured — GCP infra flag email not sent to anyone',
+    )
     return
   }
-  for (const admin of superAdmins) {
+  for (const email of recipients) {
     try {
-      const result = await emailProvider.sendTransactionalEmail({
-        email: admin.email,
-        subject,
-        text,
-        html,
-      })
+      const result = await emailProvider.sendTransactionalEmail({ email, subject, text, html })
       if (!result.success) {
-        log.error({ adminId: admin.id, error: result.error }, 'GCP infra flag email failed')
+        log.error({ to: email, error: result.error }, 'GCP infra flag email failed')
       }
     } catch (err) {
-      log.error({ err, adminId: admin.id }, 'GCP infra flag email threw')
+      log.error({ err, to: email }, 'GCP infra flag email threw')
     }
   }
 }
@@ -101,7 +110,11 @@ async function upsertFlagAndMaybeNotify(
     orderBy: { createdAt: 'desc' },
   })
 
-  const renotifyMs = env.GCP_INFRA_ALERT_RENOTIFY_HOURS * 60 * 60 * 1000
+  const renotifyHours =
+    candidate.metric === 'memLowPct'
+      ? env.GCP_INFRA_LOW_USAGE_RENOTIFY_HOURS
+      : env.GCP_INFRA_ALERT_RENOTIFY_HOURS
+  const renotifyMs = renotifyHours * 60 * 60 * 1000
   let shouldNotify = false
   let flagId: string
 
@@ -164,6 +177,23 @@ async function autoResolveClearedFlags(
   })
 }
 
+/** INF-22: load the last `memLowDays` days of memPct samples and apply the low-usage rule. */
+async function lowUsageCandidate(
+  resourceKey: string,
+  thresholds: ThresholdConfig,
+  now: Date,
+): Promise<FlagCandidate | null> {
+  if (thresholds.memLowPct === undefined || thresholds.memLowPct === null) return null
+  const days = thresholds.memLowDays ?? 7
+  const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+  const snaps = await prisma.gcpUsageSnapshot.findMany({
+    where: { resourceKey, capturedAt: { gte: since } },
+    select: { metricsJson: true },
+  })
+  const samples = snaps.map((s) => (s.metricsJson as { memPct?: number | null } | null)?.memPct)
+  return evaluateLowUsage(samples, thresholds)
+}
+
 export async function runGcpInfraMonitorJob(): Promise<void> {
   if (!isGcpInfraMonitorConfigured()) {
     log.debug('GCP_PROJECT_ID not set — skipping GCP infra monitor tick')
@@ -190,6 +220,8 @@ export async function runGcpInfraMonitorJob(): Promise<void> {
 
       const thresholds = (resource.thresholdsJson as ThresholdConfig | null) ?? {}
       const candidates = evaluateThresholds(metrics, thresholds)
+      const low = await lowUsageCandidate(resource.resourceKey, thresholds, now)
+      if (low) candidates.push(low)
 
       for (const candidate of candidates) {
         await upsertFlagAndMaybeNotify(resource, candidate, now)
