@@ -35,6 +35,9 @@ const thresholdsSchema = z.object({
   connectionsCrit: z.number().min(0).optional(),
   eventLoopLagWarnMs: z.number().min(0).optional(),
   eventLoopLagCritMs: z.number().min(0).optional(),
+  /** INF-22: "consider downgrading" when memory stays at or below this % for memLowDays days. */
+  memLowPct: z.number().min(0).max(100).optional(),
+  memLowDays: z.number().int().min(1).max(60).optional(),
 })
 
 export const gcpResourceConfigUpdateSchema = z.object({
