@@ -1,15 +1,35 @@
 import { Redis } from 'ioredis'
 import { env } from './env'
 
+/**
+ * BE-18: never stop reconnecting. The old strategy returned `null` after 5 attempts (~6 s), which makes
+ * ioredis give up for good: one Memorystore restart or failover left the API (and the chat pub/sub
+ * subscriber) broken until a pm2 restart. Backoff is capped at 2 s, with jitter so many processes don't
+ * reconnect in lockstep.
+ */
+export function redisRetryStrategy(times: number): number {
+  return Math.min(times * 200, 2000) + Math.floor(Math.random() * 100)
+}
+
+/**
+ * After a failover the old primary becomes a read-only replica; writes then fail with READONLY until we
+ * reconnect to the new primary (Memorystore Standard / INF-14). Returning 2 reconnects and resends.
+ */
+export function redisReconnectOnError(err: Error): boolean | 1 | 2 {
+  return err.message.includes('READONLY') ? 2 : false
+}
+
 const redisOptions = {
   password: env.REDIS_PASSWORD || undefined,
-  maxRetriesPerRequest: null,
+  // BE-18: during an outage a command fails after 1 reconnect attempt (~0.2 s) instead of
+  // hanging; the connection itself keeps retrying forever. BullMQ only requires `null` for Workers
+  // (blocking commands), which use their own connections (worker*.ts); the Queue producers sharing
+  // this client fail fast too, as BullMQ recommends for producers.
+  maxRetriesPerRequest: 1,
   enableReadyCheck: false,
   lazyConnect: true,
-  retryStrategy(times: number) {
-    if (times > 5) return null
-    return Math.min(times * 200, 2000)
-  },
+  retryStrategy: redisRetryStrategy,
+  reconnectOnError: redisReconnectOnError,
 }
 
 export const redisClient = new Redis(env.REDIS_URL, redisOptions)

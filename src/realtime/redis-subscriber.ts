@@ -1,5 +1,6 @@
 import Redis from 'ioredis'
 import { env } from '../config/env'
+import { redisReconnectOnError, redisRetryStrategy } from '../config/redis'
 import { conversationRooms } from './conversation-rooms'
 import { presenceRooms } from './presence-rooms'
 import { userInboxRooms } from './user-inbox-rooms'
@@ -66,10 +67,9 @@ const redisSubscriberOptions = {
   maxRetriesPerRequest: null as number | null,
   enableReadyCheck: false,
   lazyConnect: true,
-  retryStrategy(times: number) {
-    if (times > 5) return null
-    return Math.min(times * 200, 2000)
-  },
+  // BE-18: keep reconnecting forever (ioredis re-subscribes every channel on reconnect).
+  retryStrategy: redisRetryStrategy,
+  reconnectOnError: redisReconnectOnError,
 }
 
 /**

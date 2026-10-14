@@ -55,7 +55,9 @@ echo "=== ol bootstrap starting $(date -u +%FT%TZ) ==="
 APP_USER="olapp"
 APP_ROOT="/opt/ol/apps"
 LOG_DIR="/opt/ol/logs"
-NODE_MAJOR="20"
+# INF-19: the AWS SDK v3 needs Node >= 22 for releases after early January 2027; staging has
+# run 22 since 2026-09-29. A box on an older major is upgraded in place below.
+NODE_MAJOR="22"
 ADMIN_DOCROOT="/var/www/admins3jinyu.offoolive.com"
 ADMIN_PORT="8080"
 
@@ -76,8 +78,11 @@ echo "release bucket           : '$BUCKET'"
 echo "admin hostnames          : '$ADMIN_HOSTNAMES'"
 
 # ---------------------------------------------------------------- 1. base packages
-if ! command -v node >/dev/null 2>&1; then
-  echo "--- installing Node ${NODE_MAJOR} (NodeSource) ---"
+CURRENT_NODE_MAJOR="$(node --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')"
+if [ "$CURRENT_NODE_MAJOR" != "$NODE_MAJOR" ]; then
+  # Installs Node when missing, or moves an existing box to NODE_MAJOR. The npm ci in
+  # install_deps below then rebuilds native modules (bcrypt, sharp, prisma) for it.
+  echo "--- installing Node ${NODE_MAJOR} (NodeSource; found '${CURRENT_NODE_MAJOR:-none}') ---"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq ca-certificates curl gnupg tar

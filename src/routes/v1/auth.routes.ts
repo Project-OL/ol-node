@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify'
+import { clientIp } from '../../utils/client-ip'
 import { z } from 'zod'
 import type { JwtAccessPayload } from '../../models/types'
 import { authV2Service } from '../../services/auth-v2.service'
@@ -281,7 +282,7 @@ export default async function authRoutes(app: FastifyInstance) {
         .status(400)
         .send({ code: 'INVALID_REQUEST', message: 'sessionId or revokeAllSessions required' })
     }
-    const ip = (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || request.ip
+    const ip = clientIp(request) ?? request.ip
     await auditService.log({
       userId,
       actionType: 'logout',

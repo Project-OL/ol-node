@@ -10,6 +10,7 @@ import { notFoundHandler } from './middlewares/notFoundHandler'
 import { requestIdHook, requestLoggerHook } from './middlewares/requestLogger'
 import healthRoutes from './routes/v1/health.routes'
 import { registerRealtimeGateway } from './realtime/ws.gateway'
+import { trustProxySetting } from './utils/client-ip'
 
 /**
  * Slim Fastify app: health + GET /ws. Tickets are minted by the API
@@ -19,7 +20,7 @@ export async function buildWsApp() {
   const app = Fastify({
     logger,
     genReqId: () => crypto.randomUUID(),
-    trustProxy: true,
+    trustProxy: trustProxySetting(),
     keepAliveTimeout: 30_000,
   })
 

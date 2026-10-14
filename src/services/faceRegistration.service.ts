@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { clientIp } from '../utils/client-ip'
 import type { Prisma } from '@prisma/client'
 import { AppError } from '../middlewares/errorHandler'
 import { env } from '../config/env'
@@ -28,9 +29,8 @@ function toHeaderString(value: string | string[] | undefined): string | undefine
 }
 
 function extractIp(ctx: RequestCtx): string | undefined {
-  const xff = toHeaderString(ctx.headers?.['x-forwarded-for'])
-  if (xff) return xff.split(',')[0]?.trim()
-  return ctx.ip
+  // SEC-12: ctx.ip is request.ip, which honours TRUST_PROXY_HOPS.
+  return clientIp(ctx)
 }
 
 async function emitFaceRegistration(
