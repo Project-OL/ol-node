@@ -183,6 +183,9 @@ fetch_secret() {
   local secret="$1" dest="$2"
   echo "--- fetching secret $secret ---"
   gcloud secrets versions access latest --secret="$secret" --out-file="$dest" --quiet
+  # INF-20: a secret uploaded from Windows can carry CRLF (ol-node-rest-env v3 did, 2026-10-13);
+  # bash `. ./.env` in the deploy script then fails on `$'\r'`. Normalise .env files to LF.
+  case "$dest" in *.env) sed -i 's/\r$//' "$dest" ;; esac
   chmod 600 "$dest"
   chown "$APP_USER:$APP_USER" "$dest"
 }

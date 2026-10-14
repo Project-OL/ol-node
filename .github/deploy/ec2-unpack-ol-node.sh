@@ -83,8 +83,10 @@ cd "$APP_DIR"
 
 if [ -f .env ]; then
   set -a
-  # shellcheck disable=SC1091
-  . ./.env
+  # INF-20: strip CRs so a CRLF .env (e.g. written from a Windows-uploaded secret) can't
+  # abort the deploy with `$'\r': command not found`. The file itself is left as it is.
+  # shellcheck disable=SC1090
+  . <(tr -d '\r' < ./.env)
   set +a
 fi
 
