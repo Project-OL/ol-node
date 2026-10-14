@@ -2,6 +2,7 @@ import { FastifyRequest, FastifyReply } from 'fastify'
 import { redisClient, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { AppError } from './errorHandler'
+import { clientIp } from '../utils/client-ip'
 
 /**
  * INCR + first-hit EXPIRE in a single Redis round trip (pipelined). `EXPIRE ... NX`
@@ -184,10 +185,7 @@ export function createAuthRateLimit(config: AuthRateLimitConfig) {
     request: FastifyRequest,
     _reply: FastifyReply,
   ): Promise<void> {
-    const ip =
-      (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      request.ip ||
-      '0.0.0.0'
+    const ip = clientIp(request) || '0.0.0.0'
     const key = RedisKeys.authRateLimit(endpoint, ip)
     const count = await incrWithWindow(key, windowSec)
     if (count > max) {
@@ -380,10 +378,7 @@ export async function deviceFlushSessionsRateLimit(
     if (deviceId) {
       key = RedisKeys.deviceFlushRateLimit(deviceId)
     } else {
-      const ip =
-        (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-        request.ip ||
-        '0.0.0.0'
+      const ip = clientIp(request) || '0.0.0.0'
       key = RedisKeys.authRateLimit(endpoint, ip)
     }
   }

@@ -7,6 +7,7 @@
  */
 
 import crypto from 'crypto'
+import { clientIp } from '../utils/client-ip'
 import { prisma } from '../config/database'
 import { redisClient, RedisKeys } from '../config/redis'
 import { signAccess, signRefresh, verifyAccessForLogout } from '../utils/jwt'
@@ -59,11 +60,8 @@ function getIp(request?: {
   ip?: string
   headers?: Record<string, string | string[] | undefined>
 }): string {
-  const h = request?.headers
-  const forwarded = h?.['x-forwarded-for']
-  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded
-  if (first) return first.trim().split(',')[0]?.trim() ?? '0.0.0.0'
-  return request?.ip ?? '0.0.0.0'
+  // SEC-12: request.ip honours TRUST_PROXY_HOPS; the leftmost X-Forwarded-For is client-controlled.
+  return clientIp(request) ?? '0.0.0.0'
 }
 
 function getUserAgent(request?: {

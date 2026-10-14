@@ -366,6 +366,14 @@ const envSchema = z
     SECURITY_PASSWORD_LOCKOUT_DURATION_MINUTES: z.coerce.number().default(10),
     SECURITY_PASSWORD_RESET_TOKEN_EXPIRY_SECONDS: z.coerce.number().default(600),
 
+    /**
+     * SEC-12: how many proxies in front of the app append to X-Forwarded-For. `request.ip` is then
+     * the address that many hops in from the socket, which a client can't forge. GCP prod
+     * (LB → node, appends `<client>, <lb-ip>`) = 2; staging (nginx `$proxy_add_x_forwarded_for`) = 1.
+     * Unset keeps the old `trustProxy: true` (leftmost entry, client-controlled) and warns at boot.
+     */
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).optional(),
+
     REQUEST_BODY_LIMIT_BYTES: z.coerce.number().default(1_048_576), // 1MB
     MAX_UPLOAD_SIZE_BYTES: z.coerce.number().default(10_485_760), // 10MB
     /** Android APK uploads go browser → bucket via presigned PUT, so the API body limits don't apply. */

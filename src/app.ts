@@ -109,6 +109,7 @@ import { publicIdPreGenerationService } from './services/public-id-pre-generatio
 import { rootLogger } from './utils/rootLogger'
 import { registerRealtimeGateway } from './realtime/ws.gateway'
 import { globalRequestTimeoutHook } from './utils/requestTimeout'
+import { clientIp, trustProxySetting } from './utils/client-ip'
 
 const REQUEST_TIMEOUT_MS = 30_000
 
@@ -116,7 +117,7 @@ export async function buildApp() {
   const app = Fastify({
     logger,
     genReqId: () => crypto.randomUUID(),
-    trustProxy: true,
+    trustProxy: trustProxySetting(),
     connectionTimeout: REQUEST_TIMEOUT_MS,
     keepAliveTimeout: 30_000,
     bodyLimit: env.REQUEST_BODY_LIMIT_BYTES,
@@ -211,13 +212,8 @@ export async function buildApp() {
     ...(labInMemoryRateLimit ? {} : { redis: redisClient }),
     skipOnError: labInMemoryRateLimit,
     allowList: (req) => isHealthPath(req.url),
-    keyGenerator: (req) => {
-      const xff = req.headers['x-forwarded-for']
-      if (typeof xff === 'string' && xff.length > 0) {
-        return xff.split(',')[0]!.trim()
-      }
-      return req.ip
-    },
+    // SEC-12: req.ip honours TRUST_PROXY_HOPS; the raw leftmost X-Forwarded-For is client-controlled.
+    keyGenerator: (req) => clientIp(req) ?? req.ip,
     errorResponseBuilder: () => ({
       statusCode: 429,
       error: 'Too Many Requests',

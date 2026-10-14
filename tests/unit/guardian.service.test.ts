@@ -67,6 +67,22 @@ vi.mock('../../src/services/cache.service', () => ({
   },
 }))
 
+// Offline Redis stub (key builders and TTLs stay real). Before BE-18 the real client gave up after
+// ~6 s and later calls failed instantly, which is what these tests silently relied on.
+vi.mock('../../src/config/redis', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/config/redis')>()
+  const pipeline = (): unknown =>
+    new Proxy(
+      {},
+      { get: (_t, prop) => (prop === 'exec' ? async () => [] : () => pipeline()) },
+    )
+  const redisClient = new Proxy(
+    {},
+    { get: (_t, prop) => (prop === 'pipeline' || prop === 'multi' ? pipeline : async () => null) },
+  )
+  return { ...actual, redisClient, getRedisForRead: () => redisClient }
+})
+
 vi.mock('../../src/config/database', () => ({
   prisma: {
     $transaction: async (fn: (tx: Record<string, never>) => Promise<unknown>) =>

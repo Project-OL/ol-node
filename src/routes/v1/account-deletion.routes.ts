@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import { clientIp } from '../../utils/client-ip'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { accountDeletionRateLimits } from '../../middlewares/rateLimitAuth'
 import { scheduleDeletionSchema, cancelDeletionSchema } from '../../models/account-deletion.schemas'
@@ -28,7 +29,7 @@ export default async function accountDeletionRoutes(app: FastifyInstance) {
         userId,
         body.data.securityPassword,
         body.data.reason,
-        (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || request.ip,
+        clientIp(request) ?? request.ip,
       )
       return reply.status(201).send({ data: result })
     },

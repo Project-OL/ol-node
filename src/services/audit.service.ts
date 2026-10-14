@@ -1,14 +1,14 @@
 import type { FastifyRequest } from 'fastify'
 import { auditRepository } from '../repositories/audit.repository'
+import { clientIp } from '../utils/client-ip'
 import { adminAuditMetaFromRequest, type AdminAuditRequestMeta } from '../utils/admin-audit'
 
 function getIp(request: {
   ip?: string
   headers?: Record<string, string | undefined>
 }): string | undefined {
-  const forwarded = request.headers?.['x-forwarded-for']
-  if (forwarded) return forwarded.split(',')[0]?.trim()
-  return request.ip
+  // SEC-12: request.ip honours TRUST_PROXY_HOPS; the leftmost X-Forwarded-For is client-controlled.
+  return clientIp(request)
 }
 
 function getUserAgent(request: {
