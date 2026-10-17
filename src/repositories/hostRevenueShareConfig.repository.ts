@@ -6,6 +6,8 @@ export type HostRevenueShareRow = {
   subscriptionBp: number
   guardianPurchaseBp: number
   videoCallHostShareBp: number
+  luckyHostShareBp: number
+  luckyTargetRtpBp: number
   updatedAt: Date
   updatedByAdminId: string | null
 }
@@ -22,6 +24,8 @@ export const hostRevenueShareConfigRepository = {
         subscriptionBp: 7500,
         guardianPurchaseBp: 7500,
         videoCallHostShareBp: 6000,
+        luckyHostShareBp: 400,
+        luckyTargetRtpBp: 9200,
       },
       update: {},
     })
@@ -32,6 +36,8 @@ export const hostRevenueShareConfigRepository = {
     subscriptionBp?: number
     guardianPurchaseBp?: number
     videoCallHostShareBp?: number
+    luckyHostShareBp?: number
+    luckyTargetRtpBp?: number
     updatedByAdminId: string
   }): Promise<HostRevenueShareRow> {
     await this.getOrCreate()
@@ -44,6 +50,8 @@ export const hostRevenueShareConfigRepository = {
         ...(data.videoCallHostShareBp != null
           ? { videoCallHostShareBp: data.videoCallHostShareBp }
           : {}),
+        ...(data.luckyHostShareBp != null ? { luckyHostShareBp: data.luckyHostShareBp } : {}),
+        ...(data.luckyTargetRtpBp != null ? { luckyTargetRtpBp: data.luckyTargetRtpBp } : {}),
         updatedByAdminId: data.updatedByAdminId,
       },
     })

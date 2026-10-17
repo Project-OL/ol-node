@@ -39,13 +39,19 @@ export const HostRevenueSharesUpdateSchema = z
     subscriptionBp: z.number().int().min(1).max(10_000).optional(),
     guardianPurchaseBp: z.number().int().min(1).max(10_000).optional(),
     videoCallHostShareBp: z.number().int().min(1).max(10_000).optional(),
+    /** Lucky gift host cut, 0–2000 bp (0–20%). */
+    luckyHostShareBp: z.number().int().min(0).max(2_000).optional(),
+    /** Lucky gift RTP target, 5000–9900 bp (50–99%). */
+    luckyTargetRtpBp: z.number().int().min(5_000).max(9_900).optional(),
   })
   .refine(
     (b) =>
       b.giftReceiveBp != null ||
       b.subscriptionBp != null ||
       b.guardianPurchaseBp != null ||
-      b.videoCallHostShareBp != null,
+      b.videoCallHostShareBp != null ||
+      b.luckyHostShareBp != null ||
+      b.luckyTargetRtpBp != null,
     { message: 'Provide at least one share field' },
   )
 

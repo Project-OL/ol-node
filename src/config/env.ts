@@ -451,6 +451,16 @@ const envSchema = z
     LIVE_WEBHOOK_SECRET: z.string().min(32),
     LIVE_SESSION_TIMEOUT_HOURS: z.coerce.number().int().positive().default(6),
 
+    /**
+     * BE-20: internal ledger API for Live-server (`/internal/v1/ledger/*`). Served by a second
+     * listener bound to INTERNAL_API_HOST:INTERNAL_API_PORT, never by the public port the load
+     * balancer / nginx reach. Requests are HMAC-SHA256 signed with this secret (shared with
+     * Live-server's `INTERNAL_LEDGER_HMAC_SECRET`). Unset = the internal listener does not start.
+     */
+    INTERNAL_LEDGER_HMAC_SECRET: z.string().min(32).optional(),
+    INTERNAL_API_HOST: z.string().default('127.0.0.1'),
+    INTERNAL_API_PORT: z.coerce.number().int().positive().default(3101),
+
     // Wallet / coins
     COIN_TOPUP_RATE_LIMIT_MAX: z.coerce.number().default(5),
     COIN_TOPUP_RATE_LIMIT_WINDOW: z.coerce.number().default(60000),
