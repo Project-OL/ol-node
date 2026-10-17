@@ -38,3 +38,39 @@ jobs:
           # Required by src/config/env.ts (min 3 chars); without it every test that loads the
           # env module exits with code 1. Unit tests never call Rekognition.
           REKOGNITION_COLLECTION_ID: ci-test-collection
+
+  # BE-20 internal ledger money tests (tests/ledger) on throwaway service containers. Never deploys.
+  ledger-money:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: money
+          POSTGRES_PASSWORD: money
+          POSTGRES_DB: ledger_test
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U money -d ledger_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["56379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DATABASE_URL: postgresql://money:money@127.0.0.1:55432/ledger_test
+      REKOGNITION_COLLECTION_ID: ci-test-collection
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Push schema to the throwaway database
+        run: npx prisma db push --skip-generate --accept-data-loss
+      - name: Internal ledger money tests
+        run: npm run test:ledger

@@ -1691,6 +1691,10 @@ model HostRevenueShareConfig {
   subscriptionBp        Int      @default(7500) @map("subscription_bp")
   guardianPurchaseBp    Int      @default(7500) @map("guardian_purchase_bp")
   videoCallHostShareBp  Int      @default(6000) @map("video_call_host_share_bp")
+  /// Lucky gifts: host point cut of the total cost (400 = 4%). Read by the internal ledger and Live-server.
+  luckyHostShareBp      Int      @default(400) @map("lucky_host_share_bp")
+  /// Lucky gifts: reserve-pool RTP target (9200 = 92%). Read by Live-server's lucky draw engine.
+  luckyTargetRtpBp      Int      @default(9200) @map("lucky_target_rtp_bp")
   updatedAt             DateTime @updatedAt @map("updated_at")
   updatedByAdminId      String?  @map("updated_by_admin_id") @db.Uuid
 

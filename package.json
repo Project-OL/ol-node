@@ -57,6 +57,8 @@
         "api-surface:generate": "tsx scripts/generate-api-surface.ts",
         "api-surface:coverage": "tsx scripts/generate-coverage-matrix.ts",
         "test:http": "vitest run tests/http",
+        "test:ledger:setup": "node tests/ledger/setup.mjs",
+        "test:ledger": "vitest run -c vitest.ledger.config.ts",
         "postman:auth": "node scripts/generate-auth-postman-collection.mjs",
         "seed:fresh-agency": "tsx scripts/seed-fresh-agency.ts",
         "seed:fresh-user": "tsx scripts/seed-fresh-user.ts",

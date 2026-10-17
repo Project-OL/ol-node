@@ -10,7 +10,15 @@ export type HostRevenueShares = {
   subscriptionBp: number
   guardianPurchaseBp: number
   videoCallHostShareBp: number
+  /** Lucky gifts: host point cut of the total cost. */
+  luckyHostShareBp: number
+  /** Lucky gifts: reserve-pool RTP target (Live-server's draw engine). */
+  luckyTargetRtpBp: number
 }
+
+/** Admin bounds for the lucky settings: a host cut above 20% or an RTP outside 50-99% is a typo. */
+export const LUCKY_HOST_SHARE_BP_RANGE = { min: 0, max: 2_000 } as const
+export const LUCKY_TARGET_RTP_BP_RANGE = { min: 5_000, max: 9_900 } as const
 
 /** Default / fallback shares (used only when DB/cache is unavailable). */
 export const HOST_REVENUE_SHARES = {
@@ -43,6 +51,11 @@ export const HOST_REVENUE_SHARES = {
   /** Multiplier to compute caller coin debit from host's set point price (legacy fixed 60%). */
   VIDEO_CALL_CALLER_MARKUP_NUM: 10_000,
   VIDEO_CALL_CALLER_MARKUP_DEN: 6_000,
+
+  /** Lucky gift: host receives 4% of the total cost as points (Live-server's original constant). */
+  LUCKY_HOST_SHARE_BP: 400,
+  /** Lucky gift: reserve pool targets a 92% return to players. */
+  LUCKY_TARGET_RTP_BP: 9_200,
 } as const
 
 export const DEFAULT_HOST_REVENUE_SHARES: HostRevenueShares = {
@@ -50,6 +63,8 @@ export const DEFAULT_HOST_REVENUE_SHARES: HostRevenueShares = {
   subscriptionBp: HOST_REVENUE_SHARES.SUBSCRIPTION_BP,
   guardianPurchaseBp: HOST_REVENUE_SHARES.GUARDIAN_PURCHASE_BP,
   videoCallHostShareBp: HOST_REVENUE_SHARES.VIDEO_CALL_HOST_SHARE_BP,
+  luckyHostShareBp: HOST_REVENUE_SHARES.LUCKY_HOST_SHARE_BP,
+  luckyTargetRtpBp: HOST_REVENUE_SHARES.LUCKY_TARGET_RTP_BP,
 }
 
 /** Convenience: host point credit from a gift */

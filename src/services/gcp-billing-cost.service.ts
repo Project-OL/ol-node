@@ -16,9 +16,10 @@ let cachedTableRef: string | null = null
 
 /**
  * The GCP Billing Export table name has a billing-account-derived suffix
- * (`gcp_billing_export_v1_XXXXXX_XXXXXX_XXXXXX`) that isn't knowable in advance —
- * discover it once by listing the configured dataset's tables, then cache it for the
- * process lifetime.
+ * (`gcp_billing_export_v1_XXXXXX_XXXXXX_XXXXXX`), and a billing-account switch adds a
+ * second table (prod moved accounts on 2026-10-14: the old table ends 10-13, the new one
+ * starts 10-14, no overlap). Check one exists, then query the wildcard so a month that
+ * spans a switch sums both. Cached for the process lifetime.
  */
 async function resolveBillingTableRef(): Promise<string> {
   if (cachedTableRef) return cachedTableRef
@@ -33,7 +34,7 @@ async function resolveBillingTableRef(): Promise<string> {
       `No gcp_billing_export_v1_* table found in dataset "${env.GCP_BILLING_BQ_DATASET}" — has Billing Export to BigQuery been enabled yet? Export tables can take up to ~24h to appear after enabling.`,
     )
   }
-  cachedTableRef = `\`${bigquery.projectId}.${env.GCP_BILLING_BQ_DATASET}.${table.id}\``
+  cachedTableRef = `\`${bigquery.projectId}.${env.GCP_BILLING_BQ_DATASET}.gcp_billing_export_v1_*\``
   return cachedTableRef
 }
 
