@@ -259,6 +259,32 @@ describe('internal ledger: gifts', () => {
     ).rejects.toMatchObject({ statusCode: 409, code: 'DUPLICATE_LEDGER_KEY' })
   })
 
+  it('a host may gift in their own live room (PARK-01), like the local path', async () => {
+    const host = await makeUser({ coins: 10_000n })
+    const gift = await makeGift(1_000)
+    const r = await liveGift(host.id, host.id, gift.id)
+    expect(r.balanceAfterCoins).toBe('9000')
+    expect(r.balanceAfterPoints).toBe('600')
+    expect(await ledgerProblems([await walletIdOf(host.id, 'COIN'), await walletIdOf(host.id, 'POINT')])).toEqual([])
+  })
+
+  it('accepts any id format Postgres does (no stricter than the local path)', async () => {
+    const sender = await makeUser({ coins: 10_000n })
+    const host = await makeUser()
+    const gift = await makeGift(100)
+    const r = await internalLedgerService.giftSend({
+      requestId: `req-${rid()}`,
+      context: 'live_stream',
+      senderId: sender.id.toUpperCase(),
+      receiverId: host.id,
+      giftId: gift.id,
+      quantity: 1,
+      giftTransactionId: randomUUID(),
+      idemBase: `gift-stream:${randomUUID()}`,
+    })
+    expect(r.balanceAfterCoins).toBe('9900')
+  })
+
   it('video-call gift needs an ACTIVE call between the two users', async () => {
     const caller = await makeUser({ coins: 10_000n })
     const host = await makeUser()

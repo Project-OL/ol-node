@@ -379,7 +379,9 @@ export type GiftSendResult = {
 }
 
 async function giftSend(input: GiftSendInput): Promise<GiftSendResult> {
-  if (input.senderId === input.receiverId) {
+  // Live-server parity: a host may gift in their own live room (PARK-01, 2026-09-20; sender COIN
+  // and receiver POINT are different wallets). A video-call gift always has two participants.
+  if (input.context === 'video_call' && input.senderId === input.receiverId) {
     throw new AppError(400, 'Cannot send a gift to yourself', 'INVALID_REQUEST')
   }
   if (input.context === 'video_call') {

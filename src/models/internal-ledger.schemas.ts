@@ -1,30 +1,36 @@
 import { z } from 'zod'
 
+/**
+ * Validation is deliberately no stricter than Live-server's local path (BE-20 parity): anything
+ * the local path accepts must be accepted here, or a remote-mode send fails where a local one
+ * worked. Ids are checked by Postgres (uuid columns, FKs) inside the transaction, not by format
+ * here; amounts are bounded by the balance check.
+ */
 const id = z.string().min(1).max(64)
-const uuid = z.string().uuid()
 /** Ledger key bases are built by Live-server from fixed prefixes + ids (see internalLedger.service). */
 const keyBase = z.string().min(8).max(200)
-const requestId = z.string().uuid()
+const requestId = z.string().min(8).max(64)
 
 export const GiftSendSchema = z.object({
   requestId,
   context: z.enum(['live_stream', 'video_call']),
-  senderId: uuid,
-  receiverId: uuid,
-  giftId: uuid,
-  quantity: z.number().int().min(1).max(10_000),
-  giftTransactionId: uuid,
+  senderId: id,
+  receiverId: id,
+  giftId: id,
+  // Live clamps to 1..1000; the video-call path has no upper cap (bounded by the balance).
+  quantity: z.number().int().min(1).max(1_000_000),
+  giftTransactionId: id,
   idemBase: keyBase.regex(/^gift(-stream)?:/),
   sessionId: id.optional(),
 })
 
 export const LuckyGiftSchema = z.object({
   requestId,
-  senderId: uuid,
-  receiverId: uuid.nullable(),
-  giftId: uuid,
+  senderId: id,
+  receiverId: id.nullable(),
+  giftId: id,
   count: z.number().int().min(1).max(1000),
-  giftTransactionId: uuid,
+  giftTransactionId: id,
   txKeyBase: keyBase.regex(/^lucky:/),
   rewardCoins: z.string().regex(/^\d{1,18}$/),
   category: z.string().min(1).max(64),
@@ -33,7 +39,7 @@ export const LuckyGiftSchema = z.object({
 export const CallAcceptSchema = z.object({
   requestId,
   sessionId: id,
-  receiverId: uuid,
+  receiverId: id,
 })
 
 export const CallMinuteSchema = z.object({
@@ -44,8 +50,8 @@ export const CallMinuteSchema = z.object({
 
 export const GlobalMessageSchema = z.object({
   requestId,
-  senderId: uuid,
-  messageTxId: uuid,
+  senderId: id,
+  messageTxId: id,
   idemKey: keyBase.regex(/^global-msg:/),
   message: z.string().min(1).max(5000),
 })
