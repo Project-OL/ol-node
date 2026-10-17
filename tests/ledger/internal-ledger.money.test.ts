@@ -259,6 +259,32 @@ describe('internal ledger: gifts', () => {
     ).rejects.toMatchObject({ statusCode: 409, code: 'DUPLICATE_LEDGER_KEY' })
   })
 
+  it('a host may gift in their own live room (PARK-01), like the local path', async () => {
+    const host = await makeUser({ coins: 10_000n })
+    const gift = await makeGift(1_000)
+    const r = await liveGift(host.id, host.id, gift.id)
+    expect(r.balanceAfterCoins).toBe('9000')
+    expect(r.balanceAfterPoints).toBe('600')
+    expect(await ledgerProblems([await walletIdOf(host.id, 'COIN'), await walletIdOf(host.id, 'POINT')])).toEqual([])
+  })
+
+  it('accepts any id format Postgres does (no stricter than the local path)', async () => {
+    const sender = await makeUser({ coins: 10_000n })
+    const host = await makeUser()
+    const gift = await makeGift(100)
+    const r = await internalLedgerService.giftSend({
+      requestId: `req-${rid()}`,
+      context: 'live_stream',
+      senderId: sender.id.toUpperCase(),
+      receiverId: host.id,
+      giftId: gift.id,
+      quantity: 1,
+      giftTransactionId: randomUUID(),
+      idemBase: `gift-stream:${randomUUID()}`,
+    })
+    expect(r.balanceAfterCoins).toBe('9900')
+  })
+
   it('video-call gift needs an ACTIVE call between the two users', async () => {
     const caller = await makeUser({ coins: 10_000n })
     const host = await makeUser()
@@ -331,6 +357,29 @@ describe('internal ledger: lucky gifts', () => {
       where: { refId: r.transactionId, txType: 'AGENT_COMMISSION' },
     })
     expect(commission?.amount).toBe(32n)
+  })
+
+  it('LIVE-31: parallel lucky gifts add exactly to the reserve-pool counters, in the gift transaction', async () => {
+    const pool = async () => {
+      const [r] = await prisma.$queryRaw<{ spent: bigint; rewarded: bigint }[]>`
+        SELECT COALESCE(SUM(total_spent),0)::bigint AS spent, COALESCE(SUM(total_rewarded),0)::bigint AS rewarded
+        FROM lucky_reserve_pool`
+      return r
+    }
+    const host = await makeUser()
+    const sender = await makeUser({ coins: 10_000_000n })
+    const gift = await makeGift(1_000, { isLucky: true })
+    const before = await pool()
+    const rs = await settled(Array.from({ length: N }, () => lucky(sender.id, host.id, gift.id, 1, 300n)))
+    expect(rejectedCodes(rs)).toEqual([])
+    const after = await pool()
+    expect(after.spent - before.spent).toBe(BigInt(N * 1_000))
+    expect(after.rewarded - before.rewarded).toBe(BigInt(N * 300))
+
+    // A failed gift (insufficient coins) must not move the counters.
+    const poor = await makeUser({ coins: 10n })
+    await expect(lucky(poor.id, host.id, gift.id, 1, 0n)).rejects.toMatchObject({ code: 'INSUFFICIENT_COINS' })
+    expect((await pool()).spent).toBe(after.spent)
   })
 
   it('rejects a reward above the engine maximum', async () => {
