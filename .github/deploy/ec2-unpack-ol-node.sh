@@ -125,7 +125,34 @@ pm2_ensure() {
   fi
 }
 
-pm2_ensure ol-api dist/server.js
+# BE-19: ol-api may run in pm2 cluster mode (OL_API_INSTANCES in .env, default 1 = fork mode,
+# unchanged). The API is stateless across processes: WS fan-out goes through Redis pub/sub and
+# presence counts live in Redis. --merge-logs keeps the single ol-api-out/err.log files.
+# Changing the instance count needs one delete+start; after that, deploys `pm2 reload`
+# (rolling, zero downtime) in cluster mode.
+OL_API_INSTANCES="${OL_API_INSTANCES:-1}"
+# (No single quotes in this block: it runs inside a single-quoted bash -c.)
+api_count=$(pm2 jlist 2>/dev/null | grep -o "\"name\":\"ol-api\"" | wc -l | tr -d " ")
+api_exec=$(pm2 describe ol-api 2>/dev/null | grep -o "cluster_mode\|fork_mode" | head -1)
+if [ "$api_count" = "0" ] || [ -z "$api_exec" ]; then api_mode="none"; else api_mode="$api_exec:$api_count"; fi
+if [ "$OL_API_INSTANCES" -gt 1 ] 2>/dev/null; then
+  if [ "$api_mode" = "cluster_mode:$OL_API_INSTANCES" ]; then
+    echo "pm2 reload ol-api ($api_mode)"
+    pm2 reload ol-api
+  else
+    echo "ol-api $api_mode -> cluster x$OL_API_INSTANCES (delete + start)"
+    pm2 delete ol-api >/dev/null 2>&1 || true
+    pm2 start dist/server.js --name ol-api -i "$OL_API_INSTANCES" --merge-logs
+  fi
+else
+  if [ "${api_mode%%:*}" = "cluster_mode" ]; then
+    echo "ol-api $api_mode -> fork (delete + start)"
+    pm2 delete ol-api >/dev/null 2>&1 || true
+    pm2 start dist/server.js --name ol-api
+  else
+    pm2_ensure ol-api dist/server.js
+  fi
+fi
 if [ "$RESTART_WORKERS" = "1" ]; then
   pm2_ensure ol-worker dist/worker.js
   pm2_ensure ol-face-worker dist/worker-face-index.js

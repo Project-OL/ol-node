@@ -211,20 +211,26 @@ install_deps "$APP_ROOT/live-server"
 # .env, which a bare `pm2 restart` does NOT do (pm2 replays the environment saved in its
 # dump, and dotenv will not override an existing process.env value).
 start_app() {
-  local name="$1" dir="$2" script="$3"
+  local name="$1" dir="$2" script="$3" extra="${4:-}"
   sudo -u "$APP_USER" bash -lc "
     cd '$dir'
     pm2 delete '$name' >/dev/null 2>&1 || true
-    pm2 start '$script' --name '$name'
+    pm2 start '$script' --name '$name' $extra
   "
 }
+# BE-19: ol-api instance count from its .env (default 1 = fork mode); see ec2-unpack-ol-node.sh.
+OL_API_INSTANCES=$(grep -E '^OL_API_INSTANCES=' "$APP_ROOT/ol-node-rest/.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"\r' || true)
+API_EXTRA=""
+if [ -n "$OL_API_INSTANCES" ] && [ "$OL_API_INSTANCES" -gt 1 ] 2>/dev/null; then
+  API_EXTRA="-i $OL_API_INSTANCES --merge-logs"
+fi
 if [ "$START_PROCESSES" = "false" ]; then
   echo "=== start-processes=false: provisioned but NOT starting any pm2 app (nginx/admin is up) ==="
   echo "=== ol bootstrap finished (provision-only) $(date -u +%FT%TZ) ==="
   exit 0
 fi
 
-start_app ol-api  "$APP_ROOT/ol-node-rest" dist/server.js
+start_app ol-api  "$APP_ROOT/ol-node-rest" dist/server.js "$API_EXTRA"
 start_app ol-live "$APP_ROOT/live-server"  server.js
 
 if [ "$RUN_WORKERS" = "true" ]; then
