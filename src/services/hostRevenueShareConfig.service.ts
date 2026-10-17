@@ -50,7 +50,8 @@ export const hostRevenueShareConfigService = {
     try {
       const hit = await redisClient.get(key)
       // Merged over the defaults: a snapshot cached before a field existed still reads complete.
-      if (hit) return { ...defaultsDto(), ...(JSON.parse(hit) as Partial<HostRevenueShareConfigDto>) }
+      if (hit)
+        return { ...defaultsDto(), ...(JSON.parse(hit) as Partial<HostRevenueShareConfigDto>) }
     } catch {
       /* miss */
     }
