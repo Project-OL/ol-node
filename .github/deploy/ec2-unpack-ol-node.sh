@@ -132,7 +132,8 @@ pm2_ensure() {
 # (rolling, zero downtime) in cluster mode.
 OL_API_INSTANCES="${OL_API_INSTANCES:-1}"
 # (No single quotes in this block: it runs inside a single-quoted bash -c.)
-api_count=$(pm2 jlist 2>/dev/null | grep -o "\"name\":\"ol-api\"" | wc -l | tr -d " ")
+# `pm2 id ol-api` prints the process ids, e.g. "[ 6, 7 ]" (jlist repeats each name, so no grep there).
+api_count=$(pm2 id ol-api 2>/dev/null | grep -o "[0-9][0-9]*" | wc -l | tr -d " ")
 api_exec=$(pm2 describe ol-api 2>/dev/null | grep -o "cluster_mode\|fork_mode" | head -1)
 if [ "$api_count" = "0" ] || [ -z "$api_exec" ]; then api_mode="none"; else api_mode="$api_exec:$api_count"; fi
 if [ "$OL_API_INSTANCES" -gt 1 ] 2>/dev/null; then
