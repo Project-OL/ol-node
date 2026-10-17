@@ -2472,6 +2472,7 @@ model VideoCallSession {
   @@index([callerId, status])
   @@index([creatorId, status])
   @@index([livekitRoom])
+  @@index([status, startedAt])
   @@map("video_call_sessions")
 }
 
@@ -2732,6 +2733,8 @@ model GiftTransaction {
   @@index([senderUserId])
   @@index([receiverUserId])
   @@index([createdAt])
+  @@index([receiverUserId, createdAt])
+  @@index([receiverUserId, senderUserId, createdAt])
   @@map("gift_transactions")
 }
 
