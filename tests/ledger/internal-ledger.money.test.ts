@@ -333,6 +333,29 @@ describe('internal ledger: lucky gifts', () => {
     expect(commission?.amount).toBe(32n)
   })
 
+  it('LIVE-31: parallel lucky gifts add exactly to the reserve-pool counters, in the gift transaction', async () => {
+    const pool = async () => {
+      const [r] = await prisma.$queryRaw<{ spent: bigint; rewarded: bigint }[]>`
+        SELECT COALESCE(SUM(total_spent),0)::bigint AS spent, COALESCE(SUM(total_rewarded),0)::bigint AS rewarded
+        FROM lucky_reserve_pool`
+      return r
+    }
+    const host = await makeUser()
+    const sender = await makeUser({ coins: 10_000_000n })
+    const gift = await makeGift(1_000, { isLucky: true })
+    const before = await pool()
+    const rs = await settled(Array.from({ length: N }, () => lucky(sender.id, host.id, gift.id, 1, 300n)))
+    expect(rejectedCodes(rs)).toEqual([])
+    const after = await pool()
+    expect(after.spent - before.spent).toBe(BigInt(N * 1_000))
+    expect(after.rewarded - before.rewarded).toBe(BigInt(N * 300))
+
+    // A failed gift (insufficient coins) must not move the counters.
+    const poor = await makeUser({ coins: 10n })
+    await expect(lucky(poor.id, host.id, gift.id, 1, 0n)).rejects.toMatchObject({ code: 'INSUFFICIENT_COINS' })
+    expect((await pool()).spent).toBe(after.spent)
+  })
+
   it('rejects a reward above the engine maximum', async () => {
     const host = await makeUser()
     const sender = await makeUser({ coins: 1_000_000n })

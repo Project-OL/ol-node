@@ -210,6 +210,30 @@ async function settleHostCredit(
   return agencyUserId
 }
 
+export const LUCKY_RESERVE_POOL_SLOTS = 8
+
+/**
+ * LIVE-31: add one lucky gift to the reserve-pool counters (`lucky_reserve_pool`, summed over its
+ * slots by Live-server's draw engine). Pool inflow = cost x RTP target; outflow = the reward.
+ */
+async function addToLuckyReservePool(
+  tx: Tx,
+  p: { cost: bigint; reward: bigint; targetRtpBp: number },
+) {
+  const slot = Math.floor(Math.random() * LUCKY_RESERVE_POOL_SLOTS)
+  // Upsert: the migration seeds the 8 rows, but a DB built with `prisma db push` (tests) has none.
+  await tx.$executeRaw`
+    INSERT INTO lucky_reserve_pool (slot, total_spent, total_rewarded, pool_balance, updated_at)
+    VALUES (${slot}, ${p.cost}, ${p.reward},
+            (${p.cost}::numeric * ${p.targetRtpBp} / 10000) - ${p.reward}, NOW())
+    ON CONFLICT (slot) DO UPDATE
+    SET total_spent = lucky_reserve_pool.total_spent + EXCLUDED.total_spent,
+        total_rewarded = lucky_reserve_pool.total_rewarded + EXCLUDED.total_rewarded,
+        pool_balance = lucky_reserve_pool.pool_balance + EXCLUDED.pool_balance,
+        updated_at = NOW()
+  `
+}
+
 async function runMoneyTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -543,7 +567,7 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
     })
   }
   // Admin setting (host_revenue_share_config.lucky_host_share_bp, default 400 = 4%).
-  const { luckyHostShareBp } = await hostRevenueShareConfigService.getShares()
+  const { luckyHostShareBp, luckyTargetRtpBp } = await hostRevenueShareConfigService.getShares()
   const hostPoints = (totalCost * BigInt(luckyHostShareBp)) / 10_000n
   const receiverId = input.receiverId || input.senderId
   const context = isCombo ? 'LUCKY_COMBO' : 'LUCKY_SINGLE'
@@ -648,6 +672,9 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
           context,
         },
       })
+      // LIVE-31: the RTP counters commit with the gift. Last statement, so the slot's row lock is
+      // held for the shortest time; a random slot keeps concurrent lucky gifts off one row.
+      await addToLuckyReservePool(tx, { cost: totalCost, reward, targetRtpBp: luckyTargetRtpBp })
       return { finalBalanceCoins, pointsAfterHost, wealth, agencyUserId }
     })
   } catch (err) {

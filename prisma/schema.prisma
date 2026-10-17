@@ -1701,6 +1701,20 @@ model HostRevenueShareConfig {
   @@map("host_revenue_share_config")
 }
 
+/// LIVE-31: lucky-gift reserve pool counters (8 slots, summed on read). Incremented inside each
+/// lucky gift's transaction by the internal ledger (remote mode) or Live-server (local mode).
+model LuckyReservePool {
+  slot          Int      @id
+  totalSpent    BigInt   @default(0) @map("total_spent")
+  totalRewarded BigInt   @default(0) @map("total_rewarded")
+  poolBalance   Decimal  @default(0) @map("pool_balance") @db.Decimal(24, 4)
+  /// Slot 0 only: the Redis-era totals have been added.
+  seeded        Boolean  @default(false)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("lucky_reserve_pool")
+}
+
 /// Allowed video-call `pricePerMin` values for a host livestream level band.
 /// Soft-replace via admin system-settings. Multiple rows may share the same band
 /// (e.g. Lv10+ choices 3000 / 3600 / …).
