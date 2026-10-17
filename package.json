@@ -7,10 +7,12 @@
         "node": ">=20.0.0"
     },
     "overrides": {
-        "fast-jwt": "^6.2.4",
-        "fast-uri": "^3.1.2",
+        "fast-jwt": "^6.3.5",
+        "fast-uri": "^3.1.8",
+        "proxy-addr": "^2.0.8",
         "uuid": "^11.1.1",
-        "tar": "^7.5.16"
+        "tar": "^7.5.22",
+        "websocket-driver": "^0.7.5"
     },
     "scripts": {
         "dev": "tsx watch src/server.ts",
