@@ -115,8 +115,8 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
         currency: body.currency,
         idempotencyKey: body.idempotencyKey,
         callbackUrl:
-          body.callbackUrl ?? `${request.protocol}://${request.hostname}/api/v1/webhooks/epay`,
-        returnUrl: body.returnUrl ?? `${request.protocol}://${request.hostname}`,
+          body.callbackUrl ?? `${request.protocol}://${request.host}/api/v1/webhooks/epay`,
+        returnUrl: body.returnUrl ?? `${request.protocol}://${request.host}`,
       })
       return reply.status(201).send(result)
     },
