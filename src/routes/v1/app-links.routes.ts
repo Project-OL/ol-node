@@ -17,6 +17,6 @@ export default async function appLinksRoutes(app: FastifyInstance) {
   app.get('/android/latest', async (_request, reply: FastifyReply) => {
     const { android } = await appDownloadConfigService.getPublicConfig()
     if (!android) throw new AppError(404, 'No Android build is available yet', 'APK_NOT_AVAILABLE')
-    return reply.header('Cache-Control', 'no-store').redirect(302, android.url)
+    return reply.header('Cache-Control', 'no-store').redirect(android.url, 302)
   })
 }

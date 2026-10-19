@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import Fastify from 'fastify'
-import { clientIp } from '../../src/utils/client-ip'
+import { clientIp, trustProxyFromHops } from '../../src/utils/client-ip'
 import { redisReconnectOnError, redisRetryStrategy } from '../../src/config/redis'
 
 /**
  * SEC-12: with the hop count set, a client-supplied X-Forwarded-For entry can't become request.ip
  * (the rate-limit key). Fastify inject connects from 127.0.0.1, standing in for the proxy socket.
  */
-async function ipSeen(trustProxy: number | boolean, xff: string): Promise<string | undefined> {
-  const app = Fastify({ trustProxy })
+async function ipSeen(hops: number | undefined, xff: string): Promise<string | undefined> {
+  const app = Fastify({ trustProxy: trustProxyFromHops(hops) })
   app.get('/ip', async (req) => ({ ip: clientIp(req) }))
   const res = await app.inject({ method: 'GET', url: '/ip', headers: { 'x-forwarded-for': xff } })
   await app.close()
@@ -30,7 +30,15 @@ describe('SEC-12 client IP behind proxies', () => {
   })
 
   it('unset (old trustProxy: true) still returns the leftmost entry, i.e. unchanged behaviour', async () => {
-    expect(await ipSeen(true, '1.2.3.4, 203.0.113.7, 35.191.0.1')).toBe('1.2.3.4')
+    expect(await ipSeen(undefined, '1.2.3.4, 203.0.113.7, 35.191.0.1')).toBe('1.2.3.4')
+  })
+
+  it('BE-21: a raw hop count would make every client the proxy under Fastify 5 (why we pass a function)', async () => {
+    const app = Fastify({ trustProxy: 2 as unknown as boolean })
+    app.get('/ip', async (req) => ({ ip: clientIp(req) }))
+    const res = await app.inject({ method: 'GET', url: '/ip', headers: { 'x-forwarded-for': '203.0.113.7, 35.191.0.1' } })
+    await app.close()
+    expect(res.json().ip).toBe('127.0.0.1')
   })
 
   it('clientIp tolerates missing requests and blank ips', () => {

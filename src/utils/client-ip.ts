@@ -6,8 +6,20 @@ import { env } from '../config/env'
  * rate-limit key. Without one, keep the old `true` (leftmost entry) so an unconfigured env behaves as
  * before.
  */
-export function trustProxySetting(): number | boolean {
-  return env.TRUST_PROXY_HOPS ?? true
+export function trustProxySetting(): boolean | ((addr: string, hop: number) => boolean) {
+  return trustProxyFromHops(env.TRUST_PROXY_HOPS)
+}
+
+/**
+ * BE-21: Fastify 5 treats a *numeric* `trustProxy` as "trust nothing" (5.12: hop counts can't verify
+ * the immediate peer), which would make every `request.ip` the load balancer's address. Hand it the
+ * exact function proxy-addr built for a hop count under Fastify 4 instead: trust the `hops` nearest
+ * addresses (hop 0 = the socket peer). Safe here because the app VMs have no public address, so the
+ * socket peer is always the LB (prod) or nginx (staging).
+ */
+export function trustProxyFromHops(hops: number | undefined): boolean | ((addr: string, hop: number) => boolean) {
+  if (hops === undefined) return true
+  return (_addr: string, hop: number) => hop < hops
 }
 
 /**
