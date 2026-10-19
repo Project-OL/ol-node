@@ -18,8 +18,16 @@
 #
 # Contract
 # --------
+#   metadata role             = "all" (default) -> ol-api + ol-live + admin, workers per
+#                                                  run-workers (the single-VM layout)
+#                               "api"  -> ol-api only. The only role safe to run on more
+#                                         than one node; no live-server, admin or workers
+#                               "core" -> ol-live + admin + ol-worker + ol-face-worker,
+#                                         no ol-api. Must stay at exactly ONE node until
+#                                         Live-server may scale (INF-16)
 #   metadata run-workers      = "true"   -> also run ol-worker + ol-face-worker here
 #                               anything else (default) -> API + live only
+#                               (role=all only; api never runs workers, core always does)
 #   metadata start-processes  = "false"  -> provision everything but start nothing
 #                               anything else (default) -> start processes
 #   metadata release-bucket   = "gs://..." -> where */latest.tgz live
@@ -66,12 +74,22 @@ meta() {
     "http://169.254.169.254/computeMetadata/v1/instance/attributes/$1" 2>/dev/null || true
 }
 
+ROLE="$(meta role)"
+ROLE="${ROLE:-all}"
 RUN_WORKERS="$(meta run-workers)"
 START_PROCESSES="$(meta start-processes)"
+case "$ROLE" in
+  all)  WANT_API=1; WANT_LIVE=1; WANT_ADMIN=1
+        if [ "$RUN_WORKERS" = "true" ]; then WANT_WORKERS=1; else WANT_WORKERS=0; fi ;;
+  api)  WANT_API=1; WANT_LIVE=0; WANT_ADMIN=0; WANT_WORKERS=0 ;;
+  core) WANT_API=0; WANT_LIVE=1; WANT_ADMIN=1; WANT_WORKERS=1 ;;
+  *)    echo "FATAL: unknown role metadata '$ROLE' (expected all|api|core)"; exit 1 ;;
+esac
 BUCKET="$(meta release-bucket)"
 BUCKET="${BUCKET:-gs://ol-node-rest-releases}"
 ADMIN_HOSTNAMES="$(meta admin-hostnames)"
 ADMIN_HOSTNAMES="${ADMIN_HOSTNAMES:-admins3jinyu.offoolive.com priviledge.offoolive.com}"
+echo "role metadata            : '$ROLE' (api=$WANT_API live=$WANT_LIVE admin=$WANT_ADMIN workers=$WANT_WORKERS)"
 echo "run-workers metadata     : '${RUN_WORKERS:-<unset>}'"
 echo "start-processes metadata : '${START_PROCESSES:-<unset, defaults to start>}'"
 echo "release bucket           : '$BUCKET'"
@@ -208,13 +226,13 @@ YAML
   systemctl restart google-cloud-ops-agent || echo "WARNING: Ops Agent restart failed"
 fi
 
-if ! command -v nginx >/dev/null 2>&1; then
+if [ "$WANT_ADMIN" = 1 ] && ! command -v nginx >/dev/null 2>&1; then
   echo "--- installing nginx ---"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq nginx
 fi
-echo "$(nginx -v 2>&1)"
+if [ "$WANT_ADMIN" = 1 ]; then echo "$(nginx -v 2>&1)"; fi
 
 # ---------------------------------------------------------------- 2. user + layout
 id -u "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /bin/bash "$APP_USER"
@@ -231,10 +249,12 @@ fetch_release() {
   rm -rf "$tmp"
   chown -R "$APP_USER:$APP_USER" "$dest"
 }
+# ol-node-rest is needed by every role (core runs its workers).
 fetch_release ol-node-rest
-fetch_release live-server
+if [ "$WANT_LIVE" = 1 ]; then fetch_release live-server; fi
 
 # ---------------------------------------------------------------- 3b. admin portal
+if [ "$WANT_ADMIN" = 1 ]; then
 # Same layout as the hand-built VM (2026-09-20): one server block on :8080 for both
 # portal hostnames, one shared docroot. The SUPER_ADMIN-vs-everyone split is enforced
 # by the API from the Origin header, not by nginx, so both names serve the same build.
@@ -285,6 +305,7 @@ chown -R "$APP_USER:$APP_USER" "$ADMIN_DOCROOT"
 nginx -t
 systemctl enable nginx >/dev/null 2>&1
 systemctl restart nginx
+fi
 
 # ---------------------------------------------------------------- 4. secrets
 # Written 0600 and owned by the app user; never logged.
@@ -300,8 +321,10 @@ fetch_secret() {
 }
 fetch_secret ol-node-rest-env                  "$APP_ROOT/ol-node-rest/.env"
 fetch_secret ol-node-rest-firebase-adminsdk    "$APP_ROOT/ol-node-rest/offoolive-firebase-adminsdk.json"
-fetch_secret ol-live-server-env                "$APP_ROOT/live-server/.env"
-fetch_secret ol-live-server-google-credentials "$APP_ROOT/live-server/google-credentials.json"
+if [ "$WANT_LIVE" = 1 ]; then
+  fetch_secret ol-live-server-env                "$APP_ROOT/live-server/.env"
+  fetch_secret ol-live-server-google-credentials "$APP_ROOT/live-server/google-credentials.json"
+fi
 
 # ---------------------------------------------------------------- 5. dependencies
 install_deps() {
@@ -313,7 +336,7 @@ install_deps() {
   fi
 }
 install_deps "$APP_ROOT/ol-node-rest"
-install_deps "$APP_ROOT/live-server"
+if [ "$WANT_LIVE" = 1 ]; then install_deps "$APP_ROOT/live-server"; fi
 
 # ---------------------------------------------------------------- 6. processes
 # `pm2 start` is idempotent via delete-then-start: it also guarantees a fresh read of
@@ -339,16 +362,29 @@ if [ "$START_PROCESSES" = "false" ]; then
   exit 0
 fi
 
-start_app ol-api  "$APP_ROOT/ol-node-rest" dist/server.js "$API_EXTRA"
-start_app ol-live "$APP_ROOT/live-server"  server.js
+# Each role also deletes the apps it must not run, so re-running the script after a
+# role change leaves no stray process (a second ol-live would end real streams).
+stop_app() {
+  sudo -u "$APP_USER" bash -lc "pm2 delete $* >/dev/null 2>&1 || true"
+}
+if [ "$WANT_API" = 1 ]; then
+  start_app ol-api "$APP_ROOT/ol-node-rest" dist/server.js "$API_EXTRA"
+else
+  stop_app ol-api
+fi
+if [ "$WANT_LIVE" = 1 ]; then
+  start_app ol-live "$APP_ROOT/live-server" server.js
+else
+  stop_app ol-live
+fi
 
-if [ "$RUN_WORKERS" = "true" ]; then
-  echo "--- run-workers=true: starting workers on this node ---"
+if [ "$WANT_WORKERS" = 1 ]; then
+  echo "--- role=$ROLE: starting workers on this node ---"
   start_app ol-worker      "$APP_ROOT/ol-node-rest" dist/worker.js
   start_app ol-face-worker "$APP_ROOT/ol-node-rest" dist/worker-face-index.js
 else
-  echo "--- run-workers not set: API + live only (cron must not double-fire) ---"
-  sudo -u "$APP_USER" bash -lc "pm2 delete ol-worker ol-face-worker >/dev/null 2>&1 || true"
+  echo "--- role=$ROLE: no workers here (cron must not double-fire) ---"
+  stop_app ol-worker ol-face-worker
 fi
 
 # ---------------------------------------------------------------- 7. survive reboots

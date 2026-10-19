@@ -17,7 +17,13 @@
 # Required repository (or Environment "production") configuration:
 #   vars.GCP_PROJECT_ID    e.g. offoo-prod
 #   vars.GCP_ZONE          e.g. asia-south1-a
-#   vars.GCE_INSTANCE      defaults to ol-prod-app-01 when unset
+#   vars.GCE_INSTANCE      defaults to ol-prod-app-01 when unset. Runs the migration
+#                          and the workers (the single VM, or the role=core node)
+#   vars.GCE_INSTANCE_RUNS_API  'true' (default) | 'false' once GCE_INSTANCE is role=core
+#   vars.GCE_API_MIG       optional: regional MIG of role=api nodes (gce-bootstrap.sh).
+#                          When set, every instance in it gets the build too, one at a
+#                          time, each gated on /health/ready (RUN_MIGRATE=0, no workers).
+#                          Unset = single-VM deploy exactly as before.
 #   Auth, either:
 #     secrets.GCP_WORKLOAD_IDENTITY_PROVIDER + secrets.GCP_DEPLOY_SERVICE_ACCOUNT  (preferred)
 #     secrets.GCP_SA_KEY                                                           (service-account JSON fallback)
@@ -92,6 +98,8 @@ jobs:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_ZONE: ${{ vars.GCP_ZONE }}
       GCE_INSTANCE: ${{ vars.GCE_INSTANCE || 'ol-prod-app-01' }}
+      GCE_INSTANCE_RUNS_API: ${{ vars.GCE_INSTANCE_RUNS_API || 'true' }}
+      GCE_API_MIG: ${{ vars.GCE_API_MIG }}
       APP_USER: olapp
       APP_DIR: /opt/ol/apps/ol-node-rest
       RUN_MIGRATE: '1'
@@ -200,22 +208,60 @@ jobs:
 
       - name: Unpack and restart on the VM
         run: |
+          if [ "$GCE_INSTANCE_RUNS_API" = "false" ]; then restart_api=0; else restart_api=1; fi
           gcloud compute ssh "$GCE_INSTANCE" \
             --project "$GCP_PROJECT_ID" \
             --zone "$GCP_ZONE" \
             --tunnel-through-iap \
             --quiet \
-            --command "sudo APP_USER='${APP_USER}' APP_DIR='${APP_DIR}' ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE='${RUN_MIGRATE}' RESTART_WORKERS='${RESTART_WORKERS}' bash -s" \
+            --command "sudo APP_USER='${APP_USER}' APP_DIR='${APP_DIR}' ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE='${RUN_MIGRATE}' RESTART_WORKERS='${RESTART_WORKERS}' RESTART_API='${restart_api}' bash -s" \
             < .github/deploy/ec2-unpack-ol-node.sh
 
       - name: Health check
         run: |
+          if [ "$GCE_INSTANCE_RUNS_API" = "false" ]; then
+            # role=core: no ol-api to curl; the worker must be online.
+            check="for i in \$(seq 1 12); do if sudo -u ${APP_USER} pm2 describe ol-worker 2>/dev/null | grep -q 'status.*online'; then echo 'worker online'; exit 0; fi; echo \"attempt \$i worker not online\"; sleep 5; done; sudo -u ${APP_USER} pm2 list; exit 1"
+          else
+            check="for i in \$(seq 1 20); do if curl -fsS http://127.0.0.1:3000/health/ready >/dev/null; then echo 'ready'; exit 0; fi; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; pm2 list; exit 1"
+          fi
           gcloud compute ssh "$GCE_INSTANCE" \
             --project "$GCP_PROJECT_ID" \
             --zone "$GCP_ZONE" \
             --tunnel-through-iap \
             --quiet \
-            --command "for i in \$(seq 1 20); do if curl -fsS http://127.0.0.1:3000/health/ready >/dev/null; then echo 'ready'; exit 0; fi; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; pm2 list; exit 1"
+            --command "$check"
+
+      # Migration already ran once on GCE_INSTANCE above, so API nodes only unpack and
+      # restart ol-api. One node at a time, each must pass /health/ready before the next,
+      # so the LB always has healthy capacity. A failure stops the rollout; nodes not yet
+      # reached keep the previous build (migrations are expand-only, so that is safe).
+      - name: Roll out to the API MIG
+        if: env.GCE_API_MIG != ''
+        run: |
+          region="${GCP_ZONE%-*}"
+          mapfile -t nodes < <(gcloud compute instance-groups managed list-instances "$GCE_API_MIG" \
+            --project "$GCP_PROJECT_ID" --region "$region" \
+            --format="value(name,instance.segment(-3))")
+          if [ "${#nodes[@]}" -eq 0 ]; then
+            echo "::error::MIG $GCE_API_MIG in $region has no instances"
+            exit 1
+          fi
+          for line in "${nodes[@]}"; do
+            name="${line%%[[:space:]]*}"
+            zone="${line##*[[:space:]]}"
+            echo "=== $name ($zone) ==="
+            gcloud compute scp ol-node-artifact.tgz "${name}:/tmp/ol-node-artifact.tgz" \
+              --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet
+            gcloud compute ssh "$name" --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet \
+              --command "sudo APP_DIR='${APP_DIR}' EXPECT_STORAGE=r2 REQUIRE_PUBLIC_BASE_URL=1 bash -s" \
+              < .github/deploy/verify-storage-target.sh
+            gcloud compute ssh "$name" --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet \
+              --command "sudo APP_USER='${APP_USER}' APP_DIR='${APP_DIR}' ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE=0 RESTART_WORKERS=0 RESTART_API=1 bash -s" \
+              < .github/deploy/ec2-unpack-ol-node.sh
+            gcloud compute ssh "$name" --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet \
+              --command "for i in \$(seq 1 20); do if curl -fsS http://127.0.0.1:3000/health/ready >/dev/null; then echo 'ready'; exit 0; fi; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; exit 1"
+          done
 
       # Keeps <bucket>/ol-node-rest/latest.tgz equal to what is actually running, so a
       # VM the MIG (re)creates via .github/deploy/gce-bootstrap.sh boots this build

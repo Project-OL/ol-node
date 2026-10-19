@@ -146,6 +146,12 @@ const envSchema = z
      * not reachable for a non-AWS provider.
      */
     S3_PUBLIC_BASE_URL: z.string().optional(),
+    /**
+     * Private bucket (same storage client and credentials) for account-deletion archives,
+     * which hold PII. Must NOT have a public domain. Unset = write them to local disk
+     * (`<cwd>/data/account-archives`), which is lost when the MIG recreates the VM.
+     */
+    ACCOUNT_ARCHIVE_S3_BUCKET: z.string().optional(),
     REKOGNITION_COLLECTION_ID: z.string().min(3),
     REKOGNITION_QUALITY_FILTER: z.enum(['NONE', 'AUTO', 'LOW', 'MEDIUM', 'HIGH']).default('AUTO'),
     // Face thresholds below are the values tuned on GCP production (2026-09-08) and are
