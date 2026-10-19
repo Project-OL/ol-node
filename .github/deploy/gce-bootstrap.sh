@@ -99,6 +99,22 @@ echo "node $(node --version) / npm $(npm --version)"
 
 command -v pm2 >/dev/null 2>&1 || npm install -g pm2 --silent
 
+# pm2 never rotates its own logs, and both apps write one JSON line per request (ol-api pino,
+# Live-server since LIVE-44). copytruncate: pm2 keeps writing to the same file handle, no reload.
+cat > /etc/logrotate.d/pm2-olapp <<'ROTATE'
+/home/olapp/.pm2/logs/*.log {
+    su olapp olapp
+    daily
+    maxsize 200M
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+ROTATE
+
 if ! command -v nginx >/dev/null 2>&1; then
   echo "--- installing nginx ---"
   export DEBIAN_FRONTEND=noninteractive
