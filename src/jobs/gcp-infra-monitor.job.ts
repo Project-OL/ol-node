@@ -56,7 +56,11 @@ export function infraAlertRecipients(superAdminEmails: string[], extra: string[]
   ]
 }
 
-async function notifySuperAdmins(subject: string, text: string, html: string): Promise<void> {
+export async function notifySuperAdmins(
+  subject: string,
+  text: string,
+  html: string,
+): Promise<void> {
   const superAdmins = await systemAdminRepository.findAllByRole('SUPER_ADMIN', 'ACTIVE')
   const recipients = infraAlertRecipients(
     superAdmins.map((a) => a.email),

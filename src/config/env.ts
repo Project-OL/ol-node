@@ -104,6 +104,8 @@ const envSchema = z
     GCP_BILLING_BQ_DATASET: z.string().optional(),
     /** OBS-04: BigQuery dataset for the daily business metrics job (unset = job off). */
     BUSINESS_METRICS_BQ_DATASET: z.string().optional(),
+    /** INF-23: Cloud Run ol-scaler URL (capacity changes from the admin page). Unset = page read-only "not configured". */
+    OL_SCALER_URL: z.string().url().optional(),
     /** Hours an unresolved GCP infra flag waits before re-emailing SUPER_ADMINs. */
     GCP_INFRA_ALERT_RENOTIFY_HOURS: z.coerce.number().int().positive().default(6),
     /** INF-22: low-usage ("consider downgrading") flags re-email at most this often (default weekly). */

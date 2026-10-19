@@ -1,0 +1,13 @@
+{
+  "name": "ol-scaler",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "INF-23: the only service allowed to change production capacity (API group autoscaler, Redis size). Hard caps live here.",
+  "main": "index.js",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test index.test.js"
+  }
+}

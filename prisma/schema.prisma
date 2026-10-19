@@ -3681,6 +3681,17 @@ enum AdminStatus {
   SUSPENDED
 }
 
+/// INF-23: per-SUPER_ADMIN "ops password" for capacity changes (admin_id = system_admins.id).
+/// Set only by the CLI on the VM (dist/cli/set-ops-password.js), never through the API.
+model AdminOpsCredential {
+  adminId      String   @id @map("admin_id")
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("admin_ops_credentials")
+}
+
 model SystemAdmin {
   id                String      @id @default(uuid())
   email             String      @unique
