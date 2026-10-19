@@ -102,6 +102,8 @@ const envSchema = z
     GCP_PROJECT_ID: z.string().optional(),
     /** BigQuery dataset the GCP Billing Export writes to, e.g. "billing_export". */
     GCP_BILLING_BQ_DATASET: z.string().optional(),
+    /** OBS-04: BigQuery dataset for the daily business metrics job (unset = job off). */
+    BUSINESS_METRICS_BQ_DATASET: z.string().optional(),
     /** Hours an unresolved GCP infra flag waits before re-emailing SUPER_ADMINs. */
     GCP_INFRA_ALERT_RENOTIFY_HOURS: z.coerce.number().int().positive().default(6),
     /** INF-22: low-usage ("consider downgrading") flags re-email at most this often (default weekly). */
