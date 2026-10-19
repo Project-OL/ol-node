@@ -55,6 +55,7 @@ import guardianRoutes from './routes/v1/guardian.routes'
 import { registerAdminAuthRoutes } from './routes/v1/admin-auth.routes'
 import otpDeliveryAdminRoutes from './routes/v1/otp-delivery-admin.routes'
 import gcpInfraAdminRoutes from './routes/v1/gcp-infra-admin.routes'
+import infraCapacityAdminRoutes from './routes/v1/infra-capacity-admin.routes'
 import superHostRoutes from './routes/v1/super-host.routes'
 import { supportRoutes } from './routes/v1/support.routes'
 import storeRoutes from './routes/v1/store.routes'
@@ -269,6 +270,7 @@ export async function buildApp() {
       await registerAdminAuthRoutes(adminApp)
       await adminApp.register(otpDeliveryAdminRoutes)
       await adminApp.register(gcpInfraAdminRoutes)
+      await adminApp.register(infraCapacityAdminRoutes)
       await adminApp.register(systemSettingsAdminRoutes)
       await adminApp.register(superHostRoutes)
       await adminApp.register(storeAdminRoutes)
