@@ -145,7 +145,7 @@ async function writeDays(dataset: string, rows: Row[]) {
   // DML (not streaming inserts) so the DELETE of a re-run is never blocked by a streaming buffer.
   await bq.query({
     query: `BEGIN TRANSACTION;
-            DELETE FROM ${ref} WHERE day IN UNNEST(@days);
+            DELETE FROM ${ref} WHERE day IN (SELECT DATE(d) FROM UNNEST(@days) d);
             INSERT INTO ${ref} (day, metric, value, computed_at)
               SELECT DATE(r.day), r.metric, r.value, CURRENT_TIMESTAMP() FROM UNNEST(@rows) r;
             COMMIT TRANSACTION;`,
