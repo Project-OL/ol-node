@@ -121,7 +121,8 @@ cat > /etc/logrotate.d/pm2-olapp <<'ROTATE'
 ROTATE
 
 # OBS-01: Ops Agent for VM memory/disk metrics (alert policies "VM memory > 85%", "VM disk > 85%")
-# and the pm2 *-error.log files only (log-based metrics live_process_failures, ledger_unavailable).
+# and the pm2 *-error.log files (log pm2_errors: log metrics live_process_failures, ledger_unavailable),
+# plus error-level lines only, parsed for Error Reporting (logs ol_api_errors, ol_live_errors; OBS-02).
 # Syslog is deliberately not shipped. Needs roles/logging.logWriter + roles/monitoring.metricWriter
 # on the instance service account. A failed install only warns: the apps don't depend on it.
 if ! systemctl list-unit-files 2>/dev/null | grep -q google-cloud-ops-agent; then
@@ -138,12 +139,62 @@ logging:
       type: files
       include_paths:
         - /home/olapp/.pm2/logs/*-error.log
+    ol_api_errors:
+      type: files
+      include_paths:
+        - /home/olapp/.pm2/logs/ol-api-out.log
+    ol_live_errors:
+      type: files
+      include_paths:
+        - /home/olapp/.pm2/logs/ol-live-error.log
+  processors:
+    api_keep_errors:
+      type: exclude_logs
+      match_any:
+        - 'NOT jsonPayload.message =~ "\"level\":(50|60)[,}]"'
+    live_keep_errors:
+      type: exclude_logs
+      match_any:
+        - 'NOT jsonPayload.message =~ "\"level\":\"(error|fatal)\""'
+    parse:
+      type: parse_json
+      field: message
+    api_error_event:
+      type: modify_fields
+      fields:
+        severity:
+          static_value: ERROR
+        jsonPayload."@type":
+          static_value: type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent
+        jsonPayload.serviceContext.service:
+          static_value: ol-api
+        jsonPayload.message:
+          copy_from: jsonPayload.msg
+        jsonPayload.stack_trace:
+          copy_from: jsonPayload.err.stack
+    live_error_event:
+      type: modify_fields
+      fields:
+        severity:
+          static_value: ERROR
+        jsonPayload."@type":
+          static_value: type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent
+        jsonPayload.serviceContext.service:
+          static_value: live-server
+        jsonPayload.message:
+          copy_from: jsonPayload.msg
   service:
     pipelines:
       default_pipeline:
         receivers: []
       pm2:
         receivers: [pm2_errors]
+      api_errors:
+        receivers: [ol_api_errors]
+        processors: [api_keep_errors, parse, api_error_event]
+      live_errors:
+        receivers: [ol_live_errors]
+        processors: [live_keep_errors, parse, live_error_event]
 metrics:
   receivers:
     hostmetrics:
