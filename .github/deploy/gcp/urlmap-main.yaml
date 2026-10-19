@@ -23,5 +23,8 @@ pathMatchers:
     - /socket.io/*
     - /api/v1/admin/live/*
     service: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-live-backend
+  - paths:
+    - /ws
+    service: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-ws-backend
 - defaultService: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-admin-backend
   name: admin-matcher

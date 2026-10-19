@@ -313,9 +313,10 @@ describe('accountDeletionService.runDeletionJob', () => {
     expect(result.errors).toHaveLength(0)
     expect(auditLog).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: 'system',
+        userId: null,
         actionType: 'ACCOUNT_DELETION_JOB_COMPLETED',
         actionStatus: 'success',
+        actionDetails: expect.objectContaining({ actor: 'system' }),
       }),
     )
   })

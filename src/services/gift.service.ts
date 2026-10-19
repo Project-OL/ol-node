@@ -183,12 +183,18 @@ export const giftService = {
     const existing = await giftRepository.findById(giftId)
     if (!existing) throw new AppError(404, 'Gift not found', 'NOT_FOUND')
     const g = await giftRepository.softDelete(giftId)
-    await invalidateGiftCaches(existing.tags.map((t: { tag: string }) => t.tag), giftId)
+    await invalidateGiftCaches(
+      existing.tags.map((t: { tag: string }) => t.tag),
+      giftId,
+    )
     return g
   },
 
   async invalidateCachesForGift(g: GiftWithTags) {
-    await invalidateGiftCaches(g.tags.map((t) => t.tag), g.id)
+    await invalidateGiftCaches(
+      g.tags.map((t) => t.tag),
+      g.id,
+    )
   },
 
   async invalidateAllGiftCaches() {

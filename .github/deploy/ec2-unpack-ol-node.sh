@@ -10,6 +10,7 @@
 # Env flags (production 2-EC2):
 #   RUN_MIGRATE=1|0     default 1 — set 0 on replica EC2 (#2)
 #   RESTART_WORKERS=1|0 default 1 — set 0 on replica EC2 (#2)
+#   RESTART_API=1|0     default 1 — set 0 on a GCE role=core node (no ol-api there)
 #
 # Migrations: uses DATABASE_DIRECT_URL when set (RDS Proxy bypass), else DATABASE_URL.
 # Secrets stay in APP_DIR/.env (not in the artifact).
@@ -27,6 +28,7 @@ fi
 ARTIFACT="${ARTIFACT:-/tmp/ol-node-artifact.tgz}"
 RUN_MIGRATE="${RUN_MIGRATE:-1}"
 RESTART_WORKERS="${RESTART_WORKERS:-1}"
+RESTART_API="${RESTART_API:-1}"
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=512}"
 
 if [ ! -f "$ARTIFACT" ]; then
@@ -75,6 +77,7 @@ as_olapp env \
   APP_DIR="$APP_DIR" \
   RUN_MIGRATE="$RUN_MIGRATE" \
   RESTART_WORKERS="$RESTART_WORKERS" \
+  RESTART_API="$RESTART_API" \
   NODE_OPTIONS="$NODE_OPTIONS" \
   PATH="$PATH" \
   bash -c '
@@ -136,22 +139,26 @@ OL_API_INSTANCES="${OL_API_INSTANCES:-1}"
 api_count=$(pm2 id ol-api 2>/dev/null | grep -o "[0-9][0-9]*" | wc -l | tr -d " ")
 api_exec=$(pm2 describe ol-api 2>/dev/null | grep -o "cluster_mode\|fork_mode" | head -1)
 if [ "$api_count" = "0" ] || [ -z "$api_exec" ]; then api_mode="none"; else api_mode="$api_exec:$api_count"; fi
-if [ "$OL_API_INSTANCES" -gt 1 ] 2>/dev/null; then
-  if [ "$api_mode" = "cluster_mode:$OL_API_INSTANCES" ]; then
-    echo "pm2 reload ol-api ($api_mode)"
-    pm2 reload ol-api
-  else
-    echo "ol-api $api_mode -> cluster x$OL_API_INSTANCES (delete + start)"
-    pm2 delete ol-api >/dev/null 2>&1 || true
-    pm2 start dist/server.js --name ol-api -i "$OL_API_INSTANCES" --merge-logs
-  fi
+if [ "$RESTART_API" != "1" ]; then
+  echo "skipping ol-api (RESTART_API=0)"
 else
-  if [ "${api_mode%%:*}" = "cluster_mode" ]; then
-    echo "ol-api $api_mode -> fork (delete + start)"
-    pm2 delete ol-api >/dev/null 2>&1 || true
-    pm2 start dist/server.js --name ol-api
+  if [ "$OL_API_INSTANCES" -gt 1 ] 2>/dev/null; then
+    if [ "$api_mode" = "cluster_mode:$OL_API_INSTANCES" ]; then
+      echo "pm2 reload ol-api ($api_mode)"
+      pm2 reload ol-api
+    else
+      echo "ol-api $api_mode -> cluster x$OL_API_INSTANCES (delete + start)"
+      pm2 delete ol-api >/dev/null 2>&1 || true
+      pm2 start dist/server.js --name ol-api -i "$OL_API_INSTANCES" --merge-logs
+    fi
   else
-    pm2_ensure ol-api dist/server.js
+    if [ "${api_mode%%:*}" = "cluster_mode" ]; then
+      echo "ol-api $api_mode -> fork (delete + start)"
+      pm2 delete ol-api >/dev/null 2>&1 || true
+      pm2 start dist/server.js --name ol-api
+    else
+      pm2_ensure ol-api dist/server.js
+    fi
   fi
 fi
 if [ "$RESTART_WORKERS" = "1" ]; then

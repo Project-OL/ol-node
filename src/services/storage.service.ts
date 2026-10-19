@@ -87,8 +87,11 @@ export const storageService = {
     body: Buffer
     contentType: string
     cacheControl?: string
+    /** Another bucket reachable with the same client (e.g. a private one). Defaults to `s3Bucket`. */
+    bucket?: string
   }): Promise<void> {
-    if (!s3Bucket) {
+    const bucket = params.bucket ?? s3Bucket
+    if (!bucket) {
       throw new AppError(500, 'S3 bucket not configured', 'S3_NOT_CONFIGURED')
     }
     if (s3CircuitBreaker.shouldSkip()) {
@@ -97,7 +100,7 @@ export const storageService = {
     try {
       await s3Client.send(
         new PutObjectCommand({
-          Bucket: s3Bucket,
+          Bucket: bucket,
           Key: params.key,
           Body: params.body,
           ContentType: params.contentType,

@@ -1,11 +1,37 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { prisma, prismaRead } from '../config/database'
+import { env } from '../config/env'
+import { storageService } from '../services/storage.service'
 import { withDbRetry } from '../utils/prismaRetry'
 import { auditRepository } from './audit.repository'
 import type { UserStatus } from '../models/types'
 
 const ACCOUNT_ARCHIVE_DIR = path.join(process.cwd(), 'data', 'account-archives')
+
+/**
+ * Write an account-deletion archive (PII) and return where it went. A private bucket when
+ * ACCOUNT_ARCHIVE_S3_BUCKET is set, so the archive survives a MIG VM recreate and isn't split
+ * across API nodes; otherwise local disk, as before.
+ */
+export async function writeAccountArchive(filename: string, json: string): Promise<string> {
+  const archiveBucket = env.ACCOUNT_ARCHIVE_S3_BUCKET?.trim()
+  if (archiveBucket) {
+    const key = `account-archives/${filename}`
+    await storageService.putObjectBuffer({
+      bucket: archiveBucket,
+      key,
+      body: Buffer.from(json, 'utf8'),
+      contentType: 'application/json',
+      cacheControl: 'no-store',
+    })
+    return `s3://${archiveBucket}/${key}`
+  }
+  await fs.mkdir(ACCOUNT_ARCHIVE_DIR, { recursive: true })
+  const location = path.join(ACCOUNT_ARCHIVE_DIR, filename)
+  await fs.writeFile(location, json, 'utf8')
+  return location
+}
 
 export const userRepository = {
   async create(data: {
@@ -337,12 +363,12 @@ export const userRepository = {
     }
     const dataSize = JSON.stringify(archivePayload).length
     let archiveLocation: string | null = null
+    const filename = `${userId}-${now.getTime()}.json`
+    const archiveJson = JSON.stringify(archivePayload, null, 2)
     try {
-      await fs.mkdir(ACCOUNT_ARCHIVE_DIR, { recursive: true })
-      const filename = `${userId}-${now.getTime()}.json`
-      archiveLocation = path.join(ACCOUNT_ARCHIVE_DIR, filename)
-      await fs.writeFile(archiveLocation, JSON.stringify(archivePayload, null, 2), 'utf8')
+      archiveLocation = await writeAccountArchive(filename, archiveJson)
     } catch (err) {
+      archiveLocation = null
       console.error('[AccountDeletion] Archive write failed:', err)
     }
 

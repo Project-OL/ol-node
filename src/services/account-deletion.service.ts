@@ -315,11 +315,14 @@ export const accountDeletionService = {
       )
     }
 
+    // audit_logs.user_id is a UUID column: 'system' made every one of these inserts fail (P2023,
+    // ~1.8k lost rows by 2026-10-19). A job has no subject user; the actor goes in the details.
     await auditService.log({
-      userId: 'system',
+      userId: null,
       actionType: 'ACCOUNT_DELETION_JOB_COMPLETED',
       actionStatus: errors.length === 0 ? 'success' : 'failed',
       actionDetails: {
+        actor: 'system',
         deletedCount: accountsToDelete.length,
         errorCount: errors.length,
         partial: errors.length > 0,

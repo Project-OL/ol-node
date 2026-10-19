@@ -16,6 +16,8 @@ describe('isLuckyGift', () => {
   it('is not lucky otherwise', () => {
     expect(isLuckyGift({ isLucky: false, category: null })).toBe(false)
     expect(isLuckyGift({ isLucky: false })).toBe(false)
-    expect(isLuckyGift({ isLucky: false, category: { name: 'Lucky Box', slug: 'lucky-box' } })).toBe(false)
+    expect(
+      isLuckyGift({ isLucky: false, category: { name: 'Lucky Box', slug: 'lucky-box' } }),
+    ).toBe(false)
   })
 })

@@ -17,7 +17,9 @@ export function trustProxySetting(): boolean | ((addr: string, hop: number) => b
  * addresses (hop 0 = the socket peer). Safe here because the app VMs have no public address, so the
  * socket peer is always the LB (prod) or nginx (staging).
  */
-export function trustProxyFromHops(hops: number | undefined): boolean | ((addr: string, hop: number) => boolean) {
+export function trustProxyFromHops(
+  hops: number | undefined,
+): boolean | ((addr: string, hop: number) => boolean) {
   if (hops === undefined) return true
   return (_addr: string, hop: number) => hop < hops
 }

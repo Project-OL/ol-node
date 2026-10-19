@@ -526,9 +526,12 @@ echo "RC=0"
         @('compute', 'health-checks', 'create', 'http', $h[0], '--global', "--port=$($h[1])", "--request-path=$($h[2])",
           "--check-interval=$($h[3])", '--timeout=5s', '--healthy-threshold=2', "--unhealthy-threshold=$($h[4])")
     }
-    # All three EXTERNAL_MANAGED (the old project mixed EXTERNAL + EXTERNAL_MANAGED).
+    # All EXTERNAL_MANAGED (the old project mixed EXTERNAL + EXTERNAL_MANAGED).
+    # ws-backend: the LB backend timeout caps an idle websocket, so /ws needs its own
+    # 3600s service instead of sharing the 30s API one (INF-01, 2026-10-10).
     $bes = @(
       , @('ol-node-rest-backend', 'http', 'ol-node-rest-hc', '30s', 'NONE')
+      , @('ol-node-rest-ws-backend', 'http', 'ol-node-rest-hc', '3600s', 'NONE')
       , @('ol-node-rest-live-backend', 'live', 'ol-node-rest-live-hc', '3600s', 'CLIENT_IP')   # websockets
       , @('ol-node-rest-admin-backend', 'admin', 'ol-node-rest-admin-hc', '30s', 'NONE')
     )
