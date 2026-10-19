@@ -140,7 +140,8 @@ ROTATE
 
 # OBS-01: Ops Agent for VM memory/disk metrics (alert policies "VM memory > 85%", "VM disk > 85%")
 # and the pm2 *-error.log files (log pm2_errors: log metrics live_process_failures, ledger_unavailable),
-# plus error-level lines only, parsed for Error Reporting (logs ol_api_errors, ol_live_errors; OBS-02).
+# plus error-level lines only, parsed for Error Reporting (logs ol_api_errors, ol_live_errors; OBS-02),
+# and /var/log/auth.log (log system_auth; alert on SSH logins not via IAP, OBS-08).
 # Syslog is deliberately not shipped. Needs roles/logging.logWriter + roles/monitoring.metricWriter
 # on the instance service account. A failed install only warns: the apps don't depend on it.
 if ! systemctl list-unit-files 2>/dev/null | grep -q google-cloud-ops-agent; then
@@ -165,6 +166,10 @@ logging:
       type: files
       include_paths:
         - /home/olapp/.pm2/logs/ol-live-error.log
+    system_auth:
+      type: files
+      include_paths:
+        - /var/log/auth.log
   processors:
     api_keep_errors:
       type: exclude_logs
@@ -213,6 +218,8 @@ logging:
       live_errors:
         receivers: [ol_live_errors]
         processors: [live_keep_errors, parse, live_error_event]
+      auth:
+        receivers: [system_auth]
 metrics:
   receivers:
     hostmetrics:

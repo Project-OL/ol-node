@@ -89,11 +89,13 @@ import { RANKING_BACKFILL_QUEUE } from '../queues/ranking.constants'
 import { registerRankingReconcileJob } from '../queues/ranking.queue'
 import { processRankingBackfillJob } from '../jobs/ranking-backfill.job'
 import { runGcpInfraMonitorJob } from '../jobs/gcp-infra-monitor.job'
+import { runBusinessMetricsJob } from '../jobs/business-metrics.job'
 import type { WorkerFamily } from './family'
 
 const ACCOUNT_DELETION_QUEUE = 'account-deletion'
 const FACE_REGISTRATION_SWEEP_QUEUE = 'face-registration-sweep'
 const GCP_INFRA_MONITOR_QUEUE = 'gcp-infra-monitor'
+const BUSINESS_METRICS_QUEUE = 'business-metrics'
 
 /**
  * Payroll, expiry, agency, live-session, and other non-chat workers.
@@ -189,6 +191,29 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       removeOnComplete: 1000,
       removeOnFail: 500,
     },
+  )
+
+  // OBS-04: yesterday's (and the day before's) IST business metrics to BigQuery, 01:00 IST.
+  // The job is a no-op unless BUSINESS_METRICS_BQ_DATASET is set.
+  const businessMetricsQueue = new Queue(BUSINESS_METRICS_QUEUE, { connection })
+  await businessMetricsQueue.add(
+    'run',
+    {},
+    {
+      repeat: { pattern: '0 1 * * *', tz: 'Asia/Kolkata' },
+      jobId: 'business-metrics-daily-1am-ist',
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 60_000 },
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    },
+  )
+  const businessMetricsWorker = new Worker(
+    BUSINESS_METRICS_QUEUE,
+    async () => {
+      await runBusinessMetricsJob()
+    },
+    { connection, concurrency: 1 },
   )
 
   const gcpInfraMonitorWorker = new Worker(
@@ -633,6 +658,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await faceRegistrationSweepQueue.close()
       await gcpInfraMonitorWorker.close()
       await gcpInfraMonitorQueue.close()
+      await businessMetricsWorker.close()
+      await businessMetricsQueue.close()
     },
   }
 }
