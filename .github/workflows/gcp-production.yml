@@ -232,6 +232,22 @@ jobs:
             --quiet \
             --command "$check"
 
+      # Keeps <bucket>/ol-node-rest/latest.tgz equal to what is actually running, so a
+      # VM the MIG (re)creates via .github/deploy/gce-bootstrap.sh boots this build
+      # instead of a stale one. Runs after the main VM's health check passed, and BEFORE the
+      # API-node rollout, so a node the autoscaler adds mid-rollout boots this build too
+      # (2026-10-20: one added during a deploy would otherwise have booted the previous one).
+      # Opt-in: skipped until vars.GCP_RELEASE_BUCKET is set (the deploy service account also
+      # needs roles/storage.objectUser on that bucket).
+      - name: Publish release for the MIG bootstrap
+        if: vars.GCP_RELEASE_BUCKET != ''
+        env:
+          RELEASE_BUCKET: ${{ vars.GCP_RELEASE_BUCKET }}
+        run: |
+          gcloud storage cp ol-node-artifact.tgz "$RELEASE_BUCKET/ol-node-rest/$GITHUB_SHA.tgz" --quiet
+          gcloud storage cp ol-node-artifact.tgz "$RELEASE_BUCKET/ol-node-rest/latest.tgz" --quiet
+          gcloud storage ls -l "$RELEASE_BUCKET/ol-node-rest/latest.tgz"
+
       # Migration already ran once on GCE_INSTANCE above, so API nodes only unpack and
       # restart ol-api. One node at a time, each must pass /health/ready before the next,
       # so the LB always has healthy capacity. A failure stops the rollout; nodes not yet
@@ -250,6 +266,12 @@ jobs:
           for line in "${nodes[@]}"; do
             name="${line%%[[:space:]]*}"
             zone="${line##*[[:space:]]}"
+            # The autoscaler may remove a node while the rollout runs; skip it instead of hanging.
+            status=$(gcloud compute instances describe "$name" --project "$GCP_PROJECT_ID" --zone "$zone" --format="value(status)" 2>/dev/null || true)
+            if [ "$status" != "RUNNING" ]; then
+              echo "=== $name ($zone) is ${status:-gone}; skipping ==="
+              continue
+            fi
             echo "=== $name ($zone) ==="
             gcloud compute scp ol-node-artifact.tgz "${name}:/tmp/ol-node-artifact.tgz" \
               --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet
@@ -262,17 +284,3 @@ jobs:
             gcloud compute ssh "$name" --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet \
               --command "for i in \$(seq 1 20); do if curl -fsS http://127.0.0.1:3000/health/ready >/dev/null; then echo 'ready'; exit 0; fi; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; exit 1"
           done
-
-      # Keeps <bucket>/ol-node-rest/latest.tgz equal to what is actually running, so a
-      # VM the MIG (re)creates via .github/deploy/gce-bootstrap.sh boots this build
-      # instead of a stale one. Runs only after the health check passed. Opt-in: skipped
-      # until vars.GCP_RELEASE_BUCKET (e.g. gs://ol-node-rest-releases) is set, because
-      # the deploy service account also needs roles/storage.objectUser on that bucket.
-      - name: Publish release for the MIG bootstrap
-        if: vars.GCP_RELEASE_BUCKET != ''
-        env:
-          RELEASE_BUCKET: ${{ vars.GCP_RELEASE_BUCKET }}
-        run: |
-          gcloud storage cp ol-node-artifact.tgz "$RELEASE_BUCKET/ol-node-rest/$GITHUB_SHA.tgz" --quiet
-          gcloud storage cp ol-node-artifact.tgz "$RELEASE_BUCKET/ol-node-rest/latest.tgz" --quiet
-          gcloud storage ls -l "$RELEASE_BUCKET/ol-node-rest/latest.tgz"
