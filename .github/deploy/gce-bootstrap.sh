@@ -78,7 +78,12 @@ echo "release bucket           : '$BUCKET'"
 echo "admin hostnames          : '$ADMIN_HOSTNAMES'"
 
 # ---------------------------------------------------------------- 1. base packages
-CURRENT_NODE_MAJOR="$(node --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/')"
+# `command -v` first: on a fresh image there is no node, and under `set -euo pipefail` a failing
+# `node --version` in this pipeline aborted the whole bootstrap (exit 127; caught by the v4 canary).
+CURRENT_NODE_MAJOR=""
+if command -v node >/dev/null 2>&1; then
+  CURRENT_NODE_MAJOR="$(node --version | sed -E 's/^v([0-9]+).*/\1/')"
+fi
 if [ "$CURRENT_NODE_MAJOR" != "$NODE_MAJOR" ]; then
   # Installs Node when missing, or moves an existing box to NODE_MAJOR. The npm ci in
   # install_deps below then rebuilds native modules (bcrypt, sharp, prisma) for it.
@@ -114,6 +119,43 @@ cat > /etc/logrotate.d/pm2-olapp <<'ROTATE'
     copytruncate
 }
 ROTATE
+
+# OBS-01: Ops Agent for VM memory/disk metrics (alert policies "VM memory > 85%", "VM disk > 85%")
+# and the pm2 *-error.log files only (log-based metrics live_process_failures, ledger_unavailable).
+# Syslog is deliberately not shipped. Needs roles/logging.logWriter + roles/monitoring.metricWriter
+# on the instance service account. A failed install only warns: the apps don't depend on it.
+if ! systemctl list-unit-files 2>/dev/null | grep -q google-cloud-ops-agent; then
+  echo "--- installing Google Cloud Ops Agent ---"
+  ( cd /tmp && curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh \
+      && bash add-google-cloud-ops-agent-repo.sh --also-install >/tmp/ops-agent-install.log 2>&1 \
+      && rm -f add-google-cloud-ops-agent-repo.sh ) || echo "WARNING: Ops Agent install failed (see /tmp/ops-agent-install.log)"
+fi
+if [ -d /etc/google-cloud-ops-agent ]; then
+  cat > /etc/google-cloud-ops-agent/config.yaml <<'YAML'
+logging:
+  receivers:
+    pm2_errors:
+      type: files
+      include_paths:
+        - /home/olapp/.pm2/logs/*-error.log
+  service:
+    pipelines:
+      default_pipeline:
+        receivers: []
+      pm2:
+        receivers: [pm2_errors]
+metrics:
+  receivers:
+    hostmetrics:
+      type: hostmetrics
+      collection_interval: 60s
+  service:
+    pipelines:
+      default_pipeline:
+        receivers: [hostmetrics]
+YAML
+  systemctl restart google-cloud-ops-agent || echo "WARNING: Ops Agent restart failed"
+fi
 
 if ! command -v nginx >/dev/null 2>&1; then
   echo "--- installing nginx ---"
