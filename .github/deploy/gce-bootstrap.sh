@@ -220,15 +220,52 @@ logging:
         processors: [live_keep_errors, parse, live_error_event]
       auth:
         receivers: [system_auth]
+YAML
+  # OBS-07: scrape LiveKit's Prometheus endpoint (livekit_* only) from the node that runs ol-live,
+  # once metadata livekit-metrics-target=<host:port> is set (the VPS firewall admits only our NAT IP).
+  # Only one node may scrape it, or every LiveKit series would be written once per API node.
+  LK_TARGET="$(meta livekit-metrics-target)"
+  LK_RECEIVER=""; LK_PIPE=""
+  if [ "$WANT_LIVE" = 1 ] && [ -n "$LK_TARGET" ]; then
+    LK_RECEIVER="    livekit:
+      type: prometheus
+      config:
+        scrape_configs:
+          - job_name: livekit
+            scrape_interval: 60s
+            static_configs:
+              - targets: ['${LK_TARGET}']
+            metric_relabel_configs:
+              - source_labels: [__name__]
+                regex: 'livekit_.*'
+                action: keep"
+    LK_PIPE="
+      livekit:
+        receivers: [livekit]"
+  fi
+  # OBS-06: OTLP on loopback for the API's traces (OTEL_TRACING=on), forwarded to Cloud Trace
+  # (needs roles/cloudtrace.agent on the instance service account).
+  cat >> /etc/google-cloud-ops-agent/config.yaml <<YAML
+combined:
+  receivers:
+    otlp:
+      type: otlp
+      grpc_endpoint: 127.0.0.1:4317
 metrics:
   receivers:
     hostmetrics:
       type: hostmetrics
       collection_interval: 60s
+${LK_RECEIVER}
   service:
     pipelines:
       default_pipeline:
-        receivers: [hostmetrics]
+        receivers: [hostmetrics]${LK_PIPE}
+traces:
+  service:
+    pipelines:
+      otlp:
+        receivers: [otlp]
 YAML
   systemctl restart google-cloud-ops-agent || echo "WARNING: Ops Agent restart failed"
 fi
