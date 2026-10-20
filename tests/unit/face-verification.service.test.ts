@@ -23,6 +23,12 @@ const redisSet = vi.fn()
 const redisEval = vi.fn()
 const redisDel = vi.fn()
 const redisNx = vi.fn()
+// BullMQ treats a non-ioredis `connection` as options and dials localhost:6379 itself, which made
+// this file slow and flaky under the full parallel run. The queue is not under test here.
+vi.mock('../../src/queues/face-registration.queue', () => ({
+  faceRegistrationQueue: { add: vi.fn() },
+  enqueueFaceRegistrationVerification: vi.fn(),
+}))
 vi.mock('../../src/config/redis', () => ({
   redisClient: {
     get: redisGet,
@@ -116,6 +122,10 @@ vi.mock('../../src/repositories/faceLivenessConfig.repository', () => ({
   },
 }))
 
+// Imported once, after the mocks. Importing it inside the first test spent that test's 5 s budget
+// under the full parallel run.
+const { faceVerificationService } = await import('../../src/services/face-verification.service')
+
 describe('faceVerificationService', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -141,7 +151,6 @@ describe('faceVerificationService', () => {
   })
 
   it('rejects registration when validation pipeline fails', async () => {
-    const { faceVerificationService } = await import('../../src/services/face-verification.service')
     runFullValidationPipeline.mockResolvedValue({
       isValid: false,
       errorCode: 'FACE_QUALITY_BLURRED',
@@ -150,14 +159,16 @@ describe('faceVerificationService', () => {
     await expect(
       faceVerificationService.registerFromUploadedKey(
         'u1',
-        { s3Key: 'face/register/u1/a.jpg', clientRequestId: '11111111-1111-1111-1111-111111111111' },
+        {
+          s3Key: 'face/register/u1/a.jpg',
+          clientRequestId: '11111111-1111-1111-1111-111111111111',
+        },
         {},
       ),
     ).rejects.toMatchObject({ code: 'FACE_QUALITY_BLURRED' })
   })
 
   it('passes at threshold boundary 90.0 and fails at 89.9', async () => {
-    const { faceVerificationService } = await import('../../src/services/face-verification.service')
     repo.getProfileByUserId.mockResolvedValue({
       id: 'p1',
       userId: 'u1',
@@ -166,7 +177,11 @@ describe('faceVerificationService', () => {
     })
     validateImageQuality.mockResolvedValue({ isValid: true, qualityScore: 80 })
 
-    searchFaceInCollection.mockResolvedValueOnce({ faceId: 'f1', similarity: 89.9, requestId: 'r1' })
+    searchFaceInCollection.mockResolvedValueOnce({
+      faceId: 'f1',
+      similarity: 89.9,
+      requestId: 'r1',
+    })
     const failRes = await faceVerificationService.verifyFromUploadedKey(
       'u1',
       { s3Key: 'face/verify/u1/a.jpg', clientRequestId: '11111111-1111-1111-1111-111111111111' },
@@ -184,7 +199,6 @@ describe('faceVerificationService', () => {
   })
 
   it('returns fail when matched face belongs to another user', async () => {
-    const { faceVerificationService } = await import('../../src/services/face-verification.service')
     repo.getProfileByUserId.mockResolvedValue({
       id: 'p1',
       userId: 'u1',
@@ -192,7 +206,11 @@ describe('faceVerificationService', () => {
       rekognitionFaceId: 'expected-face',
     })
     validateImageQuality.mockResolvedValue({ isValid: true })
-    searchFaceInCollection.mockResolvedValue({ faceId: 'other-face', similarity: 99, requestId: 'r3' })
+    searchFaceInCollection.mockResolvedValue({
+      faceId: 'other-face',
+      similarity: 99,
+      requestId: 'r3',
+    })
     const result = await faceVerificationService.verifyFromUploadedKey(
       'u1',
       { s3Key: 'face/verify/u1/a.jpg', clientRequestId: '33333333-3333-3333-3333-333333333333' },
@@ -202,7 +220,6 @@ describe('faceVerificationService', () => {
   })
 
   it('getMyFaceProfile includes referenceImageUrl from registration s3 key', async () => {
-    const { faceVerificationService } = await import('../../src/services/face-verification.service')
     repo.getProfileByUserId.mockResolvedValue({
       id: 'p1',
       userId: 'u1',
@@ -219,7 +236,6 @@ describe('faceVerificationService', () => {
   })
 
   it('getMyFaceProfile returns null referenceImageUrl when no profile', async () => {
-    const { faceVerificationService } = await import('../../src/services/face-verification.service')
     repo.getProfileByUserId.mockResolvedValue(null)
     const res = await faceVerificationService.getMyFaceProfile('u1')
     expect(res.referenceImageUrl).toBeNull()
@@ -227,7 +243,6 @@ describe('faceVerificationService', () => {
     expect(res.hasReference).toBe(false)
   })
   it('getMyFaceProfile reports PENDING_INDEX while a fresh registration is still processing', async () => {
-    const { faceVerificationService } = await import('../../src/services/face-verification.service')
     repo.getProfileByUserId.mockResolvedValue(null)
     findLatestRegistrationForUser.mockResolvedValue({
       id: 's1',
@@ -240,7 +255,6 @@ describe('faceVerificationService', () => {
   })
 
   it('getMyFaceProfile ignores a registration attempt older than the profile', async () => {
-    const { faceVerificationService } = await import('../../src/services/face-verification.service')
     repo.getProfileByUserId.mockResolvedValue({
       id: 'p1',
       userId: 'u1',
