@@ -1,3 +1,4 @@
+import './observability/tracing' // OBS-06: must stay first (no-op unless OTEL_TRACING=on)
 import { buildApp } from './app'
 import { env } from './config/env'
 import { prisma, prismaRead, connectDatabases } from './config/database'
