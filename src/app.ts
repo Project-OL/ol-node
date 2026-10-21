@@ -111,6 +111,7 @@ import { rootLogger } from './utils/rootLogger'
 import { registerRealtimeGateway } from './realtime/ws.gateway'
 import { globalRequestTimeoutHook } from './utils/requestTimeout'
 import { clientIp, trustProxySetting } from './utils/client-ip'
+import { isDraining } from './utils/drain'
 
 const REQUEST_TIMEOUT_MS = 30_000
 
@@ -119,9 +120,19 @@ export async function buildApp() {
     logger,
     genReqId: () => crypto.randomUUID(),
     trustProxy: trustProxySetting(),
-    connectionTimeout: REQUEST_TIMEOUT_MS,
-    keepAliveTimeout: 30_000,
+    // Keep idle connections longer than the Google LB's 600 s backend keepalive: with 30 s the LB
+    // often had to open a fresh connection to Mumbai, which cost far-away users ~4 round trips
+    // (p95 1.65 s vs 0.2 s for users near Mumbai, 2026-10-21). The socket inactivity timeout must
+    // not undercut it; slow requests are still capped by globalRequestTimeoutHook.
+    keepAliveTimeout: env.HTTP_KEEP_ALIVE_TIMEOUT_MS,
+    connectionTimeout: Math.max(REQUEST_TIMEOUT_MS, env.HTTP_KEEP_ALIVE_TIMEOUT_MS + 10_000),
     bodyLimit: env.REQUEST_BODY_LIMIT_BYTES,
+  })
+
+  // Graceful drain (utils/drain.ts): while shutting down, retire each connection after its response.
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (isDraining()) reply.header('connection', 'close')
+    return payload
   })
 
   app.setReplySerializer((payload, _statusCode) =>

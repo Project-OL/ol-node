@@ -24,6 +24,13 @@ vi.mock('../../src/config/redis', () => ({
   GIFT_LIST_CACHE_TTL: 300,
 }))
 
+// Thumbnail generation downloads the source image and uploads a WebP to storage; this test is about
+// cache invalidation, so keep it offline. null = "no thumbnail", the same result as a failed upload.
+const generateForSource = vi.fn(async (_url: string): Promise<string | null> => null)
+vi.mock('../../src/services/gift-thumbnail.service', () => ({
+  giftThumbnailService: { generateForSource: (url: string) => generateForSource(url) },
+}))
+
 // Cached pages the SCAN "finds", by pattern.
 const cachedKeys: Record<string, string[]> = {
   'gifts:list*': ['gifts:list:v3:1:20', 'gifts:list:v3:2:20', 'gifts:list:v2'],
@@ -61,7 +68,11 @@ describe('giftService.patch', () => {
     })
     // List pages are cached per page/limit, so they are found by SCAN, not by a fixed key.
     expect(redisScan).toHaveBeenCalledWith('0', 'MATCH', 'gifts:list*', 'COUNT', 200)
-    expect(redisDel).toHaveBeenCalledWith('gifts:list:v3:1:20', 'gifts:list:v3:2:20', 'gifts:list:v2')
+    expect(redisDel).toHaveBeenCalledWith(
+      'gifts:list:v3:1:20',
+      'gifts:list:v3:2:20',
+      'gifts:list:v2',
+    )
     expect(redisScan).toHaveBeenCalledWith('0', 'MATCH', 'gifts:tag:v3:classic:*', 'COUNT', 200)
     expect(redisDel).toHaveBeenCalledWith('gifts:tag:v3:classic:1:20')
     // Legacy tag keys are still dropped by name.
@@ -72,5 +83,9 @@ describe('giftService.patch', () => {
       'gifts:tag:classic',
     )
     expect(invalidateActiveMonthCaches).toHaveBeenCalled()
+    // A new display image gets a fresh thumbnail.
+    expect(generateForSource).toHaveBeenCalledWith(
+      'https://images.unsplash.com/photo-1562690868-60bbe7293e94',
+    )
   })
 })

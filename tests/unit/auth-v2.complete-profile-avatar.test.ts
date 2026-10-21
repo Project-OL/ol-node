@@ -52,6 +52,12 @@ vi.mock('../../src/config/redis', () => ({
   RedisKeys: {},
 }))
 
+// Resizing reads the uploaded photo from storage and writes a 512px copy; keep this test offline.
+// null = "keep the original URL", the same result as a failed storage read.
+vi.mock('../../src/services/avatar-resize.service', () => ({
+  avatarResizeService: { shrinkOwnedAvatarUrl: vi.fn(async () => null) },
+}))
+
 import { authV2Service } from '../../src/services/auth-v2.service'
 
 const userId = 'user-uuid-1'
@@ -80,9 +86,12 @@ describe('authV2Service.completeProfile avatar moderation', () => {
   })
 
   it('skips moderation and completes when avatarUrl is omitted', async () => {
-    findById
-      .mockResolvedValueOnce(pendingUser)
-      .mockResolvedValueOnce({ ...pendingUser, status: 'active', firstName: 'Ada', avatarUrl: null })
+    findById.mockResolvedValueOnce(pendingUser).mockResolvedValueOnce({
+      ...pendingUser,
+      status: 'active',
+      firstName: 'Ada',
+      avatarUrl: null,
+    })
     const out = await authV2Service.completeProfile(userId, {
       firstName: 'Ada',
       country: 'India',
@@ -112,14 +121,12 @@ describe('authV2Service.completeProfile avatar moderation', () => {
   it('scans owned avatar URL before activating profile', async () => {
     const avatarUrl = `https://cdn.example.com/avatars/${userId}/x.jpg`
     assertAvatarUrlNotNude.mockResolvedValueOnce(undefined)
-    findById
-      .mockResolvedValueOnce(pendingUser)
-      .mockResolvedValueOnce({
-        ...pendingUser,
-        status: 'active',
-        firstName: 'Ada',
-        avatarUrl,
-      })
+    findById.mockResolvedValueOnce(pendingUser).mockResolvedValueOnce({
+      ...pendingUser,
+      status: 'active',
+      firstName: 'Ada',
+      avatarUrl,
+    })
     await authV2Service.completeProfile(userId, {
       firstName: 'Ada',
       country: 'India',
@@ -131,14 +138,12 @@ describe('authV2Service.completeProfile avatar moderation', () => {
   })
 
   it('allows external avatar URLs without scanning (no mobile change)', async () => {
-    findById
-      .mockResolvedValueOnce(pendingUser)
-      .mockResolvedValueOnce({
-        ...pendingUser,
-        status: 'active',
-        firstName: 'Ada',
-        avatarUrl: 'https://lh3.googleusercontent.com/photo.jpg',
-      })
+    findById.mockResolvedValueOnce(pendingUser).mockResolvedValueOnce({
+      ...pendingUser,
+      status: 'active',
+      firstName: 'Ada',
+      avatarUrl: 'https://lh3.googleusercontent.com/photo.jpg',
+    })
     await authV2Service.completeProfile(userId, {
       firstName: 'Ada',
       country: 'India',
@@ -154,7 +159,11 @@ describe('authV2Service.completeProfile avatar moderation', () => {
 
   it('does not activate profile when nudity is detected on owned S3 avatar', async () => {
     assertAvatarUrlNotNude.mockRejectedValueOnce(
-      new AppError(400, 'This photo cannot be used as a profile picture.', 'AVATAR_NUDITY_DETECTED'),
+      new AppError(
+        400,
+        'This photo cannot be used as a profile picture.',
+        'AVATAR_NUDITY_DETECTED',
+      ),
     )
     findById.mockResolvedValueOnce(pendingUser)
     await expect(

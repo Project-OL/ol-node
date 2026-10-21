@@ -7,6 +7,7 @@ import { ensureCollectionExists } from './lib/rekognition.client'
 import { describeStorageTarget } from './config/s3'
 import { withShutdownTimeout } from './utils/shutdownTimeout'
 import { startInternalApi } from './internal/internal-app'
+import { drainFor } from './utils/drain'
 
 async function start() {
   // Log the resolved object-storage target first. Which store a process talks to is
@@ -36,7 +37,10 @@ async function start() {
 
   const shutdown = async (signal: string, options: { exitCode: number }) => {
     try {
-      app.log.info({ signal }, 'Shutting down gracefully...')
+      app.log.info({ signal, drainMs: env.SHUTDOWN_DRAIN_MS }, 'Shutting down gracefully...')
+      // Retire the LB's pooled connections cleanly first (utils/drain.ts); 0 = skip. Not on a
+      // crash: then the process state is suspect and should stop at once.
+      if (options.exitCode === 0) await drainFor(env.SHUTDOWN_DRAIN_MS)
       await withShutdownTimeout(async () => {
         await app.close()
         await internalApp?.close()
