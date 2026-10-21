@@ -17,19 +17,27 @@ function getOtpHmacSecret(): string {
 }
 
 /** Hash OTP with HMAC-SHA256 (fast, constant-time compare). Never store plain OTP. */
-function hashOtp(otp: string): string {
-  return createHmac('sha256', getOtpHmacSecret()).update(otp).digest('hex')
+function hashOtp(otp: string, secret: string = getOtpHmacSecret()): string {
+  return createHmac('sha256', secret).update(otp).digest('hex')
 }
 
-/** Constant-time compare of OTP hash. */
-function verifyOtpHash(plainOtp: string, storedHash: string): boolean {
-  const computed = hashOtp(plainOtp)
+const hashesMatch = (computed: string, storedHash: string): boolean => {
   if (computed.length !== storedHash.length) return false
   try {
     return timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(storedHash, 'hex'))
   } catch {
     return false
   }
+}
+
+/**
+ * Constant-time compare of OTP hash. During a SEC-01 rotation of JWT_ACCESS_SECRET (the HMAC key),
+ * an OTP sent just before the switch was hashed with the previous key, so that is tried second.
+ */
+function verifyOtpHash(plainOtp: string, storedHash: string): boolean {
+  if (hashesMatch(hashOtp(plainOtp), storedHash)) return true
+  const previous = env.JWT_ACCESS_SECRET_PREVIOUS
+  return previous ? hashesMatch(hashOtp(plainOtp, previous), storedHash) : false
 }
 
 /** Generate 5-digit OTP. */
