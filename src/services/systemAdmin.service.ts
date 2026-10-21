@@ -13,7 +13,7 @@ import {
   type AdminProfileData,
 } from '../repositories/systemAdmin.repository'
 import { AppError } from '../middlewares/errorHandler'
-import { parseJwtExpiresToSeconds } from '../utils/jwt'
+import { parseJwtExpiresToSeconds, verifyRotating } from '../utils/jwt'
 import { normalizeIp } from '../utils/ipAddress'
 import { passwordService } from './password.service'
 import { adminAuthConfigService } from './adminAuthConfig.service'
@@ -268,7 +268,12 @@ export const systemAdminService = {
   async refresh(refreshToken: string) {
     let payload: AdminRefreshPayload
     try {
-      payload = jwt.verify(refreshToken, env.ADMIN_JWT_REFRESH_SECRET) as AdminRefreshPayload
+      payload = verifyRotating<AdminRefreshPayload>(
+        refreshToken,
+        env.ADMIN_JWT_REFRESH_SECRET,
+        env.ADMIN_JWT_REFRESH_SECRET_PREVIOUS,
+        {},
+      )
     } catch {
       throw new AppError(401, 'Invalid or expired refresh token', 'ADMIN_TOKEN_INVALID')
     }
@@ -351,7 +356,12 @@ export const systemAdminService = {
 
   async verifyAccessToken(token: string): Promise<AdminAccessPayload> {
     try {
-      const payload = jwt.verify(token, env.ADMIN_JWT_SECRET) as AdminAccessPayload
+      const payload = verifyRotating<AdminAccessPayload>(
+        token,
+        env.ADMIN_JWT_SECRET,
+        env.ADMIN_JWT_SECRET_PREVIOUS,
+        {},
+      )
       if (payload.iss !== 'offoo-admin' || payload.type !== 'access') {
         throw new Error('wrong token type')
       }

@@ -52,9 +52,16 @@ const envSchema = z
     JWT_ACCESS_EXPIRES_IN: z.string().default('1d'),
     JWT_REFRESH_EXPIRES_IN: z.string().default('99d'),
     JWT_REFRESH_SECRET: z.string().min(32).optional(), // if not set, uses JWT_ACCESS_SECRET (not recommended for prod)
+    // SEC-01: during a secret rotation, the old value. Tokens are signed with the current secret
+    // only; one whose signature fails the current check is retried with this (utils/jwt.ts
+    // verifyRotating). Unset = no fallback. Remove after the grace period.
+    JWT_ACCESS_SECRET_PREVIOUS: z.string().min(32).optional(),
+    JWT_REFRESH_SECRET_PREVIOUS: z.string().min(32).optional(),
 
     ADMIN_JWT_SECRET: z.string().min(32),
     ADMIN_JWT_REFRESH_SECRET: z.string().min(32),
+    ADMIN_JWT_SECRET_PREVIOUS: z.string().min(32).optional(),
+    ADMIN_JWT_REFRESH_SECRET_PREVIOUS: z.string().min(32).optional(),
     ADMIN_JWT_ACCESS_EXPIRES_IN: z.string().default('35m'),
     ADMIN_JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
     ADMIN_INITIAL_EMAIL: z.string().email().optional(),

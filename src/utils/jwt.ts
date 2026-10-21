@@ -15,6 +15,32 @@ export function parseJwtExpiresToSeconds(expiresIn: string): number {
 const ACCESS_SECRET = env.JWT_ACCESS_SECRET
 const REFRESH_SECRET = env.JWT_REFRESH_SECRET ?? env.JWT_ACCESS_SECRET
 
+/**
+ * SEC-01 rotation without logging anyone out: tokens are always signed with the current secret, and
+ * verified with the current one first. Only when that fails on the SIGNATURE is the optional
+ * `*_PREVIOUS` secret tried, so tokens issued before a rotation keep working during the grace period.
+ * Expiry and every other error come from the current-secret check, exactly as before. With no
+ * previous secret configured this is plain `jwt.verify`.
+ */
+export function verifyRotating<T>(
+  token: string,
+  current: string,
+  previous: string | undefined,
+  options: jwt.VerifyOptions,
+): T {
+  try {
+    return jwt.verify(token, current, options) as T
+  } catch (e) {
+    if (previous && e instanceof jwt.JsonWebTokenError && e.message === 'invalid signature') {
+      return jwt.verify(token, previous, options) as T
+    }
+    throw e
+  }
+}
+
+const ACCESS_PREVIOUS = env.JWT_ACCESS_SECRET_PREVIOUS
+const REFRESH_PREVIOUS = env.JWT_REFRESH_SECRET_PREVIOUS ?? env.JWT_ACCESS_SECRET_PREVIOUS
+
 export function signAccess(
   payload: Omit<JwtAccessPayload, 'iat' | 'exp'>,
   expiresIn?: string,
@@ -33,7 +59,9 @@ export function signRefresh(payload: Omit<JwtRefreshPayload, 'iat' | 'exp'>): st
 }
 
 export function verifyAccess(token: string): JwtAccessPayload {
-  return jwt.verify(token, ACCESS_SECRET, { algorithms: ['HS256'] }) as JwtAccessPayload
+  return verifyRotating<JwtAccessPayload>(token, ACCESS_SECRET, ACCESS_PREVIOUS, {
+    algorithms: ['HS256'],
+  })
 }
 
 /** Verify access JWT for logout; accepts cryptographically valid but expired tokens. */
@@ -42,15 +70,17 @@ export function verifyAccessForLogout(token: string): JwtAccessPayload {
     return verifyAccess(token)
   } catch (e) {
     if (e instanceof TokenExpiredError) {
-      return jwt.verify(token, ACCESS_SECRET, {
+      return verifyRotating<JwtAccessPayload>(token, ACCESS_SECRET, ACCESS_PREVIOUS, {
         algorithms: ['HS256'],
         ignoreExpiration: true,
-      }) as JwtAccessPayload
+      })
     }
     throw e
   }
 }
 
 export function verifyRefresh(token: string): JwtRefreshPayload {
-  return jwt.verify(token, REFRESH_SECRET, { algorithms: ['HS256'] }) as JwtRefreshPayload
+  return verifyRotating<JwtRefreshPayload>(token, REFRESH_SECRET, REFRESH_PREVIOUS, {
+    algorithms: ['HS256'],
+  })
 }
