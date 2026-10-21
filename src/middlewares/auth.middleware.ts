@@ -10,6 +10,7 @@ import {
 import { deviceBanService } from '../services/device-ban.service'
 import { userRepository } from '../repositories/user.repository'
 import { ensureUserMayAuthenticate } from '../utils/user-account-status'
+import { verifyAccess } from '../utils/jwt'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -94,7 +95,9 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
 
   let payload: JwtAccessPayload
   try {
-    payload = request.server.jwt.verify<JwtAccessPayload>(token)
+    // verifyAccess, not the @fastify/jwt plugin: it also accepts JWT_ACCESS_SECRET_PREVIOUS during
+    // a SEC-01 rotation, so a secret switch doesn't 401 every logged-in user at once.
+    payload = verifyAccess(token)
     await applyVerifiedAccessPayload(request, reply, payload)
   } catch (e) {
     if (e instanceof AppError) throw e
@@ -113,7 +116,7 @@ export async function authenticateOptional(request: FastifyRequest, reply: Fasti
   if (!token) return
 
   try {
-    const payload = request.server.jwt.verify<JwtAccessPayload>(token)
+    const payload = verifyAccess(token)
     await applyVerifiedAccessPayload(request, reply, payload)
   } catch {
     /* invalid, expired, or revoked — continue unauthenticated */
