@@ -149,9 +149,10 @@ else
     else
       echo "ol-api $api_mode -> cluster x$OL_API_INSTANCES (delete + start)"
       pm2 delete ol-api >/dev/null 2>&1 || true
-      # --kill-timeout: room for SHUTDOWN_DRAIN_MS + close (src/utils/drain.ts); pm2's 1.6 s default
-    # would kill a draining process. A running ol-api keeps its old value until delete + start.
-    pm2 start dist/server.js --name ol-api -i "$OL_API_INSTANCES" --merge-logs --kill-timeout 15000
+      # --kill-timeout: room for SHUTDOWN_DRAIN_MS + close (src/utils/drain.ts); the pm2 default of
+      # 1.6 s would kill a draining process. A running ol-api keeps its old value until delete + start.
+      # (No apostrophes in this block: it runs inside a single-quoted string.)
+      pm2 start dist/server.js --name ol-api -i "$OL_API_INSTANCES" --merge-logs --kill-timeout 15000
     fi
   else
     if [ "${api_mode%%:*}" = "cluster_mode" ]; then

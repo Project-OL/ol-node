@@ -56,6 +56,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The deploy pipes these into `bash -s`, which runs commands as it reads them: a syntax error
+      # near the end aborts only after the unpack and migrations ran (2026-10-21). Fail here instead.
+      - name: Syntax-check deploy scripts
+        run: for f in .github/deploy/*.sh; do bash -n "$f" || { echo "syntax error in $f"; exit 1; }; done
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
