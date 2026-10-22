@@ -26,6 +26,7 @@ import { RECHARGE_TX_TYPES, richTierService } from './rich-tier.service'
 import { epayClient } from '../lib/epay.client'
 import { enqueuePlatformLedgerMessage } from '../queues/platform-message.queue'
 import { isDiamondLedgerMovement } from '../config/diamond-ledger'
+import { assertPositiveAmount } from '../utils/transaction-amount-steps'
 
 /** Coins debited when changing display name via PATCH /users/me (`name` field). */
 export const USERNAME_CHANGE_COIN_COST = 10_000n
@@ -582,6 +583,7 @@ export const coinWalletService = {
     balanceAfter: bigint
     wealthLevelResult: LevelApplyResult | null
   }> {
+    assertPositiveAmount(amount)
     const existing = await coinLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
       return {
@@ -681,6 +683,7 @@ export const coinWalletService = {
     balanceAfter: bigint
     levelResult: Awaited<ReturnType<typeof walletLevelService.applyCredit>> | null
   }> {
+    assertPositiveAmount(amount)
     const existing = await coinLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
       return {

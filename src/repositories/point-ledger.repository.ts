@@ -4,6 +4,7 @@ import {
   matchesPointTransactionOrderNumber,
   parseOrderNumberTimestamp,
 } from '../utils/point-transaction-order'
+import { assertPositiveAmount } from '../utils/transaction-amount-steps'
 
 export type PointLedgerFilter = {
   walletId: string
@@ -36,6 +37,7 @@ export const pointLedgerRepository = {
       idempotencyKey: string
     },
   ) {
+    assertPositiveAmount(data.amount)
     return tx.pointLedgerEntry.create({ data })
   },
 

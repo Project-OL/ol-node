@@ -15,6 +15,7 @@ import {
   type PointSummaryPeriod,
 } from '../utils/datetime'
 import { formatPointsAsUsd } from '../utils/points-currency'
+import { assertPositiveAmount } from '../utils/transaction-amount-steps'
 import {
   buildPointAmountBreakdown,
   loadWithdrawalAmountContext,
@@ -263,6 +264,7 @@ export const pointWalletService = {
   }) {
     const { userId, amount, txType, refId, counterpartyId, description, metadata, idempotencyKey } =
       params
+    assertPositiveAmount(amount)
 
     const cached = await walletService.getCachedIdemResponse(idempotencyKey)
     if (cached) return cached
@@ -626,6 +628,7 @@ export const pointWalletService = {
     bustAgentUserId: string | null
     livestreamLevelResult: Awaited<ReturnType<typeof walletLevelService.applyCredit>> | null
   }> {
+    assertPositiveAmount(amount)
     const existing = await pointLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
       return {
@@ -759,6 +762,7 @@ export const pointWalletService = {
       freezeCheck?: boolean
     },
   ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
+    assertPositiveAmount(amount)
     const existing = await pointLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
       return {
@@ -837,6 +841,7 @@ export const pointWalletService = {
       refId?: string
     },
   ): Promise<{ ledgerEntryId: string; balanceAfter: bigint }> {
+    assertPositiveAmount(amount)
     const existing = await pointLedgerRepository.findByIdempotencyKey(tx, options.idempotencyKey)
     if (existing) {
       return {
