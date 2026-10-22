@@ -479,6 +479,8 @@ const envSchema = z
 
     /** Shared secret for LiveKit backend → ol-node-rest live session webhooks (must match LiveKit server). */
     LIVE_WEBHOOK_SECRET: z.string().min(32),
+    /** SEC-01 rotation: also accepted until Live-server sends the new value; remove after. */
+    LIVE_WEBHOOK_SECRET_PREVIOUS: z.string().min(32).optional(),
     LIVE_SESSION_TIMEOUT_HOURS: z.coerce.number().int().positive().default(6),
 
     /**
