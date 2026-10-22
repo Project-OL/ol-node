@@ -48,8 +48,17 @@ const envSchema = z
     REQUEST_LOG_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(1),
     /** Idle keep-alive timeout; above the Google LB's 600 s so it can reuse warm connections. */
     HTTP_KEEP_ALIVE_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(620_000),
-    /** utils/drain.ts. 0 = off. Needs pm2 --kill-timeout above drain + close time. */
-    SHUTDOWN_DRAIN_MS: z.coerce.number().int().min(0).max(30_000).default(0),
+    /**
+     * utils/drain.ts. 0 = off. Needs pm2 --kill-timeout above drain + close time (every ol-api
+     * start passes 15000: ec2-unpack-ol-node.sh, gce-bootstrap.sh). F09: default 5000 in production
+     * (as set on prod), 0 elsewhere so local watch-mode restarts stay instant.
+     */
+    SHUTDOWN_DRAIN_MS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(30_000)
+      .default(process.env.NODE_ENV === 'production' ? 5_000 : 0),
     REDIS_COMMAND_TIMEOUT_MS: z.coerce.number().default(3000),
 
     JWT_ACCESS_SECRET: z.string().min(32),

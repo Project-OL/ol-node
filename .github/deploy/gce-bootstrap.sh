@@ -396,9 +396,13 @@ start_app() {
 }
 # BE-19: ol-api instance count from its .env (default 1 = fork mode); see ec2-unpack-ol-node.sh.
 OL_API_INSTANCES=$(grep -E '^OL_API_INSTANCES=' "$APP_ROOT/ol-node-rest/.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '"\r' || true)
-API_EXTRA=""
+# --kill-timeout: room for SHUTDOWN_DRAIN_MS + close (ol-node-rest utils/drain.ts) and for
+# Live-server's graceful shutdown; the pm2 default of 1.6 s kills both mid-way (F09/F19, 2026-10-22:
+# autoscaled API nodes had the default). pm2 keeps it across reloads.
+KILL_TIMEOUT="--kill-timeout 15000"
+API_EXTRA="$KILL_TIMEOUT"
 if [ -n "$OL_API_INSTANCES" ] && [ "$OL_API_INSTANCES" -gt 1 ] 2>/dev/null; then
-  API_EXTRA="-i $OL_API_INSTANCES --merge-logs"
+  API_EXTRA="-i $OL_API_INSTANCES --merge-logs $KILL_TIMEOUT"
 fi
 if [ "$START_PROCESSES" = "false" ]; then
   echo "=== start-processes=false: provisioned but NOT starting any pm2 app (nginx/admin is up) ==="
@@ -417,7 +421,7 @@ else
   stop_app ol-api
 fi
 if [ "$WANT_LIVE" = 1 ]; then
-  start_app ol-live "$APP_ROOT/live-server" server.js
+  start_app ol-live "$APP_ROOT/live-server" server.js "$KILL_TIMEOUT"
 else
   stop_app ol-live
 fi
