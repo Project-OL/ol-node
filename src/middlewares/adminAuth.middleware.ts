@@ -5,6 +5,7 @@ import {
   normalizeAdminEndpoint,
   type AdminViewAccess,
 } from '../services/adminView.service'
+import { adminCountryScopeService } from '../services/adminCountryScope.service'
 import { redisClient, RedisKeys, ADMIN_ONLINE_TTL } from '../config/redis'
 import { env } from '../config/env'
 import { AppError } from './errorHandler'
@@ -74,6 +75,17 @@ export async function authenticateAdmin(req: FastifyRequest, _reply: FastifyRepl
       ) {
         throw new AppError(403, 'Endpoint not in your assigned views', 'ADMIN_VIEW_FORBIDDEN')
       }
+    }
+    // F05: a country-restricted admin only reaches users of their granted countries.
+    const routePath =
+      req.routeOptions?.url ?? (req as FastifyRequest & { routerPath?: string }).routerPath
+    if (routePath) {
+      await adminCountryScopeService.enforce(
+        payload.sub,
+        payload.role,
+        routePath.startsWith(API_PREFIX) ? routePath.slice(API_PREFIX.length) : routePath,
+        (req.params ?? {}) as Record<string, string | undefined>,
+      )
     }
   }
 
