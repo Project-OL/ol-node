@@ -119,12 +119,13 @@ fi
 pm2_ensure() {
   local name="$1"
   local script="$2"
+  shift 2
   if pm2 describe "$name" >/dev/null 2>&1; then
     echo "pm2 restart $name"
     pm2 restart "$name"
   else
-    echo "pm2 start $script --name $name"
-    pm2 start "$script" --name "$name"
+    echo "pm2 start $script --name $name $*"
+    pm2 start "$script" --name "$name" "$@"
   fi
 }
 
@@ -160,7 +161,7 @@ else
       pm2 delete ol-api >/dev/null 2>&1 || true
       pm2 start dist/server.js --name ol-api --kill-timeout 15000
     else
-      pm2_ensure ol-api dist/server.js
+      pm2_ensure ol-api dist/server.js --kill-timeout 15000
     fi
   fi
 fi
