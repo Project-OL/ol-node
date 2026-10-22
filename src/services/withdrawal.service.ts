@@ -548,6 +548,15 @@ export const withdrawalService = {
     },
     idem: string,
   ) {
+    // F04: the client key is stored on the withdrawal row (unique idempotency_key) in the debit
+    // transaction, so a retry finds it even after the Redis marker is gone (it is deleted on any
+    // error, including one after the commit, and expires). Redis stays only as a fast path.
+    const prior = await prisma.withdrawal.findUnique({
+      where: { idempotencyKey: idem },
+      select: { id: true },
+    })
+    if (prior) return withdrawalService.createWithdrawalResponse(userId, prior.id, idem)
+
     const faceIndexed = await faceVerificationRepository.isIndexedForUser(userId)
     if (!faceIndexed) {
       throw new AppError(
@@ -577,76 +586,100 @@ export const withdrawalService = {
     ])
     const amounts = calculateWithdrawalAmounts(params.grossPoints, config, methodType)
     const payoutHandler = payoutHandlerForMethod(methodType)
-    const localFx = resolveLocalFx(host?.country, config)
 
     const withdrawalId = randomUUID()
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.POINT)
+    let replayOf: string | null = null
 
     // Read Committed: the POINT wallet FOR UPDATE lock serializes the
     // availability check + escrow increment; the ledger/withdrawal keys are
     // derived from the (stable across retries) withdrawalId. Serializable
     // previously aborted every lock waiter with 40001 500s under parallel
     // withdrawal creation.
-    await withSerializationRetry(() =>
-      prisma.$transaction(
-        async (tx) => {
-          // Lock the POINT wallet row first so the availability check and hard debit
-          // are serialized against concurrent withdrawal creation.
-          await walletRepository.lockForUpdate(tx, wallet.id)
-          const walletRow = await tx.wallet.findUniqueOrThrow({
-            where: { id: wallet.id },
-            select: { unconfirmedPoints: true },
-          })
-          const last = await tx.pointLedgerEntry.findFirst({
-            where: { walletId: wallet.id },
-            orderBy: { createdAt: 'desc' },
-            select: { balanceAfter: true },
-          })
-          const totalPoints = last?.balanceAfter ?? 0n
-          const unconfirmed = walletRow.unconfirmedPoints ?? 0n
-          const available = totalPoints - unconfirmed
-          if (available < params.grossPoints) {
-            throw new AppError(400, 'Insufficient available points', 'INSUFFICIENT_POINTS', {
-              balance: available.toString(),
-              required: params.grossPoints.toString(),
-              unconfirmed: unconfirmed.toString(),
+    try {
+      await withSerializationRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            // Lock the POINT wallet row first so the availability check and hard debit
+            // are serialized against concurrent withdrawal creation.
+            await walletRepository.lockForUpdate(tx, wallet.id)
+            // F04: a concurrent create with the same key that committed while we waited on the lock.
+            const sameKey = await tx.withdrawal.findUnique({
+              where: { idempotencyKey: idem },
+              select: { id: true },
             })
-          }
+            if (sameKey) {
+              replayOf = sameKey.id
+              return
+            }
+            const walletRow = await tx.wallet.findUniqueOrThrow({
+              where: { id: wallet.id },
+              select: { unconfirmedPoints: true },
+            })
+            const last = await tx.pointLedgerEntry.findFirst({
+              where: { walletId: wallet.id },
+              orderBy: { createdAt: 'desc' },
+              select: { balanceAfter: true },
+            })
+            const totalPoints = last?.balanceAfter ?? 0n
+            const unconfirmed = walletRow.unconfirmedPoints ?? 0n
+            const available = totalPoints - unconfirmed
+            if (available < params.grossPoints) {
+              throw new AppError(400, 'Insufficient available points', 'INSUFFICIENT_POINTS', {
+                balance: available.toString(),
+                required: params.grossPoints.toString(),
+                unconfirmed: unconfirmed.toString(),
+              })
+            }
 
-          // Hard debit at request time — points leave the host wallet immediately.
-          await pointWalletService.debit(userId, params.grossPoints, PointTxType.WITHDRAWAL, tx, {
-            idempotencyKey: `withdrawal-debit:${withdrawalId}`,
-            refId: withdrawalId,
-            description: 'Withdrawal',
-            availabilityCheck: true,
-          })
+            // Hard debit at request time — points leave the host wallet immediately.
+            await pointWalletService.debit(userId, params.grossPoints, PointTxType.WITHDRAWAL, tx, {
+              idempotencyKey: `withdrawal-debit:${withdrawalId}`,
+              refId: withdrawalId,
+              description: 'Withdrawal',
+              availabilityCheck: true,
+            })
 
-          await withdrawalRepository.create(
-            {
-              id: withdrawalId,
-              walletId: wallet.id,
-              userId,
-              amountPoints: params.grossPoints,
-              status: methodType === 'EPAY' ? 'PENDING_PLATFORM' : 'PENDING',
-              paymentMethodId: method.id,
-              hostPayoutUsd: amounts.hostPayoutUsd,
-              platformFeePoints: amounts.platformFeePoints,
-              agentRewardPoints: amounts.agentRewardPoints,
-              serviceFeePoints: amounts.serviceFeePoints,
-              methodType,
-              payoutHandler,
-              idempotencyKey: `withdrawal:${userId}:${withdrawalId}`,
-              notes: params.notes ?? null,
-              withdrawalVersion: 2,
-            },
-            tx,
-          )
+            await withdrawalRepository.create(
+              {
+                id: withdrawalId,
+                walletId: wallet.id,
+                userId,
+                amountPoints: params.grossPoints,
+                status: methodType === 'EPAY' ? 'PENDING_PLATFORM' : 'PENDING',
+                paymentMethodId: method.id,
+                hostPayoutUsd: amounts.hostPayoutUsd,
+                platformFeePoints: amounts.platformFeePoints,
+                agentRewardPoints: amounts.agentRewardPoints,
+                serviceFeePoints: amounts.serviceFeePoints,
+                methodType,
+                payoutHandler,
+                // F04: `withdrawal-create:<userId>:<client key>` (rows before 2026-10-22 hold
+                // `withdrawal:<userId>:<withdrawalId>`); unique, written with the debit.
+                idempotencyKey: idem,
+                notes: params.notes ?? null,
+                withdrawalVersion: 2,
+              },
+              tx,
+            )
 
-          await userPaymentMethodRepository.touchLastUsed(method.id, userId, tx)
-        },
-        { timeout: INTERACTIVE_TX_MS },
-      ),
-    )
+            await userPaymentMethodRepository.touchLastUsed(method.id, userId, tx)
+          },
+          { timeout: INTERACTIVE_TX_MS },
+        ),
+      )
+    } catch (err) {
+      // Lost a race on the unique key outside the lock window: the whole transaction (debit
+      // included) rolled back; answer with the winner.
+      if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err
+      const winner = await prisma.withdrawal.findUnique({
+        where: { idempotencyKey: idem },
+        select: { id: true },
+      })
+      if (!winner) throw err
+      replayOf = winner.id
+    }
+    if (replayOf) return withdrawalService.createWithdrawalResponse(userId, replayOf, idem)
 
     await redisClient.del(RedisKeys.userPaymentMethods(userId))
     await walletService.adjustPointBalanceCache(userId, -params.grossPoints)
@@ -656,12 +689,56 @@ export const withdrawalService = {
       await withdrawalService.assignToAgency(withdrawalId)
     }
 
-    const refreshed = await prismaRead.withdrawal.findUniqueOrThrow({
-      where: { id: withdrawalId },
+    const response = await withdrawalService.createWithdrawalResponse(userId, withdrawalId, idem, {
+      config,
+      country: host?.country,
+      read: prismaRead,
     })
 
-    const hostPayoutUsdNum = Number(refreshed.hostPayoutUsd ?? 0)
-    const local = formatLocalAmount(hostPayoutUsdNum, localFx)
+    const pendingAssignment = await prismaRead.withdrawalPayrollAssignment.findFirst({
+      where: { withdrawalId, status: 'PENDING' },
+      orderBy: { createdAt: 'desc' },
+      select: { agencyUserId: true },
+    })
+    void enqueuePlatformWithdrawalMessage({
+      withdrawalId,
+      event: 'created',
+      hostUserId: userId,
+      agentUserId: pendingAssignment?.agencyUserId,
+    }).catch(() => {})
+
+    return response
+  },
+
+  /**
+   * The create response for a withdrawal, cached under the Redis idem key. A replay (F04) reads
+   * the primary, so a just-committed row is visible.
+   */
+  async createWithdrawalResponse(
+    userId: string,
+    withdrawalId: string,
+    idem: string,
+    ctx?: {
+      config: Parameters<typeof resolveLocalFx>[1]
+      country: string | null | undefined
+      read: typeof prismaRead
+    },
+  ) {
+    const read = ctx?.read ?? prisma
+    const [refreshed, config, country] = await Promise.all([
+      read.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } }),
+      ctx ? ctx.config : withdrawalService.getPayrollConfig(),
+      ctx
+        ? ctx.country
+        : prisma.user
+            .findUnique({ where: { id: userId }, select: { country: true } })
+            .then((u) => u?.country),
+    ])
+    const methodType = refreshed.methodType === 'BANK' ? 'BANK' : 'EPAY'
+    const local = formatLocalAmount(
+      Number(refreshed.hostPayoutUsd ?? 0),
+      resolveLocalFx(country, config),
+    )
     const response = {
       withdrawalId: refreshed.id,
       status: refreshed.status,
@@ -676,24 +753,11 @@ export const withdrawalService = {
       agentRewardPoints: refreshed.agentRewardPoints?.toString() ?? null,
       serviceFeePoints: refreshed.serviceFeePoints?.toString() ?? null,
       methodType: refreshed.methodType ?? methodType,
-      payoutHandler: refreshed.payoutHandler ?? payoutHandler,
+      payoutHandler: refreshed.payoutHandler ?? payoutHandlerForMethod(methodType),
       localCurrencyAmount: local.localCurrencyAmount,
       localCurrencyCode: local.localCurrencyCode,
     }
     await walletService.resolveIdemKey(idem, response)
-
-    const pendingAssignment = await prismaRead.withdrawalPayrollAssignment.findFirst({
-      where: { withdrawalId, status: 'PENDING' },
-      orderBy: { createdAt: 'desc' },
-      select: { agencyUserId: true },
-    })
-    void enqueuePlatformWithdrawalMessage({
-      withdrawalId,
-      event: 'created',
-      hostUserId: userId,
-      agentUserId: pendingAssignment?.agencyUserId,
-    }).catch(() => {})
-
     return response
   },
 
