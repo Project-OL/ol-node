@@ -13,6 +13,18 @@ export const AGENT_POINT_TRANSFER_STEP = 100_000n
 export const VIDEO_CALL_PRICE_STEP = 1800
 
 /**
+ * F21: every wallet debit/credit amount must be a BigInt above zero. A negative debit would pass
+ * the `balance < amount` check and act as a credit. Also the ledger repositories' backstop.
+ */
+export function assertPositiveAmount(amount: unknown, label = 'amount'): asserts amount is bigint {
+  if (typeof amount !== 'bigint' || amount <= 0n) {
+    throw new AppError(400, `${label} must be a positive whole number`, 'INVALID_AMOUNT', {
+      amount: typeof amount === 'bigint' ? amount.toString() : String(amount),
+    })
+  }
+}
+
+/**
  * Require `amount` to be a positive exact multiple of `step`.
  * Withdrawal intentionally does not use this — any gross above min is allowed.
  */

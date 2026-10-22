@@ -442,28 +442,33 @@ async function giftSend(input: GiftSendInput): Promise<GiftSendResult> {
       })
       await walletRepository.bumpVersion(tx, payerCoin.id)
 
-      const hostLedger = await pointLedgerRepository.insert(tx, {
-        walletId: hostPoint!.id,
-        direction: LedgerDirection.CREDIT,
-        txType: PointTxType.GIFT_RECEIVE,
-        amount: points,
-        balanceAfter: balanceAfterPoints,
-        idempotencyKey: pointKey,
-        refId: input.giftTransactionId,
-        counterpartyId: input.senderId,
-        description: isLive
-          ? `Received gift ${gift.name} in live stream`
-          : `Received gift ${gift.name} x${input.quantity} in video call`,
-        metadata: {
-          giftId: gift.id,
-          giftName: gift.name,
-          context: input.context,
-          quantity: input.quantity,
-          unitCoinCost: gift.coinCost,
-          giftTransactionId: input.giftTransactionId,
-        },
-      })
-      await walletRepository.bumpVersion(tx, hostPoint!.id)
+      // F21: a share that rounds to 0 writes no host row (ledger amounts are always > 0), as in
+      // the lucky path and gift-transaction.service.
+      const hostLedger =
+        points > 0n
+          ? await pointLedgerRepository.insert(tx, {
+              walletId: hostPoint!.id,
+              direction: LedgerDirection.CREDIT,
+              txType: PointTxType.GIFT_RECEIVE,
+              amount: points,
+              balanceAfter: balanceAfterPoints,
+              idempotencyKey: pointKey,
+              refId: input.giftTransactionId,
+              counterpartyId: input.senderId,
+              description: isLive
+                ? `Received gift ${gift.name} in live stream`
+                : `Received gift ${gift.name} x${input.quantity} in video call`,
+              metadata: {
+                giftId: gift.id,
+                giftName: gift.name,
+                context: input.context,
+                quantity: input.quantity,
+                unitCoinCost: gift.coinCost,
+                giftTransactionId: input.giftTransactionId,
+              },
+            })
+          : null
+      if (hostLedger) await walletRepository.bumpVersion(tx, hostPoint!.id)
 
       await tx.giftTransaction.create({
         data: {
@@ -481,14 +486,17 @@ async function giftSend(input: GiftSendInput): Promise<GiftSendResult> {
       })
 
       const wealth = await applyLevel(tx, input.senderId, LevelType.WEALTH, coinCost)
-      await applyLevel(tx, input.receiverId, LevelType.LIVESTREAM, points)
-      const agencyUserId = await settleHostCredit(tx, {
-        hostUserId: input.receiverId,
-        hostLedgerEntryId: hostLedger.id,
-        points,
-        txType: PointTxType.GIFT_RECEIVE,
-        withCommission: true,
-      })
+      let agencyUserId: string | null = null
+      if (hostLedger) {
+        await applyLevel(tx, input.receiverId, LevelType.LIVESTREAM, points)
+        agencyUserId = await settleHostCredit(tx, {
+          hostUserId: input.receiverId,
+          hostLedgerEntryId: hostLedger.id,
+          points,
+          txType: PointTxType.GIFT_RECEIVE,
+          withCommission: true,
+        })
+      }
       return { balanceAfterCoins, balanceAfterPoints, wealth, agencyUserId }
     })
   } catch (err) {

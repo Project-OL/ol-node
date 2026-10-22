@@ -1,5 +1,6 @@
 import { prismaRead } from '../config/database'
 import { CoinTxType, LedgerDirection, Prisma } from '@prisma/client'
+import { assertPositiveAmount } from '../utils/transaction-amount-steps'
 
 export type CoinLedgerFilter = {
   walletId: string
@@ -33,6 +34,7 @@ export const coinLedgerRepository = {
       idempotencyKey: string
     },
   ) {
+    assertPositiveAmount(data.amount)
     return tx.coinLedgerEntry.create({ data })
   },
 
