@@ -18,6 +18,32 @@ function newSsToken(): string {
   return crypto.randomBytes(32).toString('base64url')
 }
 
+/**
+ * F16: balances go to the provider as JSON numbers (its contract), so they must stay exact:
+ * refuse anything above Number.MAX_SAFE_INTEGER instead of sending a rounded value.
+ */
+export function safeBalance(balance: bigint): number {
+  if (balance > BigInt(Number.MAX_SAFE_INTEGER) || balance < BigInt(Number.MIN_SAFE_INTEGER)) {
+    throw new AppError(500, 'Balance exceeds the exact number range', 'BALANCE_NOT_SAFE_INTEGER')
+  }
+  return Number(balance)
+}
+
+/**
+ * F16: the callback's user_id must be the user the ss_token was issued to.
+ * GAME_SESSION_USER_CHECK_MODE=log (default) only logs a mismatch; enforce refuses it.
+ */
+export function checkSessionUser(sessionUserId: string, claimed: string | undefined, op: string) {
+  if (!claimed || claimed === sessionUserId) return
+  const enforce = (process.env.GAME_SESSION_USER_CHECK_MODE || '').toLowerCase() === 'enforce'
+  console.warn(
+    `[Game session] ${op}: user_id does not match the ss_token's user (mode=${enforce ? 'enforce' : 'log'})`,
+  )
+  if (enforce) {
+    throw new AppError(401, 'ss_token does not belong to this user', 'GAME_SESSION_USER_MISMATCH')
+  }
+}
+
 async function loadUserBasics(userId: string) {
   const user = await prismaRead.user.findUnique({
     where: { id: userId },
@@ -107,13 +133,14 @@ export const baishunSessionService = {
         userId: session.userId,
         userName: buildUserDisplayName(user),
         userAvatar: user.avatarUrl ?? '',
-        balance: Number(balance),
+        balance: safeBalance(balance),
       },
     }
   },
 
-  async getUserInfo(params: { ssToken: string }) {
+  async getUserInfo(params: { ssToken: string; userId?: string }) {
     const session = await requireActiveSession(params.ssToken)
+    checkSessionUser(session.userId, params.userId, 'get_user_info')
     const [user, balance] = await Promise.all([
       loadUserBasics(session.userId),
       diamondWalletService.getBalance(session.userId),
@@ -122,12 +149,13 @@ export const baishunSessionService = {
       userId: session.userId,
       userName: buildUserDisplayName(user),
       userAvatar: user.avatarUrl ?? '',
-      balance: Number(balance),
+      balance: safeBalance(balance),
     }
   },
 
-  async updateSsToken(params: { ssToken: string }) {
+  async updateSsToken(params: { ssToken: string; userId?: string }) {
     const session = await requireActiveSession(params.ssToken)
+    checkSessionUser(session.userId, params.userId, 'update_sstoken')
     const ssToken = newSsToken()
     const expiresAt = new Date(Date.now() + SS_TOKEN_TTL_MS)
     await prisma.gameSession.update({
@@ -144,11 +172,13 @@ export const baishunSessionService = {
     gameId: number
     roomId?: string
     orderId: string
+    userId?: string
   }): Promise<{ currencyBalance: bigint }> {
     if (params.currencyDiff === 0n) {
       throw new AppError(400, 'currency_diff must not be zero', 'INVALID_REQUEST')
     }
     const session = await requireActiveSession(params.ssToken)
+    checkSessionUser(session.userId, params.userId, 'change_balance')
     const houseUserId = await ledgerAccountRoleService.requireGameHouseUserId()
     const { userIsDebit, userTxType, houseTxType, amount } = resolveSettlement(
       params.diffMsg,
