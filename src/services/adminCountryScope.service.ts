@@ -10,22 +10,48 @@ import type { AdminRole } from '@prisma/client'
  *  - user-scoped routes (`:userId`, a withdrawal, payroll assignment, ledger entry, gift,
  *    coin-trading transfer or agency) resolve every user the route touches; each must be in a
  *    granted country (`adminCountryAccessService.assertAllowed`);
- *  - global lists of money and personal data (transactions, ledger, payroll, user search/stats)
- *    are refused for now (follow-up: filter them by the admin's countries instead).
+ *  - lists of many users' money or data (transactions, payroll, user search/history/stats) are
+ *    filtered (BE-24): `enforce` returns the admin's countries, `authenticateAdmin` puts them on
+ *    `request.adminCountryScope`, and the list keeps only rows whose every user is in them;
+ *  - company-finance aggregates (ledger, ledger audit, profit summary, payroll config) can't be
+ *    split by user country and are refused.
  * Admins with no grants and SUPER_ADMIN are unaffected. An id that resolves to nothing passes
  * through, so the handler still answers its usual 404/400.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** Admin-relative route patterns ("/admin/...") whose responses span many users' money or data. */
-const GLOBAL_SENSITIVE_LISTS: RegExp[] = [
+/** Admin-relative lists ("/admin/...") that filter themselves by `request.adminCountryScope`. */
+const COUNTRY_FILTERED_LISTS: RegExp[] = [
+  /^\/admin\/transactions\/(coins|points|trading-coins|game-diamonds|coin-trading-transfers|gifts|subscriptions|vip-purchases|store-purchases)$/,
+  /^\/admin\/agency\/payroll\/(assignments|disputed|pending-platform)$/,
+  /^\/admin\/users\/(search|search\/history|stats)$/,
+]
+
+/** Company-wide finance views: refused to country-restricted admins. */
+const COMPANY_FINANCE_ROUTES: RegExp[] = [
   /^\/admin\/transactions(\/|$)/,
   /^\/admin\/ledger(\/|$)/,
   /^\/admin\/ledger-audit(\/|$)/,
   /^\/admin\/agency\/payroll(\/|$)/,
-  /^\/admin\/users\/(search|stats)(\/|$)/,
 ]
+
+/** Prisma filter for a user relation inside the admin's countries. */
+export const inCountries = (countries: string[]) => ({ country: { in: countries } })
+
+/** Keeps the users (by `userId`) whose country is in `countries`; unchanged when no scope. */
+export async function keepUsersInCountries<T extends { userId: string }>(
+  users: T[],
+  countries: string[] | undefined,
+): Promise<T[]> {
+  if (!countries || users.length === 0) return users
+  const rows = await prismaRead.user.findMany({
+    where: { id: { in: users.map((u) => u.userId) }, ...inCountries(countries) },
+    select: { id: true },
+  })
+  const ok = new Set(rows.map((r) => r.id))
+  return users.filter((u) => ok.has(u.userId))
+}
 
 type Params = Record<string, string | undefined>
 
@@ -130,24 +156,32 @@ export async function resolveRouteUsers(route: string, params: Params): Promise<
 export const adminCountryScopeService = {
   /**
    * @param route admin-relative registered route, e.g. "/admin/users/:userId/wallet"
+   * @returns the admin's countries when the route is a country-filtered list (the caller puts
+   *   them on `request.adminCountryScope`), else undefined
    */
-  async enforce(adminId: string, role: AdminRole, route: string, params: Params): Promise<void> {
-    if (role === 'SUPER_ADMIN') return
+  async enforce(
+    adminId: string,
+    role: AdminRole,
+    route: string,
+    params: Params,
+  ): Promise<string[] | undefined> {
+    if (role === 'SUPER_ADMIN') return undefined
     const access = await adminCountryAccessService.getAccessSnapshot(adminId)
-    if (!access.restricted) return
+    if (!access.restricted) return undefined
 
     const users = await resolveRouteUsers(route, params)
     if (users === null) {
-      if (GLOBAL_SENSITIVE_LISTS.some((re) => re.test(route))) {
+      if (COUNTRY_FILTERED_LISTS.some((re) => re.test(route))) return [...access.countries]
+      if (COMPANY_FINANCE_ROUTES.some((re) => re.test(route))) {
         throw new AppError(
           403,
-          'This list is not available to country-restricted admins',
+          'This view is not available to country-restricted admins',
           'COUNTRY_ACCESS_FORBIDDEN',
         )
       }
-      return
+      return undefined
     }
-    if (!users.length) return
+    if (!users.length) return undefined
     const rows = await prismaRead.user.findMany({
       where: { id: { in: users } },
       select: { id: true, country: true },
@@ -157,5 +191,6 @@ export const adminCountryScopeService = {
       if (!country.has(id)) continue
       await adminCountryAccessService.assertAllowed(adminId, role, country.get(id) ?? null)
     }
+    return undefined
   },
 }

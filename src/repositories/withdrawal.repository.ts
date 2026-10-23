@@ -270,6 +270,8 @@ export const withdrawalRepository = {
     cursor?: string
     /** PLATFORM = admin-pay EPAY inbox; AGENCY = leftover BANK assign queue. */
     payoutHandler?: 'PLATFORM' | 'AGENCY'
+    /** BE-24: host in these countries (country-restricted admin). */
+    countries?: string[]
   }) {
     const take = opts.limit + 1
     const platformHandled = {
@@ -282,7 +284,11 @@ export const withdrawalRepository = {
           ? { NOT: platformHandled }
           : {}
     return prismaRead.withdrawal.findMany({
-      where: { status: 'PENDING_PLATFORM', ...handlerWhere },
+      where: {
+        status: 'PENDING_PLATFORM',
+        ...handlerWhere,
+        ...(opts.countries ? { user: { country: { in: opts.countries } } } : {}),
+      },
       orderBy: { requestedAt: 'asc' },
       take,
       ...(opts.cursor

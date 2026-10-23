@@ -496,6 +496,7 @@ export const payrollAdminService = {
     limit: number
     cursor?: string
     payoutHandler?: 'PLATFORM' | 'AGENCY'
+    countries?: string[]
   }) {
     const rows = await withdrawalRepository.listPendingPlatform(opts)
     const hasMore = rows.length > opts.limit
@@ -537,7 +538,7 @@ export const payrollAdminService = {
     })
   },
 
-  getDisputedPayrolls(opts: { limit: number; cursor?: string }) {
+  getDisputedPayrolls(opts: { limit: number; cursor?: string; countries?: string[] }) {
     return withdrawalService.getAdminDisputedPayrolls(opts)
   },
 
@@ -613,6 +614,8 @@ export const payrollAdminService = {
     to?: string
     cursor?: string
     limit: number
+    /** BE-24: country-restricted admin's countries. */
+    countries?: string[]
   }) {
     const from = query.from ? new Date(query.from) : undefined
     const to = query.to ? new Date(query.to) : undefined
@@ -644,6 +647,7 @@ export const payrollAdminService = {
       to,
       cursor: query.cursor,
       limit: query.limit,
+      countries: query.countries,
     })
     const hasMore = rows.length > query.limit
     const page = hasMore ? rows.slice(0, query.limit) : rows

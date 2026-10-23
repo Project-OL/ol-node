@@ -41,7 +41,13 @@ export type AdminLedgerListFilter = {
   limit: number
   /** COIN or TRADING_COIN wallet currency for coin ledger lists. */
   currencyType?: WalletCurrencyType
+  /** BE-24: only rows whose users are in these countries (country-restricted admin). */
+  countries?: string[]
 }
+
+/** BE-24: user relation filter for a country-restricted admin. Ledger rows are scoped by the
+ * wallet owner; two-party rows need both users in the countries. */
+const userIn = (countries?: string[]) => (countries ? { country: { in: countries } } : undefined)
 
 function createdAtCursorFilter(
   cursorCreatedAt: Date | undefined,
@@ -103,6 +109,7 @@ export const adminTransactionsRepository = {
       wallet: {
         ...(filter.currencyType ? { currencyType: filter.currencyType } : {}),
         ...(filter.userId ? { userId: filter.userId } : {}),
+        ...(filter.countries ? { user: userIn(filter.countries) } : {}),
       },
     }
 
@@ -160,6 +167,7 @@ export const adminTransactionsRepository = {
       wallet: {
         currencyType: WalletCurrencyType.POINT,
         ...(filter.userId ? { userId: filter.userId } : {}),
+        ...(filter.countries ? { user: userIn(filter.countries) } : {}),
       },
     }
 
@@ -215,8 +223,12 @@ export const adminTransactionsRepository = {
     cursor?: string
     limit: number
     reversedOnly?: boolean
+    countries?: string[]
   }) {
     const and: Prisma.CoinTradingTransferWhereInput[] = []
+    if (filter.countries) {
+      and.push({ senderAgent: userIn(filter.countries), recipient: userIn(filter.countries) })
+    }
     if (filter.id) and.push({ id: filter.id })
     if (filter.senderUserId) and.push({ senderAgentUserId: filter.senderUserId })
     if (filter.receiverUserId) and.push({ recipientUserId: filter.receiverUserId })
@@ -261,8 +273,12 @@ export const adminTransactionsRepository = {
     to?: Date
     cursor?: string
     limit: number
+    countries?: string[]
   }) {
     const and: Prisma.GiftTransactionWhereInput[] = []
+    if (filter.countries) {
+      and.push({ sender: userIn(filter.countries), receiver: userIn(filter.countries) })
+    }
     if (filter.id) and.push({ id: filter.id })
     if (filter.senderUserId) and.push({ senderUserId: filter.senderUserId })
     if (filter.receiverUserId) and.push({ receiverUserId: filter.receiverUserId })
@@ -335,8 +351,12 @@ export const adminTransactionsRepository = {
     to?: Date
     cursor?: string
     limit: number
+    countries?: string[]
   }) {
     const and: Prisma.CreatorSubscriptionWhereInput[] = []
+    if (filter.countries) {
+      and.push({ subscriber: userIn(filter.countries), creator: userIn(filter.countries) })
+    }
     if (filter.id) and.push({ id: filter.id })
     if (filter.senderUserId) and.push({ subscriberId: filter.senderUserId })
     if (filter.receiverUserId) and.push({ creatorId: filter.receiverUserId })
@@ -377,8 +397,10 @@ export const adminTransactionsRepository = {
     to?: Date
     cursor?: string
     limit: number
+    countries?: string[]
   }) {
     const and: Prisma.VipMembershipPurchaseWhereInput[] = []
+    if (filter.countries) and.push({ user: userIn(filter.countries) })
     if (filter.id) and.push({ id: filter.id })
     if (filter.userId) and.push({ userId: filter.userId })
     if (filter.from || filter.to || filter.cursor) {
@@ -424,8 +446,12 @@ export const adminTransactionsRepository = {
     to?: Date
     cursor?: string
     limit: number
+    countries?: string[]
   }) {
     const and: Prisma.UserStoreItemWhereInput[] = []
+    if (filter.countries) {
+      and.push({ user: userIn(filter.countries), purchasedBy: userIn(filter.countries) })
+    }
     if (filter.id) and.push({ id: filter.id })
     if (filter.receiverUserId) and.push({ userId: filter.receiverUserId })
     if (filter.senderUserId) and.push({ purchasedById: filter.senderUserId })

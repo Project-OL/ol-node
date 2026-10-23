@@ -346,6 +346,8 @@ export const payrollAssignmentRepository = {
     to?: Date
     cursor?: string
     limit: number
+    /** BE-24: host and agent both in these countries (country-restricted admin). */
+    countries?: string[]
   }) {
     let cursorAssignedAt: Date | undefined
     if (filter.cursor) {
@@ -372,6 +374,14 @@ export const payrollAssignmentRepository = {
         ...(filter.withdrawalId ? { withdrawalId: filter.withdrawalId } : {}),
         ...(Object.keys(assignedAt).length ? { assignedAt } : {}),
         ...(filter.hostUserId ? { withdrawal: { userId: filter.hostUserId } } : {}),
+        ...(filter.countries
+          ? {
+              AND: [
+                { withdrawal: { user: { country: { in: filter.countries } } } },
+                { agencyUser: { country: { in: filter.countries } } },
+              ],
+            }
+          : {}),
       },
       orderBy: [{ assignedAt: 'desc' }, { id: 'desc' }],
       take: filter.limit + 1,

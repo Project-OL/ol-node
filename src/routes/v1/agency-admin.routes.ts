@@ -1194,6 +1194,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
     const result = await payrollAdminService.getDisputedPayrolls({
       limit,
       cursor: q.cursor,
+      countries: request.adminCountryScope,
     })
     return reply.send(result)
   })
@@ -1219,6 +1220,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       to: q.to?.trim() || undefined,
       cursor: q.cursor?.trim() || undefined,
       limit,
+      countries: request.adminCountryScope,
     })
     return reply.send(result)
   })
@@ -1242,6 +1244,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         limit,
         cursor: q.cursor,
         payoutHandler: handler,
+        countries: request.adminCountryScope,
       })
       return reply.send(result)
     },

@@ -115,14 +115,30 @@ describe('F05 admin country scope', () => {
     ).rejects.toMatchObject(forbidden)
   })
 
-  it('global money / personal-data lists are refused; other routes pass', async () => {
+  it('BE-24: user lists get the admin countries as their filter', async () => {
     for (const r of [
       '/admin/transactions/coins',
       '/admin/transactions/points',
-      '/admin/ledger/house-accounts',
+      '/admin/transactions/gifts',
+      '/admin/transactions/coin-trading-transfers',
+      '/admin/agency/payroll/assignments',
+      '/admin/agency/payroll/disputed',
       '/admin/agency/payroll/pending-platform',
       '/admin/users/search',
+      '/admin/users/search/history',
       '/admin/users/stats',
+    ]) {
+      await expect(enforce(r, {}), r).resolves.toEqual(['Nepal'])
+    }
+  })
+
+  it('company-finance views are refused; other routes pass unscoped', async () => {
+    for (const r of [
+      '/admin/transactions/platform-profit/summary',
+      '/admin/ledger/house-accounts',
+      '/admin/ledger/pnl',
+      '/admin/ledger-audit/flags',
+      '/admin/agency/payroll/config',
     ]) {
       await expect(enforce(r, {}), r).rejects.toMatchObject(forbidden)
     }
@@ -134,9 +150,11 @@ describe('F05 admin country scope', () => {
   it('SUPER_ADMIN and admins with no grants are unaffected', async () => {
     await expect(enforce('/admin/users/:userId/wallet', { userId: U_IN }, 'SUPER_ADMIN')).resolves.toBeUndefined()
     await expect(enforce('/admin/transactions/coins', {}, 'SUPER_ADMIN')).resolves.toBeUndefined()
+    await expect(enforce('/admin/ledger/pnl', {}, 'SUPER_ADMIN')).resolves.toBeUndefined()
     granted = []
     await expect(enforce('/admin/users/:userId/wallet', { userId: U_IN })).resolves.toBeUndefined()
     await expect(enforce('/admin/transactions/coins', {})).resolves.toBeUndefined()
+    await expect(enforce('/admin/ledger/pnl', {})).resolves.toBeUndefined()
   })
 
   it('an id that resolves to nothing passes through to the handler (its 404)', async () => {

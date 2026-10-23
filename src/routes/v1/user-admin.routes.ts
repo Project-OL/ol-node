@@ -74,6 +74,7 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       }
       const result = await adminUserSearchService.search(parsed.data, {
         adminUserId: request.adminUser!.id,
+        countries: request.adminCountryScope,
       })
       return reply.send(result)
     },
@@ -90,7 +91,9 @@ export default async function userAdminRoutes(app: FastifyInstance) {
       },
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
-      return reply.send(await adminUserSearchService.getHistory(request.adminUser!.id))
+      return reply.send(
+        await adminUserSearchService.getHistory(request.adminUser!.id, request.adminCountryScope),
+      )
     },
   )
 
@@ -104,8 +107,10 @@ export default async function userAdminRoutes(app: FastifyInstance) {
           'User search page stats: total non-deleted users, count registered since UTC midnight, and up to 50 of those accounts (newest first).',
       },
     },
-    async (_request: FastifyRequest, reply: FastifyReply) => {
-      return reply.send(await adminUserSearchService.getRegistrationStats())
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return reply.send(
+        await adminUserSearchService.getRegistrationStats(request.adminCountryScope),
+      )
     },
   )
 

@@ -80,7 +80,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       return reply.send(
-        await adminTransactionsService.listCoinTransactions(parseListQuery(request.query)),
+        await adminTransactionsService.listCoinTransactions(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
@@ -96,7 +98,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.listPointTransactions(parseListQuery(request.query)),
+        await adminTransactionsService.listPointTransactions(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
@@ -113,7 +117,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.listTradingCoinLedger(parseListQuery(request.query)),
+        await adminTransactionsService.listTradingCoinLedger(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
@@ -130,7 +136,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.listDiamondLedger(parseListQuery(request.query)),
+        await adminTransactionsService.listDiamondLedger(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
@@ -146,7 +154,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.listCoinTradingTransfers(parseListQuery(request.query)),
+        await adminTransactionsService.listCoinTradingTransfers(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
@@ -162,7 +172,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.listGiftTransactions(parseListQuery(request.query)),
+        await adminTransactionsService.listGiftTransactions(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
@@ -178,7 +190,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.listSubscriptions(parseListQuery(request.query)),
+        await adminTransactionsService.listSubscriptions(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
@@ -194,7 +208,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.listVipPurchases(parseListQuery(request.query)),
+        await adminTransactionsService.listVipPurchases(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
@@ -210,7 +226,9 @@ export default async function adminTransactionsRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       return reply.send(
-        await adminTransactionsService.listStorePurchases(parseListQuery(request.query)),
+        await adminTransactionsService.listStorePurchases(parseListQuery(request.query), {
+          countries: request.adminCountryScope,
+        }),
       )
     },
   )
