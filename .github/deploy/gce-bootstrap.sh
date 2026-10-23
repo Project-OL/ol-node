@@ -287,8 +287,16 @@ chown -R "$APP_USER:$APP_USER" /opt/ol
 fetch_release() {
   local app="$1" dest="$APP_ROOT/$1" tmp
   tmp="$(mktemp -d)"
-  echo "--- fetching $app release ---"
-  gcloud storage cp "$BUCKET/$app/latest.tgz" "$tmp/app.tgz" --quiet
+  # Phase 0 pinned bootstrap: the deploy writes <app>/current (the commit it rolled out) next to
+  # <commit>.tgz; boot exactly that build. latest.tgz is the fallback for an older bucket layout.
+  local sha
+  sha="$(gcloud storage cat "$BUCKET/$app/current" 2>/dev/null | tr -dc '0-9a-f' | head -c 40)"
+  if [ "${#sha}" = 40 ] && gcloud storage cp "$BUCKET/$app/$sha.tgz" "$tmp/app.tgz" --quiet; then
+    echo "--- fetched $app release $sha (pinned) ---"
+  else
+    echo "--- fetching $app release (latest.tgz; no usable current pointer) ---"
+    gcloud storage cp "$BUCKET/$app/latest.tgz" "$tmp/app.tgz" --quiet
+  fi
   tar -xzf "$tmp/app.tgz" -C "$dest"
   rm -rf "$tmp"
   chown -R "$APP_USER:$APP_USER" "$dest"
@@ -367,7 +375,7 @@ fetch_secret ol-node-rest-env                  "$APP_ROOT/ol-node-rest/.env"
 fetch_secret ol-node-rest-firebase-adminsdk    "$APP_ROOT/ol-node-rest/offoolive-firebase-adminsdk.json"
 if [ "$WANT_LIVE" = 1 ]; then
   fetch_secret ol-live-server-env                "$APP_ROOT/live-server/.env"
-  fetch_secret ol-live-server-google-credentials "$APP_ROOT/live-server/google-credentials.json"
+  # Translation uses the VM service account (ADC) since 2026-10-23; the key file is gone (F01).
 fi
 
 # ---------------------------------------------------------------- 5. dependencies
