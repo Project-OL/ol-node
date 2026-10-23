@@ -3194,11 +3194,13 @@ export const withdrawalService = {
     }
   },
 
-  async getAdminDisputedPayrolls(opts: { limit: number; cursor?: string }) {
+  async getAdminDisputedPayrolls(opts: { limit: number; cursor?: string; countries?: string[] }) {
     const take = opts.limit + 1
     const rows = await prismaRead.withdrawal.findMany({
       where: {
         status: 'DISPUTED',
+        // BE-24: a country-restricted admin sees only hosts of their countries.
+        ...(opts.countries ? { user: { country: { in: opts.countries } } } : {}),
         OR: [
           { payrollAssignments: { some: { status: 'WAITING' } } },
           { payoutHandler: 'PLATFORM' },

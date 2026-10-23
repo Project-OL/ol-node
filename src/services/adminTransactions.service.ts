@@ -134,6 +134,9 @@ function pageSlice<T extends { id: string }>(rows: T[], limit: number) {
   return { page, nextCursor, hasMore }
 }
 
+/** BE-24: a country-restricted admin's countries (request.adminCountryScope); unset = all users. */
+export type AdminListScope = { countries?: string[] }
+
 async function resolvePartyFilters(query: AdminTransactionsListQuery): Promise<{
   userId?: string
   senderUserId?: string
@@ -346,7 +349,7 @@ async function resolvePointPeerSource(entry: {
 }
 
 export const adminTransactionsService = {
-  async listCoinTransactions(query: AdminTransactionsListQuery) {
+  async listCoinTransactions(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listCoinLedger({
       id: parties.id,
@@ -358,6 +361,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
       currencyType: WalletCurrencyType.COIN,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
@@ -368,7 +372,7 @@ export const adminTransactionsService = {
     }
   },
 
-  async listTradingCoinLedger(query: AdminTransactionsListQuery) {
+  async listTradingCoinLedger(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     let ledgerId = parties.id
     if (ledgerId) {
@@ -386,6 +390,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
       currencyType: WalletCurrencyType.TRADING_COIN,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
@@ -399,7 +404,7 @@ export const adminTransactionsService = {
   /** DIAMOND wallet ledger — same `coin_ledger_entries` table as COIN/TRADING_COIN, scoped
    * by currency. Includes both user wallets and the GAME_HOUSE counterparty's own wallet
    * (no `userId` filter excludes it — the house account is a normal `Wallet` row). */
-  async listDiamondLedger(query: AdminTransactionsListQuery) {
+  async listDiamondLedger(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listCoinLedger({
       id: parties.id,
@@ -411,6 +416,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
       currencyType: WalletCurrencyType.DIAMOND,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
@@ -421,7 +427,7 @@ export const adminTransactionsService = {
     }
   },
 
-  async listPointTransactions(query: AdminTransactionsListQuery) {
+  async listPointTransactions(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listPointLedger({
       id: parties.id,
@@ -433,6 +439,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
     return {
@@ -442,7 +449,7 @@ export const adminTransactionsService = {
     }
   },
 
-  async listCoinTradingTransfers(query: AdminTransactionsListQuery) {
+  async listCoinTradingTransfers(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listCoinTradingTransfers({
       id: parties.id,
@@ -453,6 +460,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
     const reversals = await loadCoinTradingTransferReversals(page)
@@ -480,7 +488,7 @@ export const adminTransactionsService = {
     }
   },
 
-  async listGiftTransactions(query: AdminTransactionsListQuery) {
+  async listGiftTransactions(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listGiftTransactions({
       id: parties.id,
@@ -491,6 +499,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
     const giftIds = page.map((g) => g.id)
@@ -546,7 +555,7 @@ export const adminTransactionsService = {
     return { platformProfitTotals: totals }
   },
 
-  async listSubscriptions(query: AdminTransactionsListQuery) {
+  async listSubscriptions(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listSubscriptions({
       id: parties.id,
@@ -557,6 +566,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
     return {
@@ -575,7 +585,7 @@ export const adminTransactionsService = {
     }
   },
 
-  async listVipPurchases(query: AdminTransactionsListQuery) {
+  async listVipPurchases(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listVipPurchases({
       id: parties.id,
@@ -584,6 +594,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
     return {
@@ -612,7 +623,7 @@ export const adminTransactionsService = {
     }
   },
 
-  async listStorePurchases(query: AdminTransactionsListQuery) {
+  async listStorePurchases(query: AdminTransactionsListQuery, scope: AdminListScope = {}) {
     const parties = await resolvePartyFilters(query)
     const rows = await adminTransactionsRepository.listStorePurchases({
       id: parties.id,
@@ -623,6 +634,7 @@ export const adminTransactionsService = {
       to: query.to ? new Date(query.to) : undefined,
       cursor: query.cursor,
       limit: query.limit,
+      countries: scope.countries,
     })
     const { page, nextCursor, hasMore } = pageSlice(rows, query.limit)
     return {

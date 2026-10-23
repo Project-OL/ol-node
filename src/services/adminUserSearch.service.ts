@@ -18,6 +18,7 @@ import {
   resolveAdminUserSearchAutoType,
 } from '../utils/admin-user-search-type'
 import { storeAdminService } from './store-admin.service'
+import { keepUsersInCountries } from './adminCountryScope.service'
 
 export type AdminUserSearchMatchType =
   | 'userId'
@@ -91,12 +92,13 @@ function mapRow(
 }
 
 export const adminUserSearchService = {
-  async getRegistrationStats() {
+  /** `countries` (BE-24): count and list only users of a country-restricted admin's countries. */
+  async getRegistrationStats(countries?: string[]) {
     const todayStartsAt = utcStartOfDay(new Date())
     const listLimit = 50
     const [counts, rows] = await Promise.all([
-      adminUserSearchRepository.countRegistrationStats(todayStartsAt),
-      adminUserSearchRepository.findRegisteredToday(todayStartsAt, listLimit),
+      adminUserSearchRepository.countRegistrationStats(todayStartsAt, countries),
+      adminUserSearchRepository.findRegisteredToday(todayStartsAt, listLimit, countries),
     ])
     return {
       totalUsers: counts.totalUsers,
@@ -127,7 +129,14 @@ export const adminUserSearchService = {
     }
   },
 
-  async getHistory(adminUserId: string): Promise<{ users: AdminUserSearchHistoryItem[] }> {
+  async getHistory(
+    adminUserId: string,
+    countries?: string[],
+  ): Promise<{ users: AdminUserSearchHistoryItem[] }> {
+    if (countries) {
+      const all = await this.getHistory(adminUserId)
+      return { users: await keepUsersInCountries(all.users, countries) }
+    }
     const key = RedisKeys.adminUserSearchHistory(adminUserId)
     let userIds: string[] = []
     try {
@@ -162,11 +171,23 @@ export const adminUserSearchService = {
 
   async search(
     params: AdminUserSearchQuery,
-    opts?: { adminUserId?: string },
+    opts?: { adminUserId?: string; countries?: string[] },
   ): Promise<{
     users: AdminUserSearchResultItem[]
     matchedBy: AdminUserSearchMatchType | null
   }> {
+    // BE-24: a country-restricted admin only finds users of their countries; history records
+    // only an in-scope exact match. (A name search may then return fewer than `limit` rows.)
+    if (opts?.countries) {
+      const all = await this.search(params)
+      const users = await keepUsersInCountries(all.users, opts.countries)
+      const matchedBy = users.length ? all.matchedBy : null
+      if (opts.adminUserId && users.length === 1 && matchedBy && matchedBy !== 'name') {
+        await this.recordHistory(opts.adminUserId, users[0]!.userId)
+      }
+      return { users, matchedBy }
+    }
+
     const query = params.q.trim()
     const effectiveType =
       params.type === 'auto' ? resolveAdminUserSearchAutoType(query) : params.type

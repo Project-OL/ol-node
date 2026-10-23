@@ -19,6 +19,8 @@ declare module 'fastify' {
     }
     /** View-permission snapshot; set by authenticateAdmin for non-SUPER_ADMIN admins. */
     adminViewAccess?: AdminViewAccess
+    /** BE-24: a country-restricted admin's countries, set only on country-filtered lists. */
+    adminCountryScope?: string[]
   }
 }
 
@@ -80,7 +82,7 @@ export async function authenticateAdmin(req: FastifyRequest, _reply: FastifyRepl
     const routePath =
       req.routeOptions?.url ?? (req as FastifyRequest & { routerPath?: string }).routerPath
     if (routePath) {
-      await adminCountryScopeService.enforce(
+      req.adminCountryScope = await adminCountryScopeService.enforce(
         payload.sub,
         payload.role,
         routePath.startsWith(API_PREFIX) ? routePath.slice(API_PREFIX.length) : routePath,

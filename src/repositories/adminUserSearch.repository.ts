@@ -119,8 +119,11 @@ export const adminUserSearchRepository = {
    * Headcount of users still in the system (`status` ≠ `deleted`).
    * `registeredToday` is `created_at` on or after UTC midnight today.
    */
-  async countRegistrationStats(todayStart: Date) {
-    const notDeleted = { status: { not: 'deleted' } } as const
+  async countRegistrationStats(todayStart: Date, countries?: string[]) {
+    const notDeleted = {
+      status: { not: 'deleted' },
+      ...(countries ? { country: { in: countries } } : {}),
+    } as const
     const [totalUsers, registeredToday] = await Promise.all([
       prismaRead.user.count({ where: notDeleted }),
       prismaRead.user.count({
@@ -130,9 +133,17 @@ export const adminUserSearchRepository = {
     return { totalUsers, registeredToday }
   },
 
-  async findRegisteredToday(todayStart: Date, limit: number): Promise<AdminUserSearchRow[]> {
+  async findRegisteredToday(
+    todayStart: Date,
+    limit: number,
+    countries?: string[],
+  ): Promise<AdminUserSearchRow[]> {
     return prismaRead.user.findMany({
-      where: { status: { not: 'deleted' }, createdAt: { gte: todayStart } },
+      where: {
+        status: { not: 'deleted' },
+        createdAt: { gte: todayStart },
+        ...(countries ? { country: { in: countries } } : {}),
+      },
       take: limit,
       orderBy: { createdAt: 'desc' },
       select: adminUserSearchSelect,
