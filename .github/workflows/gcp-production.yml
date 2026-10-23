@@ -77,6 +77,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Phase 0 versioning: GET /health reports this commit (src/config/release.ts).
+      - name: Stamp release
+        run: printf '{"commit":"%s","builtAt":"%s"}\n' "$GITHUB_SHA" "$(date -u +%FT%TZ)" > dist/release.json
+
       - name: Pack artifact
         run: |
           tar -czf ol-node-artifact.tgz \
@@ -251,7 +255,10 @@ jobs:
         run: |
           gcloud storage cp ol-node-artifact.tgz "$RELEASE_BUCKET/ol-node-rest/$GITHUB_SHA.tgz" --quiet
           gcloud storage cp ol-node-artifact.tgz "$RELEASE_BUCKET/ol-node-rest/latest.tgz" --quiet
-          gcloud storage ls -l "$RELEASE_BUCKET/ol-node-rest/latest.tgz"
+          # Pinned bootstrap: new VMs boot exactly <current>.tgz (gce-bootstrap.sh), falling back to latest.tgz.
+          printf '%s\n' "$GITHUB_SHA" > current
+          gcloud storage cp current "$RELEASE_BUCKET/ol-node-rest/current" --quiet
+          gcloud storage ls -l "$RELEASE_BUCKET/ol-node-rest/latest.tgz" "$RELEASE_BUCKET/ol-node-rest/current"
 
       # Migration already ran once on GCE_INSTANCE above, so API nodes only unpack and
       # restart ol-api. One node at a time, each must pass /health/ready before the next,
@@ -289,3 +296,38 @@ jobs:
             gcloud compute ssh "$name" --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet \
               --command "for i in \$(seq 1 20); do if curl -fsS http://127.0.0.1:3000/health/ready >/dev/null; then echo 'ready'; exit 0; fi; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; exit 1"
           done
+
+      # Phase 0 rollout re-check: every API node (including one the autoscaler added during the
+      # rollout) must report this commit on /health. A node on another commit is redeployed once;
+      # still wrong after that fails the run.
+      - name: Re-check every node runs this commit
+        if: env.GCE_API_MIG != ''
+        run: |
+          region="${GCP_ZONE%-*}"
+          commit_of() {
+            gcloud compute ssh "$1" --project "$GCP_PROJECT_ID" --zone "$2" --tunnel-through-iap --quiet \
+              --command "curl -fsS http://127.0.0.1:3000/health 2>/dev/null | grep -o '\"commit\":\"[0-9a-f]*\"' | cut -d'\"' -f4" 2>/dev/null | tr -d '\r' | tail -1
+          }
+          bad=0
+          main=$(commit_of "$GCE_INSTANCE" "$GCP_ZONE")
+          echo "$GCE_INSTANCE $GCP_ZONE ${main:-none}"
+          if [ "$GCE_INSTANCE_RUNS_API" != "false" ] && [ "$main" != "$GITHUB_SHA" ]; then bad=1; fi
+          mapfile -t nodes < <(gcloud compute instance-groups managed list-instances "$GCE_API_MIG" \
+            --project "$GCP_PROJECT_ID" --region "$region" --format="value(name,instance.segment(-3))")
+          for line in "${nodes[@]}"; do
+            name="${line%%[[:space:]]*}"; zone="${line##*[[:space:]]}"
+            got=$(commit_of "$name" "$zone")
+            echo "$name $zone ${got:-none}"
+            [ "$got" = "$GITHUB_SHA" ] && continue
+            echo "=== $name runs ${got:-unknown}; redeploying ==="
+            gcloud compute scp ol-node-artifact.tgz "${name}:/tmp/ol-node-artifact.tgz" \
+              --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet || { bad=1; continue; }
+            gcloud compute ssh "$name" --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet \
+              --command "sudo APP_USER='${APP_USER}' APP_DIR='${APP_DIR}' ARTIFACT=/tmp/ol-node-artifact.tgz RUN_MIGRATE=0 RESTART_WORKERS=0 RESTART_API=1 bash -s" \
+              < .github/deploy/ec2-unpack-ol-node.sh || { bad=1; continue; }
+            sleep 15
+            got=$(commit_of "$name" "$zone")
+            echo "$name after redeploy: ${got:-none}"
+            [ "$got" = "$GITHUB_SHA" ] || bad=1
+          done
+          [ "$bad" = 0 ] || { echo "::error::a node does not run $GITHUB_SHA"; exit 1; }

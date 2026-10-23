@@ -4,11 +4,13 @@ import { redisClient } from '../../config/redis'
 import { env } from '../../config/env'
 import { storageTarget } from '../../config/s3'
 import { requestMetrics } from '../../utils/requestMetrics'
+import { release } from '../../config/release'
 
 export default async function healthRoutes(app: FastifyInstance) {
   /** Liveness: cheap, no dependencies. Use for process health. */
   app.get('/', async (_request, reply) => {
-    return reply.send({ status: 'ok', timestamp: new Date().toISOString() })
+    // `commit` (additive): the running build, so all nodes can be compared (Phase 0).
+    return reply.send({ status: 'ok', timestamp: new Date().toISOString(), commit: release.commit })
   })
 
   /** Readiness: DB + Redis. Use for orchestrator readiness (e.g. Kubernetes). */
@@ -28,6 +30,7 @@ export default async function healthRoutes(app: FastifyInstance) {
     return reply.status(ok ? 200 : 503).send({
       status: ok ? 'ready' : 'not_ready',
       timestamp: new Date().toISOString(),
+      commit: release.commit,
       // Additive, credential-free. Lets any environment be checked with one curl:
       // provider must be `aws-s3` on prodv2/staging and `s3-compatible` on GCP.
       storage: {

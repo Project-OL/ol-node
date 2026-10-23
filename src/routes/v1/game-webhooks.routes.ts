@@ -2,7 +2,7 @@ import crypto from 'crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { verifyBaishunSignature } from '../../middlewares/gameProviderWebhookAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
-import { baishunSessionService } from '../../services/baishunSession.service'
+import { baishunSessionService, safeBalance } from '../../services/baishunSession.service'
 import {
   BaishunGetSsTokenSchema,
   BaishunGetUserInfoSchema,
@@ -83,7 +83,10 @@ export async function gameWebhooksRoutes(app: FastifyInstance) {
     { preHandler: [verifyBaishunSignature] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = BaishunGetUserInfoSchema.parse(request.body)
-      const result = await baishunSessionService.getUserInfo({ ssToken: body.ss_token })
+      const result = await baishunSessionService.getUserInfo({
+        ssToken: body.ss_token,
+        userId: body.user_id,
+      })
       return sendBaishunSuccess(reply, {
         user_id: result.userId,
         user_name: result.userName,
@@ -98,7 +101,10 @@ export async function gameWebhooksRoutes(app: FastifyInstance) {
     { preHandler: [verifyBaishunSignature] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const body = BaishunUpdateSsTokenSchema.parse(request.body)
-      const result = await baishunSessionService.updateSsToken({ ssToken: body.ss_token })
+      const result = await baishunSessionService.updateSsToken({
+        ssToken: body.ss_token,
+        userId: body.user_id,
+      })
       return sendBaishunSuccess(reply, {
         ss_token: result.ssToken,
         expire_date: result.expireDateMs,
@@ -118,8 +124,9 @@ export async function gameWebhooksRoutes(app: FastifyInstance) {
         gameId: body.game_id,
         roomId: body.room_id || undefined,
         orderId: body.order_id,
+        userId: body.user_id,
       })
-      return sendBaishunSuccess(reply, { currency_balance: Number(result.currencyBalance) })
+      return sendBaishunSuccess(reply, { currency_balance: safeBalance(result.currencyBalance) })
     },
   )
 }

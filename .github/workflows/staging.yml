@@ -44,6 +44,10 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Phase 0 versioning: GET /health reports this commit (src/config/release.ts).
+      - name: Stamp release
+        run: printf '{"commit":"%s","builtAt":"%s"}\n' "$GITHUB_SHA" "$(date -u +%FT%TZ)" > dist/release.json
+
       - name: Pack artifact
         run: |
           tar -czf ol-node-artifact.tgz \
