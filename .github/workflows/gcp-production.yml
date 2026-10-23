@@ -113,6 +113,7 @@ jobs:
       APP_DIR: /opt/ol/apps/ol-node-rest
       RUN_MIGRATE: '1'
       RESTART_WORKERS: '1'
+      CANARY_SOAK_SECONDS: ${{ vars.CANARY_SOAK_SECONDS || '120' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -240,6 +241,44 @@ jobs:
             --tunnel-through-iap \
             --quiet \
             --command "$check"
+
+      # Phase 1 canary: the main VM is the first node with the new build. Soak it (health,
+      # process restarts, 5xx count; .github/deploy/canary-soak.sh) BEFORE the release is
+      # published or any API node is touched. On failure the next step rolls it back.
+      - name: Canary soak (main VM)
+        id: canary
+        run: |
+          if [ "$GCE_INSTANCE_RUNS_API" = "false" ]; then check_api=0; else check_api=1; fi
+          gcloud compute ssh "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" \
+            --zone "$GCP_ZONE" \
+            --tunnel-through-iap \
+            --quiet \
+            --command "sudo APP_USER='${APP_USER}' SOAK_SECONDS='${CANARY_SOAK_SECONDS}' CHECK_API='${check_api}' bash -s" \
+            < .github/deploy/canary-soak.sh
+
+      # Bucket <current> still names the previous release here (it is only overwritten by the
+      # publish step below), so that build goes back on the main VM. Migrations are expand-only,
+      # so the previous build runs fine against the new schema.
+      - name: Roll the main VM back after a failed canary
+        if: failure() && steps.canary.outcome == 'failure' && vars.GCP_RELEASE_BUCKET != ''
+        env:
+          RELEASE_BUCKET: ${{ vars.GCP_RELEASE_BUCKET }}
+        run: |
+          prev=$(gcloud storage cat "$RELEASE_BUCKET/ol-node-rest/current" | tr -d '[:space:]')
+          if ! printf '%s' "$prev" | grep -Eq '^[0-9a-f]{40}$' || [ "$prev" = "$GITHUB_SHA" ]; then
+            echo "::error::no previous release to roll back to (current=${prev:-none}); main VM left on $GITHUB_SHA"
+            exit 1
+          fi
+          gcloud storage cp "$RELEASE_BUCKET/ol-node-rest/$prev.tgz" rollback.tgz --quiet
+          gcloud compute scp rollback.tgz "${GCE_INSTANCE}:/tmp/ol-node-rollback.tgz" \
+            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" --tunnel-through-iap --quiet
+          if [ "$GCE_INSTANCE_RUNS_API" = "false" ]; then restart_api=0; else restart_api=1; fi
+          gcloud compute ssh "$GCE_INSTANCE" --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" --tunnel-through-iap --quiet \
+            --command "sudo APP_USER='${APP_USER}' APP_DIR='${APP_DIR}' ARTIFACT=/tmp/ol-node-rollback.tgz RUN_MIGRATE=0 RESTART_WORKERS='${RESTART_WORKERS}' RESTART_API='${restart_api}' bash -s" \
+            < .github/deploy/ec2-unpack-ol-node.sh
+          echo "::error::canary failed on $GCE_INSTANCE; rolled back to $prev; API nodes were not touched"
+          exit 1
 
       # Keeps <bucket>/ol-node-rest/latest.tgz equal to what is actually running, so a
       # VM the MIG (re)creates via .github/deploy/gce-bootstrap.sh boots this build
