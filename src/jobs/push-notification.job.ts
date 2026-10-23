@@ -1,6 +1,7 @@
 import type { Job } from 'bullmq'
 import { randomUUID } from 'crypto'
 import { prismaRead } from '../config/database'
+import { pagedUsers } from '../utils/paged-users'
 import { pushNotificationService, type PushRecipient } from '../services/pushNotification.service'
 import { auditService } from '../services/audit.service'
 import { rootLogger } from '../utils/rootLogger'
@@ -80,23 +81,29 @@ export async function processPushBroadcastJob(job: Job<PushBroadcastJobData>): P
 
   let recipients: PushRecipient[]
   if (job.data.userIds) {
-    const rows = await prismaRead.user.findMany({
-      where: { id: { in: job.data.userIds }, fcmToken: { not: null } },
-      select: { id: true, fcmToken: true },
-    })
-    recipients = rows.map((r) => ({ userId: r.id, token: r.fcmToken! }))
+    // F18: up to 50k ids, looked up 5k at a time.
+    recipients = []
+    for (let i = 0; i < job.data.userIds.length; i += 5_000) {
+      const rows = await prismaRead.user.findMany({
+        where: { id: { in: job.data.userIds.slice(i, i + 5_000) }, fcmToken: { not: null } },
+        select: { id: true, fcmToken: true },
+      })
+      for (const r of rows) recipients.push({ userId: r.id, token: r.fcmToken! })
+    }
   } else {
-    const rows = await prismaRead.user.findMany({
-      where: {
+    // F18: paged, no 50k cap.
+    recipients = []
+    for await (const rows of pagedUsers(
+      {
         status: 'active',
         isSupport: false,
         fcmToken: { not: null },
         ...(job.data.country ? { country: { equals: job.data.country, mode: 'insensitive' } } : {}),
       },
-      select: { id: true, fcmToken: true },
-      take: 50_000,
-    })
-    recipients = rows.map((r) => ({ userId: r.id, token: r.fcmToken! }))
+      { id: true, fcmToken: true },
+    )) {
+      for (const r of rows) recipients.push({ userId: r.id, token: r.fcmToken! })
+    }
   }
 
   const batches: PushRecipient[][] = []

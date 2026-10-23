@@ -1,5 +1,5 @@
 import type { Job } from 'bullmq'
-import { prismaRead } from '../config/database'
+import { pagedUsers } from '../utils/paged-users'
 import { transactionalMessagingService } from '../services/transactionalMessaging.service'
 import { platformMessagingService } from '../services/platformMessaging.service'
 import { auditService } from '../services/audit.service'
@@ -95,15 +95,16 @@ export async function processPlatformNotificationBroadcastJob(
     return
   }
 
-  const userIds =
-    job.data.userIds ??
-    (
-      await prismaRead.user.findMany({
-        where: { status: 'active', isSupport: false },
-        select: { id: true },
-        take: 50_000,
-      })
-    ).map((u) => u.id)
+  // F18: paged, no 50k cap.
+  let userIds: string[]
+  if (job.data.userIds) {
+    userIds = job.data.userIds
+  } else {
+    userIds = []
+    for await (const rows of pagedUsers({ status: 'active', isSupport: false }, { id: true })) {
+      for (const u of rows) userIds.push(u.id)
+    }
+  }
 
   const batches: string[][] = []
   for (let i = 0; i < userIds.length; i += BROADCAST_BATCH_SIZE) {
