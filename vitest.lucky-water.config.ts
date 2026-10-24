@@ -10,7 +10,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/ledger/lucky-water.ledger.test.ts'],
+    include: ['tests/ledger/lucky-water.ledger.test.ts', 'tests/ledger/lucky-shadow-worker.test.ts'],
     setupFiles: ['tests/ledger/lucky-water.env.setup.ts'],
     fileParallelism: false,
     testTimeout: 60_000,

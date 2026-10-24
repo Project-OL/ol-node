@@ -85,6 +85,11 @@ import {
   LEDGER_FLOAT_SNAPSHOT_QUEUE,
 } from '../queues/ledger-float-snapshot.constants'
 import { processLedgerFloatSnapshotJob } from '../jobs/ledger-float-snapshot.job'
+import { processLuckyShadowWorkerJob } from '../jobs/lucky-shadow-worker.job'
+import {
+  LUCKY_SHADOW_WORKER_JOB,
+  LUCKY_SHADOW_WORKER_QUEUE,
+} from '../queues/lucky-shadow-worker.constants'
 import { RANKING_BACKFILL_QUEUE } from '../queues/ranking.constants'
 import { registerRankingReconcileJob } from '../queues/ranking.queue'
 import { processRankingBackfillJob } from '../jobs/ranking-backfill.job'
@@ -176,6 +181,26 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   const ledgerFloatSnapshotWorker = new Worker(
     LEDGER_FLOAT_SNAPSHOT_QUEUE,
     async (job: Job) => processLedgerFloatSnapshotJob(job),
+    { connection, concurrency: 1 },
+  )
+
+  const luckyShadowWorkerQueue = new Queue(LUCKY_SHADOW_WORKER_QUEUE, { connection })
+  await luckyShadowWorkerQueue.add(
+    LUCKY_SHADOW_WORKER_JOB,
+    {},
+    {
+      jobId: 'lucky-shadow-worker-repeat-15s',
+      repeat: { every: 15 * 1000 },
+      attempts: 5,
+      backoff: { type: 'exponential', delay: 10_000 },
+      removeOnComplete: 200,
+      removeOnFail: 100,
+    },
+  )
+
+  const luckyShadowWorker = new Worker(
+    LUCKY_SHADOW_WORKER_QUEUE,
+    async (job: Job) => processLuckyShadowWorkerJob(job),
     { connection, concurrency: 1 },
   )
 
@@ -617,6 +642,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   liveSessionWorker.on('failed', onFail('Live session'))
   ledgerAuditWorker.on('failed', onFail('Ledger audit'))
   ledgerFloatSnapshotWorker.on('failed', onFail('Ledger float snapshot'))
+  luckyShadowWorker.on('failed', onFail('Lucky shadow worker'))
   rankingBackfillWorker.on('failed', onFail('Ranking backfill'))
   gcpInfraMonitorWorker.on('failed', onFail('GCP infra monitor'))
 
@@ -629,6 +655,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await ledgerAuditQueue.close()
       await ledgerFloatSnapshotWorker.close()
       await ledgerFloatSnapshotQueue.close()
+      await luckyShadowWorker.close()
+      await luckyShadowWorkerQueue.close()
       await payrollSlaWorker.close()
       await payrollSlaQueue.close()
       await epayWebhookRetryWorker.close()
