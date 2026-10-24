@@ -1695,6 +1695,8 @@ model HostRevenueShareConfig {
   luckyHostShareBp      Int      @default(400) @map("lucky_host_share_bp")
   /// Lucky gifts: reserve-pool RTP target (9200 = 92%). Read by Live-server's lucky draw engine.
   luckyTargetRtpBp      Int      @default(9200) @map("lucky_target_rtp_bp")
+  /// Water-level lucky pools: pay agency commission on lucky gifts (off by default; additive flag).
+  luckyWaterAgencyCommission Boolean @default(false) @map("lucky_water_agency_commission")
   updatedAt             DateTime @updatedAt @map("updated_at")
   updatedByAdminId      String?  @map("updated_by_admin_id") @db.Uuid
 
@@ -1713,6 +1715,144 @@ model LuckyReservePool {
   updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("lucky_reserve_pool")
+}
+
+// ---------------------------------------------------------------------------
+// Water-level lucky tiers (Phase 2: schema + seed config only; engine lands in Phase 3).
+// Docs: docs/lucky/WATER_LEVEL_DESIGN.md. String columns carry CHECK constraints in SQL
+// (tier_id, mode, engine) so adding a tier/mode later is a constraint swap, not an enum migration.
+// ---------------------------------------------------------------------------
+
+/// Versioned per-tier config. Weights are basis points summing to 10000 per band.
+model LuckyTierConfig {
+  id                         String   @id @default(uuid()) @db.Uuid
+  /// T100 | T500 | T2K | T10K | T50K
+  tierId                     String   @map("tier_id") @db.VarChar(8)
+  version                    Int
+  /// off | shadow | enforce
+  mode                       String   @default("off") @db.VarChar(16)
+  /// Inclusive total-price range (coins) that routes a gift to this tier. null max = unbounded.
+  priceMin                   Int      @map("price_min")
+  priceMax                   Int?     @map("price_max")
+  /// Inflow rate: share of spend added to the pool (9200 = 92%).
+  rBp                        Int      @default(9200) @map("r_bp")
+  /// Jackpot carve-out bp (0 = none).
+  jBp                        Int      @default(0) @map("j_bp")
+  /// Base water level (coins).
+  l0                         BigInt   @map("l0")
+  /// Soft reserve (coins); payouts may not take balance below it.
+  floor                      BigInt
+  /// λ = balance / L0 cutoffs in bp (10000 = 1.0): critical < criticalMax <= low < lowMax <= normal < normalMax <= high.
+  lambdaCriticalMaxBp        Int      @default(5000) @map("lambda_critical_max_bp")
+  lambdaLowMaxBp             Int      @default(10000) @map("lambda_low_max_bp")
+  lambdaNormalMaxBp          Int      @default(15000) @map("lambda_normal_max_bp")
+  /// { critical|low|normal|high: { miss, half, equal, medium, jackpot } } each band sums to 10000.
+  bandWeightsJson            Json     @map("band_weights_json")
+  weightTableId              String   @map("weight_table_id") @db.VarChar(64)
+  /// Max multiplier of price (10 = 10x).
+  mMax                       Int      @default(10) @map("m_max")
+  /// Max point-value / coin-value ratio, in bp (10000 = 1.0).
+  vMaxBp                     Int      @default(10000) @map("v_max_bp")
+  /// Safety margin for the self-gift guard F2, in bp (100 = 0.01).
+  safetyMarginBp             Int      @default(100) @map("safety_margin_bp")
+  /// Minimum EV_normal - r gap in bp.
+  minGapBp                   Int      @default(50) @map("min_gap_bp")
+  /// Per-user daily win cap in coins (0 = off).
+  dailyWinCapCoins           BigInt   @default(0) @map("daily_win_cap_coins")
+  coolDownAfterBigWinSeconds Int      @default(0) @map("cool_down_after_big_win_seconds")
+  createdBy                  String?  @map("created_by")
+  createdAt                  DateTime @default(now()) @map("created_at")
+
+  @@unique([tierId, version])
+  @@map("lucky_tier_config")
+}
+
+/// Live pool balance per tier. Not seeded in Phase 2 (admin seeds explicitly).
+model LuckyTierPool {
+  tierId        String   @id @map("tier_id") @db.VarChar(8)
+  balance       BigInt   @default(0)
+  configVersion Int?     @map("config_version")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("lucky_tier_pool")
+}
+
+/// Virtual pool used in shadow mode (no coins move).
+model LuckyTierPoolShadow {
+  tierId        String   @id @map("tier_id") @db.VarChar(8)
+  balance       BigInt   @default(0)
+  configVersion Int      @map("config_version")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("lucky_tier_pool_shadow")
+}
+
+/// Audit trail of admin pool seeding decisions.
+model LuckyTierSeedLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  tierId    String   @map("tier_id") @db.VarChar(8)
+  amount    BigInt
+  adminId   String   @map("admin_id")
+  reason    String?
+  /// seed | start_empty | capped_ladder
+  choice    String   @db.VarChar(24)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tierId, createdAt])
+  @@map("lucky_tier_seed_log")
+}
+
+/// One row per lucky draw (legacy engine, shadow, or water_v1). `idempotencyKey` is unique.
+model LuckyDrawAudit {
+  id                 String   @id @default(uuid()) @db.Uuid
+  idempotencyKey     String   @unique @map("idempotency_key")
+  payloadFingerprint String?  @map("payload_fingerprint")
+  /// legacy | water_v1
+  engine             String   @db.VarChar(16)
+  /// off | shadow | enforce | legacy_path
+  mode               String   @db.VarChar(16)
+  tierId             String?  @map("tier_id") @db.VarChar(8)
+  senderUserId       String?  @map("sender_user_id") @db.Uuid
+  giftTransactionId  String?  @map("gift_transaction_id") @db.Uuid
+  drawnJson          Json     @map("drawn_json")
+  breakdownArray     Json     @map("breakdown_array")
+  category           String   @db.VarChar(32)
+  paidReward         BigInt   @default(0) @map("paid_reward")
+  senderBalanceAfter BigInt?  @map("sender_balance_after")
+  configVersion      Int?     @map("config_version")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@index([tierId, createdAt])
+  @@index([senderUserId, createdAt])
+  @@map("lucky_draw_audit")
+}
+
+/// Shadow-mode replay cursor (single row, key = 'default').
+model LuckyShadowCursor {
+  id            String    @id @default("default")
+  lastCreatedAt DateTime? @map("last_created_at")
+  lastId        String?   @map("last_id")
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("lucky_shadow_cursor")
+}
+
+/// Daily per-tier rollup (RTP, draw counts, pool levels).
+model LuckyTierDailySnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  tierId         String   @map("tier_id") @db.VarChar(8)
+  dayUtc         DateTime @map("day_utc") @db.Date
+  drawCount      BigInt   @default(0) @map("draw_count")
+  totalSpent     BigInt   @default(0) @map("total_spent")
+  totalPaid      BigInt   @default(0) @map("total_paid")
+  /// Realised RTP in bp (paid / spent * 10000); null when no spend.
+  rtpBp          Int?     @map("rtp_bp")
+  poolBalanceEnd BigInt?  @map("pool_balance_end")
+  metrics        Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([tierId, dayUtc])
+  @@map("lucky_tier_daily_snapshot")
 }
 
 /// Allowed video-call `pricePerMin` values for a host livestream level band.
