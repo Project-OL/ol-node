@@ -99,6 +99,12 @@ describe('luckyWater bandWeights v1', () => {
     expect(() => validateBandWeights(w, econ)).toThrow(/critical/)
   })
 
+  it('host share increase can break F2 (simulates admin host-revenue rejection path)', () => {
+    const w = clone()
+    const highHost = { ...econ, hBp: 500 }
+    expect(() => validateBandWeights(w, highHost)).toThrow(LuckyWeightsError)
+  })
+
   it('tier defaults are contiguous and floor = L0/5', () => {
     expect(DEFAULT_TIERS_V1.map((t) => t.tierId)).toEqual(['T100', 'T500', 'T2K', 'T10K', 'T50K'])
     for (let i = 1; i < DEFAULT_TIERS_V1.length; i++) {

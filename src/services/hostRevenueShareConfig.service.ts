@@ -7,6 +7,7 @@ import {
 import { RedisKeys, SYSTEM_RATES_CONFIG_TTL, redisClient } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { hostRevenueShareConfigRepository } from '../repositories/hostRevenueShareConfig.repository'
+import { assertShadowEnforceTiersPassF2 } from './luckyWater/validateActiveTiersF2'
 
 export type HostRevenueShareConfigDto = HostRevenueShares & {
   updatedAt: string | null
@@ -132,6 +133,16 @@ export const hostRevenueShareConfigService = {
     }
     if (luckyWaterAgencyCommission != null && typeof luckyWaterAgencyCommission !== 'boolean') {
       throw new AppError(422, 'luckyWaterAgencyCommission must be a boolean', 'INVALID_SHARE_BP')
+    }
+
+    if (luckyHostShareBp != null || luckyWaterAgencyCommission != null) {
+      const current = await this.getShares()
+      const nextShares = {
+        ...current,
+        ...(luckyHostShareBp != null ? { luckyHostShareBp } : {}),
+        ...(luckyWaterAgencyCommission != null ? { luckyWaterAgencyCommission } : {}),
+      }
+      await assertShadowEnforceTiersPassF2(nextShares)
     }
 
     const row = await hostRevenueShareConfigRepository.update({
