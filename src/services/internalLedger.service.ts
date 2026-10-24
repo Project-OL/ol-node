@@ -22,7 +22,7 @@
  * its committed result back (`replayed: true`); a different requestId is a real duplicate and gets
  * 409 DUPLICATE_LEDGER_KEY, which Live-server maps to its existing 409 IDEM_CONFLICT.
  */
-import { randomUUID } from 'crypto'
+import { randomInt, randomUUID } from 'crypto'
 import {
   CoinTxType,
   LedgerDirection,
@@ -43,6 +43,10 @@ import { isSerializationAbort, isUniqueViolation } from '../utils/txRetry'
 import { lockWalletsInOrder } from '../utils/wallet-lock-order'
 import { agencyCommissionService } from './agencyCommission.service'
 import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
+import { resolveCategory } from './luckyWater/categoryMap'
+import { payloadFingerprint } from './luckyWater/payloadFingerprint'
+import { resolveEngine, type EngineResolution } from './luckyWater/resolveTier'
+import { collapseBreakdown, drawUnits } from './luckyWater/waterEngine'
 import { rankingService } from './ranking.service'
 import { walletLevelService } from './user-level.service'
 import { walletService } from './wallet.service'
@@ -544,9 +548,11 @@ export type LuckyGiftInput = {
   giftTransactionId: string
   /** `lucky:<sender>:<clientTxId>` or `lucky:<txid>`. */
   txKeyBase: string
-  /** Drawn by Live-server's RTP engine. */
+  /** Drawn by Live-server's RTP engine (legacy path). Ignored by water_v1. */
   rewardCoins: string
   category: string
+  /** Phase 3: the caller accepts a server-drawn water_v1 result (additive; default legacy). */
+  supportsServerDraw?: boolean
 }
 
 export type LuckyGiftResult = {
@@ -560,40 +566,134 @@ export type LuckyGiftResult = {
   wealth: { newLevel: number; previousLevel: number }
   agencyUserId: string | null
   replayed: boolean
+  // Phase 3 additive fields (legacy keeps engine:'legacy'; Live-server treats missing as legacy).
+  engine: 'legacy' | 'water_v1'
+  category?: string
+  tierId?: string | null
+  configVersion?: number | null
+  breakdownArray?: number[]
+}
+
+/** UTC midnight of the given instant (F13 daily win-cap window). */
+function utcDayStart(now: Date): Date {
+  return new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`)
+}
+
+/**
+ * F13 user caps for a water_v1 send, read in-tx from `lucky_draw_audit` (indexed by sender/day).
+ * `priorDailyWon` = water reward coins already won today (UTC); `coolDownActive` = a prior big win
+ * (drawn_json.bigWin) sits inside the cool-down window. Both are skipped (cheap) when disabled.
+ */
+async function readWaterUserCaps(
+  tx: Tx,
+  senderId: string,
+  dailyWinCapCoins: bigint,
+  coolDownSeconds: number,
+): Promise<{ priorDailyWon: bigint; coolDownActive: boolean }> {
+  let priorDailyWon = 0n
+  let coolDownActive = false
+  if (dailyWinCapCoins > 0n) {
+    const rows = await tx.$queryRaw<{ won: bigint }[]>`
+      SELECT COALESCE(SUM(paid_reward), 0)::bigint AS won
+      FROM lucky_draw_audit
+      WHERE sender_user_id = ${senderId}::uuid
+        AND engine = 'water_v1'
+        AND created_at >= ${utcDayStart(new Date())}`
+    priorDailyWon = rows[0]?.won ?? 0n
+  }
+  if (coolDownSeconds > 0) {
+    const cutoff = new Date(Date.now() - coolDownSeconds * 1000)
+    const rows = await tx.$queryRaw<{ one: number }[]>`
+      SELECT 1 AS one
+      FROM lucky_draw_audit
+      WHERE sender_user_id = ${senderId}::uuid
+        AND engine = 'water_v1'
+        AND created_at >= ${cutoff}
+        AND (drawn_json->>'bigWin') = 'true'
+      LIMIT 1`
+    coolDownActive = rows.length > 0
+  }
+  return { priorDailyWon, coolDownActive }
+}
+
+type LuckyTxResult = {
+  finalBalanceCoins: bigint
+  pointsAfterHost: bigint | null
+  wealth: LevelResult
+  agencyUserId: string | null
+  engine: 'legacy' | 'water_v1'
+  rewardCoins: bigint
+  category: string
+  tierId: string | null
+  configVersion: number | null
+  breakdownArray: number[] | undefined
 }
 
 async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
   const gift = await loadSendableGift(input.giftId, { lucky: true })
   const count = input.count
   const isCombo = count > 1
-  const totalCost = BigInt(gift.coinCost) * BigInt(count)
-  const reward = BigInt(input.rewardCoins)
-  const maxReward =
-    totalCost * (isCombo ? LUCKY_MAX_REWARD_MULTIPLE.combo : LUCKY_MAX_REWARD_MULTIPLE.single)
-  if (reward < 0n || reward > maxReward) {
-    throw new AppError(400, 'Lucky reward out of range', 'INVALID_LUCKY_REWARD', {
-      rewardCoins: reward.toString(),
-      max: maxReward.toString(),
-    })
-  }
-  // Admin setting (host_revenue_share_config.lucky_host_share_bp, default 400 = 4%).
-  const { luckyHostShareBp, luckyTargetRtpBp } = await hostRevenueShareConfigService.getShares()
+  const unitPrice = BigInt(gift.coinCost)
+  const totalCost = unitPrice * BigInt(count)
+  const legacyReward = BigInt(input.rewardCoins)
+  // Admin settings (host_revenue_share_config): host cut bp, RTP target, water agency flag.
+  const { luckyHostShareBp, luckyTargetRtpBp, luckyWaterAgencyCommission } =
+    await hostRevenueShareConfigService.getShares()
   const hostPoints = (totalCost * BigInt(luckyHostShareBp)) / 10_000n
   const receiverId = input.receiverId || input.senderId
   const context = isCombo ? 'LUCKY_COMBO' : 'LUCKY_SINGLE'
   const debitKey = `${input.txKeyBase}-debit`
   const hostKey = `${input.txKeyBase}-host-cut`
-  // Single lucky gifts pay no agency commission; combos do (decision 2026-10-17).
-  const withCommission = isCombo && hostPoints > 0n
+  const rewardKey = `${input.txKeyBase}-reward`
+  const supportsServerDraw = input.supportsServerDraw === true
+  // F5: a clientTxId-scoped key is `lucky:<sender>:<clientTxId>` (3 parts); `lucky:<txid>` is 2.
+  const hasClientTxId = input.txKeyBase.split(':').length >= 3
 
-  let settled
+  let settled: LuckyTxResult
   try {
-    settled = await runMoneyTx(async (tx) => {
+    settled = await runMoneyTx(async (tx): Promise<LuckyTxResult> => {
+      // Engine resolution (inside tx): only when the caller advertised a server draw. Legacy
+      // callers skip the extra reads and keep the exact legacy path.
+      const resolution: EngineResolution = supportsServerDraw
+        ? await resolveEngine(tx, gift.coinCost, true)
+        : { engine: 'legacy', config: null, seedExists: false }
+      const engine = resolution.engine
+      const config = resolution.config
+
+      // Agency commission: legacy pays on combos (decision 2026-10-17); water_v1 pays only when the
+      // admin flag is on (F12). Wallet locks come first, so this must be known before locking.
+      const withCommission =
+        engine === 'water_v1'
+          ? luckyWaterAgencyCommission && hostPoints > 0n
+          : isCombo && hostPoints > 0n
+
       const { payerCoin, hostPoint } = await lockForOperation(tx, {
         payerUserId: input.senderId,
         hostUserId: receiverId,
         withCommission,
       })
+
+      // ---- pre-debit guards ----
+      if (engine === 'water_v1' && config) {
+        // F9: refuse prices too small for any pool inflow (before money moves).
+        if (unitPrice * BigInt(config.rBp) < 10_000n) {
+          throw new AppError(400, 'Lucky price too low for the pool', 'LUCKY_PRICE_TOO_LOW', {
+            unitPrice: unitPrice.toString(),
+            rBp: config.rBp,
+          })
+        }
+      } else {
+        // Legacy reward bound (F1): single ≤ 10×S, combo ≤ 2×S on the caller's drawn reward.
+        const maxReward =
+          totalCost * (isCombo ? LUCKY_MAX_REWARD_MULTIPLE.combo : LUCKY_MAX_REWARD_MULTIPLE.single)
+        if (legacyReward < 0n || legacyReward > maxReward) {
+          throw new AppError(400, 'Lucky reward out of range', 'INVALID_LUCKY_REWARD', {
+            rewardCoins: legacyReward.toString(),
+            max: maxReward.toString(),
+          })
+        }
+      }
+
       const coins = await latestCoinBalance(tx, payerCoin.id)
       if (coins < totalCost) throw insufficient(totalCost, coins)
       const coinsAfterDebit = coins - totalCost
@@ -619,6 +719,83 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
       // Wealth XP tracks the full spend; the reward is a separate credit, not a discount.
       const wealth = await applyLevel(tx, input.senderId, LevelType.WEALTH, totalCost)
 
+      // ---- decide the payout: legacy echoes the drawn reward; water_v1 draws from the pool ----
+      let reward = legacyReward
+      let category = input.category
+      let breakdownArray: number[] | undefined
+      let tierId: string | null = null
+      let configVersion: number | null = null
+      let drawnJson: Record<string, unknown> | null = null
+
+      if (engine === 'water_v1' && config) {
+        tierId = config.tierId
+        configVersion = config.version
+        // Pool row lock LAST among reads (held briefly): create at 0 if an admin seed used
+        // start_empty / capped_ladder and no row exists yet.
+        await tx.$executeRaw`
+          INSERT INTO lucky_tier_pool (tier_id, balance, config_version, updated_at)
+          VALUES (${config.tierId}, 0, ${config.version}, NOW())
+          ON CONFLICT (tier_id) DO NOTHING`
+        const poolRows = await tx.$queryRaw<{ balance: bigint }[]>`
+          SELECT balance FROM lucky_tier_pool WHERE tier_id = ${config.tierId} FOR UPDATE`
+        const poolBalance = poolRows[0]?.balance ?? 0n
+        const inflow = (totalCost * BigInt(config.rBp)) / 10_000n
+
+        const caps = await readWaterUserCaps(
+          tx,
+          input.senderId,
+          config.dailyWinCapCoins,
+          config.coolDownAfterBigWinSeconds,
+        )
+        const draw = drawUnits({
+          unitPrice,
+          count,
+          weights: config.bandWeights,
+          thresholds: config.thresholds,
+          l0: config.l0,
+          floor: config.floor,
+          mMax: config.mMax,
+          startingWater: poolBalance + inflow,
+          dailyWinCapCoins: config.dailyWinCapCoins,
+          priorDailyWon: caps.priorDailyWon,
+          coolDownActive: caps.coolDownActive,
+          randomInt: (min, max) => randomInt(min, max),
+        })
+        reward = draw.totalPaid
+        category = resolveCategory({ count, unitPrice, totalPaid: draw.totalPaid })
+        const breakdownBig = collapseBreakdown(draw.rewards)
+        breakdownArray = breakdownBig.map((v) => Number(v))
+
+        // Single conditional pool write (floor guard): a PAID draw can never dip balance below floor
+        // (the draw force-misses per unit to enforce this). A zero-paid send (pure fill / all-miss)
+        // may still sit below floor while a start_empty pool fills, so only the floor is gated on a
+        // payout. 0 rows with a payout means a bug — fail the tx rather than overpay.
+        const affected = await tx.$executeRaw`
+          UPDATE lucky_tier_pool
+          SET balance = ${draw.finalWater}, config_version = ${config.version}, updated_at = NOW()
+          WHERE tier_id = ${config.tierId}
+            AND (${draw.totalPaid} = 0 OR ${draw.finalWater} >= ${config.floor})`
+        if (affected !== 1) {
+          throw new AppError(500, 'Lucky pool floor violation', 'LUCKY_POOL_FLOOR', {
+            tierId: config.tierId,
+          })
+        }
+        drawnJson = {
+          engine: 'water_v1',
+          tierId: config.tierId,
+          configVersion: config.version,
+          weightTableId: config.weightTableId,
+          wBefore: poolBalance.toString(),
+          inflow: inflow.toString(),
+          wFinal: draw.finalWater.toString(),
+          l0: config.l0.toString(),
+          floor: config.floor.toString(),
+          rBp: config.rBp,
+          bigWin: draw.bigWin,
+          units: draw.units,
+        }
+      }
+
       let finalBalanceCoins = coinsAfterDebit
       if (reward > 0n) {
         finalBalanceCoins = coinsAfterDebit + reward
@@ -628,9 +805,9 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
           direction: LedgerDirection.CREDIT,
           txType: CoinTxType.PLATFORM_REWARD,
           balanceAfter: finalBalanceCoins,
-          idempotencyKey: `${input.txKeyBase}-reward`,
+          idempotencyKey: rewardKey,
           refId: input.giftTransactionId,
-          description: `Lucky Winner: ${gift.name} (${input.category})`,
+          description: `Lucky Winner: ${gift.name} (${category})`,
         })
       }
       await walletRepository.bumpVersion(tx, payerCoin.id)
@@ -682,16 +859,106 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
           context,
         },
       })
-      // LIVE-31: the RTP counters commit with the gift. Last statement, so the slot's row lock is
-      // held for the shortest time; a random slot keeps concurrent lucky gifts off one row.
-      await addToLuckyReservePool(tx, { cost: totalCost, reward, targetRtpBp: luckyTargetRtpBp })
-      return { finalBalanceCoins, pointsAfterHost, wealth, agencyUserId }
+
+      if (engine === 'water_v1' && config) {
+        // F11: water_v1 does NOT touch lucky_reserve_pool; the audit row is the source of truth and
+        // the F5 replay record (unique on idempotency_key = txKeyBase).
+        await tx.luckyDrawAudit.create({
+          data: {
+            idempotencyKey: input.txKeyBase,
+            payloadFingerprint: payloadFingerprint({
+              senderId: input.senderId,
+              giftId: input.giftId,
+              count,
+              receiverId: input.receiverId,
+            }),
+            engine: 'water_v1',
+            mode: 'enforce',
+            tierId: config.tierId,
+            senderUserId: input.senderId,
+            giftTransactionId: input.giftTransactionId,
+            drawnJson: (drawnJson ?? {}) as Prisma.InputJsonValue,
+            breakdownArray: (breakdownArray ?? []) as Prisma.InputJsonValue,
+            category,
+            paidReward: reward,
+            senderBalanceAfter: finalBalanceCoins,
+            configVersion: config.version,
+          },
+        })
+      } else {
+        // LIVE-31 (legacy, byte-identical): the RTP counters commit with the gift, last statement.
+        await addToLuckyReservePool(tx, {
+          cost: totalCost,
+          reward,
+          targetRtpBp: luckyTargetRtpBp,
+        })
+      }
+
+      return {
+        finalBalanceCoins,
+        pointsAfterHost,
+        wealth,
+        agencyUserId,
+        engine,
+        rewardCoins: reward,
+        category,
+        tierId,
+        configVersion,
+        breakdownArray,
+      }
     })
   } catch (err) {
     if (!isUniqueViolation(err)) throw err
+    // A water_v1 send wrote a lucky_draw_audit row in the same tx: replay from it (never re-draw).
+    const audit = await prisma.luckyDrawAudit.findUnique({
+      where: { idempotencyKey: input.txKeyBase },
+    })
+    if (audit && audit.engine === 'water_v1') {
+      if (hasClientTxId) {
+        // F5: replay identity is the txKeyBase regardless of requestId. Guard sender + fingerprint.
+        if (audit.senderUserId && audit.senderUserId !== input.senderId) throw duplicate()
+        const fp = payloadFingerprint({
+          senderId: input.senderId,
+          giftId: input.giftId,
+          count,
+          receiverId: input.receiverId,
+        })
+        if (audit.payloadFingerprint && audit.payloadFingerprint !== fp) {
+          throw new AppError(409, 'Lucky payload does not match the original send', 'LUCKY_REPLAY_MISMATCH')
+        }
+      } else {
+        // No clientTxId: keep today's requestId-strict identity against the debit row.
+        const debitRow = await prisma.coinLedgerEntry.findUnique({
+          where: { idempotencyKey: debitKey },
+          select: { metadata: true },
+        })
+        if (!debitRow || metaRequestId(debitRow.metadata) !== input.requestId) throw duplicate()
+      }
+      const breakdown = Array.isArray(audit.breakdownArray)
+        ? (audit.breakdownArray as number[])
+        : undefined
+      return {
+        transactionId: audit.giftTransactionId ?? input.giftTransactionId,
+        totalCost: totalCost.toString(),
+        hostPoints: hostPoints.toString(),
+        rewardCoins: audit.paidReward.toString(),
+        finalBalanceCoins: (audit.senderBalanceAfter ?? 0n).toString(),
+        pointsAfterHost: (await pointBalanceAfterKey(hostKey))?.toString() ?? null,
+        effectiveReceiverId: receiverId,
+        wealth: await currentLevel(input.senderId, LevelType.WEALTH),
+        agencyUserId: null,
+        replayed: true,
+        engine: 'water_v1',
+        category: audit.category,
+        tierId: audit.tierId,
+        configVersion: audit.configVersion,
+        breakdownArray: breakdown,
+      }
+    }
+    // Legacy requestId-strict replay (unchanged behaviour).
     return replayOrDuplicate(debitKey, input.requestId, async () => {
       const rewardRow = await prisma.coinLedgerEntry.findUnique({
-        where: { idempotencyKey: `${input.txKeyBase}-reward` },
+        where: { idempotencyKey: rewardKey },
         select: { balanceAfter: true, amount: true },
       })
       const debitRow = await prisma.coinLedgerEntry.findUnique({
@@ -709,6 +976,8 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
         effectiveReceiverId: receiverId,
         wealth: await currentLevel(input.senderId, LevelType.WEALTH),
         agencyUserId: null,
+        engine: 'legacy' as const,
+        category: input.category,
       }
     })
   }
@@ -727,13 +996,18 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
     transactionId: input.giftTransactionId,
     totalCost: totalCost.toString(),
     hostPoints: hostPoints.toString(),
-    rewardCoins: reward.toString(),
+    rewardCoins: settled.rewardCoins.toString(),
     finalBalanceCoins: settled.finalBalanceCoins.toString(),
     pointsAfterHost: settled.pointsAfterHost?.toString() ?? null,
     effectiveReceiverId: receiverId,
     wealth: { newLevel: settled.wealth.newLevel, previousLevel: settled.wealth.previousLevel },
     agencyUserId: settled.agencyUserId,
     replayed: false,
+    engine: settled.engine,
+    category: settled.category,
+    tierId: settled.tierId,
+    configVersion: settled.configVersion,
+    breakdownArray: settled.breakdownArray,
   }
 }
 

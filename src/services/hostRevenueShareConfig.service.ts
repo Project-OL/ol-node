@@ -20,6 +20,7 @@ function serialize(row: {
   videoCallHostShareBp: number
   luckyHostShareBp: number
   luckyTargetRtpBp: number
+  luckyWaterAgencyCommission: boolean
   updatedAt: Date
   updatedByAdminId: string | null
 }): HostRevenueShareConfigDto {
@@ -30,6 +31,7 @@ function serialize(row: {
     videoCallHostShareBp: row.videoCallHostShareBp,
     luckyHostShareBp: row.luckyHostShareBp,
     luckyTargetRtpBp: row.luckyTargetRtpBp,
+    luckyWaterAgencyCommission: row.luckyWaterAgencyCommission,
     updatedAt: row.updatedAt.toISOString(),
     updatedByAdminId: row.updatedByAdminId,
   }
@@ -80,6 +82,7 @@ export const hostRevenueShareConfigService = {
       videoCallHostShareBp: cfg.videoCallHostShareBp,
       luckyHostShareBp: cfg.luckyHostShareBp,
       luckyTargetRtpBp: cfg.luckyTargetRtpBp,
+      luckyWaterAgencyCommission: cfg.luckyWaterAgencyCommission,
     }
   },
 
@@ -96,6 +99,7 @@ export const hostRevenueShareConfigService = {
       videoCallHostShareBp?: number
       luckyHostShareBp?: number
       luckyTargetRtpBp?: number
+      luckyWaterAgencyCommission?: boolean
     },
   ): Promise<HostRevenueShareConfigDto> {
     const hasAny = Object.values(updates).some((v) => v != null)
@@ -103,7 +107,7 @@ export const hostRevenueShareConfigService = {
       throw new AppError(400, 'Provide at least one share field', 'VALIDATION_ERROR')
     }
 
-    const { luckyHostShareBp, luckyTargetRtpBp, ...hostShares } = updates
+    const { luckyHostShareBp, luckyTargetRtpBp, luckyWaterAgencyCommission, ...hostShares } = updates
     for (const [name, v] of Object.entries(hostShares)) {
       if (v == null) continue
       if (!Number.isInteger(v) || v < 1 || v > 10_000) {
@@ -125,6 +129,9 @@ export const hostRevenueShareConfigService = {
         `luckyTargetRtpBp must be an integer ${LUCKY_TARGET_RTP_BP_RANGE.min}–${LUCKY_TARGET_RTP_BP_RANGE.max} bp`,
         'INVALID_SHARE_BP',
       )
+    }
+    if (luckyWaterAgencyCommission != null && typeof luckyWaterAgencyCommission !== 'boolean') {
+      throw new AppError(422, 'luckyWaterAgencyCommission must be a boolean', 'INVALID_SHARE_BP')
     }
 
     const row = await hostRevenueShareConfigRepository.update({

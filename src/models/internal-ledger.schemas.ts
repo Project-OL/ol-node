@@ -34,6 +34,9 @@ export const LuckyGiftSchema = z.object({
   txKeyBase: keyBase.regex(/^lucky:/),
   rewardCoins: z.string().regex(/^\d{1,18}$/),
   category: z.string().min(1).max(64),
+  // Phase 3 (additive): the caller can accept a server-drawn water_v1 result. When absent/false the
+  // ledger keeps the exact legacy path and the caller's pre-drawn rewardCoins.
+  supportsServerDraw: z.boolean().optional(),
 })
 
 export const CallAcceptSchema = z.object({
