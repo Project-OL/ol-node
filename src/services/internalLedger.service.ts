@@ -51,6 +51,7 @@ import { rankingService } from './ranking.service'
 import { walletLevelService } from './user-level.service'
 import { walletService } from './wallet.service'
 import { assertCoinDebitAllowedInTx } from './wallet-freeze.service'
+import { runInLuckyMoneyTx } from './luckyWater/luckyMoneyTxContext'
 
 const TX_TIMEOUT_MS = 15_000
 const TX_MAX_ATTEMPTS = 3
@@ -238,10 +239,15 @@ async function addToLuckyReservePool(
   `
 }
 
-async function runMoneyTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+async function runMoneyTx<T>(fn: (tx: Tx) => Promise<T>, label = 'money'): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await prisma.$transaction(fn, { timeout: TX_TIMEOUT_MS, maxWait: 10_000 })
+      // C1: mark ALS only inside the interactive callback so tx.* is fine but global
+      // prisma.* trips the nested-connection guard (mode log/throw; off in production).
+      return await prisma.$transaction(
+        (tx) => runInLuckyMoneyTx(label, () => fn(tx)),
+        { timeout: TX_TIMEOUT_MS, maxWait: 10_000 },
+      )
     } catch (err) {
       if (attempt < TX_MAX_ATTEMPTS && isSerializationAbort(err)) {
         await new Promise((r) => setTimeout(r, 20 * attempt + Math.floor(Math.random() * 30)))
@@ -649,6 +655,85 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
   // F5: a clientTxId-scoped key is `lucky:<sender>:<clientTxId>` (3 parts); `lucky:<txid>` is 2.
   const hasClientTxId = input.txKeyBase.split(':').length >= 3
 
+  // B4: replay is mode-independent. If the debit (or water audit) already exists, rebuild from
+  // those rows and never consult the current tier mode / re-draw.
+  {
+    const existingDebit = await prisma.coinLedgerEntry.findUnique({
+      where: { idempotencyKey: debitKey },
+      select: { balanceAfter: true, metadata: true, refId: true },
+    })
+    if (existingDebit) {
+      const audit = await prisma.luckyDrawAudit.findUnique({
+        where: { idempotencyKey: input.txKeyBase },
+      })
+      if (audit && audit.engine === 'water_v1') {
+        if (hasClientTxId) {
+          if (audit.senderUserId && audit.senderUserId !== input.senderId) throw duplicate()
+          const fp = payloadFingerprint({
+            senderId: input.senderId,
+            giftId: input.giftId,
+            count,
+            receiverId: input.receiverId,
+          })
+          if (audit.payloadFingerprint && audit.payloadFingerprint !== fp) {
+            throw new AppError(
+              409,
+              'Lucky payload does not match the original send',
+              'LUCKY_REPLAY_MISMATCH',
+            )
+          }
+        } else if (metaRequestId(existingDebit.metadata) !== input.requestId) {
+          throw duplicate()
+        }
+        const breakdown = Array.isArray(audit.breakdownArray)
+          ? (audit.breakdownArray as number[])
+          : undefined
+        return {
+          transactionId: audit.giftTransactionId ?? input.giftTransactionId,
+          totalCost: totalCost.toString(),
+          hostPoints: hostPoints.toString(),
+          rewardCoins: audit.paidReward.toString(),
+          finalBalanceCoins: (audit.senderBalanceAfter ?? 0n).toString(),
+          pointsAfterHost: (await pointBalanceAfterKey(hostKey))?.toString() ?? null,
+          effectiveReceiverId: receiverId,
+          wealth: await currentLevel(input.senderId, LevelType.WEALTH),
+          agencyUserId: null,
+          replayed: true,
+          engine: 'water_v1',
+          category: audit.category,
+          tierId: audit.tierId,
+          configVersion: audit.configVersion,
+          breakdownArray: breakdown,
+        }
+      }
+      // Legacy original (no water audit): requestId-strict as today.
+      return replayOrDuplicate(debitKey, input.requestId, async () => {
+        const rewardRow = await prisma.coinLedgerEntry.findUnique({
+          where: { idempotencyKey: rewardKey },
+          select: { balanceAfter: true, amount: true },
+        })
+        const debitRow = await prisma.coinLedgerEntry.findUnique({
+          where: { idempotencyKey: debitKey },
+          select: { balanceAfter: true },
+        })
+        const hostAfter = await pointBalanceAfterKey(hostKey)
+        return {
+          transactionId: input.giftTransactionId,
+          totalCost: totalCost.toString(),
+          hostPoints: hostPoints.toString(),
+          rewardCoins: (rewardRow?.amount ?? 0n).toString(),
+          finalBalanceCoins: (rewardRow?.balanceAfter ?? debitRow?.balanceAfter ?? 0n).toString(),
+          pointsAfterHost: hostAfter?.toString() ?? null,
+          effectiveReceiverId: receiverId,
+          wealth: await currentLevel(input.senderId, LevelType.WEALTH),
+          agencyUserId: null,
+          engine: 'legacy' as const,
+          category: input.category,
+        }
+      })
+    }
+  }
+
   let settled: LuckyTxResult
   try {
     settled = await runMoneyTx(async (tx): Promise<LuckyTxResult> => {
@@ -719,19 +804,70 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
       // Wealth XP tracks the full spend; the reward is a separate credit, not a discount.
       const wealth = await applyLevel(tx, input.senderId, LevelType.WEALTH, totalCost)
 
-      // ---- decide the payout: legacy echoes the drawn reward; water_v1 draws from the pool ----
+      // ---- payout ----
+      // B5 water_v1 lock order: wallets → debit → wealth → host/agency → gift_transactions
+      // → pool FOR UPDATE (late) → draw → pool UPDATE → PLATFORM_REWARD → audit.
+      // Legacy path unchanged: reward credit → host → gift_tx → reserve.
       let reward = legacyReward
       let category = input.category
       let breakdownArray: number[] | undefined
       let tierId: string | null = null
       let configVersion: number | null = null
       let drawnJson: Record<string, unknown> | null = null
+      let finalBalanceCoins = coinsAfterDebit
+      let pointsAfterHost: bigint | null = null
+      let agencyUserId: string | null = null
 
       if (engine === 'water_v1' && config) {
         tierId = config.tierId
         configVersion = config.version
-        // Pool row lock LAST among reads (held briefly): create at 0 if an admin seed used
-        // start_empty / capped_ladder and no row exists yet.
+
+        // Host cut + gift row before taking the hot pool lock (shortens lock hold).
+        if (hostPoints > 0n) {
+          pointsAfterHost = (await latestPointBalance(tx, hostPoint!.id)) + hostPoints
+          const hostLedger = await pointLedgerRepository.insert(tx, {
+            walletId: hostPoint!.id,
+            amount: hostPoints,
+            direction: LedgerDirection.CREDIT,
+            txType: PointTxType.LIVESTREAM_GIFT,
+            balanceAfter: pointsAfterHost,
+            idempotencyKey: hostKey,
+            refId: input.giftTransactionId,
+            counterpartyId: input.senderId,
+            description: `Received Lucky Gift: ${gift.name}`,
+            metadata: {
+              giftId: gift.id,
+              giftName: gift.name,
+              context,
+              quantity: count,
+              unitCoinCost: gift.coinCost,
+              giftTransactionId: input.giftTransactionId,
+            },
+          })
+          await walletRepository.bumpVersion(tx, hostPoint!.id)
+          await applyLevel(tx, receiverId, LevelType.LIVESTREAM, hostPoints)
+          agencyUserId = await settleHostCredit(tx, {
+            hostUserId: receiverId,
+            hostLedgerEntryId: hostLedger.id,
+            points: hostPoints,
+            txType: PointTxType.LIVESTREAM_GIFT,
+            withCommission,
+          })
+        }
+
+        await tx.giftTransaction.create({
+          data: {
+            id: input.giftTransactionId,
+            senderUserId: input.senderId,
+            receiverUserId: receiverId,
+            giftId: gift.id,
+            coinCost: Number(totalCost),
+            quantity: count,
+            pointsAwarded: Number(hostPoints),
+            context,
+          },
+        })
+
         await tx.$executeRaw`
           INSERT INTO lucky_tier_pool (tier_id, balance, config_version, updated_at)
           VALUES (${config.tierId}, 0, ${config.version}, NOW())
@@ -766,10 +902,6 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
         const breakdownBig = collapseBreakdown(draw.rewards)
         breakdownArray = breakdownBig.map((v) => Number(v))
 
-        // Single conditional pool write (floor guard): a PAID draw can never dip balance below floor
-        // (the draw force-misses per unit to enforce this). A zero-paid send (pure fill / all-miss)
-        // may still sit below floor while a start_empty pool fills, so only the floor is gated on a
-        // payout. 0 rows with a payout means a bug — fail the tx rather than overpay.
         const affected = await tx.$executeRaw`
           UPDATE lucky_tier_pool
           SET balance = ${draw.finalWater}, config_version = ${config.version}, updated_at = NOW()
@@ -794,75 +926,22 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
           bigWin: draw.bigWin,
           units: draw.units,
         }
-      }
 
-      let finalBalanceCoins = coinsAfterDebit
-      if (reward > 0n) {
-        finalBalanceCoins = coinsAfterDebit + reward
-        await coinLedgerRepository.insert(tx, {
-          walletId: payerCoin.id,
-          amount: reward,
-          direction: LedgerDirection.CREDIT,
-          txType: CoinTxType.PLATFORM_REWARD,
-          balanceAfter: finalBalanceCoins,
-          idempotencyKey: rewardKey,
-          refId: input.giftTransactionId,
-          description: `Lucky Winner: ${gift.name} (${category})`,
-        })
-      }
-      await walletRepository.bumpVersion(tx, payerCoin.id)
+        if (reward > 0n) {
+          finalBalanceCoins = coinsAfterDebit + reward
+          await coinLedgerRepository.insert(tx, {
+            walletId: payerCoin.id,
+            amount: reward,
+            direction: LedgerDirection.CREDIT,
+            txType: CoinTxType.PLATFORM_REWARD,
+            balanceAfter: finalBalanceCoins,
+            idempotencyKey: rewardKey,
+            refId: input.giftTransactionId,
+            description: `Lucky Winner: ${gift.name} (${category})`,
+          })
+        }
+        await walletRepository.bumpVersion(tx, payerCoin.id)
 
-      let pointsAfterHost: bigint | null = null
-      let agencyUserId: string | null = null
-      if (hostPoints > 0n) {
-        pointsAfterHost = (await latestPointBalance(tx, hostPoint!.id)) + hostPoints
-        const hostLedger = await pointLedgerRepository.insert(tx, {
-          walletId: hostPoint!.id,
-          amount: hostPoints,
-          direction: LedgerDirection.CREDIT,
-          txType: PointTxType.LIVESTREAM_GIFT,
-          balanceAfter: pointsAfterHost,
-          idempotencyKey: hostKey,
-          refId: input.giftTransactionId,
-          counterpartyId: input.senderId,
-          description: `Received Lucky Gift: ${gift.name}`,
-          metadata: {
-            giftId: gift.id,
-            giftName: gift.name,
-            context,
-            quantity: count,
-            unitCoinCost: gift.coinCost,
-            giftTransactionId: input.giftTransactionId,
-          },
-        })
-        await walletRepository.bumpVersion(tx, hostPoint!.id)
-        // Host livestream XP = the host's points (decision 2026-10-17).
-        await applyLevel(tx, receiverId, LevelType.LIVESTREAM, hostPoints)
-        agencyUserId = await settleHostCredit(tx, {
-          hostUserId: receiverId,
-          hostLedgerEntryId: hostLedger.id,
-          points: hostPoints,
-          txType: PointTxType.LIVESTREAM_GIFT,
-          withCommission,
-        })
-      }
-
-      await tx.giftTransaction.create({
-        data: {
-          id: input.giftTransactionId,
-          senderUserId: input.senderId,
-          receiverUserId: receiverId,
-          giftId: gift.id,
-          coinCost: Number(totalCost),
-          quantity: count,
-          pointsAwarded: Number(hostPoints),
-          context,
-        },
-      })
-
-      if (engine === 'water_v1' && config) {
-        // F11: water_v1 does NOT touch lucky_reserve_pool; the audit row is the source of truth and
-        // the F5 replay record (unique on idempotency_key = txKeyBase).
         await tx.luckyDrawAudit.create({
           data: {
             idempotencyKey: input.txKeyBase,
@@ -886,7 +965,67 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
           },
         })
       } else {
-        // LIVE-31 (legacy, byte-identical): the RTP counters commit with the gift, last statement.
+        // Legacy (byte-identical order): PLATFORM_REWARD → host → gift_tx → reserve.
+        if (reward > 0n) {
+          finalBalanceCoins = coinsAfterDebit + reward
+          await coinLedgerRepository.insert(tx, {
+            walletId: payerCoin.id,
+            amount: reward,
+            direction: LedgerDirection.CREDIT,
+            txType: CoinTxType.PLATFORM_REWARD,
+            balanceAfter: finalBalanceCoins,
+            idempotencyKey: rewardKey,
+            refId: input.giftTransactionId,
+            description: `Lucky Winner: ${gift.name} (${category})`,
+          })
+        }
+        await walletRepository.bumpVersion(tx, payerCoin.id)
+
+        if (hostPoints > 0n) {
+          pointsAfterHost = (await latestPointBalance(tx, hostPoint!.id)) + hostPoints
+          const hostLedger = await pointLedgerRepository.insert(tx, {
+            walletId: hostPoint!.id,
+            amount: hostPoints,
+            direction: LedgerDirection.CREDIT,
+            txType: PointTxType.LIVESTREAM_GIFT,
+            balanceAfter: pointsAfterHost,
+            idempotencyKey: hostKey,
+            refId: input.giftTransactionId,
+            counterpartyId: input.senderId,
+            description: `Received Lucky Gift: ${gift.name}`,
+            metadata: {
+              giftId: gift.id,
+              giftName: gift.name,
+              context,
+              quantity: count,
+              unitCoinCost: gift.coinCost,
+              giftTransactionId: input.giftTransactionId,
+            },
+          })
+          await walletRepository.bumpVersion(tx, hostPoint!.id)
+          await applyLevel(tx, receiverId, LevelType.LIVESTREAM, hostPoints)
+          agencyUserId = await settleHostCredit(tx, {
+            hostUserId: receiverId,
+            hostLedgerEntryId: hostLedger.id,
+            points: hostPoints,
+            txType: PointTxType.LIVESTREAM_GIFT,
+            withCommission,
+          })
+        }
+
+        await tx.giftTransaction.create({
+          data: {
+            id: input.giftTransactionId,
+            senderUserId: input.senderId,
+            receiverUserId: receiverId,
+            giftId: gift.id,
+            coinCost: Number(totalCost),
+            quantity: count,
+            pointsAwarded: Number(hostPoints),
+            context,
+          },
+        })
+
         await addToLuckyReservePool(tx, {
           cost: totalCost,
           reward,
@@ -906,7 +1045,7 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
         configVersion,
         breakdownArray,
       }
-    })
+    }, 'luckyGiftSend')
   } catch (err) {
     if (!isUniqueViolation(err)) throw err
     // A water_v1 send wrote a lucky_draw_audit row in the same tx: replay from it (never re-draw).
