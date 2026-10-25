@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { prisma } from '../../src/config/database'
 import {
+  LUCKY_SHADOW_CURSOR_ID,
   SHADOW_SETTLE_LAG_MS,
   shadowAuditIdempotencyKey,
 } from '../../src/services/luckyWater/shadowWorker.constants'
@@ -41,6 +42,16 @@ async function makeLuckyGift(coinCost: number) {
   })
 }
 
+/** Pin the shadow cursor so the next batch is only txs created after this anchor. */
+async function anchorShadowCursor(before: Date) {
+  const anchor = new Date(before.getTime() - 1_000)
+  await prisma.luckyShadowCursor.upsert({
+    where: { id: LUCKY_SHADOW_CURSOR_ID },
+    create: { id: LUCKY_SHADOW_CURSOR_ID, lastCreatedAt: anchor, lastId: randomUUID() },
+    update: { lastCreatedAt: anchor, lastId: randomUUID() },
+  })
+}
+
 async function insertGiftTx(params: {
   senderId: string
   giftId: string
@@ -70,27 +81,34 @@ describe('lucky shadow worker (F4)', () => {
     await prisma.luckyShadowCursor.deleteMany({})
     await prisma.luckyDrawAudit.deleteMany({ where: { mode: 'shadow' } })
     await prisma.luckyTierPoolShadow.deleteMany({})
-    await prisma.luckyTierConfig.updateMany({ data: { mode: 'off' } })
+    await prisma.luckyTierMode.updateMany({ data: { mode: 'off' } })
   })
 
   afterAll(async () => {
-    await prisma.luckyTierConfig.updateMany({ data: { mode: 'off' } })
+    await prisma.luckyTierMode.updateMany({ data: { mode: 'off' } })
     await prisma.luckyShadowCursor.deleteMany({})
     await prisma.$disconnect()
   })
 
-  it('settle lag constant matches ledger timeout + 30s buffer', () => {
+  it('settle lag constant matches ledger timeout + maxWait + 30s buffer', () => {
     expect(shadowSettleLagMs()).toBe(SHADOW_SETTLE_LAG_MS)
-    expect(SHADOW_SETTLE_LAG_MS).toBe(45_000)
+    // B9: 15_000 + 10_000 + 30_000
+    expect(SHADOW_SETTLE_LAG_MS).toBe(55_000)
   })
 
   it('fetchShadowGiftBatch excludes rows newer than the settle window', async () => {
-    await prisma.luckyTierConfig.updateMany({ where: { tierId: 'T100' }, data: { mode: 'shadow' } })
+    await prisma.luckyShadowCursor.deleteMany({})
+    await prisma.luckyTierMode.upsert({
+      where: { tierId: 'T100' },
+      create: { tierId: 'T100', mode: 'shadow', updatedBy: 'test' },
+      update: { mode: 'shadow', updatedBy: 'test' },
+    })
     const sender = await makeUser()
     const gift = await makeLuckyGift(100)
     const now = new Date()
     const tooFresh = new Date(now.getTime() - 10_000)
     const settled = new Date(now.getTime() - SHADOW_SETTLE_LAG_MS - 5_000)
+    await anchorShadowCursor(settled)
 
     const freshTx = await insertGiftTx({
       senderId: sender.id,
@@ -114,7 +132,11 @@ describe('lucky shadow worker (F4)', () => {
   })
 
   it('shadow draw is idempotent on audit key shadow:{giftTxId}', async () => {
-    await prisma.luckyTierConfig.updateMany({ where: { tierId: 'T100' }, data: { mode: 'shadow' } })
+    await prisma.luckyTierMode.upsert({
+      where: { tierId: 'T100' },
+      create: { tierId: 'T100', mode: 'shadow', updatedBy: 'test' },
+      update: { mode: 'shadow', updatedBy: 'test' },
+    })
     await prisma.luckyTierPoolShadow.deleteMany({ where: { tierId: 'T100' } })
     await prisma.luckyTierPool.deleteMany({ where: { tierId: 'T100' } })
     await prisma.luckyShadowCursor.deleteMany({})
@@ -122,6 +144,7 @@ describe('lucky shadow worker (F4)', () => {
     const sender = await makeUser()
     const gift = await makeLuckyGift(100)
     const createdAt = new Date(Date.now() - SHADOW_SETTLE_LAG_MS - 2_000)
+    await anchorShadowCursor(createdAt)
     const tx = await insertGiftTx({
       senderId: sender.id,
       giftId: gift.id,
@@ -155,8 +178,35 @@ describe('lucky shadow worker (F4)', () => {
   })
 
   it('runShadowWorkerTick no-ops when no tier is in shadow mode', async () => {
-    await prisma.luckyTierConfig.updateMany({ data: { mode: 'off' } })
+    await prisma.luckyTierMode.updateMany({ data: { mode: 'off' } })
     const r = await runShadowWorkerTick()
     expect(r.processed).toBe(0)
+  })
+
+  it('B9: row with created_at earlier than commit by maxWait+timeout-1s is still processed once', async () => {
+    await prisma.luckyTierMode.upsert({
+      where: { tierId: 'T100' },
+      create: { tierId: 'T100', mode: 'shadow', updatedBy: 'test' },
+      update: { mode: 'shadow', updatedBy: 'test' },
+    })
+    await prisma.luckyTierPoolShadow.deleteMany({ where: { tierId: 'T100' } })
+    const sender = await makeUser()
+    const gift = await makeLuckyGift(100)
+    // Simulate created_at stamped at BEGIN, commit delayed by almost (maxWait+timeout).
+    const skewMs = 10_000 + 15_000 - 1_000 // maxWait + timeout − 1s
+    const createdAt = new Date(Date.now() - SHADOW_SETTLE_LAG_MS - 2_000 - skewMs)
+    await anchorShadowCursor(createdAt)
+    const tx = await insertGiftTx({
+      senderId: sender.id,
+      giftId: gift.id,
+      unitPrice: 100,
+      quantity: 1,
+      createdAt,
+    })
+    const batch = await fetchShadowGiftBatch()
+    expect(batch.map((r) => r.id)).toContain(tx.id)
+    const row = batch.find((r) => r.id === tx.id)!
+    expect(await processShadowGiftRow(row)).toBe('drawn')
+    expect(await processShadowGiftRow(row)).toBe('noop')
   })
 })

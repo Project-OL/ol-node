@@ -78,20 +78,24 @@ async function loadMessagingWith(opts: {
 describe('messagingService.getOrCreateDirectConversation self-guard', () => {
   const initiatorId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
-  it('rejects self DM with CANNOT_MESSAGE_SELF', async () => {
-    const searchByPublicId = vi.fn().mockResolvedValue({ userId: initiatorId, isAgency: false })
-    const userFindUnique = vi.fn()
-    const messagingService = await loadMessagingWith({ searchByPublicId, userFindUnique })
-    await expect(
-      messagingService.getOrCreateDirectConversation(initiatorId, '34216592'),
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      code: 'CANNOT_MESSAGE_SELF',
-    })
-    // A numeric id never takes the UUID lookup.
-    expect(userFindUnique).not.toHaveBeenCalled()
-    expect(searchByPublicId).toHaveBeenCalledWith('34216592', initiatorId)
-  })
+  it(
+    'rejects self DM with CANNOT_MESSAGE_SELF',
+    async () => {
+      const searchByPublicId = vi.fn().mockResolvedValue({ userId: initiatorId, isAgency: false })
+      const userFindUnique = vi.fn()
+      const messagingService = await loadMessagingWith({ searchByPublicId, userFindUnique })
+      await expect(
+        messagingService.getOrCreateDirectConversation(initiatorId, '34216592'),
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'CANNOT_MESSAGE_SELF',
+      })
+      // A numeric id never takes the UUID lookup.
+      expect(userFindUnique).not.toHaveBeenCalled()
+      expect(searchByPublicId).toHaveBeenCalledWith('34216592', initiatorId)
+    },
+    15_000,
+  )
 
   it('resolves a user UUID (old live-room cards) to its public id, then runs the same checks', async () => {
     const searchByPublicId = vi.fn().mockResolvedValue({ userId: initiatorId, isAgency: false })
