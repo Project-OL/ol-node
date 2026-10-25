@@ -115,8 +115,12 @@ export const walletUserLevelRepository = {
     })
   },
 
-  async getConfigs(levelType: LevelType) {
-    return prismaRead.walletLevelConfig.findMany({
+  /**
+   * Level threshold configs. Pass `tx` when called from inside a money transaction (C1:
+   * never nest a global/replica connection while the interactive tx holds a pool slot).
+   */
+  async getConfigs(levelType: LevelType, db: WalletUserLevelDb = prismaRead) {
+    return db.walletLevelConfig.findMany({
       where: { levelType, isActive: true },
       orderBy: { level: 'asc' },
     })

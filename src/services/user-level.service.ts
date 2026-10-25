@@ -1,5 +1,5 @@
 import { LevelType, Prisma } from '@prisma/client'
-import { prisma } from '../config/database'
+import { prisma, prismaRead } from '../config/database'
 import { redisClient } from '../config/redis'
 import { RedisKeys, USER_LEVEL_TTL, LEVEL_CONFIG_TTL } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
@@ -18,7 +18,10 @@ export type LevelSnapshot = {
 
 export type LevelThreshold = { level: number; threshold: bigint }
 
-async function getThresholds(levelType: LevelType): Promise<LevelThreshold[]> {
+async function getThresholds(
+  levelType: LevelType,
+  tx?: Prisma.TransactionClient,
+): Promise<LevelThreshold[]> {
   const redisKey =
     levelType === LevelType.WEALTH ? RedisKeys.levelConfigWealth() : RedisKeys.levelConfigStream()
 
@@ -35,7 +38,8 @@ async function getThresholds(levelType: LevelType): Promise<LevelThreshold[]> {
     // fall through to DB
   }
 
-  const configs = await walletUserLevelRepository.getConfigs(levelType)
+  // C1: when inside a money tx, read configs via `tx` (never prisma/prismaRead).
+  const configs = await walletUserLevelRepository.getConfigs(levelType, tx ?? prismaRead)
   const thresholds: LevelThreshold[] = configs.map((c) => ({
     level: c.level,
     threshold: c.threshold,
@@ -175,7 +179,7 @@ export const walletLevelService = {
     })
 
     const newCumulative = current.cumulativeTotal + increment
-    const thresholds = await getThresholds(levelType)
+    const thresholds = await getThresholds(levelType, tx)
     const newLevel = computeLevel(newCumulative, thresholds)
     const previousLevel = current.currentLevel
 
@@ -217,7 +221,7 @@ export const walletLevelService = {
 
     const newCumulative =
       current.cumulativeTotal > decrement ? current.cumulativeTotal - decrement : 0n
-    const thresholds = await getThresholds(levelType)
+    const thresholds = await getThresholds(levelType, tx)
     const newLevel = computeLevel(newCumulative, thresholds)
     const previousLevel = current.currentLevel
 
