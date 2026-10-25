@@ -2,6 +2,7 @@ import type { LuckyTierConfig, Prisma } from '@prisma/client'
 import { prisma } from '../config/database'
 import { prismaRead } from '../config/database'
 import { AppError } from '../middlewares/errorHandler'
+import { auditService } from './audit.service'
 import { hostRevenueShareConfigService } from './hostRevenueShareConfig.service'
 import {
   LUCKY_TIER_IDS,
@@ -62,12 +63,12 @@ export type LuckyTierDashboardDto = {
   snapshotRtp7dBp: number | null
 }
 
-function serializeConfig(row: LuckyTierConfig): LuckyTierConfigDto {
+function serializeConfig(row: LuckyTierConfig, modeOverride?: string): LuckyTierConfigDto {
   return {
     id: row.id,
     tierId: row.tierId,
     version: row.version,
-    mode: row.mode,
+    mode: modeOverride ?? row.mode,
     priceMin: row.priceMin,
     priceMax: row.priceMax,
     rBp: row.rBp,
@@ -88,6 +89,12 @@ function serializeConfig(row: LuckyTierConfig): LuckyTierConfigDto {
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
   }
+}
+
+/** Authoritative mode from lucky_tier_mode (B7). */
+async function getTierMode(tierId: string): Promise<string> {
+  const row = await prismaRead.luckyTierMode.findUnique({ where: { tierId } })
+  return row?.mode ?? 'off'
 }
 
 async function getLatestConfig(tierId: LuckyTierId): Promise<LuckyTierConfig | null> {
@@ -147,16 +154,17 @@ export const luckyTierAdminService = {
     for (const tierId of LUCKY_TIER_IDS) {
       const config = await getLatestConfig(tierId)
       if (!config) continue
-      const [pool, shadowPool, latestSeed] = await Promise.all([
+      const [pool, shadowPool, latestSeed, mode] = await Promise.all([
         prismaRead.luckyTierPool.findUnique({ where: { tierId } }),
         prismaRead.luckyTierPoolShadow.findUnique({ where: { tierId } }),
         prismaRead.luckyTierSeedLog.findFirst({
           where: { tierId },
           orderBy: { createdAt: 'desc' },
         }),
+        getTierMode(tierId),
       ])
       tiers.push({
-        ...serializeConfig(config),
+        ...serializeConfig(config, mode),
         poolBalance: pool?.balance.toString() ?? null,
         shadowPoolBalance: shadowPool?.balance.toString() ?? null,
         hasSeedDecision: latestSeed != null,
@@ -233,10 +241,11 @@ export const luckyTierAdminService = {
       if (spent > 0n) snapshotRtp7dBp = Number((paid * 10_000n) / spent)
     }
 
+    const mode = await getTierMode(tierId)
     return {
       tierId,
       configVersion: config.version,
-      mode: config.mode,
+      mode,
       poolBalance: pool.balance.toString(),
       shadowPoolBalance: shadowPool?.balance.toString() ?? null,
       l0: config.l0.toString(),
@@ -274,10 +283,13 @@ export const luckyTierAdminService = {
     const latest = await getLatestConfig(tierId)
     if (!latest) throw new AppError(404, 'Tier config not found', 'LUCKY_TIER_NOT_FOUND')
 
+    // B7: new config versions must NOT change lucky_tier_mode. Snapshot deprecated
+    // lucky_tier_config.mode from the current mode table for historical readability only.
+    const currentMode = await getTierMode(tierId)
     const next: Omit<Prisma.LuckyTierConfigCreateInput, 'id'> = {
       tierId,
       version: latest.version + 1,
-      mode: latest.mode,
+      mode: currentMode,
       priceMin: latest.priceMin,
       priceMax: latest.priceMax,
       rBp: patch.rBp ?? latest.rBp,
@@ -318,6 +330,8 @@ export const luckyTierAdminService = {
     })
 
     const row = await prisma.luckyTierConfig.create({ data: next })
+    const { bustLuckyTierConfigCache } = await import('./luckyWater/resolveTier')
+    bustLuckyTierConfigCache()
     return serializeConfig(row)
   },
 
@@ -329,39 +343,31 @@ export const luckyTierAdminService = {
   ): Promise<LuckyTierConfigDto> {
     const latest = await getLatestConfig(tierId)
     if (!latest) throw new AppError(404, 'Tier config not found', 'LUCKY_TIER_NOT_FOUND')
-    if (latest.mode === mode) return serializeConfig(latest)
+    const prevMode = await getTierMode(tierId)
+    if (prevMode === mode) return serializeConfig(latest, mode)
 
     if (mode === 'enforce') {
       await assertEnforceAllowed(tierId, enforceOverrideReason)
     }
 
-    const row = await prisma.luckyTierConfig.create({
-      data: {
-        tierId,
-        version: latest.version + 1,
-        mode,
-        priceMin: latest.priceMin,
-        priceMax: latest.priceMax,
-        rBp: latest.rBp,
-        jBp: latest.jBp,
-        l0: latest.l0,
-        floor: latest.floor,
-        lambdaCriticalMaxBp: latest.lambdaCriticalMaxBp,
-        lambdaLowMaxBp: latest.lambdaLowMaxBp,
-        lambdaNormalMaxBp: latest.lambdaNormalMaxBp,
-        bandWeightsJson: latest.bandWeightsJson as object,
-        weightTableId: latest.weightTableId,
-        mMax: latest.mMax,
-        vMaxBp: latest.vMaxBp,
-        safetyMarginBp: latest.safetyMarginBp,
-        minGapBp: latest.minGapBp,
-        dailyWinCapCoins: latest.dailyWinCapCoins,
-        coolDownAfterBigWinSeconds: latest.coolDownAfterBigWinSeconds,
-        createdBy: adminUserId,
-      },
+    // B7: mode lives only on lucky_tier_mode — never create a config version for mode flips.
+    await prisma.luckyTierMode.upsert({
+      where: { tierId },
+      create: { tierId, mode, updatedBy: adminUserId },
+      update: { mode, updatedBy: adminUserId },
     })
 
-    return serializeConfig(row)
+    auditService.logAdmin({
+      adminUserId,
+      actionType: 'lucky_tier_mode_change',
+      actionStatus: 'success',
+      actionDetails: { tierId, from: prevMode, to: mode, enforceOverrideReason: enforceOverrideReason ?? null },
+    })
+
+    // Mode is never cached; bust only so seed/immutable index stay coherent after related ops.
+    const { bustLuckyTierConfigCache } = await import('./luckyWater/resolveTier')
+    bustLuckyTierConfigCache()
+    return serializeConfig(latest, mode)
   },
 
   async recordSeedDecision(
@@ -412,6 +418,8 @@ export const luckyTierAdminService = {
       return { seedLogId: log.id, poolBalance }
     })
 
+    const { bustLuckyTierConfigCache } = await import('./luckyWater/resolveTier')
+    bustLuckyTierConfigCache()
     return result
   },
 
