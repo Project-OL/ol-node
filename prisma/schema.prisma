@@ -1723,13 +1723,26 @@ model LuckyReservePool {
 // (tier_id, mode, engine) so adding a tier/mode later is a constraint swap, not an enum migration.
 // ---------------------------------------------------------------------------
 
+/// Authoritative per-tier engine mode (ops control plane). Config versions must not change this.
+/// Prefer this over `lucky_tier_config.mode` (legacy column kept for expand-only compatibility).
+model LuckyTierMode {
+  tierId    String   @id @map("tier_id") @db.VarChar(8)
+  /// off | shadow | enforce
+  mode      String   @default("off") @db.VarChar(16)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by") @db.VarChar(128)
+
+  @@map("lucky_tier_mode")
+}
+
 /// Versioned per-tier config. Weights are basis points summing to 10000 per band.
 model LuckyTierConfig {
   id                         String   @id @default(uuid()) @db.Uuid
   /// T100 | T500 | T2K | T10K | T50K
   tierId                     String   @map("tier_id") @db.VarChar(8)
   version                    Int
-  /// off | shadow | enforce
+  /// DEPRECATED for runtime: kept expand-only; authoritative mode is `lucky_tier_mode.mode`.
+  /// Writers still copy a snapshot for historical rows; readers must use LuckyTierMode.
   mode                       String   @default("off") @db.VarChar(16)
   /// Inclusive total-price range (coins) that routes a gift to this tier. null max = unbounded.
   priceMin                   Int      @map("price_min")

@@ -30,6 +30,8 @@ export const OUTCOME_MULTIPLIER_BP: Readonly<Record<LuckyOutcome, number>> = Obj
 })
 
 export const WEIGHT_TABLE_ID_V1 = 'wt_v1_2026_10_24'
+/** Closeout C9: same ladder as v1; documents paid-channel v_max = 1.0 (10 000 coins/USD). */
+export const WEIGHT_TABLE_ID_V2 = 'wt_v2_2026_10_25'
 
 export const DEFAULT_BAND_WEIGHTS_V1: Readonly<BandWeightsByBand> = Object.freeze({
   critical: { miss: 3000, half: 3000, equal: 4000, medium: 0, jackpot: 0 },
@@ -37,6 +39,9 @@ export const DEFAULT_BAND_WEIGHTS_V1: Readonly<BandWeightsByBand> = Object.freez
   normal: { miss: 4000, half: 2600, equal: 1850, medium: 1250, jackpot: 300 },
   high: { miss: 5200, half: 2100, equal: 1400, medium: 800, jackpot: 500 },
 })
+
+/** Alias — C9 did not need a retune at v_max=1.0 (F2 already holds with 50 bp margin). */
+export const DEFAULT_BAND_WEIGHTS_V2 = DEFAULT_BAND_WEIGHTS_V1
 
 export interface LuckyTierDefaults {
   tierId: LuckyTierId
