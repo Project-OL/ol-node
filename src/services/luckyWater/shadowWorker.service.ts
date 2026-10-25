@@ -34,17 +34,10 @@ function utcDayStart(now: Date): Date {
   return new Date(`${now.toISOString().slice(0, 10)}T00:00:00.000Z`)
 }
 
-/** True when any tier's latest config row has mode=shadow. */
+/** True when any tier's lucky_tier_mode row is shadow (B7 authoritative mode table). */
 export async function anyTierInShadowMode(db: typeof prisma = prisma): Promise<boolean> {
   const rows = await db.$queryRaw<{ one: number }[]>`
-    SELECT 1 AS one
-    FROM (
-      SELECT DISTINCT ON (tier_id) mode
-      FROM lucky_tier_config
-      ORDER BY tier_id, version DESC
-    ) latest
-    WHERE mode = 'shadow'
-    LIMIT 1`
+    SELECT 1 AS one FROM lucky_tier_mode WHERE mode = 'shadow' LIMIT 1`
   return rows.length > 0
 }
 
