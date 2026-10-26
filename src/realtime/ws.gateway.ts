@@ -262,7 +262,12 @@ export function registerRealtimeGateway(app: FastifyInstance): void {
 
   app.addHook('onClose', async () => {
     connectionRegistry.forEachRegistered((rs) => {
-      sendServerFrame(rs.ws, { t: 'GOAWAY', reason: 'server_shutdown' })
+      // BE-08: a random delay per socket spreads reconnects over 3 s instead of one burst.
+      sendServerFrame(rs.ws, {
+        t: 'GOAWAY',
+        reason: 'server_shutdown',
+        retryInMs: Math.floor(Math.random() * 3000),
+      })
 
       try {
         rs.ws.close(1001, 'server_shutdown')

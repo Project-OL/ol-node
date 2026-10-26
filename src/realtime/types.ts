@@ -113,7 +113,8 @@ export type ServerFrame =
     }
   | { t: 'PRESENCE'; userId: string; online: boolean }
   | { t: 'PONG'; ts: number }
-  | { t: 'GOAWAY'; reason?: string }
+  /** Server shift (deploy / scale-in): reconnect after `retryInMs` (0-3000, random per socket). */
+  | { t: 'GOAWAY'; reason?: string; retryInMs?: number }
   /** Invalid client frame or recoverable WS error (do not close the socket). */
   | { t: 'ERROR'; code: string; message: string; details?: unknown }
   /** Per-user face registration / liveness pipeline (subscribe `msg:user:{userId}` on WS). */
