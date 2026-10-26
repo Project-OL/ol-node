@@ -96,6 +96,24 @@ async function advanceCursor(tx: Tx, createdAt: Date, id: string): Promise<void>
   })
 }
 
+/** Sorts after every uuid, so a parked cursor skips all rows at its timestamp. */
+const MAX_UUID = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+
+/**
+ * Move the cursor to "now − settle lag" (only ever forward). Called while no tier is in shadow,
+ * so enabling shadow starts from fresh sends instead of replaying all lucky history.
+ */
+export async function parkShadowCursor(db: typeof prisma = prisma): Promise<void> {
+  const parkAt = new Date(Date.now() - SHADOW_SETTLE_LAG_MS)
+  const cursor = await db.luckyShadowCursor.findUnique({ where: { id: LUCKY_SHADOW_CURSOR_ID } })
+  if (cursor?.lastCreatedAt && cursor.lastCreatedAt >= parkAt) return
+  await db.luckyShadowCursor.upsert({
+    where: { id: LUCKY_SHADOW_CURSOR_ID },
+    create: { id: LUCKY_SHADOW_CURSOR_ID, lastCreatedAt: parkAt, lastId: MAX_UUID },
+    update: { lastCreatedAt: parkAt, lastId: MAX_UUID },
+  })
+}
+
 export async function fetchShadowGiftBatch(
   db: typeof prisma = prisma,
   limit = SHADOW_WORKER_BATCH_SIZE,
@@ -105,22 +123,9 @@ export async function fetchShadowGiftBatch(
   const lastId = cursor?.lastId ?? null
 
   if (lastCreatedAt == null || lastId == null) {
-    return db.$queryRaw<ShadowGiftRow[]>`
-      SELECT
-        gt.id,
-        gt.sender_user_id AS "senderUserId",
-        gt.gift_id AS "giftId",
-        gt.coin_cost AS "totalCoinCost",
-        gt.quantity,
-        gt.context,
-        gt.created_at AS "createdAt",
-        g.coin_cost AS "unitPrice"
-      FROM gift_transactions gt
-      INNER JOIN gifts g ON g.id = gt.gift_id
-      WHERE gt.context IN ('LUCKY_SINGLE', 'LUCKY_COMBO')
-        AND gt.created_at < NOW() - (${SHADOW_SETTLE_LAG_MS}::int * INTERVAL '1 millisecond')
-      ORDER BY gt.created_at ASC, gt.id ASC
-      LIMIT ${limit}`
+    // No cursor yet: start from now, never from the beginning of lucky history.
+    await parkShadowCursor(db)
+    return []
   }
 
   return db.$queryRaw<ShadowGiftRow[]>`
@@ -271,9 +276,13 @@ export type ShadowWorkerTickResult = {
   errors: number
 }
 
-/** One worker tick: no-op when no tier is in shadow; otherwise tail up to one batch. */
+/**
+ * One worker tick: when no tier is in shadow, park the cursor at now (so a later shadow flip never
+ * replays the off-period); otherwise tail up to one batch.
+ */
 export async function runShadowWorkerTick(): Promise<ShadowWorkerTickResult> {
   if (!(await anyTierInShadowMode())) {
+    await parkShadowCursor()
     return { processed: 0, drawn: 0, skipped: 0, noops: 0, errors: 0 }
   }
 

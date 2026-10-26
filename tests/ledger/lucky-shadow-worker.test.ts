@@ -183,6 +183,39 @@ describe('lucky shadow worker (F4)', () => {
     expect(r.processed).toBe(0)
   })
 
+  it('a missing cursor starts at now: historical lucky rows are never replayed', async () => {
+    await prisma.luckyShadowCursor.deleteMany({})
+    await prisma.luckyTierMode.upsert({
+      where: { tierId: 'T100' },
+      create: { tierId: 'T100', mode: 'shadow', updatedBy: 'test' },
+      update: { mode: 'shadow', updatedBy: 'test' },
+    })
+    const sender = await makeUser()
+    const gift = await makeLuckyGift(100)
+    const old = await insertGiftTx({
+      senderId: sender.id,
+      giftId: gift.id,
+      unitPrice: 100,
+      quantity: 1,
+      createdAt: new Date(Date.now() - 7 * 24 * 3600_000),
+    })
+
+    expect(await fetchShadowGiftBatch()).toEqual([])
+    const cursor = await prisma.luckyShadowCursor.findUnique({ where: { id: LUCKY_SHADOW_CURSOR_ID } })
+    expect(cursor?.lastCreatedAt).toBeTruthy()
+    const next = await fetchShadowGiftBatch()
+    expect(next.map((r) => r.id)).not.toContain(old.id)
+  })
+
+  it('ticks while no tier is in shadow keep the cursor parked at now', async () => {
+    await prisma.luckyTierMode.updateMany({ data: { mode: 'off' } })
+    const stale = new Date(Date.now() - 30 * 24 * 3600_000)
+    await anchorShadowCursor(stale)
+    await runShadowWorkerTick()
+    const cursor = await prisma.luckyShadowCursor.findUnique({ where: { id: LUCKY_SHADOW_CURSOR_ID } })
+    expect(cursor!.lastCreatedAt!.getTime()).toBeGreaterThan(Date.now() - SHADOW_SETTLE_LAG_MS - 60_000)
+  })
+
   it('B9: row with created_at earlier than commit by maxWait+timeout-1s is still processed once', async () => {
     await prisma.luckyTierMode.upsert({
       where: { tierId: 'T100' },

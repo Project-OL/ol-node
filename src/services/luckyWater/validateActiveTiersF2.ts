@@ -1,24 +1,31 @@
-import { prismaRead } from '../../config/database'
+import { prisma } from '../../config/database'
 import type { HostRevenueShares } from '../../config/host-revenue-shares'
 import { AppError } from '../../middlewares/errorHandler'
 import { LUCKY_TIER_IDS, LuckyWeightsError, validateBandWeights, type BandWeightsByBand } from './bandWeights'
 import { buildLuckyF2Econ } from './f2Econ'
 
 /**
- * Re-run F2 on every tier whose latest config is in shadow or enforce.
- * Used before saving host lucky cut / water agency commission flags.
+ * Re-run F2 on the latest config of every tier whose `lucky_tier_mode` is shadow or enforce.
+ * Used before saving host lucky cut / water agency commission flags. Mode comes from the mode
+ * table (B7): `lucky_tier_config.mode` is a stale snapshot that setMode no longer writes.
  */
 export async function assertShadowEnforceTiersPassF2(
   shares: HostRevenueShares,
 ): Promise<void> {
   const violations: string[] = []
+  const modeRows = await prisma.luckyTierMode.findMany({
+    where: { mode: { in: ['shadow', 'enforce'] } },
+  })
+  const activeModes = new Map(modeRows.map((m) => [m.tierId, m.mode]))
 
   for (const tierId of LUCKY_TIER_IDS) {
-    const row = await prismaRead.luckyTierConfig.findFirst({
+    const mode = activeModes.get(tierId)
+    if (!mode) continue
+    const row = await prisma.luckyTierConfig.findFirst({
       where: { tierId },
       orderBy: { version: 'desc' },
     })
-    if (!row || (row.mode !== 'shadow' && row.mode !== 'enforce')) continue
+    if (!row) continue
 
     try {
       const weights = row.bandWeightsJson as unknown as BandWeightsByBand
@@ -26,7 +33,7 @@ export async function assertShadowEnforceTiersPassF2(
       validateBandWeights(weights, econ)
     } catch (e) {
       if (e instanceof LuckyWeightsError) {
-        violations.push(`${tierId} v${row.version} (${row.mode}): ${e.message}`)
+        violations.push(`${tierId} v${row.version} (${mode}): ${e.message}`)
       } else {
         throw e
       }

@@ -125,22 +125,44 @@ async function validateWeightsForTier(
 
 async function assertEnforceAllowed(
   tierId: string,
+  latest: LuckyTierConfig,
+  prevMode: string,
   enforceOverrideReason: string | undefined,
 ): Promise<void> {
-  const [hasSeed, hadShadowConfig, hadShadowAudit] = await Promise.all([
-    prismaRead.luckyTierSeedLog.findFirst({ where: { tierId }, select: { id: true } }),
-    prismaRead.luckyTierConfig.findFirst({ where: { tierId, mode: 'shadow' }, select: { id: true } }),
-    prismaRead.luckyDrawAudit.findFirst({
+  // Primary, not replica: these gate a money-path switch and must see a just-written seed/mode.
+  const [hasSeed, hadShadowConfig, hadShadowAudit, pool] = await Promise.all([
+    prisma.luckyTierSeedLog.findFirst({ where: { tierId }, select: { id: true } }),
+    // Legacy snapshots only; the live mode table is checked via prevMode.
+    prisma.luckyTierConfig.findFirst({ where: { tierId, mode: 'shadow' }, select: { id: true } }),
+    prisma.luckyDrawAudit.findFirst({
       where: { tierId, mode: 'shadow', engine: 'water_v1' },
       select: { id: true },
     }),
+    prisma.luckyTierPool.findUnique({ where: { tierId }, select: { balance: true } }),
   ])
   assertEnforceF10Gate({
     hasSeedDecision: hasSeed != null,
-    hadShadowConfig: hadShadowConfig != null,
+    hadShadowConfig: prevMode === 'shadow' || hadShadowConfig != null,
     hadShadowAudit: hadShadowAudit != null,
     enforceOverrideReason,
   })
+  // A pool below floor forces every win to a miss until inflow refills it; refuse unless the
+  // admin explicitly accepts that with an audited override reason.
+  const balance = pool?.balance ?? 0n
+  if (balance < latest.floor && !enforceOverrideReason) {
+    throw new AppError(
+      422,
+      `Pool balance ${balance} is below floor ${latest.floor}: every draw would miss until it refills. ` +
+        'Seed the pool to at least floor, or pass enforceOverrideReason.',
+      'LUCKY_TIER_ENFORCE_POOL_BELOW_FLOOR',
+      { balance: balance.toString(), floor: latest.floor.toString() },
+    )
+  }
+}
+
+/** F2 on the tier's latest config against the current host/agency shares. */
+async function assertLatestConfigPassesF2(latest: LuckyTierConfig): Promise<void> {
+  await validateWeightsForTier(latest.bandWeightsJson as unknown as BandWeightsByBand, latest)
 }
 
 function utcTodayStart(): Date {
@@ -347,7 +369,11 @@ export const luckyTierAdminService = {
     if (prevMode === mode) return serializeConfig(latest, mode)
 
     if (mode === 'enforce') {
-      await assertEnforceAllowed(tierId, enforceOverrideReason)
+      await assertEnforceAllowed(tierId, latest, prevMode, enforceOverrideReason)
+    }
+    if (mode !== 'off') {
+      // Host share may have changed since this version was validated; re-check F2 now.
+      await assertLatestConfigPassesF2(latest)
     }
 
     // B7: mode lives only on lucky_tier_mode — never create a config version for mode flips.
@@ -383,6 +409,13 @@ export const luckyTierAdminService = {
     if (choice !== 'seed' && amount !== 0n) {
       throw new AppError(422, 'amount must be 0 unless choice=seed', 'LUCKY_TIER_SEED_INVALID')
     }
+    if (choice === 'capped_ladder') {
+      throw new AppError(
+        422,
+        'capped_ladder is not implemented; use seed or start_empty',
+        'LUCKY_TIER_SEED_NOT_IMPLEMENTED',
+      )
+    }
 
     const latest = await getLatestConfig(tierId)
     if (!latest) throw new AppError(404, 'Tier config not found', 'LUCKY_TIER_NOT_FOUND')
@@ -400,19 +433,15 @@ export const luckyTierAdminService = {
 
       let poolBalance: string | null = null
       if (choice === 'seed') {
-        const pool = await tx.luckyTierPool.upsert({
-          where: { tierId },
-          create: {
-            tierId,
-            balance: amount,
-            configVersion: latest.version,
-          },
-          update: {
-            balance: amount,
-            configVersion: latest.version,
-          },
-        })
-        poolBalance = pool.balance.toString()
+        // Top-up, never overwrite: the pool holds players' inflow, and a plain SET would wipe it
+        // (or lose a concurrent send's delta). The ON CONFLICT update is atomic on the row lock.
+        const rows = await tx.$queryRaw<{ balance: bigint }[]>`
+          INSERT INTO lucky_tier_pool (tier_id, balance, config_version, updated_at)
+          VALUES (${tierId}, ${amount}, ${latest.version}, NOW())
+          ON CONFLICT (tier_id) DO UPDATE
+            SET balance = lucky_tier_pool.balance + EXCLUDED.balance, updated_at = NOW()
+          RETURNING balance`
+        poolBalance = rows[0]!.balance.toString()
       }
 
       return { seedLogId: log.id, poolBalance }

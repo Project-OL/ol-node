@@ -1154,3 +1154,96 @@ describe('B7 mode table + B8 water replay new requestId (DB)', () => {
   })
 })
 
+describe('review fixes: seed top-up, enforce gates, F2 via mode table (DB)', () => {
+  // T10K: untouched by the suites above (floor 1_000_000).
+  const TIER = 'T10K' as const
+
+  async function setHostShare(bp: number) {
+    await prisma.hostRevenueShareConfig.update({
+      where: { id: 1 },
+      data: { luckyHostShareBp: bp, luckyWaterAgencyCommission: false },
+    })
+    await hostRevenueShareConfigService.bustCache()
+  }
+
+  beforeAll(async () => {
+    await setHostShare(400)
+  })
+
+  afterEach(async () => {
+    await setTierMode(TIER, 'off')
+    await setHostShare(400)
+  })
+
+  afterAll(async () => {
+    await prisma.luckyTierPool.deleteMany({ where: { tierId: TIER } })
+    await prisma.luckyTierSeedLog.deleteMany({ where: { tierId: TIER } })
+  })
+
+  it('seed tops up the live pool instead of overwriting it', async () => {
+    await prisma.luckyTierPool.deleteMany({ where: { tierId: TIER } })
+    const a = await luckyTierAdminService.recordSeedDecision('admin-rf', TIER, 'seed', 600_000n)
+    expect(a.poolBalance).toBe('600000')
+    const b = await luckyTierAdminService.recordSeedDecision('admin-rf', TIER, 'seed', 600_000n)
+    expect(b.poolBalance).toBe('1200000')
+    const pool = await prisma.luckyTierPool.findUnique({ where: { tierId: TIER } })
+    expect(pool?.balance).toBe(1_200_000n)
+  })
+
+  it('capped_ladder is refused as not implemented', async () => {
+    await expect(
+      luckyTierAdminService.recordSeedDecision('admin-rf', TIER, 'capped_ladder', 0n),
+    ).rejects.toMatchObject({ statusCode: 422, code: 'LUCKY_TIER_SEED_NOT_IMPLEMENTED' })
+  })
+
+  it('enforce is refused while the pool is below floor unless an override reason is given', async () => {
+    await prisma.luckyTierPool.deleteMany({ where: { tierId: TIER } })
+    await luckyTierAdminService.recordSeedDecision('admin-rf', TIER, 'start_empty', 0n)
+    await luckyTierAdminService.setMode('admin-rf', TIER, 'shadow')
+    await expect(luckyTierAdminService.setMode('admin-rf', TIER, 'enforce')).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'LUCKY_TIER_ENFORCE_POOL_BELOW_FLOOR',
+    })
+    const ok = await luckyTierAdminService.setMode('admin-rf', TIER, 'enforce', 'ops accepts dry start')
+    expect(ok.mode).toBe('enforce')
+  })
+
+  it('enforce after shadow on the mode table passes F10 without a legacy config snapshot', async () => {
+    await prisma.luckyTierPool.deleteMany({ where: { tierId: TIER } })
+    await luckyTierAdminService.recordSeedDecision('admin-rf', TIER, 'seed', 1_000_000n)
+    await luckyTierAdminService.setMode('admin-rf', TIER, 'shadow')
+    const ok = await luckyTierAdminService.setMode('admin-rf', TIER, 'enforce')
+    expect(ok.mode).toBe('enforce')
+  })
+
+  it('host share raise is blocked by F2 when the tier is enforced on the mode table only', async () => {
+    const latest = await prisma.luckyTierConfig.findFirst({
+      where: { tierId: TIER },
+      orderBy: { version: 'desc' },
+    })
+    // The stale snapshot column says off; the live mode table says enforce.
+    expect(latest?.mode).not.toBe('enforce')
+    await setTierMode(TIER, 'enforce')
+    // EV_high 9450 + 1000 host = 10450 bp > 9900: self-gifting would profit.
+    const err = await hostRevenueShareConfigService
+      .updateConfig(randomUUID(), { luckyHostShareBp: 1000 })
+      .then(() => null, (e: unknown) => e)
+    expect(err).toMatchObject({ statusCode: 422, code: 'LUCKY_TIER_F2_VIOLATION' })
+    // Other tiers may carry stale snapshot modes from earlier suites: T10K itself must be named.
+    const violations = (err as { details?: { violations?: string[] } }).details?.violations ?? []
+    expect(violations.some((v) => v.startsWith(`${TIER} `))).toBe(true)
+  })
+
+  it('setMode to enforce re-checks F2 against the current host share', async () => {
+    await prisma.luckyTierPool.deleteMany({ where: { tierId: TIER } })
+    await luckyTierAdminService.recordSeedDecision('admin-rf', TIER, 'seed', 1_000_000n)
+    // Share raised while the tier was off, so the update-time check had nothing to validate.
+    await setHostShare(1000)
+    await setTierMode(TIER, 'shadow')
+    await expect(luckyTierAdminService.setMode('admin-rf', TIER, 'enforce')).rejects.toMatchObject({
+      statusCode: 422,
+      code: 'LUCKY_TIER_F2_VIOLATION',
+    })
+  })
+})
+

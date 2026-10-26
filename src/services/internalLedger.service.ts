@@ -868,6 +868,15 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
           },
         })
 
+        // User caps before the pool lock: the sender's wallet lock already serialises this user's
+        // sends, so reading here is equally consistent and keeps the per-tier lock hold short.
+        const caps = await readWaterUserCaps(
+          tx,
+          input.senderId,
+          config.dailyWinCapCoins,
+          config.coolDownAfterBigWinSeconds,
+        )
+
         await tx.$executeRaw`
           INSERT INTO lucky_tier_pool (tier_id, balance, config_version, updated_at)
           VALUES (${config.tierId}, 0, ${config.version}, NOW())
@@ -877,12 +886,6 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
         const poolBalance = poolRows[0]?.balance ?? 0n
         const inflow = (totalCost * BigInt(config.rBp)) / 10_000n
 
-        const caps = await readWaterUserCaps(
-          tx,
-          input.senderId,
-          config.dailyWinCapCoins,
-          config.coolDownAfterBigWinSeconds,
-        )
         const draw = drawUnits({
           unitPrice,
           count,
