@@ -95,9 +95,11 @@ import { registerRankingReconcileJob } from '../queues/ranking.queue'
 import { processRankingBackfillJob } from '../jobs/ranking-backfill.job'
 import { runGcpInfraMonitorJob } from '../jobs/gcp-infra-monitor.job'
 import { runBusinessMetricsJob } from '../jobs/business-metrics.job'
+import { trafficService } from '../services/traffic.service'
 import type { WorkerFamily } from './family'
 
 const ACCOUNT_DELETION_QUEUE = 'account-deletion'
+const TRAFFIC_MINUTE_QUEUE = 'traffic-minute'
 const FACE_REGISTRATION_SWEEP_QUEUE = 'face-registration-sweep'
 const GCP_INFRA_MONITOR_QUEUE = 'gcp-infra-monitor'
 const BUSINESS_METRICS_QUEUE = 'business-metrics'
@@ -237,6 +239,28 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
     BUSINESS_METRICS_QUEUE,
     async () => {
       await runBusinessMetricsJob()
+    },
+    { connection, concurrency: 1 },
+  )
+
+  // TRF-01: one traffic_minute row per minute (online users + Live-server's live/call counts).
+  const trafficMinuteQueue = new Queue(TRAFFIC_MINUTE_QUEUE, { connection })
+  await trafficMinuteQueue.add(
+    'sample',
+    {},
+    {
+      jobId: 'traffic-minute-every-60s',
+      repeat: { every: 60 * 1000 },
+      attempts: 2,
+      backoff: { type: 'fixed', delay: 5000 },
+      removeOnComplete: 10,
+      removeOnFail: 50,
+    },
+  )
+  const trafficMinuteWorker = new Worker(
+    TRAFFIC_MINUTE_QUEUE,
+    async () => {
+      await trafficService.sampleMinute()
     },
     { connection, concurrency: 1 },
   )
@@ -645,6 +669,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   luckyShadowWorker.on('failed', onFail('Lucky shadow worker'))
   rankingBackfillWorker.on('failed', onFail('Ranking backfill'))
   gcpInfraMonitorWorker.on('failed', onFail('GCP infra monitor'))
+  trafficMinuteWorker.on('failed', onFail('Traffic minute sample'))
 
   return {
     name: 'general',
@@ -688,6 +713,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await gcpInfraMonitorQueue.close()
       await businessMetricsWorker.close()
       await businessMetricsQueue.close()
+      await trafficMinuteWorker.close()
+      await trafficMinuteQueue.close()
     },
   }
 }

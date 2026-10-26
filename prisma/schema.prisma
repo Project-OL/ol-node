@@ -4150,3 +4150,35 @@ model LedgerAuditFlag {
   @@index([userId, createdAt(sort: Desc)])
   @@map("ledger_audit_flags")
 }
+
+// ---------------------------------------------------------------------------
+// Traffic patterns (TRF-01..04): admin Traffic page. Counts only, no user ids or IPs.
+// ---------------------------------------------------------------------------
+
+/// One row per minute (UTC minute start). Live/call columns are null when Live-server's
+/// `traffic:live:now` snapshot was missing or stale at sample time.
+model TrafficMinute {
+  minute          DateTime @id @db.Timestamptz(6)
+  onlineUsers     Int      @map("online_users")
+  hostsLive       Int?     @map("hosts_live")
+  liveViewers     Int?     @map("live_viewers")
+  callsActive     Int?     @map("calls_active")
+  usersInCalls    Int?     @map("users_in_calls")
+  liveSocketUsers Int?     @map("live_socket_users")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("traffic_minute")
+}
+
+/// One row per (IST hour start, section). section '*' = all app sections together.
+model TrafficHourly {
+  hour      DateTime @db.Timestamptz(6)
+  section   String   @db.VarChar(32)
+  requests  Int      @default(0)
+  users     Int      @default(0)
+  errors5xx Int      @default(0) @map("errors_5xx")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([hour, section])
+  @@map("traffic_hourly")
+}
