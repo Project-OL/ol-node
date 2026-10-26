@@ -8,6 +8,7 @@ import { prismaRead } from '../config/database'
 import { touchUserLastActive } from '../middlewares/lastActiveTracker.middleware'
 import { privacyService } from './privacy.service'
 import { formatLastOnline } from '../utils/last-online'
+import { trafficService } from './traffic.service'
 import type { PublicPresenceDto } from '../models/presence.schemas'
 import type { ServerFrame } from '../realtime/types'
 
@@ -67,6 +68,7 @@ export const presenceService = {
     const n = Number(result[0])
     const wasOnline = Number(result[1]) === 1
 
+    void trafficService.markPresence(userId)
     await touchPresenceLastActive(userId)
 
     // Publish when first socket arrives, or when online was already expired while count > 0.
@@ -86,6 +88,7 @@ export const presenceService = {
     )) as number
     if (after === 0) {
       await redisClient.del(RedisKeys.userOnlineStatus(userId))
+      void trafficService.clearPresence(userId)
       await publishPresence(userId, false)
     }
   },
@@ -94,6 +97,7 @@ export const presenceService = {
   async refreshOnlineHeartbeat(userId: string): Promise<void> {
     const wasOnline = await redisClient.get(RedisKeys.userOnlineStatus(userId))
     await redisClient.set(RedisKeys.userOnlineStatus(userId), '1', 'EX', PRESENCE_HEARTBEAT_TTL_SEC)
+    void trafficService.markPresence(userId)
     await touchPresenceLastActive(userId)
     // Orphaned count > 0 with expired online: PING must re-announce so subscribers catch up.
     if (wasOnline !== '1') {
@@ -105,6 +109,7 @@ export const presenceService = {
   async setUserOnline(userId: string): Promise<void> {
     const wasOnline = await redisClient.get(RedisKeys.userOnlineStatus(userId))
     await redisClient.set(RedisKeys.userOnlineStatus(userId), '1', 'EX', PRESENCE_HEARTBEAT_TTL_SEC)
+    void trafficService.markPresence(userId)
     await touchPresenceLastActive(userId)
     if (wasOnline !== '1') {
       await publishPresence(userId, true)

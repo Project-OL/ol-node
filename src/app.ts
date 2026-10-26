@@ -21,6 +21,7 @@ import {
   requestTimingOnResponse,
   requestTimingOnSend,
 } from './middlewares/requestTiming.middleware'
+import { trafficOnResponse } from './services/traffic.service'
 import { requestMetrics } from './utils/requestMetrics'
 
 import authRoutes from './routes/v1/auth.routes'
@@ -240,6 +241,7 @@ export async function buildApp() {
   app.addHook('onRequest', globalRequestTimeoutHook(isHealthPath))
   app.addHook('onSend', requestTimingOnSend)
   app.addHook('onResponse', requestTimingOnResponse)
+  app.addHook('onResponse', trafficOnResponse)
 
   app.setErrorHandler(errorHandler)
   app.setNotFoundHandler(notFoundHandler)

@@ -157,6 +157,18 @@ export const RedisKeys = {
   presenceCount: (userId: string) => `presence:count:${userId}`,
   /** Messaging: Redis pub/sub for PRESENCE frames for a user (lazy JOIN_PRESENCE). */
   presenceChannel: (userId: string) => `presence:user:${userId}`,
+  /** TRF-01: ZSET userId -> last connect/PING (epoch ms); "online now" = score in the last 60 s. */
+  presenceLastPing: () => 'presence:lastping',
+  /** TRF-03: HyperLogLog of users active in an IST hour (`YYYYMMDDHH`), all sections. */
+  trafficHourUsers: (hourKey: string) => `traffic:u:${hourKey}`,
+  /** TRF-03: HyperLogLog of users in one section during an IST hour. */
+  trafficHourSectionUsers: (hourKey: string, section: string) => `traffic:su:${hourKey}:${section}`,
+  /** TRF-03: HASH section -> request count for an IST hour. */
+  trafficHourRequests: (hourKey: string) => `traffic:req:${hourKey}`,
+  /** TRF-03: HASH section -> 5xx count for an IST hour. */
+  trafficHourErrors: (hourKey: string) => `traffic:err:${hourKey}`,
+  /** TRF-02: HASH of Live-server's per-minute counts (hostsLive, viewers, callsActive, ...; `at` ms). */
+  trafficLiveNow: () => 'traffic:live:now',
   /** Messaging: per-user thin digest for badge/list when not in conv room (Phase 7). */
   userInboxChannel: (userId: string) => `msg:user:${userId}`,
   /** Pub/sub for JOIN_GUARDIAN watchers (purchase / expiry / snapshot for a target user). */
