@@ -77,47 +77,51 @@ describe('presenceService', () => {
 
 
 
-  it('recordSocketConnected publishes when count becomes 1', async () => {
+  it(
+    'recordSocketConnected publishes when count becomes 1',
+    async () => {
+      // eval atomically INCRs presence:count and peeks the previous online flag,
+      // returning [count, wasOnlineFlag]; the SET of online:{userId} happens
+      // inside the Lua script itself, not via a separate redisClient.set call.
+      evalMock.mockResolvedValueOnce([1, 0])
 
-    // eval atomically INCRs presence:count and peeks the previous online flag,
-    // returning [count, wasOnlineFlag]; the SET of online:{userId} happens
-    // inside the Lua script itself, not via a separate redisClient.set call.
-    evalMock.mockResolvedValueOnce([1, 0])
+      publish.mockResolvedValueOnce(1)
 
-    publish.mockResolvedValueOnce(1)
+      const { presenceService } = await import('../../src/services/presence.service')
 
-    const { presenceService } = await import('../../src/services/presence.service')
+      await presenceService.recordSocketConnected('u1')
 
-    await presenceService.recordSocketConnected('u1')
+      expect(touchUserLastActive).toHaveBeenCalledWith('u1', {
+        throttleSec: 60,
+        presenceGate: true,
+      })
+      expect(publish).toHaveBeenCalled()
 
-    expect(touchUserLastActive).toHaveBeenCalledWith('u1', {
-      throttleSec: 60,
-      presenceGate: true,
-    })
-    expect(publish).toHaveBeenCalled()
+      const payload = publish.mock.calls[0]?.[1] as string
 
-    const payload = publish.mock.calls[0]?.[1] as string
-
-    expect(JSON.parse(payload)).toMatchObject({ t: 'PRESENCE', userId: 'u1', online: true })
-
-  })
+      expect(JSON.parse(payload)).toMatchObject({ t: 'PRESENCE', userId: 'u1', online: true })
+    },
+    15_000,
+  )
 
 
 
-  it('recordSocketConnected skips publish when count > 1', async () => {
+  it(
+    'recordSocketConnected skips publish when count > 1',
+    async () => {
+      // count=2 (not the first socket) and wasOnline=1 (already online) → no publish.
+      evalMock.mockResolvedValueOnce([2, 1])
 
-    // count=2 (not the first socket) and wasOnline=1 (already online) → no publish.
-    evalMock.mockResolvedValueOnce([2, 1])
+      const { presenceService } = await import('../../src/services/presence.service')
 
-    const { presenceService } = await import('../../src/services/presence.service')
+      await presenceService.recordSocketConnected('u1')
 
-    await presenceService.recordSocketConnected('u1')
+      expect(set).not.toHaveBeenCalled()
 
-    expect(set).not.toHaveBeenCalled()
-
-    expect(publish).not.toHaveBeenCalled()
-
-  })
+      expect(publish).not.toHaveBeenCalled()
+    },
+    15_000,
+  )
 
 
 

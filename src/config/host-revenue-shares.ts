@@ -14,6 +14,8 @@ export type HostRevenueShares = {
   luckyHostShareBp: number
   /** Lucky gifts: reserve-pool RTP target (Live-server's draw engine). */
   luckyTargetRtpBp: number
+  /** Water-level lucky (water_v1): pay agency commission like the combo path (off by default). */
+  luckyWaterAgencyCommission: boolean
 }
 
 /** Admin bounds for the lucky settings: a host cut above 20% or an RTP outside 50-99% is a typo. */
@@ -56,6 +58,8 @@ export const HOST_REVENUE_SHARES = {
   LUCKY_HOST_SHARE_BP: 400,
   /** Lucky gift: reserve pool targets a 92% return to players. */
   LUCKY_TARGET_RTP_BP: 9_200,
+  /** Water-level lucky: agency commission off by default (decision D8). */
+  LUCKY_WATER_AGENCY_COMMISSION: false,
 } as const
 
 export const DEFAULT_HOST_REVENUE_SHARES: HostRevenueShares = {
@@ -65,6 +69,7 @@ export const DEFAULT_HOST_REVENUE_SHARES: HostRevenueShares = {
   videoCallHostShareBp: HOST_REVENUE_SHARES.VIDEO_CALL_HOST_SHARE_BP,
   luckyHostShareBp: HOST_REVENUE_SHARES.LUCKY_HOST_SHARE_BP,
   luckyTargetRtpBp: HOST_REVENUE_SHARES.LUCKY_TARGET_RTP_BP,
+  luckyWaterAgencyCommission: HOST_REVENUE_SHARES.LUCKY_WATER_AGENCY_COMMISSION,
 }
 
 /** Convenience: host point credit from a gift */
