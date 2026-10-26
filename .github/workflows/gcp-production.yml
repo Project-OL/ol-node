@@ -351,13 +351,31 @@ jobs:
           main=$(commit_of "$GCE_INSTANCE" "$GCP_ZONE")
           echo "$GCE_INSTANCE $GCP_ZONE ${main:-none}"
           if [ "$GCE_INSTANCE_RUNS_API" != "false" ] && [ "$main" != "$GITHUB_SHA" ]; then bad=1; fi
+          # The autoscaler can add or remove a node while this runs. A node being removed is
+          # skipped. A node still booting (or not reachable yet) boots the release published
+          # above, so wait up to 8 min for it to report a commit instead of failing at once.
           mapfile -t nodes < <(gcloud compute instance-groups managed list-instances "$GCE_API_MIG" \
-            --project "$GCP_PROJECT_ID" --region "$region" --format="value(name,instance.segment(-3))")
+            --project "$GCP_PROJECT_ID" --region "$region" \
+            --format="value(name,instance.segment(-3),currentAction)")
           for line in "${nodes[@]}"; do
-            name="${line%%[[:space:]]*}"; zone="${line##*[[:space:]]}"
+            read -r name zone action <<< "$line"
+            case "$action" in
+              DELETING|ABANDONING) echo "$name $zone $action; skipped"; continue ;;
+            esac
             got=$(commit_of "$name" "$zone")
+            if [ "$got" != "$GITHUB_SHA" ] && { [ -z "$got" ] || [ "${action:-NONE}" != "NONE" ]; }; then
+              echo "$name $zone action=${action:-NONE} commit=${got:-none}; waiting for it to boot"
+              for i in $(seq 1 24); do
+                sleep 20
+                gcloud compute instances describe "$name" --project "$GCP_PROJECT_ID" --zone "$zone" \
+                  --format="value(status)" >/dev/null 2>&1 || { got="gone"; break; }
+                got=$(commit_of "$name" "$zone")
+                [ "$got" = "$GITHUB_SHA" ] && break
+              done
+            fi
             echo "$name $zone ${got:-none}"
             [ "$got" = "$GITHUB_SHA" ] && continue
+            [ "$got" = "gone" ] && { echo "$name was removed by the autoscaler; skipped"; continue; }
             echo "=== $name runs ${got:-unknown}; redeploying ==="
             gcloud compute scp ol-node-artifact.tgz "${name}:/tmp/ol-node-artifact.tgz" \
               --project "$GCP_PROJECT_ID" --zone "$zone" --tunnel-through-iap --quiet || { bad=1; continue; }
