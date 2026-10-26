@@ -104,6 +104,13 @@ export async function computeDay(day: string): Promise<Row[]> {
   }
   add('users.new', usersNew[0]?.v)
   add('users.active', usersActive[0]?.v)
+  // TRF-04: distinct users from request/socket HyperLogLogs. Unlike users.active it is not
+  // shrunk by later activity overwriting sessions.last_active_at. Absent before 2026-10-26.
+  const trafficActive = await db.$queryRawUnsafe<{ v: number }[]>(
+    `select users::int v from traffic_daily where day = $1::date and section = '*'`,
+    day,
+  )
+  if (trafficActive[0]) add('users.active_traffic', trafficActive[0].v)
   add('calls.count', calls[0]?.n)
   add('calls.minutes', Math.round(Number(calls[0]?.secs ?? 0) / 6) / 10)
   add('live.streams', live[0]?.n)

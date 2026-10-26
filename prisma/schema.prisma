@@ -4182,3 +4182,17 @@ model TrafficHourly {
   @@id([hour, section])
   @@map("traffic_hourly")
 }
+
+/// One row per (IST day, section). users = distinct users that day (HyperLogLog union), so it
+/// is not the sum of the hourly users. section '*' = all app sections.
+model TrafficDaily {
+  day       DateTime @db.Date
+  section   String   @db.VarChar(32)
+  requests  Int      @default(0)
+  users     Int      @default(0)
+  errors5xx Int      @default(0) @map("errors_5xx")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([day, section])
+  @@map("traffic_daily")
+}

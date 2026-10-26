@@ -79,6 +79,32 @@ describe('trafficService.recordRequest', () => {
   })
 })
 
+describe('trafficService.rollupHour', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('writes one row per section plus the all-sections row', async () => {
+    const r = redisClient as unknown as Record<string, ReturnType<typeof vi.fn>>
+    r.hgetall = vi
+      .fn()
+      .mockResolvedValueOnce({ Wallet: '5', Chat: '3' })
+      .mockResolvedValueOnce({ Chat: '1' })
+    r.pfcount = vi.fn().mockResolvedValueOnce(4).mockResolvedValueOnce(2).mockResolvedValueOnce(3)
+    const p = prisma as unknown as Record<string, unknown>
+    p.trafficHourly = { upsert: vi.fn((x) => x) }
+    p.$transaction = vi.fn().mockResolvedValue([])
+    const n = await trafficService.rollupHour('2026102612')
+    expect(n).toBe(3)
+    const ops = vi.mocked(p.$transaction as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      create: { section: string; requests: number; users: number; errors5xx: number }
+    }[]
+    expect(ops.map((o) => o.create)).toEqual([
+      expect.objectContaining({ section: 'Wallet', requests: 5, users: 2, errors5xx: 0 }),
+      expect.objectContaining({ section: 'Chat', requests: 3, users: 3, errors5xx: 1 }),
+      expect.objectContaining({ section: '*', requests: 8, users: 4, errors5xx: 1 }),
+    ])
+  })
+})
+
 describe('trafficService.sampleMinute', () => {
   beforeEach(() => vi.clearAllMocks())
 
