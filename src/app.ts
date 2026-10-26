@@ -101,6 +101,7 @@ import customGiftRoutes from './routes/v1/custom-gift.routes'
 import appLinksRoutes from './routes/v1/app-links.routes'
 import customGiftAdminRoutes from './routes/v1/custom-gift-admin.routes'
 import systemSettingsAdminRoutes from './routes/v1/system-settings-admin.routes'
+import luckyTierAdminRoutes from './routes/v1/lucky-tier-admin.routes'
 import adminViewRoutes from './routes/v1/admin-view.routes'
 import adminCountryAccessRoutes from './routes/v1/admin-country-access.routes'
 import adminCountryUserSearchRoutes from './routes/v1/admin-country-user-search.routes'
@@ -283,6 +284,7 @@ export async function buildApp() {
       await adminApp.register(gcpInfraAdminRoutes)
       await adminApp.register(infraCapacityAdminRoutes)
       await adminApp.register(systemSettingsAdminRoutes)
+      await adminApp.register(luckyTierAdminRoutes)
       await adminApp.register(superHostRoutes)
       await adminApp.register(storeAdminRoutes)
       await adminApp.register(giftAdminRoutes)
