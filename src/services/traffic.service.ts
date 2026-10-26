@@ -9,7 +9,8 @@ import { rootLogger } from '../utils/rootLogger'
  * - Presence: `presence:lastping` ZSET (userId -> last connect/PING ms), sampled every minute
  *   into `traffic_minute` by {@link sampleTrafficMinute}.
  * - Requests: per IST hour, a HyperLogLog of users (all + per section) and request / 5xx counts
- *   per section. Keys expire after 3 days; the hourly rollup (TRF-04) copies them to Postgres.
+ *   per section. Keys expire after 3 days; the rollup (TRF-04, every 10 min) copies them to
+ *   `traffic_hourly` / `traffic_daily` and merges day HyperLogLogs kept 40 days.
  *
  * Only counts and HyperLogLogs are stored: no IPs, no per-user lists.
  */
@@ -68,6 +69,29 @@ const SECTION_BY_SEGMENT: Record<string, string> = {
 
 /** Server-to-server, admin portal and health traffic: never counted as app usage. */
 const MACHINE_SEGMENTS = new Set(['admin', 'game-webhooks', 'webhooks', 'internal', 'health'])
+
+/** Section name for "all app sections" in traffic_hourly / traffic_daily. */
+export const ALL_SECTIONS = '*'
+/** Day HyperLogLogs live long enough for a 30-day unique-user count. */
+export const TRAFFIC_DAY_KEY_TTL_SEC = 40 * 86_400
+
+/** IST day `YYYYMMDD` for an instant. */
+export function istDayKey(at: Date | number): string {
+  return istHourKey(at).slice(0, 8)
+}
+
+/** Start of the IST hour `YYYYMMDDHH` as an instant. */
+export function istHourStart(hourKey: string): Date {
+  const k = hourKey
+  return new Date(
+    `${k.slice(0, 4)}-${k.slice(4, 6)}-${k.slice(6, 8)}T${k.slice(8, 10)}:00:00+05:30`,
+  )
+}
+
+/** IST day `YYYYMMDD` as the UTC-midnight Date Prisma uses for a DATE column. */
+export function istDayDate(dayKey: string): Date {
+  return new Date(`${dayKey.slice(0, 4)}-${dayKey.slice(4, 6)}-${dayKey.slice(6, 8)}T00:00:00Z`)
+}
 
 /** IST hour bucket `YYYYMMDDHH` for an instant. */
 export function istHourKey(at: Date | number): string {
@@ -162,6 +186,114 @@ export const trafficService = {
       update: data,
     })
     return { minute, online }
+  },
+
+  /**
+   * TRF-04: copy one IST hour's Redis counters into `traffic_hourly` (one row per section plus
+   * '*'). Idempotent; safe to run while the hour is still filling.
+   */
+  async rollupHour(hourKey: string): Promise<number> {
+    const [req, err, allUsers] = await Promise.all([
+      redisClient.hgetall(RedisKeys.trafficHourRequests(hourKey)),
+      redisClient.hgetall(RedisKeys.trafficHourErrors(hourKey)),
+      redisClient.pfcount(RedisKeys.trafficHourUsers(hourKey)),
+    ])
+    const sections = [...new Set([...Object.keys(req ?? {}), ...Object.keys(err ?? {})])]
+    if (sections.length === 0 && !allUsers) return 0
+    const users = await Promise.all(
+      sections.map((s) => redisClient.pfcount(RedisKeys.trafficHourSectionUsers(hourKey, s))),
+    )
+    const hour = istHourStart(hourKey)
+    const rows = sections.map((section, i) => ({
+      section,
+      requests: Number(req?.[section] ?? 0),
+      users: users[i] ?? 0,
+      errors5xx: Number(err?.[section] ?? 0),
+    }))
+    rows.push({
+      section: ALL_SECTIONS,
+      requests: rows.reduce((a, r) => a + r.requests, 0),
+      users: allUsers,
+      errors5xx: rows.reduce((a, r) => a + r.errors5xx, 0),
+    })
+    await prisma.$transaction(
+      rows.map((r) =>
+        prisma.trafficHourly.upsert({
+          where: { hour_section: { hour, section: r.section } },
+          create: { hour, ...r },
+          update: { requests: r.requests, users: r.users, errors5xx: r.errors5xx },
+        }),
+      ),
+    )
+    return rows.length
+  },
+
+  /**
+   * TRF-04: merge an IST day's hour HyperLogLogs into 40-day day keys (so 7- and 30-day unique
+   * users stay countable after the hour keys expire) and write `traffic_daily`.
+   */
+  async rollupDay(dayKey: string): Promise<number> {
+    const hourKeys = Array.from({ length: 24 }, (_, h) => dayKey + String(h).padStart(2, '0'))
+    const [reqs, errs] = await Promise.all([
+      Promise.all(hourKeys.map((h) => redisClient.hgetall(RedisKeys.trafficHourRequests(h)))),
+      Promise.all(hourKeys.map((h) => redisClient.hgetall(RedisKeys.trafficHourErrors(h)))),
+    ])
+    const sum = (maps: Record<string, string>[], section: string) =>
+      maps.reduce((a, m) => a + Number(m?.[section] ?? 0), 0)
+    const sections = [...new Set(reqs.flatMap((m) => Object.keys(m ?? {})))]
+    if (sections.length === 0) return 0
+
+    const dayUsersKey = RedisKeys.trafficDayUsers(dayKey)
+    const p = redisClient.pipeline()
+    p.pfmerge(dayUsersKey, ...hourKeys.map((h) => RedisKeys.trafficHourUsers(h)))
+    p.expire(dayUsersKey, TRAFFIC_DAY_KEY_TTL_SEC)
+    for (const s of sections) {
+      const k = RedisKeys.trafficDaySectionUsers(dayKey, s)
+      p.pfmerge(k, ...hourKeys.map((h) => RedisKeys.trafficHourSectionUsers(h, s)))
+      p.expire(k, TRAFFIC_DAY_KEY_TTL_SEC)
+    }
+    await p.exec()
+
+    const [allUsers, ...sectionUsers] = await Promise.all([
+      redisClient.pfcount(dayUsersKey),
+      ...sections.map((s) => redisClient.pfcount(RedisKeys.trafficDaySectionUsers(dayKey, s))),
+    ])
+    const day = istDayDate(dayKey)
+    const rows = sections.map((section, i) => ({
+      section,
+      requests: sum(reqs, section),
+      users: sectionUsers[i] ?? 0,
+      errors5xx: sum(errs, section),
+    }))
+    rows.push({
+      section: ALL_SECTIONS,
+      requests: rows.reduce((a, r) => a + r.requests, 0),
+      users: allUsers ?? 0,
+      errors5xx: rows.reduce((a, r) => a + r.errors5xx, 0),
+    })
+    await prisma.$transaction(
+      rows.map((r) =>
+        prisma.trafficDaily.upsert({
+          where: { day_section: { day, section: r.section } },
+          create: { day, ...r },
+          update: { requests: r.requests, users: r.users, errors5xx: r.errors5xx },
+        }),
+      ),
+    )
+    return rows.length
+  },
+
+  /** TRF-04 job body (every 10 min): this hour and the last, today and yesterday. */
+  async runRollup(now = Date.now()): Promise<{ hours: number; days: number }> {
+    let hours = 0
+    let days = 0
+    for (const h of [istHourKey(now), istHourKey(now - 3_600_000)]) {
+      hours += await trafficService.rollupHour(h)
+    }
+    for (const d of [istDayKey(now), istDayKey(now - 86_400_000)]) {
+      days += await trafficService.rollupDay(d)
+    }
+    return { hours, days }
   },
 }
 

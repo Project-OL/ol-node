@@ -257,10 +257,24 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       removeOnFail: 50,
     },
   )
+  // TRF-04: Redis hour/day counters -> traffic_hourly / traffic_daily, every 10 minutes.
+  await trafficMinuteQueue.add(
+    'rollup',
+    {},
+    {
+      jobId: 'traffic-rollup-every-10min',
+      repeat: { every: 10 * 60 * 1000 },
+      attempts: 2,
+      backoff: { type: 'fixed', delay: 30_000 },
+      removeOnComplete: 10,
+      removeOnFail: 50,
+    },
+  )
   const trafficMinuteWorker = new Worker(
     TRAFFIC_MINUTE_QUEUE,
-    async () => {
-      await trafficService.sampleMinute()
+    async (job: Job) => {
+      if (job.name === 'rollup') await trafficService.runRollup()
+      else await trafficService.sampleMinute()
     },
     { connection, concurrency: 1 },
   )
@@ -669,7 +683,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   luckyShadowWorker.on('failed', onFail('Lucky shadow worker'))
   rankingBackfillWorker.on('failed', onFail('Ranking backfill'))
   gcpInfraMonitorWorker.on('failed', onFail('GCP infra monitor'))
-  trafficMinuteWorker.on('failed', onFail('Traffic minute sample'))
+  trafficMinuteWorker.on('failed', onFail('Traffic sample / rollup'))
 
   return {
     name: 'general',

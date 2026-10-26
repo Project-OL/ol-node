@@ -167,6 +167,10 @@ export const RedisKeys = {
   trafficHourRequests: (hourKey: string) => `traffic:req:${hourKey}`,
   /** TRF-03: HASH section -> 5xx count for an IST hour. */
   trafficHourErrors: (hourKey: string) => `traffic:err:${hourKey}`,
+  /** TRF-04: HyperLogLog of users active on an IST day (`YYYYMMDD`), merged from the hour keys; 40-day TTL. */
+  trafficDayUsers: (dayKey: string) => `traffic:ud:${dayKey}`,
+  /** TRF-04: HyperLogLog of users in one section on an IST day; 40-day TTL. */
+  trafficDaySectionUsers: (dayKey: string, section: string) => `traffic:sud:${dayKey}:${section}`,
   /** TRF-02: HASH of Live-server's per-minute counts (hostsLive, viewers, callsActive, ...; `at` ms). */
   trafficLiveNow: () => 'traffic:live:now',
   /** Messaging: per-user thin digest for badge/list when not in conv room (Phase 7). */
