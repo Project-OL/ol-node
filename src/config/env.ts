@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import * as dotenv from 'dotenv'
+// Keep zod 3's validation messages (the app sees them); must load before any parse.
+import './zod-v3-messages'
 
 dotenv.config()
 
@@ -97,12 +99,12 @@ const envSchema = z
     SUPER_ADMIN_PORTAL_ORIGIN: z.string().optional().default('https://admins3jinyu.offoolive.com'),
     ADMIN_PORTAL_ORIGIN: z.string().optional().default('https://priviledge.offoolive.com'),
     /** Optional override for inbox sender (`users.id`). When unset, server uses or creates `offoo_platform`. */
-    PLATFORM_SENDER_USER_ID: z.string().uuid().optional(),
+    PLATFORM_SENDER_USER_ID: z.string().guid().optional(),
     /**
      * Agency user that receives BANK payroll takeover inventory (host payout + 60% fee reward).
      * Must be an existing `users.is_agent` row. Required to complete takeover payouts.
      */
-    COMPANY_AGENCY_USER_ID: z.string().uuid().optional(),
+    COMPANY_AGENCY_USER_ID: z.string().guid().optional(),
     /** HMAC key for device binding fingerprint. Min 32 chars. Required in production. */
     DEVICE_FINGERPRINT_SECRET: z.string().min(32).optional(),
 

@@ -87,7 +87,7 @@ export const AdminUploadUrlSchema = z.object({
 })
 
 export const ReplyTemplateParamsSchema = z.object({
-  templateId: z.string().uuid(),
+  templateId: z.string().guid(),
 })
 
 export const CreateReplyTemplateSchema = z.object({
@@ -107,7 +107,7 @@ export const UpdateReplyTemplateSchema = z
 export const BulkResolveWithTemplateSchema = z.object({
   /** No upper bound — the admin portal lets a CSA select tickets across pages. */
   ticketIds: z.array(z.coerce.bigint()).min(1),
-  templateId: z.string().uuid(),
+  templateId: z.string().guid(),
   resolution: z.enum(['RESOLVED', 'REJECTED']).default('RESOLVED'),
 })
 
@@ -139,9 +139,9 @@ export const AdminReportListQuerySchema = z.object({
   status: z.enum(['PENDING', 'REVIEWED', 'RESOLVED', 'DISMISSED']).optional(),
   context: z.enum(['CHAT', 'LIVE']).optional(),
   reason: AdminReportReasonEnum.optional(),
-  reportedUserId: z.string().uuid().optional(),
-  hostUserId: z.string().uuid().optional(),
-  reporterId: z.string().uuid().optional(),
+  reportedUserId: z.string().guid().optional(),
+  hostUserId: z.string().guid().optional(),
+  reporterId: z.string().guid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })

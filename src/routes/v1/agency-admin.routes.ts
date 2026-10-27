@@ -148,11 +148,11 @@ const AgencyCommissionWindowConfigUpdateSchema = z
 
 const DisputeResolveSchema = z.object({
   reason: z.string().min(3),
-  agencyUserId: z.string().uuid().optional(),
+  agencyUserId: z.string().guid().optional(),
 })
 
 const WithdrawalAssignSchema = z.object({
-  agencyUserId: z.string().uuid().optional(),
+  agencyUserId: z.string().guid().optional(),
   /** Numeric agency public ID or owner public/display ID. Leading `#` is stripped in the service. */
   agencyPublicId: z.string().trim().regex(/^\d+$/).optional(),
 })
@@ -167,7 +167,7 @@ const AdminCompletePlatformSchema = z.object({
 })
 
 const AdminCompletePayrollManuallySchema = z.object({
-  agencyUserId: z.string().uuid().optional(),
+  agencyUserId: z.string().guid().optional(),
   /** Numeric agency public ID or owner public/display ID. Leading `#` is stripped in the service. */
   agencyPublicId: z.string().trim().regex(/^\d+$/).optional(),
   proofS3Key: z.string().min(1).max(500),
@@ -177,9 +177,9 @@ const AdminCompletePayrollManuallySchema = z.object({
 
 const AdminUpdatePayrollProofSchema = z.object({
   /** Edit this specific assignment's proof directly, regardless of status. */
-  assignmentId: z.string().uuid().optional(),
+  assignmentId: z.string().guid().optional(),
   /** No assignmentId: target that agency's most recent assignment on this withdrawal instead. */
-  agencyUserId: z.string().uuid().optional(),
+  agencyUserId: z.string().guid().optional(),
   agencyPublicId: z.string().trim().regex(/^\d+$/).optional(),
   proofS3Key: z.string().min(1).max(500),
   proofS3Bucket: z.string().min(1).max(255),
@@ -571,7 +571,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -624,7 +624,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -655,7 +655,7 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }

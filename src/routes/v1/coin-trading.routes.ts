@@ -15,7 +15,7 @@ import { env } from '../../config/env'
 
 const topupSchema = z
   .object({
-    packageId: z.string().uuid().optional(),
+    packageId: z.string().guid().optional(),
     amountUsd: z.number().positive().optional(),
     currency: z.string().default('USD'),
     callbackUrl: z.string().url().optional(),
@@ -50,7 +50,7 @@ const ListTransfersQuerySchema = z.object({
   fromDate: z.string().datetime().optional(),
   toDate: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
-  cursor: z.string().uuid().optional(),
+  cursor: z.string().guid().optional(),
 })
 
 function resolveTransferDirection(parsed: z.infer<typeof ListTransfersQuerySchema>) {
@@ -66,7 +66,7 @@ const ListHistoryQuerySchema = z.object({
   fromDate: z.string().datetime().optional(),
   toDate: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
-  cursor: z.string().uuid().optional(),
+  cursor: z.string().guid().optional(),
 })
 
 export default async function coinTradingRoutes(app: FastifyInstance) {

@@ -16,7 +16,7 @@ import {
 } from '../../models/withdrawal.schemas'
 
 const ProofUploadBodySchema = z.object({
-  assignmentId: z.string().uuid(),
+  assignmentId: z.string().guid(),
   mimeType: z.string().min(1).max(100),
 })
 

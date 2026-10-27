@@ -31,7 +31,7 @@ export default async function superHostRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid params',
+          parsed.error.issues[0]?.message ?? 'Invalid params',
           'INVALID_REQUEST',
         )
       }
@@ -65,7 +65,7 @@ export default async function superHostRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid params',
+          parsed.error.issues[0]?.message ?? 'Invalid params',
           'INVALID_REQUEST',
         )
       }

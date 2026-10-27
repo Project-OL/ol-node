@@ -42,7 +42,7 @@ export default async function callRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid request',
+          parsed.error.issues[0]?.message ?? 'Invalid request',
           'INVALID_REQUEST',
         )
       }
@@ -81,7 +81,7 @@ export default async function callRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid request',
+          parsed.error.issues[0]?.message ?? 'Invalid request',
           'INVALID_REQUEST',
         )
       }

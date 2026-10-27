@@ -111,7 +111,7 @@ export default async function pushNotificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          parsed.error.issues[0]?.message ?? 'Invalid request body',
           'INVALID_REQUEST',
         )
       }
@@ -143,7 +143,7 @@ export default async function pushNotificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          parsed.error.issues[0]?.message ?? 'Invalid request body',
           'INVALID_REQUEST',
         )
       }

@@ -20,7 +20,7 @@ export default async function accountDeletionRoutes(app: FastifyInstance) {
       if (!body.success) {
         throw new AppError(
           400,
-          body.error.errors[0]?.message ?? 'Validation failed',
+          body.error.issues[0]?.message ?? 'Validation failed',
           'INVALID_REQUEST',
           { fieldErrors: body.error.flatten().fieldErrors },
         )
@@ -58,7 +58,7 @@ export default async function accountDeletionRoutes(app: FastifyInstance) {
       if (!body.success) {
         throw new AppError(
           400,
-          body.error.errors[0]?.message ?? 'Validation failed',
+          body.error.issues[0]?.message ?? 'Validation failed',
           'INVALID_REQUEST',
           { fieldErrors: body.error.flatten().fieldErrors },
         )

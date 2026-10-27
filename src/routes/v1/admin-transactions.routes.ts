@@ -13,7 +13,7 @@ const preAuth = [authenticateAdmin]
 function parseListQuery(query: unknown) {
   const parsed = adminTransactionsListQuerySchema.safeParse(query ?? {})
   if (!parsed.success) {
-    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+    throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
   }
   return parsed.data
 }
@@ -21,7 +21,7 @@ function parseListQuery(query: unknown) {
 function parseProfitSummaryQuery(query: unknown) {
   const parsed = adminPlatformProfitSummaryQuerySchema.safeParse(query ?? {})
   if (!parsed.success) {
-    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+    throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
   }
   return parsed.data
 }
@@ -41,7 +41,7 @@ function revertContext(request: FastifyRequest, body: ReturnType<typeof parseRev
 function parseRevertBody(body: unknown) {
   const parsed = adminTransactionRevertBodySchema.safeParse(body ?? {})
   if (!parsed.success) {
-    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+    throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
   }
   return parsed.data
 }

@@ -5,7 +5,7 @@ export const setPresenceBodySchema = z.object({
 })
 
 export const bulkPresenceBodySchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1).max(100),
+  userIds: z.array(z.string().guid()).min(1).max(100),
 })
 
 export type PublicPresenceDto = {

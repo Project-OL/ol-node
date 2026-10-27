@@ -39,7 +39,7 @@ export const ApkReleaseCreateBodySchema = z.object({
 })
 
 export const ApkCurrentReleaseBodySchema = z.object({
-  releaseId: z.string().uuid(),
+  releaseId: z.string().guid(),
 })
 
 export type AppLinksUpdateInput = z.infer<typeof AppLinksUpdateSchema>

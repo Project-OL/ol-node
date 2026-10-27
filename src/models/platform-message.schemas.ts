@@ -7,7 +7,7 @@ export const platformMessageBodySchema = z.object({
 export const platformNotificationBroadcastBodySchema = z.object({
   message: z.string().min(1).max(4000),
   /** When omitted, sends to all active non-support users (batched via queue). */
-  userIds: z.array(z.string().uuid()).min(1).max(500).optional(),
+  userIds: z.array(z.string().guid()).min(1).max(500).optional(),
   campaignId: z.string().min(1).max(128).optional(),
 })
 

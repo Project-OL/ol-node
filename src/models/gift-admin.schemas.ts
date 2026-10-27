@@ -13,7 +13,7 @@ const categorySlug = z
   .regex(/^[a-z0-9][a-z0-9_-]*$/, 'Slug must be a lowercase slug')
 
 export const GiftAdminListQuerySchema = z.object({
-  categoryId: z.string().uuid().optional(),
+  categoryId: z.string().guid().optional(),
   status: z.enum(['active', 'disabled', 'all']).default('all'),
   minPrice: z.coerce.number().int().min(0).optional(),
   maxPrice: z.coerce.number().int().min(0).optional(),
@@ -36,7 +36,7 @@ export const UpdateGiftCategoryBodySchema = z.object({
 })
 
 export const ReorderGiftCategoriesBodySchema = z.object({
-  orderedIds: z.array(z.string().uuid()).min(1),
+  orderedIds: z.array(z.string().guid()).min(1),
 })
 
 export const CreateGiftAdminBodySchema = z.object({
@@ -46,7 +46,7 @@ export const CreateGiftAdminBodySchema = z.object({
   displayImageUrl: z.string().url(),
   effectUrl: z.string().url().nullable().optional(),
   vapUrl: z.string().url().nullable().optional(),
-  categoryId: z.string().uuid().nullable().optional(),
+  categoryId: z.string().guid().nullable().optional(),
   displayOrder: z.coerce.number().int().min(0).optional(),
   vipOnly: z.coerce.boolean().optional(),
   isLucky: z.coerce.boolean().optional(),
@@ -61,7 +61,7 @@ export const CreateGiftAdminMultipartFieldsSchema = z.object({
   vapUrl: z.union([z.literal(''), z.string().url()]).optional(),
   categoryId: z.preprocess(
     (v) => (v === '' ? undefined : v),
-    z.string().uuid().nullable().optional(),
+    z.string().guid().nullable().optional(),
   ),
   displayOrder: z.preprocess(
     (v) => (v === '' || v === undefined ? undefined : v),
@@ -88,7 +88,7 @@ export const PatchGiftAdminBodySchema = z.object({
   displayImageUrl: z.string().url().optional(),
   effectUrl: z.string().url().nullable().optional(),
   vapUrl: z.string().url().nullable().optional(),
-  categoryId: z.string().uuid().nullable().optional(),
+  categoryId: z.string().guid().nullable().optional(),
   displayOrder: z.coerce.number().int().min(0).optional(),
   vipOnly: z.boolean().optional(),
   isLucky: z.boolean().optional(),
@@ -107,7 +107,7 @@ export const PatchGiftAdminMultipartFieldsSchema = z.object({
   vapUrl: z.string().optional(),
   categoryId: z.preprocess(
     (v) => (v === '' ? null : v === undefined ? undefined : v),
-    z.string().uuid().nullable().optional(),
+    z.string().guid().nullable().optional(),
   ),
   displayOrder: z.preprocess(
     (v) => (v === '' || v === undefined ? undefined : v),
@@ -154,15 +154,15 @@ export const UpdateGalleryCategoryBodySchema = z.object({
 })
 
 export const ReorderGalleryCategoriesBodySchema = z.object({
-  orderedIds: z.array(z.string().uuid()).min(1),
+  orderedIds: z.array(z.string().guid()).min(1),
   year: z.coerce.number().int().min(2024).max(2099).optional(),
   month: z.coerce.number().int().min(1).max(12).optional(),
 })
 
 export const AddGiftsToGalleryCategoryBodySchema = z.object({
-  giftIds: z.array(z.string().uuid()).min(1),
+  giftIds: z.array(z.string().guid()).min(1),
 })
 
 export const RemoveGiftsFromGalleryCategoryBodySchema = z.object({
-  giftIds: z.array(z.string().uuid()).min(1).max(100),
+  giftIds: z.array(z.string().guid()).min(1).max(100),
 })

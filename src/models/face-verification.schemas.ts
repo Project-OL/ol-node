@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const faceActionBodySchema = z.object({
   s3Key: z.string().min(1),
-  clientRequestId: z.string().uuid(),
+  clientRequestId: z.string().guid(),
 })
 
 export const livenessSessionResponseSchema = z.object({
@@ -15,7 +15,7 @@ export const uploadUrlResponseSchema = z.object({
   uploadUrl: z.string().url(),
   s3Key: z.string().min(1),
   expiresInSec: z.number().int().positive(),
-  clientRequestId: z.string().uuid(),
+  clientRequestId: z.string().guid(),
 })
 
 export type FaceActionBody = z.infer<typeof faceActionBodySchema>

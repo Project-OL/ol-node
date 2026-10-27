@@ -19,7 +19,7 @@ export default async function faceVerificationRoutes(app: FastifyInstance) {
     if (!userId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
     const parsed = faceActionBodySchema.safeParse(request.body ?? {})
     if (!parsed.success) {
-      throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+      throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
     }
     return faceVerificationService.registerFromUploadedKey(userId, parsed.data, request)
   })
@@ -52,7 +52,7 @@ export default async function faceVerificationRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }

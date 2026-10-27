@@ -12,11 +12,11 @@ export const securityPinSchema = z.string().regex(/^\d{4,8}$/, 'PIN must be 4 to
 export const getIdentifiersSchema = z.object({})
 
 export const sendOtpSchema = z.object({
-  identifierId: z.string().uuid('Invalid identifier ID'),
+  identifierId: z.string().guid('Invalid identifier ID'),
 })
 
 export const verifyOtpSchema = z.object({
-  identifierId: z.string().uuid('Invalid identifier ID'),
+  identifierId: z.string().guid('Invalid identifier ID'),
   otp: z.string().regex(otpFiveDigits, 'OTP must be 5 digits'),
 })
 
@@ -49,7 +49,7 @@ export const changePinSchema = z
   })
 
 export const resetPasswordSchema = z.object({
-  identifierId: z.string().uuid('Invalid identifier ID'),
+  identifierId: z.string().guid('Invalid identifier ID'),
   otp: z.string().regex(otpFiveDigits, 'OTP must be 5 digits'),
   newPin: securityPinSchema,
 })

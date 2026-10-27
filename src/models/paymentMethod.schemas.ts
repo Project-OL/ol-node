@@ -19,8 +19,8 @@ export const BindEpaySchema = z.object({
     },
     z
       .string({
-        required_error: 'ePay email is required',
-        invalid_type_error: 'ePay email must be text',
+        error: (iss) =>
+          iss.input === undefined ? 'ePay email is required' : 'ePay email must be text',
       })
       .max(255, 'ePay email must be at most 255 characters')
       .email('Invalid ePay email address'),
@@ -33,7 +33,8 @@ const bankText = (label: string) =>
     // Per-field required / length / format rules are admin-configurable and applied in
     // userPaymentMethodService.bindBank (utils/bank-field-rules.ts); this only caps payload size.
     z
-      .string({ invalid_type_error: `${label} must be text` })
+      // undefined falls through to the default "Required" (v3 invalid_type_error semantics)
+      .string({ error: (iss) => (iss.input === undefined ? undefined : `${label} must be text`) })
       .max(500, `${label} is too long`)
       .optional(),
   )

@@ -43,7 +43,7 @@ function parseCommissionPeriodQuery(q: Record<string, string | undefined>) {
     to: q.to,
   })
   if (!range.success) {
-    throw new AppError(400, range.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+    throw new AppError(400, range.error.issues[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
   }
   if (range.data.from && range.data.to) {
     return { from: range.data.from, to: range.data.to }
@@ -128,7 +128,7 @@ export async function registerAgencyCommissionRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }

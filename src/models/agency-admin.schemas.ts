@@ -47,7 +47,7 @@ export const pendingApplicationsQuerySchema = z.object({
 })
 
 export const approveApplicationBodySchema = z.object({
-  applicationId: z.string().uuid(),
+  applicationId: z.string().guid(),
   commissionTier: z.string().min(1).max(8).optional(),
 })
 

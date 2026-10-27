@@ -1,6 +1,6 @@
 import { FastifyError, FastifyReply, FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
-import { ZodError } from 'zod'
+import { ZodError, type z } from 'zod'
 import { env } from '../config/env'
 
 export class AppError extends Error {
@@ -22,7 +22,10 @@ export class AppError extends Error {
  */
 function toClientInputError(error: unknown): AppError | null {
   if (error instanceof ZodError) {
-    const issues = error.errors.map((e) => ({ path: e.path.join('.'), message: e.message }))
+    const issues = error.issues.map((e: z.core.$ZodIssue) => ({
+      path: e.path.join('.'),
+      message: e.message,
+    }))
     const first = issues[0]
     const message = first
       ? first.path

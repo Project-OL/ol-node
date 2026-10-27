@@ -9,7 +9,7 @@ const preAuth = [authenticateAdmin]
 function parseListQuery(query: unknown) {
   const parsed = adminActivityListQuerySchema.safeParse(query ?? {})
   if (!parsed.success) {
-    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+    throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
   }
   return parsed.data
 }

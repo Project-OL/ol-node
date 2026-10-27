@@ -11,9 +11,14 @@ export function parseRequest<T extends z.ZodTypeAny>(schema: T, payload: unknown
   if (!parsed.success) {
     throw new AppError(
       400,
-      parsed.error.errors[0]?.message ?? 'Invalid request',
+      parsed.error.issues[0]?.message ?? 'Invalid request',
       'INVALID_REQUEST',
-      { issues: parsed.error.errors.map((e) => ({ path: e.path.join('.'), message: e.message })) },
+      {
+        issues: parsed.error.issues.map((e: z.core.$ZodIssue) => ({
+          path: e.path.join('.'),
+          message: e.message,
+        })),
+      },
     )
   }
   return parsed.data

@@ -14,7 +14,7 @@ export default async function uploadRoutes(app: FastifyInstance) {
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
         message:
-          parsed.error.errors[0]?.message ??
+          parsed.error.issues[0]?.message ??
           'contentType is required (image/jpeg, image/png, or image/webp)',
         details: parsed.error.flatten().fieldErrors,
       })

@@ -4,7 +4,7 @@ import { grossPointsFromUsd } from '../utils/withdrawal-amount'
 const withdrawalAmountFields = {
   grossPoints: z.coerce.bigint().positive().optional(),
   amountUsd: z.coerce.number().positive().optional(),
-  paymentMethodId: z.string().uuid(),
+  paymentMethodId: z.string().guid(),
   idempotencyKey: z.string().min(8).max(128),
   notes: z.string().max(500).optional(),
 }

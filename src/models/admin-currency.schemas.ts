@@ -6,7 +6,7 @@ const positiveAmountSchema = z
   .refine((v) => BigInt(v) > 0n, 'Amount must be positive')
 
 export const adminCurrencyAdjustBodySchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.string().guid(),
   currency: z.enum(['COIN', 'POINT', 'TRADING_COIN', 'DIAMOND']),
   direction: z.enum(['credit', 'debit']),
   amount: positiveAmountSchema,
@@ -40,7 +40,7 @@ export type AdminCurrencySupplySummaryQuery = z.infer<typeof adminCurrencySupply
 export const adminCurrencyAdjustmentsQuerySchema = z.object({
   currency: z.enum(['COIN', 'POINT', 'TRADING_COIN', 'DIAMOND']).optional(),
   direction: z.enum(['credit', 'debit']).optional(),
-  userId: z.string().uuid().optional(),
+  userId: z.string().guid().optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   cursor: z.string().min(1).max(256).optional(),
@@ -64,9 +64,9 @@ export const adminCashJournalCreateBodySchema = z.object({
   direction: z.enum(['IN', 'OUT']),
   reason: z.enum(['AGENCY_TRADING_PURCHASE', 'EPAY_PAYOUT', 'PAYROLL_TAKEOVER_PAYOUT']),
   amountUsd: z.string().regex(/^\d+(\.\d{1,4})?$/, 'amountUsd must be a positive USD amount'),
-  counterpartyUserId: z.string().uuid().optional(),
+  counterpartyUserId: z.string().guid().optional(),
   ledgerRefId: z.string().max(255).optional(),
-  withdrawalId: z.string().uuid().optional(),
+  withdrawalId: z.string().guid().optional(),
   description: z.string().max(500).optional(),
   unitsAmount: z.string().regex(/^\d+$/).optional(),
 })
@@ -117,7 +117,7 @@ export const adminHouseAccountsQuerySchema = z.object({
 export type AdminHouseAccountsQuery = z.infer<typeof adminHouseAccountsQuerySchema>
 
 export const adminHouseAccountUpsertBodySchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.string().guid(),
   role: z.enum(['TREASURY', 'COMPANY_AGENCY', 'GAME_HOUSE']),
   label: z.string().max(120).optional(),
   note: z.string().max(500).optional(),
@@ -141,7 +141,7 @@ export const adminTreasuryFlowsQuerySchema = z.object({
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   classification: treasuryFlowClassificationEnum.optional(),
-  senderUserId: z.string().uuid().optional(),
+  senderUserId: z.string().guid().optional(),
   cursor: z.string().min(1).max(256).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 })
@@ -150,7 +150,7 @@ export type AdminTreasuryFlowsQuery = z.infer<typeof adminTreasuryFlowsQuerySche
 
 export const adminTreasuryFlowClassifyBodySchema = z.object({
   flowKind: z.enum(['COIN_TRADING_TRANSFER', 'AGENT_POINT_TRANSFER']),
-  flowId: z.string().uuid(),
+  flowId: z.string().guid(),
   /** INTERNAL is derived from a house recipient and cannot be set manually. */
   classification: z.enum(['SALE', 'PROMO', 'WRITE_OFF']),
   reason: z.string().max(500).optional(),

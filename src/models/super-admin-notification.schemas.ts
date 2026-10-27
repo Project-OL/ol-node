@@ -7,5 +7,5 @@ export const SuperAdminNotificationListQuerySchema = z.object({
 })
 
 export const SuperAdminNotificationMarkReadBodySchema = z.object({
-  ids: z.array(z.string().uuid()).max(100).optional(),
+  ids: z.array(z.string().guid()).max(100).optional(),
 })

@@ -7,11 +7,11 @@ export const SetFcmTokenSchema = z.object({
 export const PushNotificationSchema = z.object({
   title: z.string().min(1).max(200),
   body: z.string().min(1).max(1000),
-  data: z.record(z.string()).optional(),
+  data: z.record(z.string(), z.string()).optional(),
 })
 
 export const PushBroadcastSchema = PushNotificationSchema.extend({
-  userIds: z.array(z.string().uuid()).min(1).max(50_000).optional(),
+  userIds: z.array(z.string().guid()).min(1).max(50_000).optional(),
   country: z.string().min(1).max(100).optional(),
 })
 
