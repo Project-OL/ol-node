@@ -34,6 +34,9 @@ describe('zod 3 message compatibility', () => {
     ['regex', z.string().regex(/^\d+$/), 'a', 'Invalid'],
     ['enum', z.enum(['a', 'b']), 'c', "Invalid enum value. Expected 'a' | 'b', received 'c'"],
     ['enum wrong type', z.enum(['a', 'b']), 5, "Expected 'a' | 'b', received number"],
+    ['enum missing', z.object({ p: z.enum(['a', 'b']) }), {}, 'Required'],
+    ['nativeEnum missing', z.object({ c: z.nativeEnum(Color) }), {}, 'Required'],
+    ['literal missing', z.object({ t: z.literal('x') }), {}, 'Invalid literal value, expected "x"'],
     [
       'nativeEnum',
       z.nativeEnum(Color),
