@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-const uuidSchema = z.string().uuid()
+const uuidSchema = z.string().guid()
 
 export const keyParamSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]{2,63}$/),

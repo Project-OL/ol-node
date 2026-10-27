@@ -13,7 +13,7 @@ function queryStringArray<T extends z.ZodTypeAny>(itemSchema: T) {
 // ── Shared ──────────────────────────────────────────────────────────────────
 
 export const CursorPaginationSchema = z.object({
-  cursor: z.string().uuid().optional(),
+  cursor: z.string().guid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 })
 
@@ -57,12 +57,12 @@ export const CoinHistoryQuerySchema = DateRangeSchema.merge(CursorPaginationSche
 })
 
 export const TopupInitiateSchema = z.object({
-  packageId: z.string().uuid(),
+  packageId: z.string().guid(),
   idempotencyKey: z.string().min(8).max(128),
 })
 
 export const TopupConfirmSchema = z.object({
-  orderId: z.string().uuid(),
+  orderId: z.string().guid(),
   gatewayRef: z.string().max(256),
   idempotencyKey: z.string().min(8).max(128),
 })
@@ -136,7 +136,7 @@ export const PointSummaryQuerySchema = z.object({
 })
 
 export const PointLedgerEntryParamsSchema = z.object({
-  entryId: z.string().uuid(),
+  entryId: z.string().guid(),
 })
 
 /** Business refId (gift tx, withdrawal, subscription, transfer, …). */
@@ -161,7 +161,7 @@ export const WithdrawInitiateSchema = z
   .object({
     amountPoints: z.coerce.bigint().positive().optional(),
     amountUsd: z.coerce.number().positive().optional(),
-    paymentMethodId: z.string().uuid(),
+    paymentMethodId: z.string().guid(),
     idempotencyKey: z.string().min(8).max(128),
     notes: z.string().max(500).optional(),
   })

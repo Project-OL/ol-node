@@ -16,7 +16,7 @@ export const locationHistoryQuerySchema = z.object({
 })
 
 export const adminLocationsQuerySchema = z.object({
-  userId: z.string().uuid().optional(),
+  userId: z.string().guid().optional(),
   /** Numeric public / display ID (`publicId`, `defaultPublicId`, or `currentVipPublicId`). */
   publicId: z
     .string()

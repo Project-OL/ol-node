@@ -47,7 +47,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -102,7 +102,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
       if (!body.success) {
         throw new AppError(
           400,
-          body.error.errors[0]?.message ?? 'Validation failed',
+          body.error.issues[0]?.message ?? 'Validation failed',
           'INVALID_REQUEST',
         )
       }
@@ -144,7 +144,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
       if (!body.success) {
         throw new AppError(
           400,
-          body.error.errors[0]?.message ?? 'Validation failed',
+          body.error.issues[0]?.message ?? 'Validation failed',
           'INVALID_REQUEST',
         )
       }
@@ -216,7 +216,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
       if (!params.success) {
         throw new AppError(
           400,
-          params.error.errors[0]?.message ?? 'Invalid target user id',
+          params.error.issues[0]?.message ?? 'Invalid target user id',
           'INVALID_REQUEST',
         )
       }
@@ -269,14 +269,14 @@ export default async function deviceRoutes(app: FastifyInstance) {
       if (!params.success) {
         throw new AppError(
           400,
-          params.error.errors[0]?.message ?? 'Invalid registry id',
+          params.error.issues[0]?.message ?? 'Invalid registry id',
           'INVALID_REQUEST',
         )
       }
       if (!body.success) {
         throw new AppError(
           400,
-          body.error.errors[0]?.message ?? 'Validation failed',
+          body.error.issues[0]?.message ?? 'Validation failed',
           'INVALID_REQUEST',
         )
       }
@@ -320,7 +320,7 @@ export default async function deviceRoutes(app: FastifyInstance) {
       if (!params.success) {
         throw new AppError(
           400,
-          params.error.errors[0]?.message ?? 'Invalid registry id',
+          params.error.issues[0]?.message ?? 'Invalid registry id',
           'INVALID_REQUEST',
         )
       }

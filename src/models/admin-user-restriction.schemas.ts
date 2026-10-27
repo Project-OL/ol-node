@@ -21,7 +21,7 @@ export const adminApplyRestrictionBodySchema = z
      * MESSAGING_DISABLE only. Users this account cannot message.
      * Omit for a global send ban (cannot message anyone).
      */
-    targetUserIds: z.array(z.string().uuid()).min(1).max(100).optional(),
+    targetUserIds: z.array(z.string().guid()).min(1).max(100).optional(),
     /**
      * MESSAGING_DISABLE only. Union `targetUserIds` with the active ban and
      * keep the later of the two `restrictedUntil` dates.
@@ -62,7 +62,7 @@ export const adminStopLiveStreamBodySchema = z.object({
 
 export const adminListGlobalRestrictionsQuerySchema = z.object({
   type: userRestrictionTypeSchema.optional(),
-  userId: z.string().uuid().optional(),
+  userId: z.string().guid().optional(),
   active: z
     .union([z.literal('true'), z.literal('false'), z.boolean()])
     .optional()
@@ -72,7 +72,7 @@ export const adminListGlobalRestrictionsQuerySchema = z.object({
 })
 
 export const adminListActiveLiveStreamsQuerySchema = z.object({
-  hostUserId: z.string().uuid().optional(),
+  hostUserId: z.string().guid().optional(),
   country: z.string().min(1).max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),

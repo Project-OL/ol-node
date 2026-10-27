@@ -105,7 +105,7 @@ export default async function privacyRoutes(app: FastifyInstance) {
         if (!parsed.success) {
           throw new AppError(
             400,
-            parsed.error.errors[0]?.message ?? 'Validation failed',
+            parsed.error.issues[0]?.message ?? 'Validation failed',
             'INVALID_REQUEST',
           )
         }
@@ -163,7 +163,7 @@ export default async function privacyRoutes(app: FastifyInstance) {
         if (!parsed.success) {
           throw new AppError(
             400,
-            parsed.error.errors[0]?.message ?? 'Validation failed',
+            parsed.error.issues[0]?.message ?? 'Validation failed',
             'INVALID_REQUEST',
           )
         }
@@ -221,7 +221,7 @@ export default async function privacyRoutes(app: FastifyInstance) {
         if (!parsed.success) {
           throw new AppError(
             400,
-            parsed.error.errors[0]?.message ?? 'Validation failed',
+            parsed.error.issues[0]?.message ?? 'Validation failed',
             'INVALID_REQUEST',
           )
         }
@@ -279,7 +279,7 @@ export default async function privacyRoutes(app: FastifyInstance) {
         if (!parsed.success) {
           throw new AppError(
             400,
-            parsed.error.errors[0]?.message ?? 'Validation failed',
+            parsed.error.issues[0]?.message ?? 'Validation failed',
             'INVALID_REQUEST',
           )
         }

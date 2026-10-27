@@ -27,12 +27,12 @@ const listStuckSessionsQuerySchema = z.object({
   minAgeSec: z.coerce.number().int().min(0).max(86_400).optional(),
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
-  userId: z.string().uuid().optional(),
+  userId: z.string().guid().optional(),
 })
 
 const clearAllStuckSessionsBodySchema = z.object({
   minAgeSec: z.coerce.number().int().min(0).max(86_400).optional(),
-  userId: z.string().uuid().optional(),
+  userId: z.string().guid().optional(),
   reason: z.string().max(500).optional(),
 })
 
@@ -64,7 +64,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -95,7 +95,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -146,7 +146,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -189,7 +189,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -229,7 +229,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -268,7 +268,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -300,7 +300,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -399,7 +399,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -438,7 +438,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -523,7 +523,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -565,7 +565,7 @@ export default async function faceVerificationAdminRoutes(app: FastifyInstance) 
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }

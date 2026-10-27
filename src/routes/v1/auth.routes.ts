@@ -53,7 +53,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        message: parsed.error.issues[0]?.message ?? 'Validation failed',
         details: parsed.error.flatten().fieldErrors,
       })
     }
@@ -70,7 +70,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+          message: parsed.error.issues[0]?.message ?? 'Validation failed',
           details: parsed.error.flatten().fieldErrors,
         })
       }
@@ -87,7 +87,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+          message: parsed.error.issues[0]?.message ?? 'Validation failed',
           details: parsed.error.flatten().fieldErrors,
         })
       }
@@ -105,7 +105,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        message: parsed.error.issues[0]?.message ?? 'Validation failed',
         details: parsed.error.flatten().fieldErrors,
       })
     }
@@ -123,7 +123,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        message: parsed.error.issues[0]?.message ?? 'Validation failed',
         details: parsed.error.flatten().fieldErrors,
       })
     }
@@ -142,7 +142,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+          message: parsed.error.issues[0]?.message ?? 'Validation failed',
           details: parsed.error.flatten().fieldErrors,
         })
       }
@@ -160,7 +160,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+          message: parsed.error.issues[0]?.message ?? 'Validation failed',
           details: parsed.error.flatten().fieldErrors,
         })
       }
@@ -184,7 +184,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+          message: parsed.error.issues[0]?.message ?? 'Validation failed',
           details: parsed.error.flatten().fieldErrors,
         })
       }
@@ -205,7 +205,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        message: parsed.error.issues[0]?.message ?? 'Validation failed',
       })
     }
     const result = await authV2Service.refresh(parsed.data.refreshToken, request)
@@ -236,7 +236,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+          message: parsed.error.issues[0]?.message ?? 'Validation failed',
         })
       }
       const result = await authV2Service.logoutByAccessToken(parsed.data.accessToken, request)
@@ -252,7 +252,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message ?? 'Validation failed',
+          message: parsed.error.issues[0]?.message ?? 'Validation failed',
         })
       }
       const result = await authV2Service.invalidateAccessByToken(parsed.data.accessToken, request)
@@ -267,7 +267,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) {
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message ?? 'Validation failed',
+        message: parsed.error.issues[0]?.message ?? 'Validation failed',
       })
     }
     // Prefer explicit sessionId so a stray revokeAllSessions flag does not invalidate every JWT (token_version bump).
@@ -303,7 +303,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message,
+          message: parsed.error.issues[0]?.message,
           details: parsed.error.flatten().fieldErrors,
         })
       const result = await authV2Service.passwordResetSendOtp(parsed.data.identifier)
@@ -315,7 +315,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message,
+        message: parsed.error.issues[0]?.message,
         details: parsed.error.flatten().fieldErrors,
       })
     const result = await authV2Service.passwordResetSendOtpToProvider(
@@ -329,7 +329,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message,
+        message: parsed.error.issues[0]?.message,
         details: parsed.error.flatten().fieldErrors,
       })
     const result = await authV2Service.passwordResetVerifyOtp(
@@ -347,7 +347,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message,
+          message: parsed.error.issues[0]?.message,
           details: parsed.error.flatten().fieldErrors,
         })
       const result = await authV2Service.passwordResetConfirm(
@@ -393,7 +393,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message,
+        message: parsed.error.issues[0]?.message,
         details: parsed.error.flatten().fieldErrors,
       })
     const result = await authV2Service.passwordSet(userId, parsed.data.password)
@@ -406,7 +406,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.status(400).send({
         code: 'INVALID_REQUEST',
-        message: parsed.error.errors[0]?.message,
+        message: parsed.error.issues[0]?.message,
         details: parsed.error.flatten().fieldErrors,
       })
     const result = await authV2Service.passwordChange(
@@ -428,7 +428,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message,
+          message: parsed.error.issues[0]?.message,
           details: parsed.error.flatten().fieldErrors,
         })
       const result = await authV2Service.emailBindSendOtp(userId, parsed.data.newEmail)
@@ -445,7 +445,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return reply.status(400).send({
           code: 'INVALID_REQUEST',
-          message: parsed.error.errors[0]?.message,
+          message: parsed.error.issues[0]?.message,
           details: parsed.error.flatten().fieldErrors,
         })
       const result = await authV2Service.emailBindVerifyOtp(
@@ -463,7 +463,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply
         .status(400)
-        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
     const result = await authV2Service.emailModifyVerifyOld(userId, parsed.data.currentEmail)
     return reply.send(result)
   })
@@ -477,7 +477,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return reply
           .status(400)
-          .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+          .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
       const result = await authV2Service.emailModifyVerifyOldOtp(
         userId,
         parsed.data.currentEmail,
@@ -493,7 +493,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply
         .status(400)
-        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
     const result = await authV2Service.emailModifyVerifyNew(
       userId,
       parsed.data.newEmail,
@@ -512,7 +512,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return reply
           .status(400)
-          .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+          .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
       const result = await authV2Service.phoneBindSendOtp(userId, parsed.data.newPhone)
       return reply.send(result)
     },
@@ -527,7 +527,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return reply
           .status(400)
-          .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+          .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
       const result = await authV2Service.phoneBindVerifyOtp(
         userId,
         parsed.data.newPhone,
@@ -543,7 +543,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply
         .status(400)
-        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
     const result = await authV2Service.phoneModifyVerifyOld(userId, parsed.data.currentPhone)
     return reply.send(result)
   })
@@ -557,7 +557,7 @@ export default async function authRoutes(app: FastifyInstance) {
       if (!parsed.success)
         return reply
           .status(400)
-          .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+          .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
       const result = await authV2Service.phoneModifyVerifyOldOtp(
         userId,
         parsed.data.currentPhone,
@@ -573,7 +573,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply
         .status(400)
-        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
     const result = await authV2Service.phoneModifyVerifyNew(
       userId,
       parsed.data.newPhone,
@@ -588,7 +588,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply
         .status(400)
-        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
     const result = await authV2Service.oauthGoogle(
       parsed.data.idToken,
       parsed.data.deviceName,
@@ -602,7 +602,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply
         .status(400)
-        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
     const result = await authV2Service.oauthFacebook(
       parsed.data.accessToken,
       parsed.data.deviceName,
@@ -616,7 +616,7 @@ export default async function authRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply
         .status(400)
-        .send({ code: 'INVALID_REQUEST', message: parsed.error.errors[0]?.message })
+        .send({ code: 'INVALID_REQUEST', message: parsed.error.issues[0]?.message })
     const result = await authV2Service.oauthApple(
       parsed.data.identityToken,
       parsed.data.deviceName,

@@ -27,7 +27,7 @@ export default async function questionnaireAdminRoutes(app: FastifyInstance) {
       if (!parsed.success)
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid payload',
+          parsed.error.issues[0]?.message ?? 'Invalid payload',
           'invalid_payload',
         )
       const created = await questionnaireService.adminCreate(request.adminUser!.id, parsed.data)
@@ -46,7 +46,7 @@ export default async function questionnaireAdminRoutes(app: FastifyInstance) {
       if (!parsed.success)
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid payload',
+          parsed.error.issues[0]?.message ?? 'Invalid payload',
           'invalid_payload',
         )
       return reply.send(

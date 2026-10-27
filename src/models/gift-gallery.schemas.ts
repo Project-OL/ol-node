@@ -3,7 +3,7 @@ import { z } from 'zod'
 const sectionSchema = z.object({
   name: z.string().min(1).max(255),
   sortOrder: z.coerce.number().int().optional(),
-  giftIds: z.array(z.string().uuid()).min(1),
+  giftIds: z.array(z.string().guid()).min(1),
 })
 
 export const UpsertGiftGalleryBodySchema = z.object({

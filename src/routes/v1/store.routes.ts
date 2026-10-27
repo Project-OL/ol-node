@@ -50,9 +50,9 @@ export default async function storeRoutes(app: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const bodySchema = z
         .object({
-          storeItemId: z.string().uuid(),
+          storeItemId: z.string().guid(),
           /** Preferred recipient selector for gifting. */
-          recipientUserId: z.string().uuid().optional(),
+          recipientUserId: z.string().guid().optional(),
           /** Backward-compatible recipient selector by public ID. */
           recipientPublicId: z.number().int().positive().optional(),
           idempotencyKey: z.string().min(8).max(200),
@@ -65,7 +65,7 @@ export default async function storeRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -106,7 +106,7 @@ export default async function storeRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -130,7 +130,7 @@ export default async function storeRoutes(app: FastifyInstance) {
     },
   )
 
-  const SlotIdSchema = z.string().uuid().nullable()
+  const SlotIdSchema = z.string().guid().nullable()
   const SetActiveItemsBodySchema = z
     .object({
       RIDE: SlotIdSchema.optional(),
@@ -168,7 +168,7 @@ export default async function storeRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }

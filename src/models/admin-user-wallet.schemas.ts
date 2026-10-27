@@ -12,7 +12,7 @@ export const adminWalletAmountBodySchema = z.object({
 })
 
 export const adminWalletBulkDeductPointsBodySchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1).max(200),
+  userIds: z.array(z.string().guid()).min(1).max(200),
   amount: positiveAmountSchema,
   description: z.string().max(500).optional(),
 })
@@ -32,7 +32,7 @@ export const adminTransactionListQuerySchema = z.object({
     }),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
-  cursor: z.string().uuid().optional(),
+  cursor: z.string().guid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   direction: z.enum(['credit', 'debit']).optional(),
 })
@@ -46,8 +46,8 @@ export const adminPostWarnBodySchema = z.object({
 })
 
 export const adminPostListQuerySchema = z.object({
-  userId: z.string().uuid(),
-  cursor: z.string().uuid().optional(),
+  userId: z.string().guid(),
+  cursor: z.string().guid().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
 

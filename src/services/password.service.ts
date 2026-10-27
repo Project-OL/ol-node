@@ -21,7 +21,7 @@ export const passwordService = {
   validateStrength(password: string): { ok: true } | { ok: false; error: string } {
     const result = passwordSchema.safeParse(password)
     if (result.success) return { ok: true }
-    const msg = result.error.errors[0]?.message ?? 'Invalid password'
+    const msg = result.error.issues[0]?.message ?? 'Invalid password'
     return { ok: false, error: msg }
   },
 

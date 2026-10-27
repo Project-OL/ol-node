@@ -30,12 +30,12 @@ export const CreateCustomGiftRequestBodySchema = z.object({
 export const MyCustomGiftRequestsQuerySchema = z.object({
   status: z.enum(['PENDING', 'COMPLETED', 'FAILED']).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
-  cursor: z.string().uuid().optional(),
+  cursor: z.string().guid().optional(),
 })
 
 export const AdminCustomGiftRequestListQuerySchema = z.object({
   status: z.enum(['PENDING', 'COMPLETED', 'FAILED']).optional(),
-  userId: z.string().uuid().optional(),
+  userId: z.string().guid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 })
@@ -53,7 +53,7 @@ export const UpdateCustomGiftConfigBodySchema = z
 
 export const CompleteCustomGiftRequestBodySchema = z.object({
   /** Gift created via the gift-admin endpoints for this user. */
-  giftId: z.string().uuid().optional(),
+  giftId: z.string().guid().optional(),
   adminNote: z.string().trim().max(2000).optional(),
 })
 

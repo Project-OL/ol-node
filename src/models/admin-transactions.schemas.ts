@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-const optionalUuid = z.string().uuid().optional()
+const optionalUuid = z.string().guid().optional()
 const optionalId = z.string().min(1).max(128).optional()
 
 /** Shared list filters — every endpoint accepts ID search + date window. */

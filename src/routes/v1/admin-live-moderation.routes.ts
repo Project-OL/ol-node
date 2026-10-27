@@ -32,7 +32,7 @@ export default async function adminLiveModerationRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -55,7 +55,7 @@ export default async function adminLiveModerationRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -100,7 +100,7 @@ export default async function adminLiveModerationRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -123,7 +123,7 @@ export default async function adminLiveModerationRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -152,7 +152,7 @@ export default async function adminLiveModerationRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }

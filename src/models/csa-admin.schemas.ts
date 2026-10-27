@@ -94,7 +94,7 @@ export type FailedLoginsQuery = z.infer<typeof FailedLoginsQuerySchema>
 
 export const FailedLoginAttemptsQuerySchema = z.object({
   withinHours: z.coerce.number().int().min(1).max(168).default(24),
-  adminId: z.string().uuid().optional(),
+  adminId: z.string().guid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 })

@@ -38,7 +38,7 @@ export default async function questionnaireRoutes(app: FastifyInstance) {
       if (!body.success)
         throw new AppError(
           400,
-          body.error.errors[0]?.message ?? 'Invalid payload',
+          body.error.issues[0]?.message ?? 'Invalid payload',
           'invalid_payload',
         )
       const result = await questionnaireService.submit(
@@ -63,7 +63,7 @@ export default async function questionnaireRoutes(app: FastifyInstance) {
       if (!query.success)
         throw new AppError(
           400,
-          query.error.errors[0]?.message ?? 'Invalid query',
+          query.error.issues[0]?.message ?? 'Invalid query',
           'invalid_payload',
         )
       return reply.send(

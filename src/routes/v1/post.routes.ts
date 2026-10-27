@@ -32,7 +32,7 @@ export default async function postRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          parsed.error.issues[0]?.message ?? 'Invalid request body',
           'INVALID_REQUEST',
         )
       }
@@ -67,7 +67,7 @@ export default async function postRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid request body',
+          parsed.error.issues[0]?.message ?? 'Invalid request body',
           'INVALID_REQUEST',
         )
       }
@@ -122,7 +122,7 @@ export default async function postRoutes(app: FastifyInstance) {
       if (!parsedQuery.success) {
         throw new AppError(
           400,
-          parsedQuery.error.errors[0]?.message ?? 'Invalid query parameters',
+          parsedQuery.error.issues[0]?.message ?? 'Invalid query parameters',
           'INVALID_REQUEST',
         )
       }
@@ -158,7 +158,7 @@ export default async function postRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }
@@ -263,7 +263,7 @@ export default async function postRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid post id',
+          parsed.error.issues[0]?.message ?? 'Invalid post id',
           'INVALID_REQUEST',
         )
       }
@@ -306,7 +306,7 @@ export default async function postRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid post id',
+          parsed.error.issues[0]?.message ?? 'Invalid post id',
           'INVALID_REQUEST',
         )
       }

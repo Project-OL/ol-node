@@ -116,7 +116,7 @@ export const refreshBodySchema = z.object({
 // Logout
 export const logoutBodySchema = z
   .object({
-    sessionId: z.string().uuid().optional(),
+    sessionId: z.string().guid().optional(),
   })
   .optional()
 
@@ -145,7 +145,7 @@ export const passwordResetVerifyOtpBodySchema = z.object({
 
 // Password reset confirm
 export const passwordResetConfirmBodySchema = z.object({
-  resetToken: z.string().uuid(),
+  resetToken: z.string().guid(),
   newPassword: passwordSchema,
 })
 
@@ -216,7 +216,7 @@ export const phoneModifyVerifyNewBodySchema = z.object({
 
 // Session revoke
 export const sessionRevokeBodySchema = z.object({
-  sessionId: z.string().uuid().optional(),
+  sessionId: z.string().guid().optional(),
   revokeAllSessions: z.boolean().optional().default(false),
 })
 

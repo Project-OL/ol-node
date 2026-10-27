@@ -112,7 +112,7 @@ export async function registerAdminAuthRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 const cuid = z.string().cuid()
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 
 const userIdList = z.array(uuid).min(1).max(50)
 

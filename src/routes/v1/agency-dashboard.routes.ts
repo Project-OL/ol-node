@@ -31,7 +31,7 @@ const hostListQuerySchema = dashboardPeriodSchema.extend({
 function parsePeriod(query: unknown): DashboardPeriodQuery {
   const parsed = dashboardPeriodSchema.safeParse(query ?? {})
   if (!parsed.success) {
-    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+    throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
   }
   return parsed.data
 }
@@ -73,7 +73,7 @@ export async function registerAgencyDashboardRoutes(app: FastifyInstance): Promi
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid query',
+          parsed.error.issues[0]?.message ?? 'Invalid query',
           'INVALID_REQUEST',
         )
       }

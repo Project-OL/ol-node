@@ -44,14 +44,14 @@ const sendMessageMediaItemSchema = z
 export const SendMessageSchema = z
   .object({
     /** UUID v4 from client — idempotent retries must reuse the same value per logical send. */
-    clientMessageId: z.string().uuid(),
+    clientMessageId: z.string().guid(),
     content: z.string().max(4000).optional(),
     type: z.enum(['TEXT', 'TEXT_COINS', 'IMAGE', 'VIDEO', 'AUDIO', 'FILE', 'GIFT']),
     // Client payloads often send null for "no reply"; normalize to undefined.
     replyToId: z.preprocess((v) => (v === null ? undefined : v), z.string().cuid().optional()),
     mediaItems: z.array(sendMessageMediaItemSchema).max(10).optional(),
     /** Required when type is GIFT — catalog gift UUID. */
-    giftId: z.string().uuid().optional(),
+    giftId: z.string().guid().optional(),
     /**
      * GIFT only: how many of the same catalog gift to send in one message.
      * Coins debited / points credited / agency commission scale by this count. Default 1.
@@ -170,7 +170,7 @@ export const CheckBlockQuerySchema = z.object({
 
 export const CreateReportSchema = z
   .object({
-    reportedUserId: z.string().uuid(),
+    reportedUserId: z.string().guid(),
     conversationId: z.string().cuid().optional(),
     messageId: z.string().cuid().optional(),
     reason: z.enum([
@@ -191,7 +191,7 @@ export const CreateReportSchema = z
     /** CHAT (default) = DM report; LIVE = report raised during a live broadcast. */
     context: z.enum(['CHAT', 'LIVE']).default('CHAT'),
     liveSessionId: z.string().min(1).max(200).optional(),
-    hostUserId: z.string().uuid().optional(),
+    hostUserId: z.string().guid().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.context === 'LIVE' && !val.liveSessionId) {

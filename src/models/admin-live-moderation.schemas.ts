@@ -27,7 +27,7 @@ export const adminReportStatusSchema = z.enum(['PENDING', 'REVIEWED', 'RESOLVED'
 
 export const adminLiveModerationListQuerySchema = z.object({
   kind: adminLiveModerationKindSchema.optional(),
-  userId: z.string().uuid().optional(),
+  userId: z.string().guid().optional(),
   /** Filter nudity / video_call logs. Ignored for other kinds. */
   action: adminModerationActionSchema.optional(),
   /** Filter user_report rows. Ignored for other kinds. */

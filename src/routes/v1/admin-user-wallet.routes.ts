@@ -16,7 +16,7 @@ const preAuth = [authenticateAdmin]
 function parseAmountBody(body: unknown) {
   const parsed = adminWalletAmountBodySchema.safeParse(body ?? {})
   if (!parsed.success) {
-    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+    throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
   }
   return {
     amount: BigInt(parsed.data.amount),
@@ -28,7 +28,7 @@ function parseAmountBody(body: unknown) {
 function parseBulkDeductBody(body: unknown) {
   const parsed = adminWalletBulkDeductPointsBodySchema.safeParse(body ?? {})
   if (!parsed.success) {
-    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
+    throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid body', 'INVALID_REQUEST')
   }
   return {
     userIds: parsed.data.userIds,
@@ -40,7 +40,7 @@ function parseBulkDeductBody(body: unknown) {
 function parseTxQuery(query: unknown) {
   const parsed = adminTransactionListQuerySchema.safeParse(query ?? {})
   if (!parsed.success) {
-    throw new AppError(400, parsed.error.errors[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
+    throw new AppError(400, parsed.error.issues[0]?.message ?? 'Invalid query', 'INVALID_REQUEST')
   }
   return parsed.data
 }
@@ -372,7 +372,7 @@ export default async function adminUserWalletRoutes(app: FastifyInstance) {
       if (!bodyParsed.success) {
         throw new AppError(
           400,
-          bodyParsed.error.errors[0]?.message ?? 'Invalid body',
+          bodyParsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }

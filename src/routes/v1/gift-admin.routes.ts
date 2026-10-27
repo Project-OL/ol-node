@@ -135,7 +135,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -166,7 +166,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         if (!parsed.success) {
           throw new AppError(
             400,
-            parsed.error.errors[0]?.message ?? 'Invalid multipart fields',
+            parsed.error.issues[0]?.message ?? 'Invalid multipart fields',
             'INVALID_REQUEST',
           )
         }
@@ -234,7 +234,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
@@ -259,7 +259,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
         if (!parsed.success) {
           throw new AppError(
             400,
-            parsed.error.errors[0]?.message ?? 'Invalid multipart fields',
+            parsed.error.issues[0]?.message ?? 'Invalid multipart fields',
             'INVALID_REQUEST',
           )
         }
@@ -337,7 +337,7 @@ export default async function giftAdminRoutes(app: FastifyInstance) {
       if (!parsed.success) {
         throw new AppError(
           400,
-          parsed.error.errors[0]?.message ?? 'Invalid body',
+          parsed.error.issues[0]?.message ?? 'Invalid body',
           'INVALID_REQUEST',
         )
       }
