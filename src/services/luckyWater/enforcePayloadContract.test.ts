@@ -21,8 +21,7 @@ type LedgerResult = {
 /** Mirrors Live `serviceLuckyGift.js` reward field selection. */
 function mapLuckyRewardFields(local: LocalDraw, ledger: LedgerResult) {
   const useWater = ledger.engine === 'water_v1'
-  const ledgerReward =
-    ledger.rewardCoins != null ? BigInt(ledger.rewardCoins) : undefined
+  const ledgerReward = ledger.rewardCoins != null ? BigInt(ledger.rewardCoins) : undefined
   const totalReward = useWater && ledgerReward != null ? ledgerReward : local.totalReward
   const category = useWater && ledger.category != null ? ledger.category : local.category
   const breakdownArray =

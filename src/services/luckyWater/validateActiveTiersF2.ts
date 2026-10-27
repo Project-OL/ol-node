@@ -1,7 +1,12 @@
 import { prisma } from '../../config/database'
 import type { HostRevenueShares } from '../../config/host-revenue-shares'
 import { AppError } from '../../middlewares/errorHandler'
-import { LUCKY_TIER_IDS, LuckyWeightsError, validateBandWeights, type BandWeightsByBand } from './bandWeights'
+import {
+  LUCKY_TIER_IDS,
+  LuckyWeightsError,
+  validateBandWeights,
+  type BandWeightsByBand,
+} from './bandWeights'
 import { buildLuckyF2Econ } from './f2Econ'
 
 /**
@@ -9,9 +14,7 @@ import { buildLuckyF2Econ } from './f2Econ'
  * Used before saving host lucky cut / water agency commission flags. Mode comes from the mode
  * table (B7): `lucky_tier_config.mode` is a stale snapshot that setMode no longer writes.
  */
-export async function assertShadowEnforceTiersPassF2(
-  shares: HostRevenueShares,
-): Promise<void> {
+export async function assertShadowEnforceTiersPassF2(shares: HostRevenueShares): Promise<void> {
   const violations: string[] = []
   const modeRows = await prisma.luckyTierMode.findMany({
     where: { mode: { in: ['shadow', 'enforce'] } },

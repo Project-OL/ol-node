@@ -147,7 +147,11 @@ export async function fetchShadowGiftBatch(
     LIMIT ${limit}`
 }
 
-async function processShadowDraw(tx: Tx, row: ShadowGiftRow, config: ResolvedTierConfig): Promise<void> {
+async function processShadowDraw(
+  tx: Tx,
+  row: ShadowGiftRow,
+  config: ResolvedTierConfig,
+): Promise<void> {
   const unitPrice = BigInt(row.unitPrice)
   const count = row.quantity
   const totalCost = unitPrice * BigInt(count)
@@ -245,7 +249,9 @@ async function processShadowDraw(tx: Tx, row: ShadowGiftRow, config: ResolvedTie
 }
 
 /** Tail one gift row: resolve tier; shadow draw only when that tier is in shadow mode. */
-export async function processShadowGiftRow(row: ShadowGiftRow): Promise<'drawn' | 'skipped' | 'noop'> {
+export async function processShadowGiftRow(
+  row: ShadowGiftRow,
+): Promise<'drawn' | 'skipped' | 'noop'> {
   return prisma.$transaction(async (tx) => {
     const config = await resolveTierConfig(tx, row.unitPrice)
     if (!config || config.mode !== 'shadow') {

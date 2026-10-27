@@ -21,7 +21,10 @@ export async function verifyLiveWebhookSecret(
   const provided = req.headers['x-live-webhook-secret'] as string | undefined
   const actual = Buffer.from(provided ?? '')
 
-  if (!matches(actual, env.LIVE_WEBHOOK_SECRET) && !matches(actual, env.LIVE_WEBHOOK_SECRET_PREVIOUS)) {
+  if (
+    !matches(actual, env.LIVE_WEBHOOK_SECRET) &&
+    !matches(actual, env.LIVE_WEBHOOK_SECRET_PREVIOUS)
+  ) {
     throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
   }
 }

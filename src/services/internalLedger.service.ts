@@ -244,10 +244,10 @@ async function runMoneyTx<T>(fn: (tx: Tx) => Promise<T>, label = 'money'): Promi
     try {
       // C1: mark ALS only inside the interactive callback so tx.* is fine but global
       // prisma.* trips the nested-connection guard (mode log/throw; off in production).
-      return await prisma.$transaction(
-        (tx) => runInLuckyMoneyTx(label, () => fn(tx)),
-        { timeout: TX_TIMEOUT_MS, maxWait: 10_000 },
-      )
+      return await prisma.$transaction((tx) => runInLuckyMoneyTx(label, () => fn(tx)), {
+        timeout: TX_TIMEOUT_MS,
+        maxWait: 10_000,
+      })
     } catch (err) {
       if (attempt < TX_MAX_ATTEMPTS && isSerializationAbort(err)) {
         await new Promise((r) => setTimeout(r, 20 * attempt + Math.floor(Math.random() * 30)))
@@ -1066,7 +1066,11 @@ async function luckyGiftSend(input: LuckyGiftInput): Promise<LuckyGiftResult> {
           receiverId: input.receiverId,
         })
         if (audit.payloadFingerprint && audit.payloadFingerprint !== fp) {
-          throw new AppError(409, 'Lucky payload does not match the original send', 'LUCKY_REPLAY_MISMATCH')
+          throw new AppError(
+            409,
+            'Lucky payload does not match the original send',
+            'LUCKY_REPLAY_MISMATCH',
+          )
         }
       } else {
         // No clientTxId: keep today's requestId-strict identity against the debit row.
