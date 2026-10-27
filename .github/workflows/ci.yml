@@ -74,3 +74,43 @@ jobs:
         run: npx prisma db push --skip-generate --accept-data-loss
       - name: Internal ledger money tests
         run: npm run test:ledger
+
+  # BE-26: lucky water-level suites. They need the lucky tier seed rows that the migrations insert,
+  # so the throwaway database is built with migrate deploy (db push would leave the tiers empty).
+  lucky-water:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ol_lucky
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ol_lucky"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5433/ol_lucky
+      DATABASE_DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5433/ol_lucky
+      REKOGNITION_COLLECTION_ID: ci-test-collection
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Apply migrations to the throwaway database
+        run: npx prisma migrate deploy
+      - name: Lucky water-level tests
+        run: npx vitest run -c vitest.lucky-water.config.ts
+      - name: Lucky pool starvation test
+        run: npx vitest run -c vitest.lucky-pool-starve.config.ts
