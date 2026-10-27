@@ -82,6 +82,7 @@ export function v3Message(iss: Raw): string | undefined {
       // z.nativeEnum: neither string nor number).
       const allStrings = vals.every((v) => typeof v === 'string')
       const t = typeof iss.input
+      if (iss.input === undefined) return 'Required'
       if (allStrings ? t !== 'string' : t !== 'string' && t !== 'number')
         return `Expected ${joinValues(vals)}, received ${receivedType(iss.input)}`
       return `Invalid enum value. Expected ${joinValues(vals)}, received '${String(iss.input)}'`
