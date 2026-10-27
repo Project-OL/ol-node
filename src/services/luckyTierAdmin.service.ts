@@ -340,7 +340,11 @@ export const luckyTierAdminService = {
     const lambdaLowMaxBp = next.lambdaLowMaxBp ?? latest.lambdaLowMaxBp
     const lambdaNormalMaxBp = next.lambdaNormalMaxBp ?? latest.lambdaNormalMaxBp
     if (!(lambdaCriticalMaxBp < lambdaLowMaxBp && lambdaLowMaxBp < lambdaNormalMaxBp)) {
-      throw new AppError(422, 'Lambda thresholds must be strictly increasing', 'LUCKY_TIER_ECON_INVALID')
+      throw new AppError(
+        422,
+        'Lambda thresholds must be strictly increasing',
+        'LUCKY_TIER_ECON_INVALID',
+      )
     }
 
     await validateWeightsForTier(next.bandWeightsJson as unknown as BandWeightsByBand, {
@@ -387,7 +391,12 @@ export const luckyTierAdminService = {
       adminUserId,
       actionType: 'lucky_tier_mode_change',
       actionStatus: 'success',
-      actionDetails: { tierId, from: prevMode, to: mode, enforceOverrideReason: enforceOverrideReason ?? null },
+      actionDetails: {
+        tierId,
+        from: prevMode,
+        to: mode,
+        enforceOverrideReason: enforceOverrideReason ?? null,
+      },
     })
 
     // Mode is never cached; bust only so seed/immutable index stay coherent after related ops.
@@ -404,7 +413,11 @@ export const luckyTierAdminService = {
     reason?: string,
   ): Promise<{ seedLogId: string; poolBalance: string | null }> {
     if (choice === 'seed' && amount <= 0n) {
-      throw new AppError(422, 'Seed amount must be positive when choice=seed', 'LUCKY_TIER_SEED_INVALID')
+      throw new AppError(
+        422,
+        'Seed amount must be positive when choice=seed',
+        'LUCKY_TIER_SEED_INVALID',
+      )
     }
     if (choice !== 'seed' && amount !== 0n) {
       throw new AppError(422, 'amount must be 0 unless choice=seed', 'LUCKY_TIER_SEED_INVALID')

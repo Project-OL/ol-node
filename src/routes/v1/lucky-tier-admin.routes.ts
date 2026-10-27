@@ -55,23 +55,28 @@ export default async function luckyTierAdminRoutes(app: FastifyInstance) {
       const { tierId } = LuckyTierIdParamSchema.parse(request.params)
       const body = LuckyTierConfigVersionCreateSchema.parse(request.body ?? {})
       const before = await luckyTierAdminService.getTier(tierId as LuckyTierId)
-      const created = await luckyTierAdminService.createConfigVersion(adminUserId, tierId as LuckyTierId, {
-        rBp: body.rBp,
-        jBp: body.jBp,
-        l0: body.l0 != null ? BigInt(body.l0) : undefined,
-        floor: body.floor != null ? BigInt(body.floor) : undefined,
-        lambdaCriticalMaxBp: body.lambdaCriticalMaxBp,
-        lambdaLowMaxBp: body.lambdaLowMaxBp,
-        lambdaNormalMaxBp: body.lambdaNormalMaxBp,
-        bandWeights: body.bandWeights,
-        weightTableId: body.weightTableId,
-        mMax: body.mMax,
-        vMaxBp: body.vMaxBp,
-        safetyMarginBp: body.safetyMarginBp,
-        minGapBp: body.minGapBp,
-        dailyWinCapCoins: body.dailyWinCapCoins != null ? BigInt(body.dailyWinCapCoins) : undefined,
-        coolDownAfterBigWinSeconds: body.coolDownAfterBigWinSeconds,
-      })
+      const created = await luckyTierAdminService.createConfigVersion(
+        adminUserId,
+        tierId as LuckyTierId,
+        {
+          rBp: body.rBp,
+          jBp: body.jBp,
+          l0: body.l0 != null ? BigInt(body.l0) : undefined,
+          floor: body.floor != null ? BigInt(body.floor) : undefined,
+          lambdaCriticalMaxBp: body.lambdaCriticalMaxBp,
+          lambdaLowMaxBp: body.lambdaLowMaxBp,
+          lambdaNormalMaxBp: body.lambdaNormalMaxBp,
+          bandWeights: body.bandWeights,
+          weightTableId: body.weightTableId,
+          mMax: body.mMax,
+          vMaxBp: body.vMaxBp,
+          safetyMarginBp: body.safetyMarginBp,
+          minGapBp: body.minGapBp,
+          dailyWinCapCoins:
+            body.dailyWinCapCoins != null ? BigInt(body.dailyWinCapCoins) : undefined,
+          coolDownAfterBigWinSeconds: body.coolDownAfterBigWinSeconds,
+        },
+      )
       auditService.logAdminFromRequest(request, {
         actionType: 'ADMIN_LUCKY_TIER_CONFIG_VERSION',
         actionDetails: {

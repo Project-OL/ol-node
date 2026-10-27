@@ -108,7 +108,8 @@ export const hostRevenueShareConfigService = {
       throw new AppError(400, 'Provide at least one share field', 'VALIDATION_ERROR')
     }
 
-    const { luckyHostShareBp, luckyTargetRtpBp, luckyWaterAgencyCommission, ...hostShares } = updates
+    const { luckyHostShareBp, luckyTargetRtpBp, luckyWaterAgencyCommission, ...hostShares } =
+      updates
     for (const [name, v] of Object.entries(hostShares)) {
       if (v == null) continue
       if (!Number.isInteger(v) || v < 1 || v > 10_000) {

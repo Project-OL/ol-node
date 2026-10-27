@@ -1,4 +1,4 @@
-import sharp from 'sharp'
+import sharp, { type Metadata, type Sharp } from 'sharp'
 
 /**
  * Catalog images are uploaded at whatever resolution the admin happened to export —
@@ -44,8 +44,8 @@ export async function generateThumbnail(
 ): Promise<ThumbnailResult | null> {
   const maxPx = opts?.maxPx ?? THUMBNAIL_MAX_PX
 
-  let image: sharp.Sharp
-  let metadata: sharp.Metadata
+  let image: Sharp
+  let metadata: Metadata
   try {
     image = sharp(source, { failOn: 'error' })
     metadata = await image.metadata()

@@ -14,7 +14,8 @@
         "tar": "^7.5.22",
         "websocket-driver": "^0.7.5",
         "@fastify/static": "10.1.5",
-        "find-my-way": "9.9.0"
+        "find-my-way": "9.9.0",
+        "deepmerge-ts": "^8.0.2"
     },
     "scripts": {
         "dev": "tsx watch src/server.ts",
@@ -128,7 +129,7 @@
         "@opentelemetry/sdk-trace-base": "2.0.1",
         "@opentelemetry/sdk-trace-node": "2.0.1",
         "@opentelemetry/semantic-conventions": "^1.43.0",
-        "@prisma/client": "^6.16.2",
+        "@prisma/client": "^6.19.3",
         "@prisma/instrumentation": "^6.16.2",
         "axios": "^1.17.0",
         "bcrypt": "^5.1.1",
@@ -148,7 +149,7 @@
         "pino-pretty": "^11.2.1",
         "redis": "^6.1.0",
         "sanitize-html": "^2.17.4",
-        "sharp": "^0.33.5",
+        "sharp": "^0.35.5",
         "uuid": "^11.1.1",
         "zod": "^3.23.8"
     },
@@ -167,7 +168,7 @@
         "eslint-config-prettier": "^9.1.0",
         "eslint-plugin-prettier": "^5.2.1",
         "prettier": "^3.3.3",
-        "prisma": "^6.16.2",
+        "prisma": "^6.19.3",
         "tsx": "^4.16.2",
         "typescript": "^5.5.3",
         "vitest": "^4.1.8"

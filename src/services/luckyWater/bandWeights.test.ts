@@ -26,7 +26,8 @@ const clone = (): BandWeightsByBand => JSON.parse(JSON.stringify(DEFAULT_BAND_WE
 
 describe('luckyWater bandWeights v1', () => {
   it('every band sums to 10000', () => {
-    for (const band of Object.values(DEFAULT_BAND_WEIGHTS_V1)) expect(sumBandWeights(band)).toBe(10_000)
+    for (const band of Object.values(DEFAULT_BAND_WEIGHTS_V1))
+      expect(sumBandWeights(band)).toBe(10_000)
   })
 
   it('computes the specified EVs in bp', () => {
@@ -46,8 +47,18 @@ describe('luckyWater bandWeights v1', () => {
   })
 
   it('passes F2 (9450 + 400 = 9850 < 9900)', () => {
-    expect(selfGiftGuardMarginBp({ evHighBp: 9450, hBp: 400, aBp: 0, vMaxBp: 10_000, safetyMarginBp: 100 })).toBe(50)
-    expect(() => assertSelfGiftGuard({ evHighBp: 9450, hBp: 400, vMaxBp: 10_000, safetyMarginBp: 100 })).not.toThrow()
+    expect(
+      selfGiftGuardMarginBp({
+        evHighBp: 9450,
+        hBp: 400,
+        aBp: 0,
+        vMaxBp: 10_000,
+        safetyMarginBp: 100,
+      }),
+    ).toBe(50)
+    expect(() =>
+      assertSelfGiftGuard({ evHighBp: 9450, hBp: 400, vMaxBp: 10_000, safetyMarginBp: 100 }),
+    ).not.toThrow()
   })
 
   it('validateBandWeights accepts the v1 table and returns EVs', () => {
@@ -56,19 +67,27 @@ describe('luckyWater bandWeights v1', () => {
 
   it('F2 is strict: equality fails', () => {
     // 9500 + 400 = 9900 == 10000 - 100 -> must throw
-    expect(() => assertSelfGiftGuard({ evHighBp: 9500, hBp: 400, vMaxBp: 10_000, safetyMarginBp: 100 })).toThrow(
-      LuckyWeightsError,
-    )
+    expect(() =>
+      assertSelfGiftGuard({ evHighBp: 9500, hBp: 400, vMaxBp: 10_000, safetyMarginBp: 100 }),
+    ).toThrow(LuckyWeightsError)
   })
 
   it('F2 counts agency commission and v_max', () => {
-    expect(() => assertSelfGiftGuard({ evHighBp: 9450, hBp: 400, aBp: 100, vMaxBp: 10_000, safetyMarginBp: 100 })).toThrow(
-      LuckyWeightsError,
-    )
-    expect(() => assertSelfGiftGuard({ evHighBp: 9450, hBp: 400, vMaxBp: 12_500, safetyMarginBp: 100 })).toThrow(
-      LuckyWeightsError,
-    )
-    expect(() => assertSelfGiftGuard({ evHighBp: 9450, hBp: 400, vMaxBp: 10_000, safetyMarginBp: 100 })).not.toThrow()
+    expect(() =>
+      assertSelfGiftGuard({
+        evHighBp: 9450,
+        hBp: 400,
+        aBp: 100,
+        vMaxBp: 10_000,
+        safetyMarginBp: 100,
+      }),
+    ).toThrow(LuckyWeightsError)
+    expect(() =>
+      assertSelfGiftGuard({ evHighBp: 9450, hBp: 400, vMaxBp: 12_500, safetyMarginBp: 100 }),
+    ).toThrow(LuckyWeightsError)
+    expect(() =>
+      assertSelfGiftGuard({ evHighBp: 9450, hBp: 400, vMaxBp: 10_000, safetyMarginBp: 100 }),
+    ).not.toThrow()
   })
 
   it('rejects bands that do not sum to 10000', () => {

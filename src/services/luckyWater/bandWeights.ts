@@ -30,7 +30,7 @@ export const OUTCOME_MULTIPLIER_BP: Readonly<Record<LuckyOutcome, number>> = Obj
 })
 
 export const WEIGHT_TABLE_ID_V1 = 'wt_v1_2026_10_24'
-/** Closeout C9: same ladder as v1; documents paid-channel v_max = 1.0 (10 000 coins/USD). */
+/** Closeout C9: same ladder as v1; documents paid-channel v_max = 1.0 (10,000 coins/USD). */
 export const WEIGHT_TABLE_ID_V2 = 'wt_v2_2026_10_25'
 
 export const DEFAULT_BAND_WEIGHTS_V1: Readonly<BandWeightsByBand> = Object.freeze({
@@ -144,7 +144,9 @@ export function assertBandWeightsShape(band: LuckyBand, w: BandWeights): void {
   for (const k of LUCKY_OUTCOMES) {
     const v = w[k]
     if (!Number.isInteger(v) || v < 0) {
-      throw new LuckyWeightsError(`band ${band}: weight ${k} must be a non-negative integer (got ${v})`)
+      throw new LuckyWeightsError(
+        `band ${band}: weight ${k} must be a non-negative integer (got ${v})`,
+      )
     }
   }
   const sum = sumBandWeights(w)
@@ -174,18 +176,23 @@ export function validateBandWeights(
   if (weights.critical.medium !== 0 || weights.critical.jackpot !== 0) {
     throw new LuckyWeightsError('critical band must not allow medium or jackpot outcomes')
   }
-  if (weights.low.jackpot !== 0) throw new LuckyWeightsError('low band must not allow jackpot outcomes')
+  if (weights.low.jackpot !== 0)
+    throw new LuckyWeightsError('low band must not allow jackpot outcomes')
 
   const ev = computeAllBandEvBp(weights)
-  if (!(ev.critical < ev.low)) throw new LuckyWeightsError(`EV_critical(${ev.critical}) must be < EV_low(${ev.low})`)
-  if (!(ev.low < econ.rBp)) throw new LuckyWeightsError(`EV_low(${ev.low}) must be < r(${econ.rBp})`)
-  if (!(econ.rBp < ev.normal)) throw new LuckyWeightsError(`r(${econ.rBp}) must be < EV_normal(${ev.normal})`)
+  if (!(ev.critical < ev.low))
+    throw new LuckyWeightsError(`EV_critical(${ev.critical}) must be < EV_low(${ev.low})`)
+  if (!(ev.low < econ.rBp))
+    throw new LuckyWeightsError(`EV_low(${ev.low}) must be < r(${econ.rBp})`)
+  if (!(econ.rBp < ev.normal))
+    throw new LuckyWeightsError(`r(${econ.rBp}) must be < EV_normal(${ev.normal})`)
   if (ev.normal - econ.rBp < econ.minGapBp) {
     throw new LuckyWeightsError(
       `EV_normal(${ev.normal}) - r(${econ.rBp}) = ${ev.normal - econ.rBp}bp is below min gap ${econ.minGapBp}bp`,
     )
   }
-  if (!(ev.normal < ev.high)) throw new LuckyWeightsError(`EV_normal(${ev.normal}) must be < EV_high(${ev.high})`)
+  if (!(ev.normal < ev.high))
+    throw new LuckyWeightsError(`EV_normal(${ev.normal}) must be < EV_high(${ev.high})`)
 
   assertSelfGiftGuard({
     evHighBp: ev.high,
