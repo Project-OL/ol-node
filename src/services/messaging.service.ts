@@ -75,6 +75,8 @@ export type DmContact = {
   lastActiveAt: string | null
   lastOnlineSeconds: number | null
   lastOnlineLabel: string | null
+  isLive: boolean
+  liveStreamId: string | null
   isMutual: boolean
   existingConversationId: string | null
 }
@@ -1175,6 +1177,8 @@ export const messagingService = {
           lastActiveAt: presence?.lastActiveAt ?? null,
           lastOnlineSeconds: presence?.lastOnlineSeconds ?? null,
           lastOnlineLabel: presence?.lastOnlineLabel ?? null,
+          isLive: presence?.isLive ?? false,
+          liveStreamId: presence?.liveStreamId ?? null,
         }
       })
     }
@@ -1227,6 +1231,8 @@ export const messagingService = {
         lastActiveAt: presence?.lastActiveAt ?? null,
         lastOnlineSeconds: presence?.lastOnlineSeconds ?? null,
         lastOnlineLabel: presence?.lastOnlineLabel ?? null,
+        isLive: presence?.isLive ?? false,
+        liveStreamId: presence?.liveStreamId ?? null,
         isMutual: !!friendCard,
         existingConversationId: existingConvIds.get(id) ?? null,
       }

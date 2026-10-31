@@ -5,6 +5,7 @@ import {
   RedisKeys,
 } from '../config/redis'
 import { prismaRead } from '../config/database'
+import { env } from '../config/env'
 import { touchUserLastActive } from '../middlewares/lastActiveTracker.middleware'
 import { privacyService } from './privacy.service'
 import { formatLastOnline } from '../utils/last-online'
@@ -122,6 +123,24 @@ export const presenceService = {
     await publishPresence(userId, false)
   },
 
+  /**
+   * LIVE-60: same frame Live-server publishes on go-live / end. Used by the admin force-end here,
+   * which deletes `user:active_stream:{userId}` itself.
+   */
+  async publishLiveStatus(
+    userId: string,
+    isLive: boolean,
+    liveStreamId: string | null = null,
+  ): Promise<void> {
+    const frame: ServerFrame = {
+      t: 'LIVE_STATUS',
+      userId,
+      isLive,
+      liveStreamId: isLive ? liveStreamId : null,
+    }
+    await redisClient.publish(RedisKeys.presenceChannel(userId), JSON.stringify(frame))
+  },
+
   async isUserOnline(userId: string): Promise<boolean> {
     const v = await redisClient.get(RedisKeys.userOnlineStatus(userId))
     return v === '1'
@@ -129,7 +148,8 @@ export const presenceService = {
 
   /**
    * Presence for one or more users as seen by `viewerId`.
-   * Respects VIP invisible-online privacy on targets.
+   * Respects VIP invisible-online privacy on targets (`isOnline` only; `isLive` stays visible).
+   * LIVE-60: `online:*` and Live-server's `user:active_stream:*` come back in one MGET.
    */
   async getPublicPresenceForUsers(
     viewerId: string,
@@ -139,15 +159,22 @@ export const presenceService = {
     const result = new Map<string, PublicPresenceDto>()
     if (unique.length === 0) return result
 
-    const onlineKeys = unique.map((id) => RedisKeys.userOnlineStatus(id))
-    const onlineValues = await redisClient.mget(...onlineKeys)
+    const includeLive = env.PRESENCE_INCLUDE_LIVE
+    const keys = unique.map((id) => RedisKeys.userOnlineStatus(id))
+    if (includeLive) keys.push(...unique.map((id) => RedisKeys.userActiveStream(id)))
+    const values = await redisClient.mget(...keys)
     const privacyFlags = await privacyService.getEffectiveFlagsBulk(unique)
 
-    const offlineNeedingLastActive: string[] = []
+    const liveFields = (i: number) => {
+      const streamId = includeLive ? values[unique.length + i] : null
+      return { isLive: Boolean(streamId), liveStreamId: streamId || null }
+    }
+
+    const offlineNeedingLastActive: { userId: string; i: number }[] = []
     for (let i = 0; i < unique.length; i++) {
       const userId = unique[i]!
       const hidden = privacyFlags.get(userId)?.invisibleOnline ?? false
-      const rawOnline = onlineValues[i] === '1'
+      const rawOnline = values[i] === '1'
 
       if (hidden && viewerId !== userId) {
         const frozenAt = privacyFlags.get(userId)?.invisibleOnlineLastSeenAt ?? null
@@ -158,6 +185,7 @@ export const presenceService = {
           lastActiveAt: lastOnline.lastActiveAt,
           lastOnlineSeconds: lastOnline.lastOnlineSeconds,
           lastOnlineLabel: lastOnline.lastOnlineLabel,
+          ...liveFields(i),
         })
         continue
       }
@@ -169,21 +197,22 @@ export const presenceService = {
           lastActiveAt: null,
           lastOnlineSeconds: null,
           lastOnlineLabel: null,
+          ...liveFields(i),
         })
       } else {
-        offlineNeedingLastActive.push(userId)
+        offlineNeedingLastActive.push({ userId, i })
       }
     }
 
     if (offlineNeedingLastActive.length === 0) return result
 
     const rows = await prismaRead.user.findMany({
-      where: { id: { in: offlineNeedingLastActive } },
+      where: { id: { in: offlineNeedingLastActive.map((o) => o.userId) } },
       select: { id: true, lastActiveAt: true },
     })
     const lastActiveMap = new Map(rows.map((r) => [r.id, r.lastActiveAt]))
 
-    for (const userId of offlineNeedingLastActive) {
+    for (const { userId, i } of offlineNeedingLastActive) {
       const lastActive = lastActiveMap.get(userId) ?? null
       const lastOnline = formatLastOnline(lastActive)
       result.set(userId, {
@@ -192,6 +221,7 @@ export const presenceService = {
         lastActiveAt: lastOnline.lastActiveAt,
         lastOnlineSeconds: lastOnline.lastOnlineSeconds,
         lastOnlineLabel: lastOnline.lastOnlineLabel,
+        ...liveFields(i),
       })
     }
 
@@ -210,6 +240,8 @@ export const presenceService = {
         lastActiveAt: null,
         lastOnlineSeconds: null,
         lastOnlineLabel: null,
+        isLive: false,
+        liveStreamId: null,
       }
     )
   },

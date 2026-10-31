@@ -138,6 +138,8 @@ export type ResolvedPublicIdentity = {
   lastActiveAt: string | null
   lastOnlineSeconds: number | null
   lastOnlineLabel: string | null
+  isLive: boolean
+  liveStreamId: string | null
   acceptVideoCalls: boolean
   isVideoCallEnabled: boolean
 }
@@ -166,6 +168,8 @@ export const userSearchService = {
             lastActiveAt: null,
             lastOnlineSeconds: null,
             lastOnlineLabel: null,
+            isLive: false,
+            liveStreamId: null,
           }),
       videoCallSettingsService.getAcceptVideoCalls(user.id),
     ])
@@ -182,6 +186,8 @@ export const userSearchService = {
       lastActiveAt: presence.lastActiveAt,
       lastOnlineSeconds: presence.lastOnlineSeconds,
       lastOnlineLabel: presence.lastOnlineLabel,
+      isLive: presence.isLive,
+      liveStreamId: presence.liveStreamId,
       acceptVideoCalls,
       isVideoCallEnabled: acceptVideoCalls,
     }

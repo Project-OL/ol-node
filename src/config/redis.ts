@@ -141,6 +141,8 @@ export const RedisKeys = {
   unreadCount: (userId: string, convId: string) => `unread:${userId}:${convId}`,
   /** Messaging: user online status. */
   userOnlineStatus: (userId: string) => `online:${userId}`,
+  /** Owned by Live-server: streamId while the user hosts a live (LIVE-60 reads it for presence). */
+  userActiveStream: (userId: string) => `user:active_stream:${userId}`,
   /** Messaging: cached conversation membership for WS typing path (60s). */
   convMember: (conversationId: string, userId: string) => `conv:member:${conversationId}:${userId}`,
   /** Messaging: typing publish throttle (SET NX, 2s). */

@@ -111,7 +111,16 @@ export type ServerFrame =
       /** CDN/S3 URL for progressive playback (same key as at send time). */
       streamingUrl: string
     }
-  | { t: 'PRESENCE'; userId: string; online: boolean }
+  /** `isLive` / `liveStreamId` only on the JOIN_PRESENCE snapshot (LIVE-60); transitions omit them. */
+  | {
+      t: 'PRESENCE'
+      userId: string
+      online: boolean
+      isLive?: boolean
+      liveStreamId?: string | null
+    }
+  /** LIVE-60: published by Live-server on go-live / end into `presence:user:{userId}`. */
+  | { t: 'LIVE_STATUS'; userId: string; isLive: boolean; liveStreamId: string | null }
   | { t: 'PONG'; ts: number }
   /** Server shift (deploy / scale-in): reconnect after `retryInMs` (0-3000, random per socket). */
   | { t: 'GOAWAY'; reason?: string; retryInMs?: number }

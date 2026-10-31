@@ -436,6 +436,14 @@ const envSchema = z
     WS_MAX_CONV_JOINS_PER_SOCKET: z.coerce.number().default(200),
     /** Max JOIN_PRESENCE / JOIN_GUARDIAN targets per socket. */
     WS_MAX_PRESENCE_JOINS_PER_SOCKET: z.coerce.number().int().min(1).max(500).default(100),
+    /**
+     * LIVE-60: presence responses carry `isLive` / `liveStreamId` from Live-server's
+     * `user:active_stream:{userId}`. `false` is the kill switch (always isLive:false).
+     */
+    PRESENCE_INCLUDE_LIVE: z
+      .string()
+      .optional()
+      .transform((s) => s !== 'false'),
     /** Drop outbound WS frames when the socket buffer exceeds this (bytes). */
     WS_SEND_BUFFER_LIMIT_BYTES: z.coerce.number().int().positive().default(1_048_576),
 
