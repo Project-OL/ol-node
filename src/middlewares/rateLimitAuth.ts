@@ -709,6 +709,14 @@ export const rateLimitNormalHostClaim = buildRateLimit({
   keyBuilder: (userId) => RedisKeys.ratelimitNormalHostClaim(userId),
 })
 
+/** Normal Host basic reward claim: max 5 per 60s per user. */
+export const rateLimitNormalHostBasicClaim = buildRateLimit({
+  max: 5,
+  windowMs: 60_000,
+  keyFn: (r) => r.userId ?? '',
+  keyBuilder: (userId) => RedisKeys.ratelimitNormalHostBasicClaim(userId),
+})
+
 export const rateLimitFaceRegister = buildFaceRateLimit({
   max: env.FACE_REGISTER_RATE_PER_HOUR,
   windowMs: 3_600_000,

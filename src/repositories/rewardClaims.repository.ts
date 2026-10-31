@@ -2,7 +2,11 @@ import { Prisma } from '@prisma/client'
 import { prismaRead } from '../config/database'
 import { countryEqualsFilter } from '../utils/agency-country'
 
-export type RewardClaimType = 'NORMAL_HOST' | 'ROYAL_HOST' | 'LIVESTREAM_STREAK'
+export type RewardClaimType =
+  | 'NORMAL_HOST'
+  | 'NORMAL_HOST_BASIC'
+  | 'ROYAL_HOST'
+  | 'LIVESTREAM_STREAK'
 
 export type RewardClaimUserTotalRow = {
   userId: string
@@ -33,7 +37,7 @@ export type AdminDeductionRow = {
   createdAt: Date
 }
 
-/** One `UNION ALL` over the three reward-claim tables, each already shaped user_id/type/date/points/ledger_entry_id/claimed_at. */
+/** One `UNION ALL` over the four reward-claim tables, each already shaped user_id/type/date/points/ledger_entry_id/claimed_at. */
 function claimsCte(params: { from?: Date; to?: Date; type?: RewardClaimType }) {
   const fromClause = params.from ? Prisma.sql`AND claim_date >= ${params.from}` : Prisma.empty
   const toClause = params.to ? Prisma.sql`AND claim_date <= ${params.to}` : Prisma.empty
@@ -42,6 +46,10 @@ function claimsCte(params: { from?: Date; to?: Date; type?: RewardClaimType }) {
     {
       type: 'NORMAL_HOST',
       sql: Prisma.sql`SELECT user_id, 'NORMAL_HOST'::text AS type, reward_date AS claim_date, points_amount, ledger_entry_id, claimed_at FROM normal_host_reward_claims`,
+    },
+    {
+      type: 'NORMAL_HOST_BASIC',
+      sql: Prisma.sql`SELECT user_id, 'NORMAL_HOST_BASIC'::text AS type, reward_date AS claim_date, points_amount, ledger_entry_id, claimed_at FROM normal_host_basic_reward_claims`,
     },
     {
       type: 'ROYAL_HOST',

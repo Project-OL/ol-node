@@ -38,6 +38,27 @@ export const normalHostRewardRepository = {
     return tx.normalHostRewardClaim.create({ data })
   },
 
+  async getBasicClaimForDate(userId: string, rewardDate: Date) {
+    return prismaRead.normalHostBasicRewardClaim.findUnique({
+      where: { userId_rewardDate: { userId, rewardDate } },
+      select: { pointsAmount: true, claimedAt: true },
+    })
+  },
+
+  async insertBasicClaim(
+    data: {
+      userId: string
+      rewardDate: Date
+      pointsAmount: bigint
+      requiredMinutes: number
+      streamedSeconds: number
+      ledgerEntryId: string
+    },
+    tx: Prisma.TransactionClient = prisma,
+  ) {
+    return tx.normalHostBasicRewardClaim.create({ data })
+  },
+
   /** Primary, not replica: read right after a lazy insert must see it. */
   async getDailyTier(userId: string, rewardDate: Date) {
     return prisma.normalHostDailyTier.findUnique({

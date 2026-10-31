@@ -111,6 +111,9 @@ export const PointTxTypeEnum = z.enum([
   'PAYROLL_HOST_PAYOUT',
   'LIVESTREAM_STREAK_REWARD',
   'PAYROLL_TAKEOVER_INVENTORY',
+  'ROYAL_HOST_REWARD',
+  'NORMAL_HOST_REWARD',
+  'NORMAL_HOST_BASIC_REWARD',
 ])
 
 /** Category aliases (`livestream`, `commission`, …) or raw `PointTxType` values. */

@@ -13,6 +13,7 @@ const EXPORT_ROW_CAP = 10_000
 
 export const TYPE_LABEL: Record<RewardClaimType, string> = {
   NORMAL_HOST: 'Normal Host',
+  NORMAL_HOST_BASIC: 'Normal Host Basic',
   ROYAL_HOST: 'Royal Host',
   LIVESTREAM_STREAK: 'Livestream Streak',
 }

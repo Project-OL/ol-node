@@ -90,7 +90,7 @@ export function resolvePointLedgerRevertability(params: {
 
 /**
  * Single-wallet (no counterparty) point ledger rows an admin can revert:
- * generic balance corrections and the three reward-claim credit types.
+ * generic balance corrections and the four reward-claim credit types.
  * None of these ever apply livestream XP or agency commission on credit
  * (verified: not in COMMISSION_ELIGIBLE_TX_TYPES / ranking tx-type sets, and
  * the reward services credit with `applyLivestreamLevel: false`), so a
@@ -99,6 +99,7 @@ export function resolvePointLedgerRevertability(params: {
 const SINGLE_WALLET_REVERTABLE_TX_TYPES = new Set<PointTxType>([
   PointTxType.ADJUSTMENT,
   PointTxType.NORMAL_HOST_REWARD,
+  PointTxType.NORMAL_HOST_BASIC_REWARD,
   PointTxType.ROYAL_HOST_REWARD,
   PointTxType.LIVESTREAM_STREAK_REWARD,
 ])

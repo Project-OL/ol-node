@@ -1,6 +1,11 @@
 import { z } from 'zod'
 
-export const RewardClaimTypeEnum = z.enum(['NORMAL_HOST', 'ROYAL_HOST', 'LIVESTREAM_STREAK'])
+export const RewardClaimTypeEnum = z.enum([
+  'NORMAL_HOST',
+  'NORMAL_HOST_BASIC',
+  'ROYAL_HOST',
+  'LIVESTREAM_STREAK',
+])
 
 export const ListRewardClaimsQuerySchema = z.object({
   country: z.string().max(100).optional(),

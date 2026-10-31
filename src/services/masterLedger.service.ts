@@ -578,12 +578,13 @@ const REWARD_POINT_TX = [
   PointTxType.LIVESTREAM_STREAK_REWARD,
   PointTxType.PLATFORM_REWARD,
   PointTxType.NORMAL_HOST_REWARD,
+  PointTxType.NORMAL_HOST_BASIC_REWARD,
   PointTxType.ROYAL_HOST_REWARD,
 ]
 
 /**
  * Reward units minted into customer wallets: login, weekly top-up, platform and VIP
- * coin rewards plus streak / platform / Normal Host / Royal Host point rewards. The operating P&L expenses these
+ * coin rewards plus streak / platform / Normal Host (tier + basic) / Royal Host point rewards. The operating P&L expenses these
  * the moment they are credited; the redemption estimate counts them as units issued.
  */
 async function rewardMintUnits(house: HouseAccounts, from?: Date, to?: Date): Promise<bigint> {

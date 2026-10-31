@@ -17,6 +17,7 @@ export const POINT_EARNINGS_CATEGORIES = {
     PointTxType.LIVESTREAM_STREAK_REWARD, // rewards section: first-7-days livestream daily parts
     PointTxType.ROYAL_HOST_REWARD, // rewards section: weekly Royal Host timing/gifting parts
     PointTxType.NORMAL_HOST_REWARD, // rewards section: daily Normal Host tiered hourly reward
+    PointTxType.NORMAL_HOST_BASIC_REWARD, // rewards section: daily Normal Host flat reward (no tier)
   ],
   subscription: [PointTxType.SUBSCRIPTION, PointTxType.GUARDIAN_PURCHASE],
   withdraw: [
