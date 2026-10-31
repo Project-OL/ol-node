@@ -140,6 +140,8 @@ async function handleJoinPresence(
         t: 'PRESENCE',
         userId: targetUserId,
         online: p?.isOnline ?? false,
+        isLive: p?.isLive ?? false,
+        liveStreamId: p?.liveStreamId ?? null,
       })
     }
   }

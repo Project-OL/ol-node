@@ -7,6 +7,7 @@ import { userRepository } from '../repositories/user.repository'
 import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
 import { liveSessionService } from './liveSession.service'
+import { presenceService } from './presence.service'
 import { formatUserName } from '../utils/user-display'
 import {
   computeEffectiveDurationSeconds,
@@ -444,6 +445,11 @@ export const adminLiveStreamService = {
     } catch (err) {
       rootLogger.warn({ err, roomId }, 'admin live stop: Redis room cleanup failed')
     }
+    await presenceService
+      .publishLiveStatus(params.userId, false)
+      .catch((err) =>
+        rootLogger.warn({ err, roomId }, 'admin live stop: LIVE_STATUS publish failed'),
+      )
 
     auditService.logAdmin({
       adminUserId: params.adminUserId,

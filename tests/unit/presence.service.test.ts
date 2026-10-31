@@ -16,8 +16,22 @@ const publish = vi.fn()
 
 const touchUserLastActive = vi.fn()
 
+const mget = vi.fn()
+
+const getEffectiveFlagsBulk = vi.fn()
+
+const findMany = vi.fn()
+
 vi.mock('../../src/middlewares/lastActiveTracker.middleware', () => ({
   touchUserLastActive: (...args: unknown[]) => touchUserLastActive(...args),
+}))
+
+vi.mock('../../src/services/privacy.service', () => ({
+  privacyService: { getEffectiveFlagsBulk: (...a: unknown[]) => getEffectiveFlagsBulk(...a) },
+}))
+
+vi.mock('../../src/config/database', () => ({
+  prismaRead: { user: { findMany: (...a: unknown[]) => findMany(...a) } },
 }))
 
 vi.mock('../../src/config/redis', () => ({
@@ -36,6 +50,8 @@ vi.mock('../../src/config/redis', () => ({
 
     publish,
 
+    mget,
+
   },
 
   PRESENCE_HEARTBEAT_TTL_SEC: 60,
@@ -49,6 +65,8 @@ vi.mock('../../src/config/redis', () => ({
     userOnlineStatus: (u: string) => `online:${u}`,
 
     presenceChannel: (u: string) => `presence:user:${u}`,
+
+    userActiveStream: (u: string) => `user:active_stream:${u}`,
 
   },
 
@@ -159,6 +177,81 @@ describe('presenceService', () => {
     expect(touchUserLastActive).toHaveBeenCalledWith('u1', {
       throttleSec: 60,
       presenceGate: true,
+    })
+  })
+
+  describe('LIVE-60 isLive', () => {
+    beforeEach(() => {
+      mget.mockReset()
+      findMany.mockReset()
+      getEffectiveFlagsBulk.mockReset()
+      getEffectiveFlagsBulk.mockResolvedValue(new Map())
+      findMany.mockResolvedValue([])
+    })
+
+    it('reads online and active-stream keys in one MGET', async () => {
+      // online: a=yes, b=no, c=yes; active_stream: a=s-a, b=s-b, c=none
+      mget.mockResolvedValueOnce(['1', null, '1', 's-a', 's-b', null])
+      const { presenceService } = await import('../../src/services/presence.service')
+
+      const map = await presenceService.getPublicPresenceForUsers('viewer', ['a', 'b', 'c'])
+
+      expect(mget).toHaveBeenCalledTimes(1)
+      expect(mget).toHaveBeenCalledWith(
+        'online:a',
+        'online:b',
+        'online:c',
+        'user:active_stream:a',
+        'user:active_stream:b',
+        'user:active_stream:c',
+      )
+      expect(map.get('a')).toMatchObject({ isOnline: true, isLive: true, liveStreamId: 's-a' })
+      expect(map.get('b')).toMatchObject({ isOnline: false, isLive: true, liveStreamId: 's-b' })
+      expect(map.get('c')).toMatchObject({ isOnline: true, isLive: false, liveStreamId: null })
+    })
+
+    it('keeps isLive for an invisible-online VIP host while hiding isOnline', async () => {
+      getEffectiveFlagsBulk.mockResolvedValueOnce(
+        new Map([['vip', { invisibleOnline: true, invisibleOnlineLastSeenAt: null }]]),
+      )
+      mget.mockResolvedValueOnce(['1', 's-vip'])
+      const { presenceService } = await import('../../src/services/presence.service')
+
+      const p = (await presenceService.getPublicPresenceForUsers('viewer', ['vip'])).get('vip')
+
+      expect(p).toMatchObject({ isOnline: false, isLive: true, liveStreamId: 's-vip' })
+    })
+
+    it('PRESENCE_INCLUDE_LIVE=false skips the active-stream keys', async () => {
+      const { env } = await import('../../src/config/env')
+      const prev = env.PRESENCE_INCLUDE_LIVE
+      ;(env as { PRESENCE_INCLUDE_LIVE: boolean }).PRESENCE_INCLUDE_LIVE = false
+      try {
+        mget.mockResolvedValueOnce(['1'])
+        const { presenceService } = await import('../../src/services/presence.service')
+
+        const p = (await presenceService.getPublicPresenceForUsers('viewer', ['a'])).get('a')
+
+        expect(mget).toHaveBeenCalledWith('online:a')
+        expect(p).toMatchObject({ isOnline: true, isLive: false, liveStreamId: null })
+      } finally {
+        ;(env as { PRESENCE_INCLUDE_LIVE: boolean }).PRESENCE_INCLUDE_LIVE = prev
+      }
+    })
+
+    it('publishLiveStatus sends a LIVE_STATUS frame on the presence channel', async () => {
+      publish.mockResolvedValueOnce(1)
+      const { presenceService } = await import('../../src/services/presence.service')
+
+      await presenceService.publishLiveStatus('h1', false, 's1')
+
+      expect(publish.mock.calls[0]?.[0]).toBe('presence:user:h1')
+      expect(JSON.parse(publish.mock.calls[0]?.[1] as string)).toEqual({
+        t: 'LIVE_STATUS',
+        userId: 'h1',
+        isLive: false,
+        liveStreamId: null,
+      })
     })
   })
 

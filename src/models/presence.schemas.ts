@@ -14,4 +14,8 @@ export type PublicPresenceDto = {
   lastActiveAt: string | null
   lastOnlineSeconds: number | null
   lastOnlineLabel: string | null
+  /** Hosting a live right now. Not hidden by invisible-online: a live is public on the feed. */
+  isLive: boolean
+  /** Room to join when `isLive`; null otherwise. */
+  liveStreamId: string | null
 }
