@@ -87,6 +87,9 @@ vi.mock('../../src/repositories/normalHostReward.repository', () => ({
 vi.mock('../../src/services/normalHostRewardConfig.service', () => ({
   normalHostRewardConfigService: { getConfig: async () => ({ tiersBigInt: TIERS }) },
 }))
+vi.mock('../../src/services/normalHostBasicRewardConfig.service', () => ({
+  normalHostBasicRewardConfigService: { getConfig: async () => ({ enabled: false }) },
+}))
 vi.mock('../../src/services/livestreamRewardConfig.service', () => ({
   livestreamRewardConfigService: { getConfig: async () => ({ windowDays: 7 }) },
 }))

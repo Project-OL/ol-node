@@ -49,7 +49,8 @@ describe('point earnings categories', () => {
 
   it('expands platform_reward category to payroll, platform and host reward types', () => {
     // LIVESTREAM_STREAK_REWARD added 2026-08-10 (first-7-days livestream claims); payroll
-    // takeover inventory and the Royal/Normal Host rewards joined the rewards section later.
+    // takeover inventory and the Royal/Normal Host rewards joined the rewards section later;
+    // the Normal Host basic reward on 2026-10-31.
     const types = resolvePointHistoryTxTypes(['platform_reward'])
     expect([...types].sort()).toEqual(
       [
@@ -59,6 +60,7 @@ describe('point earnings categories', () => {
         PointTxType.LIVESTREAM_STREAK_REWARD,
         PointTxType.ROYAL_HOST_REWARD,
         PointTxType.NORMAL_HOST_REWARD,
+        PointTxType.NORMAL_HOST_BASIC_REWARD,
       ].sort(),
     )
   })

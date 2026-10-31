@@ -24,6 +24,7 @@ import { AgencyHostConfigUpdateSchema } from '../../models/agencyHostConfig.sche
 import { LivestreamRewardConfigUpdateSchema } from '../../models/livestreamRewardConfig.schemas'
 import { RoyalHostRewardConfigUpdateSchema } from '../../models/royalHostRewardConfig.schemas'
 import { NormalHostRewardConfigUpdateSchema } from '../../models/normalHostRewardConfig.schemas'
+import { NormalHostBasicRewardConfigUpdateSchema } from '../../models/normalHostBasicRewardConfig.schemas'
 import { AccountDeletionConfigUpdateSchema } from '../../models/accountDeletionConfig.schemas'
 import { ReplaceRestrictedIdentityWordsSchema } from '../../models/restrictedIdentityWords.schemas'
 import { hostRevenueShareConfigService } from '../../services/hostRevenueShareConfig.service'
@@ -36,6 +37,7 @@ import { agencyHostConfigService } from '../../services/agencyHostConfig.service
 import { livestreamRewardConfigService } from '../../services/livestreamRewardConfig.service'
 import { royalHostRewardConfigService } from '../../services/royalHostRewardConfig.service'
 import { normalHostRewardConfigService } from '../../services/normalHostRewardConfig.service'
+import { normalHostBasicRewardConfigService } from '../../services/normalHostBasicRewardConfig.service'
 import { accountDeletionConfigService } from '../../services/accountDeletionConfig.service'
 import { restrictedIdentityWordsService } from '../../services/restrictedIdentityWords.service'
 import { systemRatesAdminService } from '../../services/systemRatesAdmin.service'
@@ -65,6 +67,7 @@ import { addUtcDays, utcStartOfWeek } from '../../utils/datetime'
  * GET|PUT /v1/admin/system-settings/admin-auth
  * GET|PUT /v1/admin/system-settings/agency-host
  * GET|PUT /v1/admin/system-settings/livestream-reward
+ * GET|PUT /v1/admin/system-settings/normal-host-basic-reward
  * GET|PUT /v1/admin/system-settings/account-deletion
  * GET|PUT /v1/admin/system-settings/restricted-words
  */
@@ -476,6 +479,30 @@ export default async function systemSettingsAdminRoutes(app: FastifyInstance) {
       auditService.logAdminFromRequest(request, {
         actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
         actionDetails: { settingKey: 'normal-host-reward' },
+      })
+      return reply.send(result)
+    },
+  )
+
+  app.get(
+    '/system-settings/normal-host-basic-reward',
+    { preHandler: [authenticateAdmin] },
+    async (_request, reply) => {
+      return reply.send(await normalHostBasicRewardConfigService.getConfigDto())
+    },
+  )
+
+  app.put(
+    '/system-settings/normal-host-basic-reward',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const body = NormalHostBasicRewardConfigUpdateSchema.parse(request.body ?? {})
+      const result = await normalHostBasicRewardConfigService.updateConfig(adminUserId, body)
+      auditService.logAdminFromRequest(request, {
+        actionType: 'ADMIN_SYSTEM_SETTINGS_UPDATED',
+        actionDetails: { settingKey: 'normal-host-basic-reward', ...body },
       })
       return reply.send(result)
     },

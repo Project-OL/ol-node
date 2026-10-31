@@ -5,6 +5,7 @@ import {
   rateLimitLivestreamRewardClaim,
   rateLimitRoyalHostClaim,
   rateLimitNormalHostClaim,
+  rateLimitNormalHostBasicClaim,
 } from '../../middlewares/rateLimitAuth'
 import { AppError } from '../../middlewares/errorHandler'
 import { rewardService } from '../../services/reward.service'
@@ -125,6 +126,23 @@ export default async function rewardsRoutes(app: FastifyInstance) {
         )
       }
       const body = await normalHostRewardService.claimReward(userId, parsed.data.hourSlot)
+      return reply.send(body)
+    },
+  )
+
+  app.post(
+    '/normal-host/basic/claim',
+    {
+      preHandler: [...preAuth, rateLimitNormalHostBasicClaim],
+      schema: {
+        tags: ['Rewards'],
+        description:
+          'Claim the Normal Host daily basic reward (admin-set minutes live today, no tier today); once per UTC day',
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const userId = request.userId!
+      const body = await normalHostRewardService.claimBasicReward(userId)
       return reply.send(body)
     },
   )

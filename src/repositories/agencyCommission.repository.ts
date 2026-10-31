@@ -624,7 +624,8 @@ export const agencyCommissionRepository = {
    * Host POINT credit buckets for agent host detail UI.
    * - live: livestream gifts (`LIVESTREAM_GIFT` or `GIFT_RECEIVE` where context ≠ direct)
    * - privateChat: message gifts (`GIFT_RECEIVE` + metadata.context = direct)
-   * - platformRewards: `PLATFORM_REWARD` + `LIVESTREAM_STREAK_REWARD` (daily livestream claims)
+   * - platformRewards: `PLATFORM_REWARD` + the reward-claim credits (livestream streak,
+   *   Normal Host tier + basic, Royal Host)
    * - other: remaining credits (includes `VIDEO_CALL`, subscriptions, etc.)
    */
   async aggregateHostEarningsBuckets({
@@ -673,8 +674,13 @@ export const agencyCommissionRepository = {
         ), 0)::bigint AS private_chat,
         COALESCE(SUM(
           CASE
-            WHEN ple.tx_type IN ('PLATFORM_REWARD', 'LIVESTREAM_STREAK_REWARD')
-              THEN ple.amount
+            WHEN ple.tx_type IN (
+              'PLATFORM_REWARD',
+              'LIVESTREAM_STREAK_REWARD',
+              'NORMAL_HOST_REWARD',
+              'NORMAL_HOST_BASIC_REWARD',
+              'ROYAL_HOST_REWARD'
+            ) THEN ple.amount
             ELSE 0
           END
         ), 0)::bigint AS platform_rewards,
@@ -683,7 +689,10 @@ export const agencyCommissionRepository = {
             WHEN ple.tx_type IN (
               'LIVESTREAM_GIFT',
               'PLATFORM_REWARD',
-              'LIVESTREAM_STREAK_REWARD'
+              'LIVESTREAM_STREAK_REWARD',
+              'NORMAL_HOST_REWARD',
+              'NORMAL_HOST_BASIC_REWARD',
+              'ROYAL_HOST_REWARD'
             ) THEN 0
             WHEN ple.tx_type = 'GIFT_RECEIVE' THEN 0
             ELSE ple.amount

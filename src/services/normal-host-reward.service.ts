@@ -12,6 +12,10 @@ import {
   normalHostRewardConfigService,
   type NormalHostTierBigInt,
 } from './normalHostRewardConfig.service'
+import {
+  normalHostBasicRewardConfigService,
+  type NormalHostBasicRewardEffectiveConfig,
+} from './normalHostBasicRewardConfig.service'
 import { dayIndexSinceJoin, effectiveSecondsForSession } from './livestream-reward.service'
 import { livestreamRewardConfigService } from './livestreamRewardConfig.service'
 import { hasRoyalHostTag } from '../utils/royalHostTag'
@@ -59,6 +63,23 @@ export type NormalHostTierListItemDto = {
   windowDays: number
 }
 
+/**
+ * Flat daily reward for streaming `requiredMinutes` on a day the host has no tier. `null`
+ * on the status block while an admin has it switched off.
+ */
+export type NormalHostBasicRewardDto = {
+  requiredMinutes: number
+  /** Effective live minutes today, capped at `requiredMinutes`. */
+  completedMinutes: number
+  /** The amount paid once claimed; before that, the amount a claim would pay now. */
+  pointsAmount: string
+  /** False once the host has a tier today: the tier slots take over. */
+  available: boolean
+  unlocked: boolean
+  claimed: boolean
+  claimedAt: string | null
+}
+
 export type NormalHostRewardStatusDto =
   | { eligible: false }
   | {
@@ -75,6 +96,7 @@ export type NormalHostRewardStatusDto =
       hasTier: false
       nextTier: NormalHostNextTierDto
       tiers: NormalHostTierListItemDto[]
+      basicReward: NormalHostBasicRewardDto | null
     }
   | {
       eligible: true
@@ -94,6 +116,8 @@ export type NormalHostRewardStatusDto =
       slots: NormalHostSlotDto[]
       totalClaimedToday: string
       tiers: NormalHostTierListItemDto[]
+      /** Still sent with a tier, so a basic claim made before the tier was reached shows. */
+      basicReward: NormalHostBasicRewardDto | null
     }
 
 async function streamedSecondsToday(userId: string, dayStartUtc: Date): Promise<number> {
@@ -201,14 +225,43 @@ function buildTierList(tiers: NormalHostTierBigInt[]): NormalHostTierListItemDto
   }))
 }
 
+function buildBasicReward(
+  config: NormalHostBasicRewardEffectiveConfig,
+  claim: { pointsAmount: bigint; claimedAt: Date } | null,
+  hasTier: boolean,
+  secondsToday: number,
+): NormalHostBasicRewardDto | null {
+  if (!config.enabled) return null
+  const available = !hasTier
+  return {
+    requiredMinutes: config.requiredMinutes,
+    completedMinutes: Math.min(config.requiredMinutes, Math.floor(secondsToday / 60)),
+    pointsAmount: (claim?.pointsAmount ?? config.pointsAmountBigInt).toString(),
+    available,
+    unlocked: available && secondsToday >= config.requiredMinutes * 60,
+    claimed: !!claim,
+    claimedAt: claim ? claim.claimedAt.toISOString() : null,
+  }
+}
+
+/** 60 → "1 hour", 120 → "2 hours", 90 → "90 minutes". */
+function formatLiveDuration(minutes: number): string {
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60
+    return `${hours} hour${hours === 1 ? '' : 's'}`
+  }
+  return `${minutes} minutes`
+}
+
 async function loadEligibilityAndInputs(userId: string) {
-  const [user, config, livestreamConfig] = await Promise.all([
+  const [user, config, livestreamConfig, basicConfig] = await Promise.all([
     prismaRead.user.findUnique({
       where: { id: userId },
       select: { adminTags: true, createdAt: true },
     }),
     normalHostRewardConfigService.getConfig(),
     livestreamRewardConfigService.getConfig(),
+    normalHostBasicRewardConfigService.getConfig(),
   ])
   if (!user) throw new AppError(404, 'User not found', 'NOT_FOUND')
 
@@ -217,7 +270,23 @@ async function loadEligibilityAndInputs(userId: string) {
   const today = utcStartOfDay(new Date())
   const dayIndex = dayIndexSinceJoin(user.createdAt, today)
   const eligible = !hasRoyalHostTag(user.adminTags) && dayIndex > livestreamConfig.windowDays
-  return { eligible, config }
+  return { eligible, config, basicConfig }
+}
+
+/** Higher of today's 00:00 floor and the tier reached so far today, plus today's inputs. */
+async function resolveTodayTier(userId: string, tiers: NormalHostTierBigInt[], now: Date) {
+  const rewardDate = utcStartOfDay(now)
+  const [secondsToday, dayFloor, liveEarnings] = await Promise.all([
+    streamedSecondsToday(userId, rewardDate),
+    getDayTier(userId, rewardDate, tiers),
+    computeEarningsByWindow(userId, tiers, now),
+  ])
+  return {
+    rewardDate,
+    secondsToday,
+    liveEarnings,
+    currentTier: higherTier(dayFloor, resolveCurrentTier(tiers, liveEarnings)),
+  }
 }
 
 /**
@@ -330,7 +399,7 @@ function tierAbove(
 
 export const normalHostRewardService = {
   async getStatus(userId: string): Promise<NormalHostRewardStatusDto> {
-    const { eligible, config } = await loadEligibilityAndInputs(userId)
+    const { eligible, config, basicConfig } = await loadEligibilityAndInputs(userId)
     if (!eligible) return { eligible: false }
 
     const now = new Date()
@@ -338,16 +407,20 @@ export const normalHostRewardService = {
     const nextEvaluation = addUtcDays(rewardDate, 1)
     // Tier = higher of today's 00:00 floor and the tier reached so far today (window
     // 00:00 UTC N days back → now), so it can rise during the day but never fall.
-    const [secondsToday, earningsByWindow, claims, dayFloor] = await Promise.all([
+    const [secondsToday, earningsByWindow, claims, dayFloor, basicClaim] = await Promise.all([
       streamedSecondsToday(userId, rewardDate),
       computeEarningsByWindow(userId, config.tiersBigInt, now),
       normalHostRewardRepository.getClaimsForDate(userId, rewardDate),
       getDayTier(userId, rewardDate, config.tiersBigInt),
+      basicConfig.enabled
+        ? normalHostRewardRepository.getBasicClaimForDate(userId, rewardDate)
+        : Promise.resolve(null),
     ])
     const currentTier = higherTier(
       dayFloor,
       resolveCurrentTier(config.tiersBigInt, earningsByWindow),
     )
+    const basicReward = buildBasicReward(basicConfig, basicClaim, !!currentTier, secondsToday)
     const evaluation = {
       tierEvaluatedAt: rewardDate.toISOString(),
       nextEvaluationAt: nextEvaluation.toISOString(),
@@ -378,6 +451,7 @@ export const normalHostRewardService = {
           progressPercent,
         },
         tiers: buildTierList(config.tiersBigInt),
+        basicReward,
       }
     }
 
@@ -441,6 +515,7 @@ export const normalHostRewardService = {
       slots,
       totalClaimedToday: totalClaimedToday.toString(),
       tiers: buildTierList(config.tiersBigInt),
+      basicReward,
     }
   },
 
@@ -456,16 +531,13 @@ export const normalHostRewardService = {
       throw new AppError(400, 'Invalid hour slot', 'INVALID_REQUEST')
     }
 
-    const now = new Date()
-    const rewardDate = utcStartOfDay(now)
     // Pays the higher of today's 00:00 floor and the tier reached so far today — the same
     // tier getStatus shows at this moment.
-    const [secondsToday, dayFloor, liveEarnings] = await Promise.all([
-      streamedSecondsToday(userId, rewardDate),
-      getDayTier(userId, rewardDate, config.tiersBigInt),
-      computeEarningsByWindow(userId, config.tiersBigInt, now),
-    ])
-    const currentTier = higherTier(dayFloor, resolveCurrentTier(config.tiersBigInt, liveEarnings))
+    const { rewardDate, secondsToday, liveEarnings, currentTier } = await resolveTodayTier(
+      userId,
+      config.tiersBigInt,
+      new Date(),
+    )
     if (!currentTier || hourSlot > currentTier.hourCapHours) {
       // Name the exact receiving target that unlocks THIS slot, not a generic "no tier".
       const target = lowestTierCoveringSlot(config.tiersBigInt, hourSlot, currentTier)
@@ -551,6 +623,99 @@ export const normalHostRewardService = {
       pointsAmount: pointsAmount.toString(),
       claimedAt: new Date().toISOString(),
     }
+  },
+
+  /**
+   * Once per UTC day: the admin-set flat amount for `requiredMinutes` of effective live
+   * time, only while the host has no tier. A tier reached after this claim still opens the
+   * tier slots the same day; the basic claim is kept.
+   */
+  async claimBasicReward(userId: string): Promise<{ pointsAmount: string; claimedAt: string }> {
+    const { eligible, config, basicConfig } = await loadEligibilityAndInputs(userId)
+    if (!eligible) {
+      throw new AppError(403, 'Not eligible for Normal Host reward', 'NORMAL_HOST_NOT_ELIGIBLE')
+    }
+    if (!basicConfig.enabled) {
+      throw new AppError(403, 'This reward is not available', 'NORMAL_HOST_BASIC_DISABLED')
+    }
+
+    const { rewardDate, secondsToday, currentTier } = await resolveTodayTier(
+      userId,
+      config.tiersBigInt,
+      new Date(),
+    )
+    if (currentTier) {
+      throw new AppError(
+        403,
+        'You have reached a receiving target today — claim your hourly rewards instead',
+        'NORMAL_HOST_BASIC_HAS_TIER',
+      )
+    }
+    const { requiredMinutes } = basicConfig
+    if (secondsToday < requiredMinutes * 60) {
+      throw new AppError(
+        403,
+        `Go live for ${formatLiveDuration(requiredMinutes)} today to claim this reward`,
+        'NORMAL_HOST_BASIC_HOURS_NOT_MET',
+        { requiredMinutes, completedMinutes: Math.floor(secondsToday / 60) },
+      )
+    }
+
+    const pointsAmount = basicConfig.pointsAmountBigInt
+    const rewardDateStr = utcDateString(rewardDate)
+    const idempotencyKey = `normal-host-basic-reward:${userId}:${rewardDateStr}`
+    let claimedAt = new Date()
+
+    try {
+      await withSerializationRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            const existing = await tx.normalHostBasicRewardClaim.findUnique({
+              where: { userId_rewardDate: { userId, rewardDate } },
+            })
+            if (existing) {
+              throw new AppError(409, 'Already claimed', 'ALREADY_CLAIMED')
+            }
+
+            const credit = await pointWalletService.creditInTransaction(
+              userId,
+              pointsAmount,
+              PointTxType.NORMAL_HOST_BASIC_REWARD,
+              tx,
+              {
+                idempotencyKey,
+                description: 'Normal Host daily basic reward',
+                metadata: { rewardDate: rewardDateStr, requiredMinutes },
+                applyLivestreamLevel: false,
+              },
+            )
+
+            const row = await normalHostRewardRepository.insertBasicClaim(
+              {
+                userId,
+                rewardDate,
+                pointsAmount,
+                requiredMinutes,
+                streamedSeconds: secondsToday,
+                ledgerEntryId: credit.ledgerEntryId,
+              },
+              tx,
+            )
+            claimedAt = row.claimedAt
+          },
+          { timeout: INTERACTIVE_TX_TIMEOUT_MS },
+        ),
+      )
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new AppError(409, 'Already claimed', 'ALREADY_CLAIMED')
+      }
+      throw err
+    }
+
+    await walletService.adjustPointBalanceCache(userId, pointsAmount)
+
+    return { pointsAmount: pointsAmount.toString(), claimedAt: claimedAt.toISOString() }
   },
 
   /**
