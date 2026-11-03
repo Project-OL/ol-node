@@ -9,6 +9,7 @@ import {
 } from '../../models/gcp-infra-admin.schemas'
 import { gcpBillingCostService } from '../../services/gcp-billing-cost.service'
 import { gcpInfraAdminService } from '../../services/gcp-infra-admin.service'
+import { livekitBandwidthService } from '../../services/livekit-bandwidth.service'
 import { auditService } from '../../services/audit.service'
 import { parseRequest } from '../../utils/zod-request'
 
@@ -20,6 +21,7 @@ import { parseRequest } from '../../utils/zod-request'
  * GET  /v1/admin/gcp-infra/resources/:resourceKey/history
  * GET|PUT /v1/admin/gcp-infra/resources/:resourceKey/config
  * GET  /v1/admin/gcp-infra/cost-by-service
+ * GET  /v1/admin/gcp-infra/livekit-bandwidth
  * GET  /v1/admin/gcp-infra/flags
  * POST /v1/admin/gcp-infra/flags/:id/resolve
  */
@@ -83,6 +85,24 @@ export default async function gcpInfraAdminRoutes(app: FastifyInstance) {
         forceRefresh: query.refresh,
       })
       return reply.send(result)
+    },
+  )
+
+  // LIVE-63: video-server (LiveKit VPS) transfer vs the 32 TB/month allowance. Cached 5 min.
+  app.get(
+    '/gcp-infra/livekit-bandwidth',
+    {
+      preHandler,
+      schema: {
+        tags: ['Admin', 'GCP infra cost'],
+        description:
+          'LiveKit VPS media transfer (livekit_packet_bytes): month-to-date and rolling 30 days vs 32 TB, current/peak Mbps, hourly 7-day series. `?refresh=true` bypasses the 5-minute cache. Returns `{ error }` when Cloud Monitoring is unreachable.',
+        querystring: { type: 'object', properties: { refresh: { type: 'boolean' } } },
+      },
+    },
+    async (request, reply) => {
+      const { refresh } = (request.query ?? {}) as { refresh?: boolean }
+      return reply.send(await livekitBandwidthService.get(refresh === true))
     },
   )
 
