@@ -123,6 +123,8 @@ export const RedisKeys = {
   otpCostRates: () => 'otp:cost-rates',
   /** Cached GCP Billing Export (BigQuery) spend-by-service for one UTC month. */
   gcpCostByService: (year: number, month: number) => `gcp-infra-cost:by-service:${year}-${month}`,
+  /** LIVE-63: cached LiveKit VPS bandwidth summary for the admin GCP page (TTL 5 min). */
+  livekitBandwidth: () => 'gcp-infra:livekit-bandwidth:v1',
   /** Per-user social endpoint rate limit. */
   socialRateLimit: (endpoint: string, userId: string) => `ratelimit:social:${endpoint}:${userId}`,
   /** User level cache. */
