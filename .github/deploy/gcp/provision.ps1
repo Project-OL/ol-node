@@ -526,6 +526,10 @@ echo "RC=0"
         @('compute', 'health-checks', 'create', 'http', $h[0], '--global', "--port=$($h[1])", "--request-path=$($h[2])",
           "--check-interval=$($h[3])", '--timeout=5s', '--healthy-threshold=2', "--unhealthy-threshold=$($h[4])")
     }
+    # NOTE (2026-11-03): production no longer uses this managed LB. Far users were slow through it
+    # (INF-25), so DNS moved to a classic EXTERNAL ALB (cl-* backends, cl-ol-node-rest-urlmap from
+    # urlmap-classic.yaml) on 2026-10-27, and this LB was deleted (INF-28). For a new project build
+    # the classic LB instead: same backends/health checks with --load-balancing-scheme=EXTERNAL.
     # All EXTERNAL_MANAGED (the old project mixed EXTERNAL + EXTERNAL_MANAGED).
     # ws-backend: the LB backend timeout caps an idle websocket, so /ws needs its own
     # 3600s service instead of sharing the 30s API one (INF-01, 2026-10-10).
