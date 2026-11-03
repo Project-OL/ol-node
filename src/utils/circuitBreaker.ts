@@ -114,11 +114,20 @@ export const s3CircuitBreaker = new CircuitBreaker({
   halfOpenTimeoutMs: 3_000,
 })
 
-export const rekognitionCircuitBreaker = new CircuitBreaker({
-  failureThreshold: 6,
-  openDurationMs: 15_000,
-  halfOpenTimeoutMs: 3_000,
-})
+/**
+ * BE-10: one breaker per Rekognition operation family. A single shared breaker let indexing
+ * failures (e.g. a missing IndexFaces permission) fail-fast liveness and verification calls in
+ * the same process.
+ */
+export type RekognitionOperation = 'index' | 'search' | 'detect' | 'liveness'
+const rekognitionBreaker = () =>
+  new CircuitBreaker({ failureThreshold: 6, openDurationMs: 15_000, halfOpenTimeoutMs: 3_000 })
+export const rekognitionCircuitBreakers: Record<RekognitionOperation, CircuitBreaker> = {
+  index: rekognitionBreaker(),
+  search: rekognitionBreaker(),
+  detect: rekognitionBreaker(),
+  liveness: rekognitionBreaker(),
+}
 
 export const livekitCircuitBreaker = new CircuitBreaker({
   failureThreshold: 5,
@@ -152,6 +161,14 @@ export const msg91CircuitBreaker = new CircuitBreaker({
 export const sesCircuitBreaker = new CircuitBreaker({
   failureThreshold: 5,
   openDurationMs: 15_000,
+  halfOpenTimeoutMs: 3_000,
+})
+
+/** BE-09 P4: Firebase Cloud Messaging. Pushes are sent inline from message/call paths, so a
+ * hanging FCM must not add its timeout to every one of them. */
+export const fcmCircuitBreaker = new CircuitBreaker({
+  failureThreshold: 8,
+  openDurationMs: 20_000,
   halfOpenTimeoutMs: 3_000,
 })
 

@@ -68,6 +68,42 @@ describe('resend.provider', () => {
     expect(resendCircuitBreaker.getState()).toBe('closed')
   })
 
+  it('retries a 429 with backoff and succeeds without touching the breaker (BE-29)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(429, { name: 'rate_limit_exceeded' }))
+      .mockResolvedValueOnce(jsonResponse(429, { name: 'rate_limit_exceeded' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'resend-429' }))
+
+    const pending = resendProvider.sendOtpEmail({ email: 'user@example.com', otp: '1', purpose: 'login' })
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(await pending).toEqual({ success: true, providerMessageId: 'resend-429' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls[2][1].body).toBe(fetchMock.mock.calls[0][1].body)
+  })
+
+  it('a burst of 429s never opens the breaker; gives up after 2 retries', async () => {
+    fetchMock.mockResolvedValue({
+      ...jsonResponse(429, { message: 'Too many requests' }),
+      headers: new Headers({ 'retry-after': '1' }),
+    })
+
+    for (let i = 0; i < 6; i++) {
+      const pending = resendProvider.sendOtpEmail({ email: 'user@example.com', otp: '1', purpose: 'login' })
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(await pending).toEqual({ success: false, error: 'Resend 429: Too many requests' })
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(18)
+    expect(resendCircuitBreaker.getState()).toBe('closed')
+  })
+
+  it('still counts 5xx toward the breaker and does not retry it', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(503, { message: 'unavailable' }))
+    const result = await resendProvider.sendOtpEmail({ email: 'user@example.com', otp: '1', purpose: 'login' })
+    expect(result).toEqual({ success: false, error: 'Resend 503: unavailable' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    resendCircuitBreaker.recordSuccess()
+  })
+
   it('opens after threshold network failures, short-circuits, then recovers', async () => {
     fetchMock.mockRejectedValue(new Error('network down'))
 

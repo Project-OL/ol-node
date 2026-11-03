@@ -302,6 +302,14 @@ const envSchema = z
       .string()
       .default('true')
       .transform((s) => s === 'true' || s === '1'),
+    /**
+     * BE-06: make a 480 px WebP `thumbnailUrl` for image posts at create time (best effort;
+     * null on failure, clients fall back to mediaUrl). `false` restores the old behaviour.
+     */
+    POST_IMAGE_THUMBNAILS: z
+      .string()
+      .default('true')
+      .transform((s) => s === 'true' || s === '1'),
     FACE_DUPLICATE_CHECK_ENABLED: z.coerce.boolean().default(true),
     FACE_CONTENT_MODERATION_ENABLED: z.coerce.boolean().default(false),
     /**

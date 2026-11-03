@@ -11,6 +11,23 @@ function getIp(request: {
   return clientIp(request)
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * BE-07: audit_logs.user_id / admin_user_id are UUID columns. A non-UUID actor such as 'system'
+ * made the whole insert fail (P2023, ~5.8k lost rows before 2026-10-19), so keep it in the
+ * details instead and store null.
+ */
+function uuidOrNull(
+  value: string | null | undefined,
+  field: string,
+  details: Record<string, unknown>,
+): string | null | undefined {
+  if (value == null || UUID_RE.test(value)) return value
+  details[`${field}NonUuid`] = value
+  return null
+}
+
 function getUserAgent(request: {
   headers?: Record<string, string | undefined>
 }): string | undefined {
@@ -44,13 +61,18 @@ export const auditService = {
   }) {
     const ip = params.ipAddress ?? (params.request ? getIp(params.request) : undefined)
     const ua = params.userAgent ?? (params.request ? getUserAgent(params.request) : undefined)
+    const extra: Record<string, unknown> = {}
+    const userId = uuidOrNull(params.userId, 'userId', extra)
+    const adminUserId = uuidOrNull(params.adminUserId, 'adminUserId', extra)
     auditRepository
       .log({
-        userId: params.userId,
-        adminUserId: params.adminUserId,
+        userId,
+        adminUserId,
         actionType: params.actionType,
         actionStatus: params.actionStatus,
-        actionDetails: params.actionDetails,
+        actionDetails: Object.keys(extra).length
+          ? { ...(params.actionDetails ?? {}), ...extra }
+          : params.actionDetails,
         ipAddress: ip,
         userAgent: ua,
         deviceId: params.deviceId,

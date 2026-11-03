@@ -17,7 +17,7 @@ import {
 } from '@aws-sdk/client-rekognition'
 import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
-import { rekognitionCircuitBreaker } from '../utils/circuitBreaker'
+import { rekognitionCircuitBreakers, type RekognitionOperation } from '../utils/circuitBreaker'
 
 const rekognitionClient = new RekognitionClient({
   region: env.AWS_REGION,
@@ -60,10 +60,12 @@ function isRekognitionBusinessError(err: unknown): boolean {
 }
 
 async function withTimeout<T>(
+  operation: RekognitionOperation,
   timeoutMs: number,
   run: (abortSignal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  if (rekognitionCircuitBreaker.shouldSkip()) {
+  const breaker = rekognitionCircuitBreakers[operation]
+  if (breaker.shouldSkip()) {
     throw new AppError(
       502,
       'Face recognition service temporarily unavailable',
@@ -74,11 +76,11 @@ async function withTimeout<T>(
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const result = await run(controller.signal)
-    rekognitionCircuitBreaker.recordSuccess()
+    breaker.recordSuccess()
     return result
   } catch (err) {
     if (!isRekognitionBusinessError(err)) {
-      rekognitionCircuitBreaker.recordFailure()
+      breaker.recordFailure()
     }
     throw err
   } finally {
@@ -116,7 +118,7 @@ export async function ensureCollectionExists(): Promise<void> {
 }
 
 export async function detectFacesQuality(imageBytes: Uint8Array) {
-  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('detect', env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new DetectFacesCommand({
         Attributes: ['ALL'],
@@ -128,7 +130,7 @@ export async function detectFacesQuality(imageBytes: Uint8Array) {
 }
 
 export async function detectModerationLabels(imageBytes: Uint8Array) {
-  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('detect', env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new DetectModerationLabelsCommand({
         Image: { Bytes: imageBytes },
@@ -140,7 +142,7 @@ export async function detectModerationLabels(imageBytes: Uint8Array) {
 }
 
 export async function recognizeCelebrities(imageBytes: Uint8Array) {
-  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('detect', env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new RecognizeCelebritiesCommand({
         Image: { Bytes: imageBytes },
@@ -151,7 +153,7 @@ export async function recognizeCelebrities(imageBytes: Uint8Array) {
 }
 
 export async function detectModerationLabelsFromS3(bucket: string, key: string) {
-  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('detect', env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new DetectModerationLabelsCommand({
         Image: { S3Object: { Bucket: bucket, Name: key } },
@@ -163,7 +165,7 @@ export async function detectModerationLabelsFromS3(bucket: string, key: string) 
 }
 
 export async function detectFacesQualityFromS3(bucket: string, key: string) {
-  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('detect', env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new DetectFacesCommand({
         Attributes: ['ALL'],
@@ -179,7 +181,7 @@ export async function indexUserFace(params: { userId: string; imageBytes: Uint8A
   // Keep it stable but sanitize to a safe subset.
   const externalImageId = params.userId.replace(/[^A-Za-z0-9_.-]/g, '_')
 
-  return withTimeout(env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('index', env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new IndexFacesCommand({
         CollectionId: env.REKOGNITION_COLLECTION_ID,
@@ -195,7 +197,7 @@ export async function indexUserFace(params: { userId: string; imageBytes: Uint8A
 }
 
 export async function searchFaceByImage(imageBytes: Uint8Array) {
-  return withTimeout(env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('search', env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new SearchFacesByImageCommand({
         CollectionId: env.REKOGNITION_COLLECTION_ID,
@@ -218,6 +220,7 @@ export async function searchFaceInCollection(params: {
 }) {
   try {
     const result = await withTimeout(
+      'search',
       params.timeoutMs ?? env.FACE_VERIFY_TIMEOUT_MS,
       async (abortSignal) =>
         rekognitionClient.send(
@@ -259,20 +262,23 @@ export async function compareFacesIndexedToLive(params: {
   similarityThreshold: number
   timeoutMs?: number
 }) {
-  return withTimeout(params.timeoutMs ?? env.FACE_VERIFY_TIMEOUT_MS, async (abortSignal) =>
-    rekognitionClient.send(
-      new CompareFacesCommand({
-        SourceImage: { Bytes: params.sourceImageBytes },
-        TargetImage: { Bytes: params.targetImageBytes },
-        SimilarityThreshold: params.similarityThreshold,
-      }),
-      { abortSignal },
-    ),
+  return withTimeout(
+    'search',
+    params.timeoutMs ?? env.FACE_VERIFY_TIMEOUT_MS,
+    async (abortSignal) =>
+      rekognitionClient.send(
+        new CompareFacesCommand({
+          SourceImage: { Bytes: params.sourceImageBytes },
+          TargetImage: { Bytes: params.targetImageBytes },
+          SimilarityThreshold: params.similarityThreshold,
+        }),
+        { abortSignal },
+      ),
   )
 }
 
 export async function deleteFaceFromCollection(faceId: string) {
-  return withTimeout(env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('index', env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new DeleteFacesCommand({
         CollectionId: env.REKOGNITION_COLLECTION_ID,
@@ -284,7 +290,7 @@ export async function deleteFaceFromCollection(faceId: string) {
 }
 
 export async function describeFaceCollection() {
-  return withTimeout(env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('index', env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new DescribeCollectionCommand({
         CollectionId: env.REKOGNITION_COLLECTION_ID,
@@ -295,7 +301,7 @@ export async function describeFaceCollection() {
 }
 
 export async function listFacesInCollection(params: { maxResults?: number; nextToken?: string }) {
-  return withTimeout(env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
+  return withTimeout('index', env.FACE_INDEX_TIMEOUT_MS, async (abortSignal) =>
     rekognitionClient.send(
       new ListFacesCommand({
         CollectionId: env.REKOGNITION_COLLECTION_ID,
@@ -320,7 +326,7 @@ export async function createFaceLivenessSession(params: {
 }) {
   const timeoutMs = Math.max(env.FACE_VERIFY_TIMEOUT_MS, 15_000)
   const sendCreate = (bucket?: string) =>
-    withTimeout(timeoutMs, async (abortSignal) =>
+    withTimeout('liveness', timeoutMs, async (abortSignal) =>
       rekognitionClient.send(
         new CreateFaceLivenessSessionCommand({
           ClientRequestToken: params.clientRequestToken,
@@ -353,7 +359,7 @@ export async function createFaceLivenessSession(params: {
 
 export async function getFaceLivenessSessionResults(sessionId: string) {
   const timeoutMs = Math.max(env.FACE_VERIFY_TIMEOUT_MS, 15_000)
-  return withTimeout(timeoutMs, async (abortSignal) =>
+  return withTimeout('liveness', timeoutMs, async (abortSignal) =>
     rekognitionClient.send(new GetFaceLivenessSessionResultsCommand({ SessionId: sessionId }), {
       abortSignal,
     }),
