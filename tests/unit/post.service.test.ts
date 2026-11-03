@@ -306,6 +306,72 @@ describe('postService', () => {
       }
     })
 
+    describe('image thumbnails (BE-06)', () => {
+      const mediaKey = `posts/${userId}/img1.jpg`
+      const stubCreatedPost = () => {
+        createPostRepo.mockImplementation(async (data: Record<string, unknown>) => ({
+          id: postId,
+          ...data,
+        }))
+        findById.mockImplementation(async () => ({
+          id: postId,
+          user: { id: userId, username: 'u', publicId: BigInt(1) },
+          tags: [],
+          mediaUrl: `https://cdn/${mediaKey}`,
+          mediaType: 'IMAGE',
+          thumbnailUrl: createPostRepo.mock.calls[0]?.[0]?.thumbnailUrl ?? null,
+          caption: null,
+          visibility: 'SUBSCRIBERS_ONLY',
+          subscriberOnly: false,
+          likesCount: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }))
+      }
+
+      it('stores a 480 px WebP next to the original and returns its URL', async () => {
+        const sharp = (await import('sharp')).default
+        const big = await sharp({
+          create: { width: 1600, height: 1200, channels: 3, background: { r: 10, g: 120, b: 200 } },
+        })
+          .jpeg()
+          .toBuffer()
+        getObjectBuffer.mockResolvedValue(big)
+        getCdnOrS3PublicUrl.mockImplementation((key: string) => `https://cdn/${key}`)
+        stubCreatedPost()
+
+        const result = await postService.createPost(userId, { mediaKey }, meta)
+
+        const thumbKey = `posts/${userId}/img1.thumb.webp`
+        expect(putObjectBuffer).toHaveBeenCalledWith(
+          expect.objectContaining({ key: thumbKey, contentType: 'image/webp' }),
+        )
+        const stored = putObjectBuffer.mock.calls[0]![0].body as Buffer
+        const metaOut = await sharp(stored).metadata()
+        expect(metaOut.format).toBe('webp')
+        expect(Math.max(metaOut.width!, metaOut.height!)).toBe(480)
+        expect(createPostRepo).toHaveBeenCalledWith(
+          expect.objectContaining({ thumbnailKey: thumbKey, thumbnailUrl: `https://cdn/${thumbKey}` }),
+        )
+        expect(result.thumbnailUrl).toBe(`https://cdn/${thumbKey}`)
+        expect(result.mediaUrl).toBe(`https://cdn/${mediaKey}`)
+      })
+
+      it('still creates the post with no thumbnail when the original cannot be read', async () => {
+        getObjectBuffer.mockRejectedValue(new Error('NoSuchKey'))
+        getCdnOrS3PublicUrl.mockImplementation((key: string) => `https://cdn/${key}`)
+        stubCreatedPost()
+
+        const result = await postService.createPost(userId, { mediaKey }, meta)
+
+        expect(putObjectBuffer).not.toHaveBeenCalled()
+        expect(createPostRepo).toHaveBeenCalledWith(
+          expect.objectContaining({ thumbnailKey: null, thumbnailUrl: null }),
+        )
+        expect(result.thumbnailUrl).toBeNull()
+      })
+    })
+
     it('creates video post with generated thumbnail', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2026-04-12T12:00:00Z'))

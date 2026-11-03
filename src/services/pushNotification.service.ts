@@ -4,8 +4,24 @@ import { AppError } from '../middlewares/errorHandler'
 import { PushDeliverySource, PushDeliveryStatus } from '@prisma/client'
 import { pushDeliveryLogService } from './pushDeliveryLog.service'
 import { rootLogger } from '../utils/rootLogger'
+import { fcmCircuitBreaker } from '../utils/circuitBreaker'
 
 const log = rootLogger.child({ module: 'push-notification' })
+
+/**
+ * BE-09 P4: FCM errors that say Google's side is unavailable (or unreachable). Token and payload
+ * errors (invalid/unregistered token, invalid-argument) and quota errors are per-request and must
+ * not open the breaker.
+ */
+const FCM_INFRA_ERROR_CODES = new Set([
+  'messaging/internal-error',
+  'messaging/server-unavailable',
+  'messaging/unknown-error',
+  'app/network-error',
+  'app/network-timeout',
+  'unknown',
+])
+const FCM_CIRCUIT_OPEN = 'FCM_CIRCUIT_OPEN'
 
 export type PushPayload = {
   title: string
@@ -122,6 +138,9 @@ export const pushNotificationService = {
     const data = normalizeData(payload.data)
     try {
       await assertFirebaseCredentials()
+      if (fcmCircuitBreaker.shouldSkip()) {
+        throw new AppError(503, 'Push temporarily unavailable', FCM_CIRCUIT_OPEN)
+      }
       const sendResult = getFirebaseMessaging().send({
         token,
         notification: { title: payload.title, body: payload.body },
@@ -133,13 +152,19 @@ export const pushNotificationService = {
         )
       }
       await sendResult
+      fcmCircuitBreaker.recordSuccess()
       result = { success: true }
     } catch (err) {
       if (
         err instanceof AppError &&
-        (err.code === 'FIREBASE_NOT_CONFIGURED' || err.code === 'FIREBASE_PRIVATE_KEY_INVALID')
+        (err.code === 'FIREBASE_NOT_CONFIGURED' ||
+          err.code === 'FIREBASE_PRIVATE_KEY_INVALID' ||
+          err.code === FCM_CIRCUIT_OPEN)
       ) {
-        log.debug({ userId, code: err.code }, 'push skipped: Firebase not configured')
+        log.debug(
+          { userId, code: err.code },
+          'push skipped: Firebase not configured or circuit open',
+        )
         result = {
           success: false,
           skipped: true,
@@ -148,6 +173,7 @@ export const pushNotificationService = {
         }
       } else {
         const { code, message } = extractFirebaseError(err)
+        if (FCM_INFRA_ERROR_CODES.has(code)) fcmCircuitBreaker.recordFailure()
         if (STALE_TOKEN_ERROR_CODES.has(code)) {
           await prisma.user
             .update({
@@ -218,11 +244,15 @@ export const pushNotificationService = {
     const data = normalizeData(payload.data)
     try {
       await assertFirebaseCredentials()
+      if (fcmCircuitBreaker.shouldSkip()) {
+        throw new AppError(503, 'Push temporarily unavailable', FCM_CIRCUIT_OPEN)
+      }
       const result = await getFirebaseMessaging().sendEachForMulticast({
         tokens,
         notification: { title: payload.title, body: payload.body },
         data,
       })
+      fcmCircuitBreaker.recordSuccess()
       const results = recipients.map((r, i) => {
         const resp = result.responses[i]
         if (resp?.success) return { userId: r.userId, success: true }
@@ -268,9 +298,14 @@ export const pushNotificationService = {
     } catch (err) {
       if (
         err instanceof AppError &&
-        (err.code === 'FIREBASE_NOT_CONFIGURED' || err.code === 'FIREBASE_PRIVATE_KEY_INVALID')
+        (err.code === 'FIREBASE_NOT_CONFIGURED' ||
+          err.code === 'FIREBASE_PRIVATE_KEY_INVALID' ||
+          err.code === FCM_CIRCUIT_OPEN)
       ) {
-        log.debug({ code: err.code }, 'multicast push skipped: Firebase not configured')
+        log.debug(
+          { code: err.code },
+          'multicast push skipped: Firebase not configured or circuit open',
+        )
         const results = recipients.map((r) => ({
           userId: r.userId,
           success: false,
@@ -296,6 +331,7 @@ export const pushNotificationService = {
         return { successCount: 0, failureCount: recipients.length, results }
       }
       const extracted = extractFirebaseError(err)
+      if (FCM_INFRA_ERROR_CODES.has(extracted.code)) fcmCircuitBreaker.recordFailure()
       log.warn(
         { err, fcmCode: extracted.code, fcmMessage: extracted.message },
         'multicast push failed',

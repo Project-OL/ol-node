@@ -197,6 +197,7 @@ model User {
   userRestrictions             UserRestriction[]
   restrictionTargetsAsTarget   UserRestrictionTarget[] @relation("RestrictionTargetUser")
   moderationNotifications      SuperAdminNotification[]
+  superHost                    SuperHost?
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -207,6 +208,21 @@ model User {
   @@index([currentAgencyId])
   @@index([lastActiveAt])
   @@map("users")
+}
+
+/// BE-30: super-host grants (admin route POST /admin/super-hosts). Read/written with raw SQL in
+/// super-host.repository.ts; the table was never created, so reads fell back to "none" and grants
+/// failed. granted_by / revoked_by are system_admins ids (no FK, like other admin actor columns).
+model SuperHost {
+  userId          String    @id @map("user_id") @db.Uuid
+  grantedByUserId String    @map("granted_by_user_id") @db.Uuid
+  grantedAt       DateTime  @default(now()) @map("granted_at") @db.Timestamptz
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz
+  revokedByUserId String?   @map("revoked_by_user_id") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("super_hosts")
 }
 
 // ─── 2. AUTH_IDENTIFIERS (email, phone, google, facebook, apple) ───

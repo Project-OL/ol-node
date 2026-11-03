@@ -13,6 +13,9 @@ import { subscriptionService } from './subscription.service'
 import { videoThumbnailService } from './video-thumbnail.service'
 import { rootLogger } from '../utils/rootLogger'
 import { assertUserMayPost } from './wallet-freeze.service'
+import { env } from '../config/env'
+import { generateThumbnail, THUMBNAIL_CONTENT_TYPE, THUMBNAIL_EXT } from '../utils/image-thumbnail'
+import { MAX_ASSET_BYTES } from '../utils/remote-asset'
 
 const VIDEO_MIME_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'] as const
 
@@ -26,6 +29,13 @@ function detectPostMediaType(mediaKey: string): 'IMAGE' | 'VIDEO' {
 
 function buildThumbnailKey(mediaKey: string): string {
   return mediaKey.replace(/\.[^/.]+$/, '.thumb.jpg')
+}
+
+/** BE-06: grid-sized WebP for image posts. 480 px covers a 3-column grid cell on a 3x screen. */
+const POST_IMAGE_THUMBNAIL_MAX_PX = 480
+
+function buildImageThumbnailKey(mediaKey: string): string {
+  return mediaKey.replace(/\.[^/.]+$/, `.thumb.${THUMBNAIL_EXT}`)
 }
 
 function buildMediaKeyRegex(userId: string): RegExp {
@@ -173,6 +183,30 @@ export const postService = {
         rootLogger
           .child({ module: 'post-service', mediaKey })
           .error({ err }, 'Video thumbnail generation failed')
+      }
+    } else if (env.POST_IMAGE_THUMBNAILS) {
+      // Best effort, like the video branch: on any failure the post keeps thumbnailUrl null and
+      // clients use mediaUrl. generateThumbnail returns null for animated/small/unreadable images.
+      try {
+        const source = await storageService.getObjectBuffer(mediaKey)
+        if (source.byteLength <= MAX_ASSET_BYTES) {
+          const thumb = await generateThumbnail(source, { maxPx: POST_IMAGE_THUMBNAIL_MAX_PX })
+          if (thumb) {
+            const key = buildImageThumbnailKey(mediaKey)
+            await storageService.putObjectBuffer({
+              key,
+              body: thumb.buffer,
+              contentType: THUMBNAIL_CONTENT_TYPE,
+              cacheControl: 'public, max-age=31536000, immutable',
+            })
+            thumbnailKey = key
+            thumbnailUrl = storageService.getCdnOrS3PublicUrl(key)
+          }
+        }
+      } catch (err) {
+        rootLogger
+          .child({ module: 'post-service', mediaKey })
+          .warn({ err }, 'Image thumbnail generation failed')
       }
     }
 
