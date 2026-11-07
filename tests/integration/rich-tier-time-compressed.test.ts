@@ -13,18 +13,36 @@
  *   bash:       RICH_TIER_SIM_LIVE=1 npm run test:rich-tier-sim
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   REAL_MONTH_MS,
   sim,
   simWait,
   simDayDelayMs,
 } from './rich-tier-sim-harness'
-import {
-  applyRetentionRule,
-  richTierService,
-  thresholdForTier,
-} from '../../src/services/rich-tier.service'
+
+// vi.mock is only hoisted in the test file, so the harness mocks are registered here.
+vi.mock('../../src/utils/datetime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/utils/datetime')>()),
+  utcNow: (await import('./rich-tier-sim-harness')).simMocks.utcNow,
+}))
+vi.mock('../../src/config/redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/config/redis')>()),
+  redisClient: (await import('./rich-tier-sim-harness')).simMocks.redisClient,
+}))
+vi.mock('../../src/repositories/vip-assignment.repository', async () =>
+  (await import('./rich-tier-sim-harness')).simMocks.vipAssignmentRepo,
+)
+vi.mock('../../src/repositories/richTier.repository', async () =>
+  (await import('./rich-tier-sim-harness')).simMocks.richTierRepo,
+)
+vi.mock('../../src/services/ranking.service', async () =>
+  (await import('./rich-tier-sim-harness')).simMocks.rankingService,
+)
+vi.mock('../../src/config/database', async () =>
+  (await import('./rich-tier-sim-harness')).simMocks.database,
+)
+import { applyRetentionRule, richTierService } from '../../src/services/rich-tier.service'
 
 const LIVE = process.env.RICH_TIER_SIM_LIVE === '1'
 
@@ -66,9 +84,11 @@ describe(
       const closed = sim.advanceToNextMonth()
       await rollover(uid, closed.year, closed.month)
 
-      expect(sim.getTier(uid)).toBe(3)
+      // III → lands on I, halfway to II: 3M + (5M-3M)/2 = 4M
+      expect(sim.getTier(uid)).toBe(1)
       expect(sim.getCarryover(uid)).toBe(applyRetentionRule(3))
-      expect(sim.getCarryover(uid)).toBe(thresholdForTier(1) / 2n)
+      expect(sim.getCarryover(uid)).toBe(4_000_000n)
+      expect(sim.state.historyRows[0]?.tier).toBe(3)
     })
 
     it('single recharge jumps across multiple tiers immediately', async () => {
@@ -82,12 +102,13 @@ describe(
       const closed = sim.advanceToNextMonth()
       await rollover(uid, closed.year, closed.month)
 
-      expect(sim.getTier(uid)).toBe(6)
+      // VI → lands on IV: 20M + (30M-20M)/2 = 25M
+      expect(sim.getTier(uid)).toBe(4)
       expect(sim.getCarryover(uid)).toBe(applyRetentionRule(6))
-      expect(sim.getCarryover(uid)).toBe(10_000_000n)
+      expect(sim.getCarryover(uid)).toBe(25_000_000n)
     })
 
-    it('downgrades to tier 0 after a month with zero recharge', async () => {
+    it('decays to tier 0 over months with zero recharge', async () => {
       const uid = 'user_downgrade_zero'
 
       await simWait(5)
@@ -97,8 +118,9 @@ describe(
       await simWait(25)
       let closed = sim.advanceToNextMonth()
       await rollover(uid, closed.year, closed.month)
-      expect(sim.getTier(uid)).toBe(4)
-      expect(sim.getCarryover(uid)).toBe(2_500_000n)
+      // IV → lands on II: 5M + (10M-5M)/2 = 7.5M
+      expect(sim.getTier(uid)).toBe(2)
+      expect(sim.getCarryover(uid)).toBe(7_500_000n)
 
       await simMonthWait()
       closed = sim.advanceToNextMonth()
@@ -106,10 +128,10 @@ describe(
 
       expect(sim.getTier(uid)).toBe(0)
       expect(sim.getCarryover(uid)).toBe(0n)
-      expect(sim.state.historyRows).toHaveLength(2)
+      expect(sim.state.historyRows.map((r) => r.tier)).toEqual([4, 2])
     })
 
-    it('carryover from tier 7 cushions next-month progress', async () => {
+    it('carryover from tier 7 cushions next-month progress; badge only rises mid-month', async () => {
       const uid = 'user_carryover_cushion'
 
       await simWait(5)
@@ -119,16 +141,52 @@ describe(
       await simWait(25)
       let closed = sim.advanceToNextMonth()
       await rollover(uid, closed.year, closed.month)
-      expect(sim.getCarryover(uid)).toBe(10_000_000n)
+      // VII → lands on IV: 25M
+      expect(sim.getCarryover(uid)).toBe(25_000_000n)
+      expect(sim.getTier(uid)).toBe(4)
 
       await simWait(5)
       await recharge(uid, 5_000_000n)
-      expect(sim.getTier(uid)).toBe(3)
+      expect(sim.getTier(uid)).toBe(5) // 30M
 
       await simWait(25)
       closed = sim.advanceToNextMonth()
       await rollover(uid, closed.year, closed.month)
+      // V → lands on III: 10M + (20M-10M)/2 = 15M
       expect(sim.getTier(uid)).toBe(3)
+      expect(sim.getCarryover(uid)).toBe(15_000_000n)
+    })
+
+    it('RICH VIII in Oct → III on Nov 1, rises with Nov recharges, re-rolled on Dec 1', async () => {
+      const uid = 'user_viii_example'
+      sim.setSimUtc(2026, 10, 5)
+      await recharge(uid, 120_000_000n)
+      expect(sim.getTier(uid)).toBe(7)
+      sim.setSimUtc(2026, 10, 20)
+      await recharge(uid, 90_000_000n)
+      expect(sim.getTier(uid)).toBe(8)
+
+      let closed = sim.advanceToNextMonth()
+      await rollover(uid, closed.year, closed.month)
+      // VIII → lands on V: 30M + (50M-30M)/2 = 40M
+      expect(sim.getCarryover(uid)).toBe(40_000_000n)
+      expect(sim.getTier(uid)).toBe(5)
+
+      sim.setSimUtc(2026, 11, 10)
+      await recharge(uid, 1_000_000n)
+      expect(sim.getTier(uid)).toBe(5) // 41M — no mid-month drop
+      sim.setSimUtc(2026, 11, 25)
+      await recharge(uid, 10_000_000n)
+      expect(sim.getTier(uid)).toBe(6) // 51M
+
+      closed = sim.advanceToNextMonth()
+      // recharge on Dec 1 before this user's rollover batch runs
+      await recharge(uid, 10_000_000n)
+      await rollover(uid, closed.year, closed.month)
+      // Nov closed at 51M → VI; lands on IV with 25M; + 10M Dec = 35M → V
+      expect(sim.state.historyRows.map((r) => r.tier)).toEqual([8, 6])
+      expect(sim.getCarryover(uid)).toBe(25_000_000n)
+      expect(sim.getTier(uid)).toBe(5)
     })
 
     it('spend does not change badge (no applyRecharge)', async () => {

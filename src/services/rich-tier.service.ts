@@ -92,16 +92,38 @@ export function computeTier(
   return tier
 }
 
-/** Carryover coins applied at UTC month rollover toward the *next* month’s progress. */
+/**
+ * Tier a user lands on at month rollover, from the tier reached in the closed month:
+ * I–II → none, III–VI → 2 below, VII–IX → 3 below, X → VII.
+ */
+export function retentionLandingTier(closedMonthTier: number): number {
+  if (closedMonthTier <= 2) return 0
+  if (closedMonthTier <= 6) return closedMonthTier - 2
+  if (closedMonthTier <= 9) return closedMonthTier - 3
+  if (closedMonthTier === 10) return 7
+  return 0
+}
+
+/**
+ * Carryover coins applied at UTC month rollover toward the *next* month’s progress:
+ * the landing tier's threshold plus half the gap to the tier above it, so the user
+ * starts the month ON the landing tier, halfway to the next one
+ * (e.g. RICH III → RICH I with 3M + (5M − 3M) / 2 = 4M).
+ */
 export function applyRetentionRule(
   newTier: number,
   ladder: readonly RichTierLadderRow[] = defaultRichTierLadder(),
 ): bigint {
-  if (newTier <= 2) return 0n
-  if (newTier <= 6) return thresholdForTier(newTier - 2, ladder) / 2n
-  if (newTier <= 9) return thresholdForTier(newTier - 3, ladder) / 2n
-  if (newTier === 10) return thresholdForTier(7, ladder) / 2n
-  return 0n
+  const landing = retentionLandingTier(newTier)
+  if (landing <= 0) return 0n
+  const floor = thresholdForTier(landing, ladder)
+  const next = thresholdForTier(landing + 1, ladder)
+  if (next <= floor) return floor
+  return floor + (next - floor) / 2n
+}
+
+function nextYearMonth(year: number, month: number): { year: number; month: number } {
+  return month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 }
 }
 
 export type RichTierSnapshotDto = {
@@ -272,7 +294,8 @@ export const richTierService = {
     const liveProgress = carryover + monthTotal
     const liveTier = computeTier(liveProgress, ladder)
 
-    if (liveTier !== previousTier) {
+    // A recharge only ever raises the badge; downgrades happen only at monthly rollover.
+    if (liveTier > previousTier) {
       await tx.userRichTier.upsert({
         where: { userId },
         create: {
@@ -385,11 +408,23 @@ export const richTierService = {
         const progressTotal = carryIn + pure
         const effectiveTier = computeTier(progressTotal, ladder)
         const newCarryover = applyRetentionRule(effectiveTier, ladder)
+        // New month's badge starts from the carryover, plus any recharge already made in
+        // the new month before this user's rollover ran (rollover starts 00:05 UTC, batched).
+        const openMonth = nextYearMonth(prevYear, prevMonth)
+        const openAgg = await tx.monthlyRechargeAggregate.findUnique({
+          where: {
+            userId_year_month: { userId, year: openMonth.year, month: openMonth.month },
+          },
+        })
+        const openMonthTier = computeTier(
+          newCarryover + (openAgg?.totalRechargeCoins ?? 0n),
+          ladder,
+        )
         const rolledAt = new Date()
         await richTierRepository.upsertUserRichTier(
           {
             userId,
-            currentTier: effectiveTier,
+            currentTier: openMonthTier,
             evaluatedFromYear: prevYear,
             evaluatedFromMonth: prevMonth,
             evaluatedRechargeCoins: progressTotal,

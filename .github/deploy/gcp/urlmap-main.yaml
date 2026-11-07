@@ -1,3 +1,5 @@
+# HISTORICAL: managed LB url map (ol-node-rest-urlmap), deleted 2026-11-03 (INF-28). The live map is
+# urlmap-classic.yaml (cl-ol-node-rest-urlmap). Kept only as the source provision.ps1 used.
 defaultService: https://www.googleapis.com/compute/v1/projects/__PROJECT__/global/backendServices/ol-node-rest-backend
 hostRules:
 - hosts:

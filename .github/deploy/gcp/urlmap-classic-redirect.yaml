@@ -1,0 +1,7 @@
+# HTTP -> HTTPS redirect map for the classic LB (cl-ol-node-rest-http-proxy).
+name: cl-ol-node-rest-redirect
+description: "INF-25: classic copy of ol-node-rest-redirect (HTTP -> HTTPS)"
+defaultUrlRedirect:
+  httpsRedirect: true
+  redirectResponseCode: MOVED_PERMANENTLY_DEFAULT
+  stripQuery: false
