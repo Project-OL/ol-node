@@ -1,11 +1,29 @@
 /**
  * In-memory harness for rich-tier live-badge + rollover simulations.
  * Wired to real `richTierService.applyRecharge` / `processMonthlyRolloverForUser`.
+ *
+ * `vi.mock` is only hoisted in the test file itself, so this module only *builds* the
+ * mocks (`simMocks`); the test file registers them with
+ * `vi.mock(path, async () => (await import('./rich-tier-sim-harness')).simMocks.<x>)`.
+ * Do not import `src/services/rich-tier.service` here (circular with the repo mock).
  */
 
 import { vi } from 'vitest'
 import type { Prisma } from '@prisma/client'
-import { thresholdForTier } from '../../src/services/rich-tier.service'
+
+/** Default seed ladder (mirrors RICH_TIER_THRESHOLDS). */
+const SIM_LADDER: readonly bigint[] = [
+  3_000_000n,
+  5_000_000n,
+  10_000_000n,
+  20_000_000n,
+  30_000_000n,
+  50_000_000n,
+  100_000_000n,
+  200_000_000n,
+  500_000_000n,
+  1_000_000_000n,
+]
 
 export const REAL_MONTH_MS = 5 * 60 * 1000
 
@@ -38,7 +56,7 @@ function histKey(userId: string, year: number, month: number) {
   return `${userId}:${year}:${month}`
 }
 
-const simInternal = vi.hoisted(() => {
+const simInternal = (() => {
   const state = {
     simNow: new Date(Date.UTC(2025, 0, 1, 12, 0, 0)),
     aggregates: new Map<
@@ -181,40 +199,30 @@ const simInternal = vi.hoisted(() => {
     aggKey,
     histKey,
   }
-})
+})()
 
-/** Public simulation API (not hoisted — safe to export). */
+/** Public simulation API. */
 export const sim = simInternal
 
-vi.mock('../../src/utils/datetime', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/utils/datetime')>()
-  return {
-    ...actual,
-    utcNow: () => simInternal.state.simNow,
-  }
-})
+const redisClientMock = {
+  get: vi.fn().mockResolvedValue(null),
+  set: vi.fn().mockResolvedValue('OK'),
+  del: vi.fn().mockResolvedValue(1),
+}
 
-vi.mock('../../src/config/redis', async () => {
-  const actual = await vi.importActual<typeof import('../../src/config/redis')>(
-    '../../src/config/redis',
-  )
-  return {
-    ...actual,
-    redisClient: {
-      get: vi.fn().mockResolvedValue(null),
-      set: vi.fn().mockResolvedValue('OK'),
-      del: vi.fn().mockResolvedValue(1),
-    },
-  }
-})
-
-vi.mock('../../src/repositories/vip-assignment.repository', () => ({
+const vipAssignmentRepoMock = {
   vipAssignmentRepository: {
     findMostRecent: vi.fn().mockResolvedValue(null),
   },
-}))
+}
 
-vi.mock('../../src/repositories/richTier.repository', () => ({
+const rankingServiceMock = {
+  rankingService: {
+    onRecharge: vi.fn().mockResolvedValue(undefined),
+  },
+}
+
+const richTierRepoMock = {
   richTierRepository: {
     upsertMonthlyAggregate: async (
       {
@@ -315,21 +323,32 @@ vi.mock('../../src/repositories/richTier.repository', () => ({
       })
     },
     getConfig: async () =>
-      Array.from({ length: 10 }, (_, i) => ({
+      SIM_LADDER.map((minRechargeCoins, i) => ({
         tier: i + 1,
-        minRechargeCoins: thresholdForTier(i + 1),
+        minRechargeCoins,
         displayName: `RICH ${i + 1}`,
       })),
     listHistory: async () => [],
   },
-}))
+}
 
-vi.mock('../../src/config/database', () => ({
+const databaseMock = {
   prisma: {
-    $transaction: async (fn: (tx: Prisma.TransactionClient) => Promise<void>) => fn(simInternal.createTx()),
+    $transaction: async (fn: (tx: Prisma.TransactionClient) => Promise<void>) =>
+      fn(simInternal.createTx()),
   },
   prismaRead: {},
-}))
+}
+
+/** Module mocks for the test file to register (see header). */
+export const simMocks = {
+  redisClient: redisClientMock,
+  vipAssignmentRepo: vipAssignmentRepoMock,
+  rankingService: rankingServiceMock,
+  richTierRepo: richTierRepoMock,
+  database: databaseMock,
+  utcNow: () => simInternal.state.simNow,
+}
 
 export const simDayDelayMs = (days: number) => Math.round((days / 30) * REAL_MONTH_MS)
 

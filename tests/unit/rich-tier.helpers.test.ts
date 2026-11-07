@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyRetentionRule,
   computeTier,
+  retentionLandingTier,
   RICH_TIER_THRESHOLDS,
   thresholdForTier,
 } from "../../src/services/rich-tier.service";
@@ -27,6 +28,14 @@ describe("computeTier", () => {
   });
 });
 
+describe("retentionLandingTier", () => {
+  it("I–II → none, III–VI → 2 below, VII–IX → 3 below, X → VII", () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(retentionLandingTier)).toEqual([
+      0, 0, 0, 1, 2, 3, 4, 4, 5, 6, 7,
+    ]);
+  });
+});
+
 describe("applyRetentionRule", () => {
   it("returns 0 for tiers 0–2", () => {
     expect(applyRetentionRule(0)).toBe(0n);
@@ -34,13 +43,31 @@ describe("applyRetentionRule", () => {
     expect(applyRetentionRule(2)).toBe(0n);
   });
 
-  it("matches spec for sample mid tiers", () => {
-    expect(applyRetentionRule(3)).toBe(thresholdForTier(1) / 2n);
-    expect(applyRetentionRule(6)).toBe(thresholdForTier(4) / 2n);
-    expect(applyRetentionRule(7)).toBe(thresholdForTier(4) / 2n);
-    expect(applyRetentionRule(8)).toBe(thresholdForTier(5) / 2n);
-    expect(applyRetentionRule(9)).toBe(thresholdForTier(6) / 2n);
-    expect(applyRetentionRule(10)).toBe(thresholdForTier(7) / 2n);
+  it("lands on the landing tier, halfway to the next one (default ladder)", () => {
+    expect(applyRetentionRule(3)).toBe(4_000_000n); // I: 3M + (5M-3M)/2
+    expect(applyRetentionRule(4)).toBe(7_500_000n); // II: 5M + (10M-5M)/2
+    expect(applyRetentionRule(5)).toBe(15_000_000n); // III
+    expect(applyRetentionRule(6)).toBe(25_000_000n); // IV
+    expect(applyRetentionRule(7)).toBe(25_000_000n); // IV
+    expect(applyRetentionRule(8)).toBe(40_000_000n); // V
+    expect(applyRetentionRule(9)).toBe(75_000_000n); // VI
+    expect(applyRetentionRule(10)).toBe(150_000_000n); // VII
+  });
+
+  it("carryover always computes back to exactly the landing tier", () => {
+    for (let t = 0; t <= 10; t++) {
+      expect(computeTier(applyRetentionRule(t))).toBe(retentionLandingTier(t));
+    }
+  });
+
+  it("uses a custom ladder", () => {
+    const ladder = Array.from({ length: 10 }, (_, i) => ({
+      tier: i + 1,
+      minRechargeCoins: BigInt((i + 1) * 100),
+      displayName: `T${i + 1}`,
+    }));
+    expect(applyRetentionRule(3, ladder)).toBe(150n); // 100 + (200-100)/2
+    expect(thresholdForTier(1, ladder)).toBe(100n);
   });
 });
 

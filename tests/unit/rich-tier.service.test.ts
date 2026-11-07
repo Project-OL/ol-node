@@ -278,7 +278,29 @@ describe("richTierService", () => {
     expect(upsertUserRichTier).toHaveBeenCalledTimes(1);
   });
 
-  it("processMonthlyRolloverForUser preserves live badge tier and applies carryover", async () => {
+  it("applyRecharge never lowers the badge mid-month", async () => {
+    const userRichTierUpsert = vi.fn();
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      userRichTier: {
+        // RICH VIII held from the closed month, stale carryover 15M
+        findUnique: vi.fn().mockResolvedValue({ currentTier: 8, carryoverCoins: 15_000_000n }),
+        upsert: userRichTierUpsert,
+      },
+    } as unknown as Prisma.TransactionClient;
+    upsertMonthlyAggregate.mockResolvedValue(undefined);
+    getMonthlyAggregateInTx.mockResolvedValue({
+      totalRechargeCoins: 1_000_000n,
+      rechargeCount: 1,
+      lastRechargeAt: new Date(),
+    });
+
+    await richTierService.applyRecharge("u1", 1_000_000n, tx);
+
+    expect(userRichTierUpsert).not.toHaveBeenCalled();
+  });
+
+  it("rollover records the closed-month tier and starts the badge on the landing tier", async () => {
     const txMock = {
       userRichTier: {
         findUnique: vi.fn().mockResolvedValue({
@@ -288,9 +310,10 @@ describe("richTierService", () => {
         }),
       },
       monthlyRechargeAggregate: {
-        findUnique: vi.fn().mockResolvedValue({
-          totalRechargeCoins: 35_000_000n,
-        }),
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ totalRechargeCoins: 35_000_000n }) // closed month
+          .mockResolvedValueOnce(null), // open month: nothing yet
       },
     };
     historyExists.mockResolvedValue(false);
@@ -305,21 +328,55 @@ describe("richTierService", () => {
 
     await richTierService.processMonthlyRolloverForUser("u1", 2026, 5);
 
+    // closed month: 15M + 35M = 50M → VI; lands on IV with 20M + (30M-20M)/2 = 25M
     expect(upsertUserRichTier).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "u1",
-        currentTier: 6,
-        carryoverCoins: 10_000_000n,
+        currentTier: 4,
+        carryoverCoins: 25_000_000n,
+        evaluatedRechargeCoins: 50_000_000n,
       }),
       txMock,
     );
     expect(insertHistory).toHaveBeenCalledWith(
       expect.objectContaining({
         tier: 6,
-        carryoverApplied: 10_000_000n,
+        carryoverApplied: 25_000_000n,
       }),
       txMock,
     );
+    expect(txMock.monthlyRechargeAggregate.findUnique).toHaveBeenLastCalledWith({
+      where: { userId_year_month: { userId: "u1", year: 2026, month: 6 } },
+    });
+  });
+
+  it("rollover counts open-month recharges made before the user's rollover ran", async () => {
+    const txMock = {
+      userRichTier: {
+        findUnique: vi.fn().mockResolvedValue({ userId: "u1", currentTier: 6, carryoverCoins: 0n }),
+      },
+      monthlyRechargeAggregate: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ totalRechargeCoins: 50_000_000n }) // Dec: VI
+          .mockResolvedValueOnce({ totalRechargeCoins: 10_000_000n }), // Jan 1, 00:02 UTC
+      },
+    };
+    historyExists.mockResolvedValue(false);
+    $transaction.mockImplementation(
+      async (fn: (tx: typeof txMock) => Promise<void>) => {
+        await fn(txMock);
+      },
+    );
+    await richTierService.processMonthlyRolloverForUser("u1", 2026, 12);
+    // 25M carryover + 10M already recharged = 35M → V (not IV)
+    expect(upsertUserRichTier).toHaveBeenCalledWith(
+      expect.objectContaining({ currentTier: 5, carryoverCoins: 25_000_000n }),
+      txMock,
+    );
+    expect(txMock.monthlyRechargeAggregate.findUnique).toHaveBeenLastCalledWith({
+      where: { userId_year_month: { userId: "u1", year: 2027, month: 1 } },
+    });
   });
 
   it("rollover with zero recharge yields tier 0 and carryover 0 when no carry-in", async () => {
@@ -372,7 +429,7 @@ describe("richTierService", () => {
     );
   });
 
-  it("rollover with tier-1 progress keeps tier 1 and zero carryover", async () => {
+  it("rollover from tier 1 drops the badge to 0 with zero carryover", async () => {
     const txMock = {
       userRichTier: {
         findUnique: vi.fn().mockResolvedValue({
@@ -382,9 +439,10 @@ describe("richTierService", () => {
         }),
       },
       monthlyRechargeAggregate: {
-        findUnique: vi.fn().mockResolvedValue({
-          totalRechargeCoins: 3_000_000n,
-        }),
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ totalRechargeCoins: 3_000_000n })
+          .mockResolvedValueOnce(null),
       },
     };
     historyExists.mockResolvedValue(false);
@@ -396,11 +454,12 @@ describe("richTierService", () => {
     await richTierService.processMonthlyRolloverForUser("u1", 2026, 2);
     expect(upsertUserRichTier).toHaveBeenCalledWith(
       expect.objectContaining({
-        currentTier: 1,
+        currentTier: 0,
         carryoverCoins: 0n,
       }),
       txMock,
     );
+    expect(insertHistory).toHaveBeenCalledWith(expect.objectContaining({ tier: 1 }), txMock);
   });
 
   it("computeTier uses the default seed ladder", () => {
