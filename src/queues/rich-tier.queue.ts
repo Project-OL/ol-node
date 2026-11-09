@@ -27,7 +27,8 @@ export async function enqueueRolloverMaster(
     { year, month, force },
     {
       ...richTierJobOptions,
-      jobId: `master:${year}-${month}${force ? ':force' : ''}`,
+      // BullMQ 5 rejects custom ids containing ':' (unless exactly 3 parts), so use '-'.
+      jobId: `master-${year}-${month}${force ? '-force' : ''}`,
     },
   )
 }
@@ -44,7 +45,7 @@ export async function enqueueRolloverBatch(
     { year, month, userIds },
     {
       ...richTierJobOptions,
-      jobId: `batch:${year}-${month}:${start}-${end}`,
+      jobId: `batch-${year}-${month}-${start}-${end}`,
     },
   )
 }

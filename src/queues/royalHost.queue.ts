@@ -25,7 +25,8 @@ export async function enqueueEvalMaster(weekStart: Date, force?: boolean): Promi
     { weekStart: weekStartStr, force },
     {
       ...royalHostJobOptions,
-      jobId: `master:${weekStartStr}${force ? ':force' : ''}`,
+      // BullMQ 5 rejects custom ids containing ':' (unless exactly 3 parts), so use '-'.
+      jobId: `master-${weekStartStr}${force ? '-force' : ''}`,
     },
   )
 }
@@ -39,7 +40,7 @@ export async function enqueueEvalBatch(weekStart: Date, userIds: string[]): Prom
     { weekStart: weekStartStr, userIds },
     {
       ...royalHostJobOptions,
-      jobId: `batch:${weekStartStr}:${start}-${end}`,
+      jobId: `batch-${weekStartStr}-${start}-${end}`,
     },
   )
 }

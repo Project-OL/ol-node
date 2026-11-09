@@ -27,7 +27,8 @@ export async function enqueueAgencyRecomputeMaster(
     { utcDate, force: force === true },
     {
       ...jobOpts,
-      jobId: `master:${utcDate}${force ? ':force' : ''}`,
+      // BullMQ 5 rejects custom ids containing ':' (unless exactly 3 parts), so use '-'.
+      jobId: `master-${utcDate}${force ? '-force' : ''}`,
     },
   )
 }
@@ -43,7 +44,7 @@ export async function enqueueAgencyRecomputeBatch(
     { utcDate, agencyUserIds },
     {
       ...jobOpts,
-      jobId: `batch:${utcDate}:${start}-${end}`,
+      jobId: `batch-${utcDate}-${start}-${end}`,
     },
   )
 }
