@@ -80,6 +80,13 @@ export const RedisKeys = {
   phoneModifyInProgress: (userId: string) => `phone_modify:${userId}`,
   /** Per-endpoint auth rate limit: ratelimit:auth:{endpoint}:{ip} */
   authRateLimit: (endpoint: string, ip: string) => `ratelimit:auth:${endpoint}:${ip}`,
+  /** SEC-18: per-identifier auth limit; `idHash` = sha256 of the normalised phone/email (no PII in the key). */
+  authIdentifierRateLimit: (endpoint: string, idHash: string) =>
+    `ratelimit:auth:id:${endpoint}:${idHash}`,
+  /** SEC-18: per-user bucket for auth endpoints that run after `authenticate` (provider bind/unbind). */
+  authUserRateLimit: (endpoint: string, userId: string) => `ratelimit:auth:u:${endpoint}:${userId}`,
+  /** SEC-18: logged-in traffic per IP across all users behind it (flood guard). */
+  rateLimitIpFlood: (ip: string) => `ratelimit:ipflood:${ip}`,
   /** Per-user security password rate limit */
   securityPasswordRateLimit: (endpoint: string, userId: string) =>
     `ratelimit:security:${endpoint}:${userId}`,

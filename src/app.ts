@@ -113,7 +113,9 @@ import { publicIdPreGenerationService } from './services/public-id-pre-generatio
 import { rootLogger } from './utils/rootLogger'
 import { registerRealtimeGateway } from './realtime/ws.gateway'
 import { globalRequestTimeoutHook } from './utils/requestTimeout'
-import { clientIp, trustProxySetting } from './utils/client-ip'
+import { trustProxySetting } from './utils/client-ip'
+import { rateLimitSubject } from './utils/rate-limit-subject'
+import { ipFloodGuardHook } from './middlewares/rateLimitAuth'
 import { isDraining } from './utils/drain'
 
 const REQUEST_TIMEOUT_MS = 30_000
@@ -222,13 +224,16 @@ export async function buildApp() {
   const labInMemoryRateLimit = env.LAB_REQUEST_METRICS || env.LAB_INMEMORY_RATE_LIMIT
 
   await app.register(rateLimit, {
-    max: env.RATE_LIMIT_MAX,
+    // SEC-18: logged-in requests get a bucket per user (carrier NAT puts many phones on one IP);
+    // only requests without a valid access token share a per-IP bucket. A route's own
+    // `config.rateLimit.max` still overrides this for both kinds.
+    max: (_req, key) => (key.startsWith('u:') ? env.RATE_LIMIT_MAX : env.RATE_LIMIT_ANON_MAX),
     timeWindow: env.RATE_LIMIT_TIME_WINDOW,
     ...(labInMemoryRateLimit ? {} : { redis: redisClient }),
     skipOnError: labInMemoryRateLimit,
     allowList: (req) => isHealthPath(req.url),
-    // SEC-12: req.ip honours TRUST_PROXY_HOPS; the raw leftmost X-Forwarded-For is client-controlled.
-    keyGenerator: (req) => clientIp(req) ?? req.ip,
+    // SEC-12: the IP is req.ip (honours TRUST_PROXY_HOPS), never the raw leftmost X-Forwarded-For.
+    keyGenerator: (req) => rateLimitSubject(req).key,
     errorResponseBuilder: () => ({
       statusCode: 429,
       error: 'Too Many Requests',
@@ -236,6 +241,9 @@ export async function buildApp() {
     }),
   })
 
+  if (!labInMemoryRateLimit && env.RATE_LIMIT_IP_FLOOD_MAX > 0) {
+    app.addHook('onRequest', ipFloodGuardHook(isHealthPath))
+  }
   app.addHook('onRequest', requestIdHook)
   app.addHook('onRequest', requestLoggerHook)
   app.addHook('onRequest', requestTimingOnRequest)

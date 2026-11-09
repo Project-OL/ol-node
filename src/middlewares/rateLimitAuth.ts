@@ -3,6 +3,7 @@ import { redisClient, RedisKeys } from '../config/redis'
 import { env } from '../config/env'
 import { AppError } from './errorHandler'
 import { clientIp } from '../utils/client-ip'
+import { identifierBucket, opaqueBucket, rateLimitSubject } from '../utils/rate-limit-subject'
 
 /**
  * INCR + first-hit EXPIRE in a single Redis round trip (pipelined). `EXPIRE ... NX`
@@ -167,34 +168,107 @@ export const rateLimitCtTransfer = buildRateLimit({
 export interface AuthRateLimitConfig {
   /** Endpoint key (e.g. 'auth.signup.send_otp') */
   endpoint: string
-  /** Max requests per window */
+  /**
+   * Max requests per window per subject: per user when the route ran `authenticate` first, else per
+   * `body[subjectField]` (phone/email/token) when configured, else per IP.
+   */
   max: number
   /** Window in milliseconds */
   windowMs: number
+  /**
+   * SEC-18: body field that identifies who the attempt is for. Set → the limit is counted per value
+   * of that field (so one phone can't be hammered from many IPs), and the IP gets the looser
+   * `ipMax` instead (carrier NAT puts many real users on one IP).
+   */
+  subjectField?: 'identifier' | 'resetToken' | 'accessToken'
+  /** SEC-18: per-IP ceiling when `subjectField` is set. Defaults to `max`. */
+  ipMax?: number
+}
+
+function tooMany(windowSec: number): AppError {
+  return new AppError(
+    429,
+    `Too many attempts. Try again in ${windowSec} seconds.`,
+    'RATE_LIMITED',
+    { retryAfter: windowSec },
+  )
 }
 
 /**
- * Returns a Fastify preHandler that enforces per-IP rate limit for an auth endpoint using Redis.
- * Uses INCR + EXPIRE; on first request in window sets TTL, then increments. If count > max, returns 429.
+ * Returns a Fastify preHandler that rate-limits an auth endpoint in Redis (INCR + first-hit EXPIRE).
+ * SEC-18: keyed per user, per identifier (+ a looser per-IP ceiling) or per IP — see the config.
  */
 export function createAuthRateLimit(config: AuthRateLimitConfig) {
-  const { endpoint, max, windowMs } = config
+  const { endpoint, max, windowMs, subjectField } = config
+  const ipMax = config.ipMax ?? max
   const windowSec = Math.ceil(windowMs / 1000)
 
   return async function authRateLimitPreHandler(
-    request: FastifyRequest,
+    request: FastifyRequest & { userId?: string },
     _reply: FastifyReply,
   ): Promise<void> {
-    const ip = clientIp(request) || '0.0.0.0'
-    const key = RedisKeys.authRateLimit(endpoint, ip)
-    const count = await incrWithWindow(key, windowSec)
-    if (count > max) {
-      throw new AppError(
-        429,
-        `Too many attempts. Try again in ${windowSec} seconds.`,
-        'RATE_LIMITED',
-        { retryAfter: windowSec },
+    if (request.userId) {
+      const count = await incrWithWindow(
+        RedisKeys.authUserRateLimit(endpoint, request.userId),
+        windowSec,
       )
+      if (count > max) throw tooMany(windowSec)
+      return
+    }
+
+    const ip = clientIp(request) || '0.0.0.0'
+    const ipKey = RedisKeys.authRateLimit(endpoint, ip)
+    const body = request.body as Record<string, unknown> | null | undefined
+    const raw = subjectField && body && typeof body === 'object' ? body[subjectField] : undefined
+    const idHash =
+      subjectField === 'identifier'
+        ? identifierBucket(raw)
+        : subjectField
+          ? opaqueBucket(raw)
+          : undefined
+
+    if (!idHash) {
+      // No subject in the body (or none configured): IP only. A missing field 400s in the route anyway.
+      const count = await incrWithWindow(ipKey, windowSec)
+      if (count > ipMax) throw tooMany(windowSec)
+      return
+    }
+
+    const idKey = RedisKeys.authIdentifierRateLimit(endpoint, idHash)
+    const results = await redisClient
+      .pipeline()
+      .incr(idKey)
+      .expire(idKey, windowSec, 'NX')
+      .incr(ipKey)
+      .expire(ipKey, windowSec, 'NX')
+      .exec()
+    const idCount = results?.[0]?.[1] as number
+    const ipCount = results?.[2]?.[1] as number
+    if (idCount > max || ipCount > ipMax) throw tooMany(windowSec)
+  }
+}
+
+/**
+ * SEC-18: flood guard for logged-in traffic. The global limiter is per user, so N accounts on one
+ * host would get N × RATE_LIMIT_MAX; this caps all logged-in requests from one IP together at
+ * RATE_LIMIT_IP_FLOOD_MAX per RATE_LIMIT_TIME_WINDOW. Anonymous requests are already per IP in the
+ * global limiter. Fails open on Redis errors (the global limiter still applies).
+ */
+export function ipFloodGuardHook(isExempt: (url: string) => boolean) {
+  const windowSec = Math.ceil(env.RATE_LIMIT_TIME_WINDOW / 1000)
+  return async function ipFloodGuard(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+    if (isExempt(request.url)) return
+    const subject = rateLimitSubject(request)
+    if (!subject.userId) return
+    let count: number
+    try {
+      count = await incrWithWindow(RedisKeys.rateLimitIpFlood(subject.ip), windowSec)
+    } catch {
+      return
+    }
+    if (count > env.RATE_LIMIT_IP_FLOOD_MAX) {
+      request.log.warn({ ip: subject.ip, count }, 'ip flood guard: 429')
+      throw tooMany(windowSec)
     }
   }
 }
@@ -231,60 +305,86 @@ export function createSecurityRateLimit(config: {
   }
 }
 
-/** Pre-configured rate limiters for auth endpoints (per prompt). */
+/**
+ * Pre-configured rate limiters for auth endpoints. Window 10 min unless noted.
+ * SEC-18: `max` is per phone/email/token; `ipMax` is the per-IP ceiling (carrier-NAT friendly, but
+ * still caps SMS/email pumping from one host).
+ */
 export const authRateLimits = {
   signupSendOtp: createAuthRateLimit({
     endpoint: 'auth.signup.send_otp',
     max: 5,
+    ipMax: 20,
+    subjectField: 'identifier',
     windowMs: 600000,
   }),
   signupVerifyOtp: createAuthRateLimit({
     endpoint: 'auth.signup.verify_otp',
     max: 10,
+    ipMax: 30,
+    subjectField: 'identifier',
     windowMs: 600000,
   }),
   loginSendOtp: createAuthRateLimit({
     endpoint: 'auth.login.send_otp',
     max: 10,
+    ipMax: 30,
+    subjectField: 'identifier',
     windowMs: 600000,
   }),
   loginVerifyOtp: createAuthRateLimit({
     endpoint: 'auth.login.verify_otp',
     max: 10,
+    ipMax: 30,
+    subjectField: 'identifier',
     windowMs: 600000,
   }),
   loginPassword: createAuthRateLimit({
     endpoint: 'auth.login.password',
     max: 10,
+    ipMax: 30,
+    subjectField: 'identifier',
     windowMs: 600000,
   }),
   passwordResetSendOtp: createAuthRateLimit({
     endpoint: 'auth.password.reset.send_otp',
     max: 5,
+    ipMax: 20,
+    subjectField: 'identifier',
     windowMs: 600000,
   }),
   passwordResetConfirm: createAuthRateLimit({
     endpoint: 'auth.password.reset.confirm',
     max: 5,
+    ipMax: 20,
+    subjectField: 'resetToken',
     windowMs: 600000,
   }),
+  /** Runs after `authenticate` → per user. 1-day window. */
   providerBind: createAuthRateLimit({
     endpoint: 'auth.provider.bind',
     max: 5,
     windowMs: 86400000,
   }),
+  /** Runs after `authenticate` → per user. 1-day window. */
   providerUnbind: createAuthRateLimit({
     endpoint: 'auth.provider.unbind',
     max: 5,
     windowMs: 86400000,
   }),
+  /** 1-min window. */
   logoutToken: createAuthRateLimit({
     endpoint: 'auth.logout.token',
     max: 30,
+    ipMax: 120,
+    subjectField: 'accessToken',
     windowMs: 60000,
   }),
+  /** 1-min window. */
   invalidateAccessToken: createAuthRateLimit({
     endpoint: 'auth.access.invalidate',
+    ipMax: 120,
+    subjectField: 'accessToken',
     max: 30,
     windowMs: 60000,
   }),

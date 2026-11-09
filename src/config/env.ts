@@ -411,8 +411,19 @@ const envSchema = z
           .filter(Boolean),
       ),
 
+    /** SEC-18: global limit per logged-in user (bucket `u:<userId>`) per RATE_LIMIT_TIME_WINDOW. */
     RATE_LIMIT_MAX: z.coerce.number().default(200),
     RATE_LIMIT_TIME_WINDOW: z.coerce.number().default(60000),
+    /**
+     * SEC-18: global limit per IP for requests without a valid access token (login screens, public
+     * reads). Higher than the per-user limit because carrier NAT puts many phones on one IP.
+     */
+    RATE_LIMIT_ANON_MAX: z.coerce.number().int().min(1).default(300),
+    /**
+     * SEC-18: flood guard on logged-in traffic per IP (all users behind it together), so many
+     * accounts from one host can't multiply the per-user limit without bound. 0 disables it.
+     */
+    RATE_LIMIT_IP_FLOOD_MAX: z.coerce.number().int().min(0).default(3000),
     AUTH_RATE_LIMIT_MAX: z.coerce.number().default(5),
     AUTH_RATE_LIMIT_TIME_WINDOW: z.coerce.number().default(60000),
 
