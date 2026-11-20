@@ -166,6 +166,8 @@ const AdminCompletePlatformSchema = z.object({
   proofS3Bucket: z.string().min(1).max(255),
 })
 
+const WithdrawalIdParamsSchema = z.object({ id: z.string().guid() })
+
 const AdminCompletePayrollManuallySchema = z.object({
   agencyUserId: z.string().guid().optional(),
   /** Numeric agency public ID or owner public/display ID. Leading `#` is stripped in the service. */
@@ -1317,6 +1319,35 @@ export default async function agencyAdminRoutes(app: FastifyInstance) {
         body,
       )
       return reply.send({ ok: true, ...result })
+    },
+  )
+
+  /**
+   * "Pay via Epay": transfer the host payout from our Epay balance to the host's Epay account
+   * (EPAY withdrawals in PENDING_PLATFORM). Needs EPAY_ENABLED + EPAY_PAYOUT_ENABLED.
+   * Returns the attempt: SUCCESS (withdrawal → WAITING), SUBMITTED / UNKNOWN (reconcile job
+   * finishes it), or FAILED (nothing sent; safe to retry).
+   */
+  app.post<{ Params: { id: string } }>(
+    '/withdrawal/:id/epay-payout',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const { id } = WithdrawalIdParamsSchema.parse(request.params)
+      const { epayPayoutService } = await import('../../services/epay-payout.service')
+      const result = await epayPayoutService.payWithdrawalViaEpay(adminUserId, id)
+      return reply.send({ ok: true, ...result })
+    },
+  )
+
+  app.get<{ Params: { id: string } }>(
+    '/withdrawal/:id/epay-payouts',
+    { preHandler: [authenticateAdmin] },
+    async (request, reply) => {
+      const { id } = WithdrawalIdParamsSchema.parse(request.params)
+      const { epayPayoutService } = await import('../../services/epay-payout.service')
+      return reply.send({ items: await epayPayoutService.listForWithdrawal(id) })
     },
   )
 

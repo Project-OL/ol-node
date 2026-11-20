@@ -29,7 +29,9 @@ import { walletService } from './wallet.service'
 import { agencyService } from './agency.service'
 import { auditService } from './audit.service'
 import { userRepository } from '../repositories/user.repository'
-import { epayClient } from '../lib/epay.client'
+import { epayGateway, EpayRejectedError, isEpayConfigured } from '../lib/epay/epay-gateway.client'
+import { makeEpayMerchantOrderNo } from '../lib/epay/epay-order-no'
+import type { EpayPaidFields } from './coin-wallet.service'
 import { prisma } from '../config/database'
 import {
   PERSONAL_COIN_EXCHANGE_RATES,
@@ -328,6 +330,8 @@ type TopupInitiateResult = {
   amountUsd: string
   tradingCoinsAwarded: string
   packageId: string | null
+  merchantOrderNo?: string
+  status?: string
 }
 
 export const coinTradingService = {
@@ -464,14 +468,22 @@ export const coinTradingService = {
       packageId?: string
       amountUsd?: number
       currency: string
-      callbackUrl: string
-      returnUrl: string
+      /** @deprecated ignored; Epay URLs are fixed server-side (EPAY_* env). */
+      callbackUrl?: string
+      /** @deprecated ignored; Epay URLs are fixed server-side (EPAY_* env). */
+      returnUrl?: string
       idempotencyKey?: string
     },
   ) {
     const user = await userRepository.findById(agentUserId)
     if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
     await agencyService.enforcePauseGate(agentUserId)
+    if (!isEpayConfigured()) {
+      throw new AppError(503, 'Top-up is not available right now', 'EPAY_DISABLED')
+    }
+    if (input.currency.toUpperCase() !== 'USD') {
+      throw new AppError(400, 'Only USD top-ups are supported', 'CURRENCY_NOT_SUPPORTED')
+    }
 
     // Optional client key: retries replay the original order/payment link
     // instead of opening a second PENDING order + payment URL.
@@ -516,8 +528,10 @@ export const coinTradingService = {
       packageId?: string
       amountUsd?: number
       currency: string
-      callbackUrl: string
-      returnUrl: string
+      /** @deprecated ignored; Epay URLs are fixed server-side (EPAY_* env). */
+      callbackUrl?: string
+      /** @deprecated ignored; Epay URLs are fixed server-side (EPAY_* env). */
+      returnUrl?: string
       idempotencyKey?: string
     },
   ) {
@@ -542,62 +556,120 @@ export const coinTradingService = {
       throw new AppError(400, 'packageId or amountUsd required', 'TOPUP_INPUT_REQUIRED')
     }
 
+    const amount = new Prisma.Decimal(amountUsd.toFixed(2))
+    if (amount.lte(0)) throw new AppError(400, 'Amount must be positive', 'INVALID_AMOUNT')
+
     const idempotencyKey = input.idempotencyKey
       ? `trading-topup:${agentUserId}:${input.idempotencyKey}`
       : `trading-topup:${agentUserId}:${Date.now()}`
+    const merchantOrderNo = makeEpayMerchantOrderNo('TRADING_TOPUP')
     const order = await prisma.coinTradingTopupOrder.create({
       data: {
         agentUserId,
         packageId,
-        amountUsd: new Prisma.Decimal(amountUsd.toFixed(2)),
+        amountUsd: amount,
+        currency: 'USD',
         tradingCoinsAwarded,
         rateApplied,
         idempotencyKey,
         status: 'PENDING',
+        merchantOrderNo,
       },
     })
-    const epay = await epayClient.createOrder({
-      amountUsd,
-      currency: input.currency,
-      orderId: order.id,
-      orderType: 'TRADING_TOPUP',
-      description: 'Trading coin top-up',
-      callbackUrl: input.callbackUrl,
-      returnUrl: input.returnUrl,
-    })
+    // callbackUrl / returnUrl from the client are ignored on purpose: the notify URL is fixed
+    // server-side (EPAY_NOTIFY_URL) so a client can never redirect our payment callbacks.
+    let cashier: Awaited<ReturnType<typeof epayGateway.createCashierPayin>>
+    try {
+      cashier = await epayGateway.createCashierPayin({
+        merchantOrderNo,
+        amount: amount.toFixed(2),
+        currency: 'USD',
+        remark: 'Trading coin top-up',
+      })
+    } catch (err) {
+      if (err instanceof EpayRejectedError) {
+        await prisma.coinTradingTopupOrder.updateMany({
+          where: { id: order.id, status: 'PENDING' },
+          data: { status: 'FAILED', failureReason: 'EPAY_CREATE_REJECTED' },
+        })
+      }
+      // Transport failure: stays PENDING; the reconcile job queries Epay and closes it.
+      throw err
+    }
     await prisma.coinTradingTopupOrder.update({
       where: { id: order.id },
-      data: { epayRef: epay.gatewayRef },
+      data: {
+        epayRef: cashier.epayOrderNo ?? null,
+        paymentUrl: cashier.epayUrl,
+        epayStatus: cashier.status ?? null,
+      },
     })
     return {
-      paymentUrl: epay.paymentUrl,
+      paymentUrl: cashier.epayUrl,
       orderId: order.id,
-      amountUsd: amountUsd.toFixed(2),
+      amountUsd: amount.toFixed(2),
       tradingCoinsAwarded: tradingCoinsAwarded.toString(),
       packageId: packageId ?? null,
+      merchantOrderNo,
+      status: 'PENDING',
     }
   },
-  async confirmTopup(
-    order: {
-      id: string
-      agentUserId: string
-      amountUsd: Prisma.Decimal
-      tradingCoinsAwarded: bigint
-      status: string
-    },
-    payload: { gatewayRef: string; amountUsd: number },
-  ) {
-    await prisma.$transaction(
+
+  /** Order status for the agent (polled after the Epay page closes). */
+  async getTopupOrder(agentUserId: string, orderId: string) {
+    const order = await prisma.coinTradingTopupOrder.findFirst({
+      where: { id: orderId, agentUserId },
+    })
+    if (!order) throw new AppError(404, 'Order not found', 'ORDER_NOT_FOUND')
+    const view = {
+      orderId: order.id,
+      status: order.status,
+      amountUsd: order.amountUsd.toFixed(2),
+      currency: order.currency,
+      tradingCoinsAwarded: order.tradingCoinsAwarded.toString(),
+      paymentUrl: order.status === 'PENDING' ? order.paymentUrl : null,
+      paidAt: order.paidAt?.toISOString() ?? null,
+      failureReason: order.failureReason,
+      createdAt: order.createdAt.toISOString(),
+    }
+    return {
+      pendingMerchantOrderNo: order.status === 'PENDING' ? order.merchantOrderNo : null,
+      view,
+    }
+  },
+
+  /**
+   * Credit a trading top-up Epay has confirmed as paid. Only caller:
+   * `epayPayinService.settlePayin` (after signature + status query + amount checks).
+   * Exactly-once via a conditional `PENDING → COMPLETED` claim in the same transaction as the
+   * ledger insert (ledger key `trading-topup:<orderId>` backs it up). Returns false when the
+   * order was not PENDING.
+   */
+  async creditPaidTopup(orderId: string, epay: EpayPaidFields): Promise<boolean> {
+    const order = await prisma.coinTradingTopupOrder.findUnique({ where: { id: orderId } })
+    if (!order) throw new AppError(404, 'Order not found', 'ORDER_NOT_FOUND')
+    if (order.status !== 'PENDING') return false
+    const gatewayRef = epay.epayOrderNo ?? order.epayRef ?? order.merchantOrderNo ?? order.id
+    const wallet = await walletRepository.getOrCreate(
+      order.agentUserId,
+      WalletCurrencyType.TRADING_COIN,
+    )
+
+    const credited = await prisma.$transaction(
       async (tx) => {
-        const fresh = await tx.coinTradingTopupOrder.findUnique({ where: { id: order.id } })
-        if (!fresh || fresh.status !== 'PENDING') return
-        if (Number(fresh.amountUsd.toString()) !== payload.amountUsd) {
-          throw new AppError(400, 'Webhook amount mismatch', 'TOPUP_AMOUNT_MISMATCH')
-        }
-        const wallet = await walletRepository.getOrCreate(
-          fresh.agentUserId,
-          WalletCurrencyType.TRADING_COIN,
-        )
+        const claimed = await tx.coinTradingTopupOrder.updateMany({
+          where: { id: order.id, status: 'PENDING' },
+          data: {
+            status: 'COMPLETED',
+            epayRef: gatewayRef,
+            epayStatus: epay.epayStatus,
+            paidAmount: epay.paidAmount,
+            paidCurrency: epay.paidCurrency,
+            paidAt: new Date(),
+          },
+        })
+        if (claimed.count === 0) return false
+        const fresh = order
         await walletRepository.lockForUpdate(tx, wallet.id)
         const last = await tx.coinLedgerEntry.findFirst({
           where: { walletId: wallet.id },
@@ -611,18 +683,33 @@ export const coinTradingService = {
           txType: CoinTxType.TRADING_TOPUP,
           amount: fresh.tradingCoinsAwarded,
           balanceAfter: balance + fresh.tradingCoinsAwarded,
-          refId: payload.gatewayRef,
+          refId: gatewayRef,
           description: 'Trading coin top-up',
+          metadata: { orderId: fresh.id, merchantOrderNo: fresh.merchantOrderNo, gatewayRef },
           idempotencyKey: `trading-topup:${fresh.id}`,
         })
         await tx.coinTradingTopupOrder.update({
           where: { id: fresh.id },
-          data: { status: 'COMPLETED', ledgerEntryId: entry.id },
+          data: { ledgerEntryId: entry.id },
         })
+        return true
       },
       { timeout: TX_TIMEOUT_MS },
     )
+    if (!credited) return false
     await walletService.adjustTradingBalanceCache(order.agentUserId)
+    auditService.log({
+      userId: order.agentUserId,
+      actionType: 'TRADING_TOPUP_CONFIRMED',
+      actionStatus: 'success',
+      actionDetails: {
+        orderId: order.id,
+        merchantOrderNo: order.merchantOrderNo,
+        gatewayRef,
+        tradingCoins: order.tradingCoinsAwarded.toString(),
+      },
+    })
+    return true
   },
   async exchangePointsForTradingCoins(
     userId: string,

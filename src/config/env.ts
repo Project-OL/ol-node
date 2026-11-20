@@ -479,9 +479,38 @@ const envSchema = z
     LIVEKIT_API_KEY: z.string().optional(),
     LIVEKIT_API_SECRET: z.string().optional(),
 
-    EPAY_BASE_URL: z.string().url().default('https://epay.invalid'),
-    EPAY_API_KEY: z.string().min(1).default('epay-test-key'),
-    EPAY_WEBHOOK_SECRET: z.string().min(1).default('epay-test-secret'),
+    // Epay gateway (real API, src/lib/epay/). EPAY_ENABLED=true requires the vars checked in
+    // superRefine below. Keys are secrets: Secret Manager / .env only, never committed, never logged.
+    // Sandbox: one key covers both directions; production has separate pay-in and payout keys.
+    EPAY_ENABLED: z
+      .string()
+      .optional()
+      .transform((s) => s === 'true'),
+    /** e.g. https://<host>/capi/openapi (no trailing slash). */
+    EPAY_API_BASE_URL: z.string().url().optional(),
+    /** Our merchant Epay account (email). */
+    EPAY_ACCOUNT: z.string().min(1).optional(),
+    EPAY_MERCHANT_NAME: z.string().min(1).optional(),
+    EPAY_PAYIN_KEY: z.string().min(1).optional(),
+    EPAY_PAYOUT_KEY: z.string().min(1).optional(),
+    /** Server callback for every Epay order; must be our public /api/v1/webhooks/epay. */
+    EPAY_NOTIFY_URL: z.string().url().optional(),
+    /** Browser redirects after the cashier page. */
+    EPAY_SUCCESS_URL: z.string().url().optional(),
+    EPAY_FAIL_URL: z.string().url().optional(),
+    /** Cashier channel / mode for Epay-balance payment (to be confirmed by Epay). */
+    EPAY_PAYIN_CHANNEL_CODE: z.string().min(1).optional(),
+    EPAY_PAYIN_CHECKOUT_TYPE: z.string().min(1).optional(),
+    /**
+     * Second switch for money OUT: admin "Pay via Epay" on EPAY withdrawals. Off by default so
+     * pay-in can go live first. Needs EPAY_ENABLED too.
+     */
+    EPAY_PAYOUT_ENABLED: z
+      .string()
+      .optional()
+      .transform((s) => s === 'true'),
+    EPAY_API_VERSION: z.string().min(1).default('V2.0.0'),
+    EPAY_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 
     // Game provider — BAISHUN (first concrete adapter of the generic game-provider
     // abstraction). All optional: the BAISHUN adapter is disabled (games hidden from the
@@ -634,6 +663,25 @@ const envSchema = z
         message:
           'S3_PUBLIC_BASE_URL (or CLOUDFRONT_DOMAIN) is required when S3_ENDPOINT_URL is set — the AWS bucket-hosted URL is unreachable for a non-AWS provider',
       })
+    }
+    if (val.EPAY_ENABLED) {
+      const requiredEpayVars = [
+        'EPAY_API_BASE_URL',
+        'EPAY_ACCOUNT',
+        'EPAY_MERCHANT_NAME',
+        'EPAY_PAYIN_KEY',
+        'EPAY_PAYOUT_KEY',
+        'EPAY_NOTIFY_URL',
+      ] as const
+      for (const key of requiredEpayVars) {
+        if (!val[key]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when EPAY_ENABLED=true`,
+          })
+        }
+      }
     }
     if (val.NODE_ENV === 'production' && !val.DEVICE_FINGERPRINT_SECRET) {
       ctx.addIssue({

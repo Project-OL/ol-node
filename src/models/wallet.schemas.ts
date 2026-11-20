@@ -61,6 +61,11 @@ export const TopupInitiateSchema = z.object({
   idempotencyKey: z.string().min(8).max(128),
 })
 
+export const TopupOrderParamsSchema = z.object({
+  orderId: z.string().guid(),
+})
+
+/** @deprecated `/wallet/coins/topup/confirm` is retired (always 410). Kept for the contract lock. */
 export const TopupConfirmSchema = z.object({
   orderId: z.string().guid(),
   gatewayRef: z.string().max(256),

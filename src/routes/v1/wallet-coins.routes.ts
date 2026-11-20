@@ -3,11 +3,13 @@ import { authenticate } from '../../middlewares/auth.middleware'
 import { coinTopupRateLimit } from '../../middlewares/rateLimitAuth'
 import { coinWalletService } from '../../services/coin-wallet.service'
 import { walletService } from '../../services/wallet.service'
+import { AppError } from '../../middlewares/errorHandler'
 import {
   TopupInitiateSchema,
-  TopupConfirmSchema,
   CoinHistoryQuerySchema,
+  TopupOrderParamsSchema,
 } from '../../models/wallet.schemas'
+import { epayPayinService } from '../../services/epay-payin.service'
 
 export async function walletCoinsRoutes(app: FastifyInstance) {
   app.get(
@@ -42,18 +44,35 @@ export async function walletCoinsRoutes(app: FastifyInstance) {
     },
   )
 
-  app.post(
-    '/topup/confirm',
+  /**
+   * Retired (Epay P0, 2026-11-20). This used to credit coins for any client-supplied
+   * `gatewayRef` with no gateway check, so anyone could mint coins against a PENDING order.
+   * Top-ups are now settled only server-side, from a signed Epay callback re-verified by a
+   * status query. The path stays registered (API contract) but never credits.
+   */
+  app.post('/topup/confirm', { preHandler: [authenticate] }, async () => {
+    throw new AppError(
+      410,
+      'Top-ups are confirmed automatically once the payment completes',
+      'TOPUP_CONFIRM_REMOVED',
+    )
+  })
+
+  /**
+   * Buyer's order status; polled after the Epay page closes. One indexed read, answers
+   * immediately; a PENDING order also kicks a single-flight background Epay check.
+   */
+  app.get<{ Params: { orderId: string } }>(
+    '/topup/orders/:orderId',
     { preHandler: [authenticate] },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      const body = TopupConfirmSchema.parse(request.body)
-      const result = await coinWalletService.confirmTopup(
+    async (request, reply) => {
+      const { orderId } = TopupOrderParamsSchema.parse(request.params)
+      const { view, pendingMerchantOrderNo } = await coinWalletService.getTopupOrder(
         request.userId!,
-        body.orderId,
-        body.gatewayRef,
-        body.idempotencyKey,
+        orderId,
       )
-      return reply.send(result)
+      epayPayinService.kickRefresh(pendingMerchantOrderNo)
+      return reply.send(view)
     },
   )
 

@@ -23,7 +23,17 @@ import {
 } from './user-level.service'
 import { assertCoinDebitAllowed, assertCoinDebitAllowedInTx } from './wallet-freeze.service'
 import { RECHARGE_TX_TYPES, richTierService } from './rich-tier.service'
-import { epayClient } from '../lib/epay.client'
+import { epayGateway, EpayRejectedError, isEpayConfigured } from '../lib/epay/epay-gateway.client'
+import { makeEpayMerchantOrderNo } from '../lib/epay/epay-order-no'
+import { redisClient, RedisKeys } from '../config/redis'
+
+/** What a verified Epay "paid" result records on the order. */
+export interface EpayPaidFields {
+  epayOrderNo: string | null
+  epayStatus: string
+  paidAmount: Prisma.Decimal
+  paidCurrency: string
+}
 import { enqueuePlatformLedgerMessage } from '../queues/platform-message.queue'
 import { isDiamondLedgerMovement } from '../config/diamond-ledger'
 import { assertPositiveAmount } from '../utils/transaction-amount-steps'
@@ -62,73 +72,182 @@ export const coinWalletService = {
     }))
   },
 
+  /**
+   * Start a personal coin purchase through the Epay cashier. Returns `paymentUrl` (Epay page
+   * where the user pays from their Epay balance). Coins are NOT credited here: only
+   * {@link creditPaidTopup}, reached from a verified Epay result, credits.
+   * Refuses before writing anything while Epay is disabled.
+   */
   async initiateTopup(userId: string, packageId: string, idempotencyKey: string) {
+    if (!isEpayConfigured()) {
+      throw new AppError(503, 'Coin purchase is not available right now', 'EPAY_DISABLED')
+    }
     const cached = await walletService.getCachedIdemResponse(idempotencyKey)
     if (cached) return cached
 
     const acquired = await walletService.acquireIdemKey(idempotencyKey)
     if (!acquired) throw new AppError(409, 'Request is already processing', 'IDEM_CONFLICT')
 
-    const pkg = await prisma.coinPackage.findFirst({
-      where: { id: packageId, isActive: true },
-    })
-    if (!pkg) throw new AppError(404, 'Package not found', 'PACKAGE_NOT_FOUND')
+    try {
+      // Same key again after the replay cache expired: hand back the open order, never a 2nd one.
+      // Both reads are independent indexed lookups: run them in parallel (one round-trip).
+      const [existing, pkg] = await Promise.all([
+        prisma.coinTopupOrder.findUnique({ where: { idempotencyKey } }),
+        prisma.coinPackage.findFirst({ where: { id: packageId, isActive: true } }),
+      ])
+      if (existing) {
+        if (existing.userId === userId && existing.status === 'PENDING' && existing.paymentUrl) {
+          const replay = {
+            orderId: existing.id,
+            coins: existing.coins,
+            priceCents: existing.priceCents,
+            paymentUrl: existing.paymentUrl,
+            merchantOrderNo: existing.merchantOrderNo,
+            status: existing.status,
+          }
+          await walletService.resolveIdemKey(idempotencyKey, replay)
+          return replay
+        }
+        throw new AppError(409, 'Use a new idempotency key for a new purchase', 'IDEM_CONFLICT')
+      }
 
-    const order = await prisma.coinTopupOrder.create({
-      data: {
-        userId,
-        packageId: pkg.id,
+      if (!pkg) throw new AppError(404, 'Package not found', 'PACKAGE_NOT_FOUND')
+
+      const merchantOrderNo = makeEpayMerchantOrderNo('PERSONAL_TOPUP')
+      const order = await prisma.coinTopupOrder.create({
+        data: {
+          userId,
+          packageId: pkg.id,
+          coins: pkg.coins,
+          priceCents: pkg.priceCents,
+          currency: pkg.currency,
+          idempotencyKey,
+          status: 'PENDING',
+          merchantOrderNo,
+        },
+      })
+
+      let cashier: Awaited<ReturnType<typeof epayGateway.createCashierPayin>>
+      try {
+        cashier = await epayGateway.createCashierPayin({
+          merchantOrderNo,
+          amount: (pkg.priceCents / 100).toFixed(2),
+          currency: pkg.currency,
+          remark: `${pkg.coins} coins`,
+        })
+      } catch (err) {
+        if (err instanceof EpayRejectedError) {
+          await prisma.coinTopupOrder.updateMany({
+            where: { id: order.id, status: 'PENDING' },
+            data: { status: 'FAILED', failureReason: 'EPAY_CREATE_REJECTED' },
+          })
+        }
+        // Transport failure: outcome unknown, the order stays PENDING and the reconcile job
+        // queries Epay and closes it. The user never got a payment URL, so nothing was paid.
+        throw err
+      }
+
+      await prisma.coinTopupOrder.update({
+        where: { id: order.id },
+        data: {
+          gatewayRef: cashier.epayOrderNo ?? null,
+          paymentUrl: cashier.epayUrl,
+          epayStatus: cashier.status ?? null,
+        },
+      })
+
+      const response = {
+        orderId: order.id,
         coins: pkg.coins,
         priceCents: pkg.priceCents,
-        currency: pkg.currency,
-        idempotencyKey,
+        paymentUrl: cashier.epayUrl,
+        merchantOrderNo,
         status: 'PENDING',
-      },
-    })
-
-    const epay = await epayClient.createOrder({
-      amountUsd: Number((pkg.priceCents / 100).toFixed(2)),
-      currency: pkg.currency,
-      orderId: order.id,
-      orderType: 'PERSONAL_TOPUP',
-      description: `Personal top-up ${pkg.coins} coins`,
-      callbackUrl: '/api/v1/webhooks/epay',
-      returnUrl: '/',
-    })
-
-    await prisma.coinTopupOrder.update({
-      where: { id: order.id },
-      data: { gatewayRef: epay.gatewayRef },
-    })
-
-    const response = {
-      orderId: order.id,
-      coins: pkg.coins,
-      priceCents: pkg.priceCents,
-      paymentUrl: epay.paymentUrl,
+      }
+      await walletService.resolveIdemKey(idempotencyKey, response)
+      return response
+    } catch (err) {
+      try {
+        await redisClient.del(RedisKeys.walletIdem(idempotencyKey))
+      } catch {
+        // best-effort: the key expires on its own
+      }
+      throw err
     }
-    await walletService.resolveIdemKey(idempotencyKey, response)
-    return response
   },
 
-  async confirmTopup(userId: string, orderId: string, gatewayRef: string, idempotencyKey: string) {
-    const cached = await walletService.getCachedIdemResponse(idempotencyKey)
-    if (cached) return cached
+  /**
+   * Order status for the buyer (the app polls this after the Epay page closes). One PK read;
+   * `pendingMerchantOrderNo` lets the route kick a background Epay refresh without a 2nd read.
+   */
+  async getTopupOrder(userId: string, orderId: string) {
+    const order = await prisma.coinTopupOrder.findFirst({ where: { id: orderId, userId } })
+    if (!order) throw new AppError(404, 'Order not found', 'ORDER_NOT_FOUND')
+    return {
+      pendingMerchantOrderNo: order.status === 'PENDING' ? order.merchantOrderNo : null,
+      view: coinWalletService.toTopupOrderView(order),
+    }
+  },
 
-    const acquired = await walletService.acquireIdemKey(idempotencyKey)
-    if (!acquired) throw new AppError(409, 'Request is already processing', 'IDEM_CONFLICT')
+  toTopupOrderView(order: {
+    id: string
+    status: string
+    coins: number
+    priceCents: number
+    currency: string
+    paymentUrl: string | null
+    paidAt: Date | null
+    failureReason: string | null
+    createdAt: Date
+  }) {
+    return {
+      orderId: order.id,
+      status: order.status,
+      coins: order.coins,
+      priceCents: order.priceCents,
+      currency: order.currency,
+      paymentUrl: order.status === 'PENDING' ? order.paymentUrl : null,
+      paidAt: order.paidAt?.toISOString() ?? null,
+      failureReason: order.failureReason,
+      createdAt: order.createdAt.toISOString(),
+    }
+  },
 
-    const order = await prisma.coinTopupOrder.findFirst({
-      where: { id: orderId, userId, status: 'PENDING' },
-    })
-    if (!order) throw new AppError(404, 'Order not found or already processed', 'ORDER_NOT_FOUND')
+  /**
+   * Credit a top-up that Epay has confirmed as paid. Only caller: `epayPayinService.settlePayin`
+   * (after signature + status query + amount checks). Exactly-once: the order is claimed with a
+   * conditional `PENDING → PAID` update inside the same transaction as the ledger insert, so
+   * concurrent callback/reconcile runs cannot both credit; the ledger idempotency key
+   * (`epay-personal-topup:<orderId>`, also read by the ledger-origin classifier) backs it up.
+   * Returns null when the order was not PENDING (already handled).
+   */
+  async creditPaidTopup(orderId: string, epay: EpayPaidFields) {
+    const order = await prisma.coinTopupOrder.findUnique({ where: { id: orderId } })
+    if (!order) throw new AppError(404, 'Order not found', 'ORDER_NOT_FOUND')
+    if (order.status !== 'PENDING') return null
+    const userId = order.userId
+    const idempotencyKey = `epay-personal-topup:${order.id}`
+    const gatewayRef = epay.epayOrderNo ?? order.gatewayRef ?? order.merchantOrderNo ?? order.id
 
     const wallet = await walletRepository.getOrCreate(userId, WalletCurrencyType.COIN)
 
     const txType = CoinTxType.TOPUP
 
-    const { ledgerEntry, richTierMonth } = await prisma.$transaction(
+    const result = await prisma.$transaction(
       async (tx) => {
+        const claimed = await tx.coinTopupOrder.updateMany({
+          where: { id: order.id, status: 'PENDING' },
+          data: {
+            status: 'PAID',
+            gatewayRef,
+            epayStatus: epay.epayStatus,
+            paidAmount: epay.paidAmount,
+            paidCurrency: epay.paidCurrency,
+            paidAt: new Date(),
+          },
+        })
+        if (claimed.count === 0) return null
+
         await walletRepository.lockForUpdate(tx, wallet.id)
 
         const last = await tx.coinLedgerEntry.findFirst({
@@ -147,7 +266,12 @@ export const coinWalletService = {
           balanceAfter: newBalance,
           refId: gatewayRef,
           description: `Top-up: ${order.coins} coins`,
-          metadata: { packageId: order.packageId, orderId, gatewayRef },
+          metadata: {
+            packageId: order.packageId,
+            orderId,
+            gatewayRef,
+            merchantOrderNo: order.merchantOrderNo,
+          },
           idempotencyKey,
         })
 
@@ -155,7 +279,7 @@ export const coinWalletService = {
 
         await tx.coinTopupOrder.update({
           where: { id: orderId },
-          data: { status: 'PAID', gatewayRef, ledgerEntryId: entry.id },
+          data: { ledgerEntryId: entry.id },
         })
 
         const richMonth = RECHARGE_TX_TYPES.has(txType)
@@ -169,6 +293,8 @@ export const coinWalletService = {
       },
       { timeout: INTERACTIVE_TX_TIMEOUT_MS },
     )
+    if (!result) return null
+    const { ledgerEntry, richTierMonth } = result
 
     await walletService.adjustCoinBalanceCache(userId, BigInt(order.coins))
 
@@ -186,10 +312,15 @@ export const coinWalletService = {
       userId,
       actionType: 'COIN_TOPUP_CONFIRMED',
       actionStatus: 'success',
-      actionDetails: { orderId, gatewayRef, coins: order.coins },
+      actionDetails: {
+        orderId,
+        gatewayRef,
+        merchantOrderNo: order.merchantOrderNo,
+        coins: order.coins,
+      },
     })
 
-    const response = {
+    return {
       ledgerEntryId: ledgerEntry.id,
       coins: order.coins,
       balanceAfter: ledgerEntry.balanceAfter.toString(),
@@ -201,8 +332,6 @@ export const coinWalletService = {
         previousLevel: wealthSnapshot.previousLevel,
       },
     }
-    await walletService.resolveIdemKey(idempotencyKey, response)
-    return response
   },
 
   /**

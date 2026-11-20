@@ -20,3 +20,10 @@ execSync('npx prisma db push --skip-generate --accept-data-loss', {
   stdio: 'inherit',
   env: { ...process.env, DATABASE_URL: target },
 })
+
+// `db push` only knows what Prisma can model. Re-create the raw-SQL indexes from the
+// migrations that money safety depends on, so the test DB enforces what production does.
+execSync(
+  `docker exec ${container} psql -U money -d ledger_test -v ON_ERROR_STOP=1 -c "CREATE UNIQUE INDEX IF NOT EXISTS epay_payout_orders_one_live_per_withdrawal ON epay_payout_orders (withdrawal_id) WHERE status <> 'FAILED'"`,
+  { stdio: 'inherit' },
+)
