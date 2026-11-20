@@ -55,9 +55,12 @@ import {
 } from '../queues/agency-commission.constants'
 import { agencyLevelRecomputeQueue } from '../queues/agency-commission.queue'
 import { processAgencyLevelRecomputeJob } from '../jobs/agency-level-recompute.job'
-import { EPAY_WEBHOOK_RETRY_JOB, EPAY_WEBHOOK_RETRY_QUEUE } from '../queues/epay-webhook.constants'
-import { coinWalletService } from '../services/coin-wallet.service'
-import { coinTradingService } from '../services/coinTrading.service'
+import {
+  EPAY_RECONCILE_EVERY_MS,
+  EPAY_RECONCILE_JOB,
+  EPAY_RECONCILE_QUEUE,
+  runEpayReconcileJob,
+} from '../jobs/epay-reconcile.job'
 import {
   PAYROLL_SLA_JOB,
   PAYROLL_SLA_QUEUE,
@@ -543,26 +546,27 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
     { connection, concurrency: env.WORKER_CONCURRENCY_DEFAULT },
   )
 
-  const epayWebhookRetryWorker = new Worker(
-    EPAY_WEBHOOK_RETRY_QUEUE,
-    async (job: Job<{ payload: any; orderType: 'PERSONAL_TOPUP' | 'TRADING_TOPUP' }>) => {
-      if (job.name !== EPAY_WEBHOOK_RETRY_JOB) return
-      const payload = job.data.payload
-      if (job.data.orderType === 'PERSONAL_TOPUP') {
-        await coinWalletService.confirmTopup(
-          payload.userId,
-          payload.orderId,
-          payload.gatewayRef,
-          `epay-personal-topup:${payload.orderId}`,
-        )
-      } else {
-        const order = await prisma.coinTradingTopupOrder.findUnique({
-          where: { id: payload.orderId },
-        })
-        if (order) await coinTradingService.confirmTopup(order, payload)
-      }
+  // Epay status checks (pay-in + payout). Replaces the old epay-webhook-retry worker, which
+  // replayed unverified callback payloads. Concurrency 1: runs must not overlap.
+  const epayReconcileQueue = new Queue(EPAY_RECONCILE_QUEUE, { connection })
+  await epayReconcileQueue.add(
+    EPAY_RECONCILE_JOB,
+    {},
+    {
+      jobId: 'epay-reconcile-2min',
+      repeat: { every: EPAY_RECONCILE_EVERY_MS },
+      attempts: 1,
+      removeOnComplete: true,
+      removeOnFail: 50,
     },
-    { connection, concurrency: env.WORKER_CONCURRENCY_DEFAULT },
+  )
+  const epayReconcileWorker = new Worker(
+    EPAY_RECONCILE_QUEUE,
+    async (job: Job) => {
+      if (job.name !== EPAY_RECONCILE_JOB) return
+      await runEpayReconcileJob()
+    },
+    { connection, concurrency: 1 },
   )
 
   await liveSessionQueue.add(
@@ -675,7 +679,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   vipMembershipExpiryWorker.on('failed', onFail('VIP membership expiry'))
   agencyLeaveWorker.on('failed', onFail('Agency leave auto-approve'))
   agencyLevelRecomputeWorker.on('failed', onFail('Agency level recompute'))
-  epayWebhookRetryWorker.on('failed', onFail('Epay webhook retry'))
+  epayReconcileWorker.on('failed', onFail('Epay reconcile'))
   payrollSlaWorker.on('failed', onFail('Payroll SLA'))
   liveSessionWorker.on('failed', onFail('Live session'))
   ledgerAuditWorker.on('failed', onFail('Ledger audit'))
@@ -698,7 +702,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await luckyShadowWorkerQueue.close()
       await payrollSlaWorker.close()
       await payrollSlaQueue.close()
-      await epayWebhookRetryWorker.close()
+      await epayReconcileWorker.close()
+      await epayReconcileQueue.close()
       await agencyLevelRecomputeWorker.close()
       await agencyLevelRecomputeQueue.close()
       await agencyLeaveWorker.close()

@@ -137,7 +137,7 @@ export const livekitCircuitBreaker = new CircuitBreaker({
 
 /** Lower threshold, longer cooldown — payment gateway outages tend to run
  * longer and this path is low-frequency enough that a longer cooldown is
- * cheap. Sits above epayClient's own axios-level 5xx retry+backoff. */
+ * cheap. Sits above the Epay gateway client's own retry (src/lib/epay/epay-gateway.client.ts). */
 export const epayCircuitBreaker = new CircuitBreaker({
   failureThreshold: 4,
   openDurationMs: 20_000,

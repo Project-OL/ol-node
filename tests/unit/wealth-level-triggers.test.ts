@@ -45,8 +45,10 @@ vi.mock('../../src/services/audit.service', () => ({
   auditService: { log: vi.fn() },
 }))
 
-vi.mock('../../src/lib/epay.client', () => ({
-  epayClient: { createOrder: vi.fn() },
+vi.mock('../../src/lib/epay/epay-gateway.client', () => ({
+  epayGateway: { createCashierPayin: vi.fn() },
+  isEpayConfigured: () => false,
+  EpayRejectedError: class extends Error {},
 }))
 
 vi.mock('../../src/repositories/wallet.repository', () => ({

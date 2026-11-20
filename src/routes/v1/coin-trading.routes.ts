@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { authenticate } from '../../middlewares/auth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import { coinTradingService } from '../../services/coinTrading.service'
+import { epayPayinService } from '../../services/epay-payin.service'
 import { securityPasswordService } from '../../services/security-password.service'
 import {
   rateLimitCtExchange,
@@ -18,7 +19,9 @@ const topupSchema = z
     packageId: z.string().guid().optional(),
     amountUsd: z.number().positive().optional(),
     currency: z.string().default('USD'),
+    /** Accepted for backward compatibility but IGNORED: Epay URLs are fixed server-side. */
     callbackUrl: z.string().url().optional(),
+    /** Accepted for backward compatibility but IGNORED: Epay URLs are fixed server-side. */
     returnUrl: z.string().url().optional(),
     /** Optional client retry token; same key replays the original order instead of creating another. */
     idempotencyKey: z.string().min(8).max(128).optional(),
@@ -26,6 +29,7 @@ const topupSchema = z
   .refine((b) => b.packageId != null || b.amountUsd != null, {
     message: 'packageId or amountUsd required',
   })
+const topupOrderParamsSchema = z.object({ orderId: z.string().guid() })
 const exchangeSchema = z.object({
   pointsToExchange: z.string().min(1),
   securityPassword: z.string().optional(),
@@ -114,9 +118,6 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
         amountUsd: body.amountUsd,
         currency: body.currency,
         idempotencyKey: body.idempotencyKey,
-        callbackUrl:
-          body.callbackUrl ?? `${request.protocol}://${request.host}/api/v1/webhooks/epay`,
-        returnUrl: body.returnUrl ?? `${request.protocol}://${request.host}`,
       })
       return reply.status(201).send(result)
     },
@@ -135,6 +136,23 @@ export default async function coinTradingRoutes(app: FastifyInstance) {
         cursor: q.cursor,
       })
       return reply.send({ items: rows })
+    },
+  )
+
+  /** Agent's top-up order status; answers immediately, PENDING kicks a background Epay check. */
+  app.get<{ Params: { orderId: string } }>(
+    '/topup/orders/:orderId',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      const user = await userRepository.findById(request.userId!)
+      if (!user?.isAgent) throw new AppError(403, 'Agent only', 'AGENT_ONLY')
+      const { orderId } = topupOrderParamsSchema.parse(request.params)
+      const { view, pendingMerchantOrderNo } = await coinTradingService.getTopupOrder(
+        request.userId!,
+        orderId,
+      )
+      epayPayinService.kickRefresh(pendingMerchantOrderNo)
+      return reply.send(view)
     },
   )
 

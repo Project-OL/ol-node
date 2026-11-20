@@ -34,9 +34,21 @@ vi.mock('../../src/config/database', () => ({
   prismaRead: {},
 }))
 const createOrder = vi.fn()
-vi.mock('../../src/lib/epay.client', () => ({
-  epayClient: { createOrder: (...a: unknown[]) => createOrder(...a) },
-}))
+const epayEnabled = vi.fn(() => true)
+vi.mock('../../src/lib/epay/epay-gateway.client', async () => {
+  const { AppError } = await import('../../src/middlewares/errorHandler')
+  class EpayRejectedError extends AppError {
+    constructor() {
+      super(502, 'rejected', 'EPAY_REJECTED')
+      Object.setPrototypeOf(this, new.target.prototype)
+    }
+  }
+  return {
+    epayGateway: { createCashierPayin: (...a: unknown[]) => createOrder(...a) },
+    isEpayConfigured: () => epayEnabled(),
+    EpayRejectedError,
+  }
+})
 const redisDel = vi.fn()
 vi.mock('../../src/config/redis', () => ({
   redisClient: { del: (...a: unknown[]) => redisDel(...a), get: vi.fn(), set: vi.fn() },
@@ -70,8 +82,46 @@ describe('coinTradingService.initiateTopup idempotency', () => {
     resolveIdemKey.mockReset().mockResolvedValue(undefined)
     orderCreate.mockReset().mockResolvedValue({ id: 'order-1' })
     orderUpdate.mockReset().mockResolvedValue({})
-    createOrder.mockReset().mockResolvedValue({ paymentUrl: 'https://pay', gatewayRef: 'gw-1' })
+    createOrder
+      .mockReset()
+      .mockResolvedValue({ epayUrl: 'https://pay', epayOrderNo: 'gw-1', status: '0' })
     redisDel.mockReset().mockResolvedValue(1)
+    epayEnabled.mockReset().mockReturnValue(true)
+  })
+
+  it('refuses before any write while Epay is disabled', async () => {
+    epayEnabled.mockReturnValue(false)
+    await expect(coinTradingService.initiateTopup('agent-1', input)).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'EPAY_DISABLED',
+    })
+    expect(acquireIdemKey).not.toHaveBeenCalled()
+    expect(orderCreate).not.toHaveBeenCalled()
+  })
+
+  it('rejects non-USD before any write', async () => {
+    await expect(
+      coinTradingService.initiateTopup('agent-1', { ...input, currency: 'EUR' }),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'CURRENCY_NOT_SUPPORTED' })
+    expect(orderCreate).not.toHaveBeenCalled()
+  })
+
+  it('sends the cashier order with a CT merchantOrderNo and the exact amount; ignores client URLs', async () => {
+    const out = await coinTradingService.initiateTopup('agent-1', input)
+    const created = orderCreate.mock.calls[0]![0] as { data: { merchantOrderNo: string } }
+    expect(created.data.merchantOrderNo).toMatch(/^CT\d{6}[0-9A-F]{16}$/)
+    expect(createOrder).toHaveBeenCalledWith({
+      merchantOrderNo: created.data.merchantOrderNo,
+      amount: '100.00',
+      currency: 'USD',
+      remark: 'Trading coin top-up',
+    })
+    expect(JSON.stringify(createOrder.mock.calls[0])).not.toContain('cb.example')
+    expect(orderUpdate).toHaveBeenCalledWith({
+      where: { id: 'order-1' },
+      data: { epayRef: 'gw-1', paymentUrl: 'https://pay', epayStatus: '0' },
+    })
+    expect(out).toMatchObject({ paymentUrl: 'https://pay', merchantOrderNo: created.data.merchantOrderNo })
   })
 
   it('replays the cached response without creating another order', async () => {

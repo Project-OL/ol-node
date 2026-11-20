@@ -269,6 +269,11 @@ export const RedisKeys = {
   videoCallPriceCaps: () => 'call:price-caps',
   coinsellerSettings: (agencyUserId: string) => `agency:coinseller:${agencyUserId}`,
   walletIdem: (key: string) => `wallet:idem:${key}`,
+  /**
+   * Epay status-query single-flight per order (SET NX PX). Shared by every API/worker instance,
+   * so N concurrent polls / callbacks / reconcile runs cause at most one Epay query per window.
+   */
+  epayQueryGate: (merchantOrderNo: string) => `epay:qgate:${merchantOrderNo}`,
   walletRateLimit: (userId: string, action: string) => `wallet:rl:${userId}:${action}`,
   /** Wallet ledger level snapshots (wealth / livestream cumulative credits). */
   userWealthLevel: (userId: string) => `level:wealth:${userId}`,

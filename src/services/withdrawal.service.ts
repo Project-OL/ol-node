@@ -190,6 +190,31 @@ export function isPlatformHandledWithdrawal(w: {
   return false
 }
 
+/** Epay payout states where money may be moving: the withdrawal must not be refunded or re-paid. */
+export const EPAY_PAYOUT_LIVE_STATUSES = ['SUBMITTING', 'SUBMITTED', 'UNKNOWN'] as const
+
+/**
+ * Lock the withdrawal row (FOR UPDATE) and refuse if an Epay payout for it is in flight.
+ * `epayPayoutService` takes the same lock before recording a payout, so a refund/manual
+ * complete and an Epay payout can never both go through for one withdrawal.
+ */
+export async function lockWithdrawalAndAssertNoLiveEpayPayout(
+  tx: Prisma.TransactionClient,
+  withdrawalId: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM withdrawals WHERE id = ${withdrawalId}::uuid FOR UPDATE`
+  const live = await tx.epayPayoutOrder.count({
+    where: { withdrawalId, status: { in: [...EPAY_PAYOUT_LIVE_STATUSES] } },
+  })
+  if (live > 0) {
+    throw new AppError(
+      409,
+      'An Epay payout for this withdrawal is in progress; wait for it to finish',
+      'EPAY_PAYOUT_IN_FLIGHT',
+    )
+  }
+}
+
 /**
  * Pure fee math for Vitest + runtime. Uses BigInt for point splits; USD outputs use Decimal→number at boundaries only.
  *
@@ -1269,6 +1294,7 @@ export const withdrawalService = {
 
     await prisma.$transaction(
       async (tx) => {
+        await lockWithdrawalAndAssertNoLiveEpayPayout(tx, withdrawalId)
         const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
         if (!w) throw new AppError(404, 'Withdrawal not found', 'NOT_FOUND')
         if (!isPlatformHandledWithdrawal(w)) {
@@ -2647,6 +2673,8 @@ export const withdrawalService = {
 
     await prisma.$transaction(
       async (tx) => {
+        // Never refund while an Epay transfer for this withdrawal may still land.
+        await lockWithdrawalAndAssertNoLiveEpayPayout(tx, withdrawalId)
         const hardDebitAtCreate = await pointLedgerRepository.findByIdempotencyKey(
           tx,
           `withdrawal-debit:${withdrawalId}`,
@@ -2786,7 +2814,7 @@ export const withdrawalService = {
   async cancelUnsettledWithdrawalsForPointsFreeze(
     userId: string,
     adminUserId: string,
-  ): Promise<{ cancelledIds: string[] }> {
+  ): Promise<{ cancelledIds: string[]; skippedEpayInFlightIds: string[] }> {
     const open = await prisma.withdrawal.findMany({
       where: {
         userId,
@@ -2799,16 +2827,83 @@ export const withdrawalService = {
     })
 
     const cancelledIds: string[] = []
+    const skippedEpayInFlightIds: string[] = []
     for (const row of open) {
-      await withdrawalService.adminReverseWithdrawal(
-        adminUserId,
-        row.id,
-        'Points frozen by admin — withdrawal cancelled and escrow released',
-        { bypassAgeLimit: true },
-      )
-      cancelledIds.push(row.id)
+      try {
+        await withdrawalService.adminReverseWithdrawal(
+          adminUserId,
+          row.id,
+          'Points frozen by admin — withdrawal cancelled and escrow released',
+          { bypassAgeLimit: true },
+        )
+        cancelledIds.push(row.id)
+      } catch (err) {
+        // The money is already on its way through Epay; it cannot be stopped from here.
+        if (err instanceof AppError && err.code === 'EPAY_PAYOUT_IN_FLIGHT') {
+          skippedEpayInFlightIds.push(row.id)
+          continue
+        }
+        throw err
+      }
     }
-    return { cancelledIds }
+    return { cancelledIds, skippedEpayInFlightIds }
+  },
+
+  /**
+   * Epay confirmed the transfer for a platform (EPAY) withdrawal: PENDING_PLATFORM → WAITING,
+   * exactly like the admin's manual "paid + proof" step but with the Epay order as the payout
+   * reference. The existing WAITING → PAID job then books the company payout. Idempotent:
+   * a withdrawal that already left PENDING_PLATFORM is left alone (returns false).
+   */
+  async markPlatformPayoutSentViaEpay(
+    withdrawalId: string,
+    info: { payoutRef: string; adminUserId: string | null; merchantOrderNo: string },
+  ): Promise<boolean> {
+    const config = await withdrawalService.getPayrollConfig()
+    const waitingExpiresAt = new Date(Date.now() + config.waitingHours * 60 * 60 * 1000)
+    let hostUserId: string | null = null
+
+    const moved = await prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM withdrawals WHERE id = ${withdrawalId}::uuid FOR UPDATE`
+        const w = await tx.withdrawal.findUnique({ where: { id: withdrawalId } })
+        if (!w || !isPlatformHandledWithdrawal(w) || w.status !== 'PENDING_PLATFORM') return false
+        hostUserId = w.userId
+        await withdrawalRepository.updateStatus(
+          {
+            id: withdrawalId,
+            status: 'WAITING',
+            waitingExpiresAt,
+            payoutRef: info.payoutRef,
+          },
+          tx,
+        )
+        return true
+      },
+      { timeout: INTERACTIVE_TX_MS },
+    )
+    if (!moved) return false
+
+    await enqueuePlatformWaiting(withdrawalId, waitingExpiresAt)
+    auditService.logAdmin({
+      adminUserId: info.adminUserId ?? 'system',
+      targetUserId: hostUserId,
+      actionType: 'WITHDRAWAL_PLATFORM_PAID_EPAY',
+      actionStatus: 'success',
+      actionDetails: {
+        withdrawalId,
+        payoutRef: info.payoutRef,
+        merchantOrderNo: info.merchantOrderNo,
+      },
+    })
+    if (hostUserId) {
+      void enqueuePlatformWithdrawalMessage({
+        withdrawalId,
+        event: 'waiting',
+        hostUserId,
+      }).catch(() => {})
+    }
+    return true
   },
 
   async getWithdrawalHistory(userId: string, opts: { limit: number; cursor?: string }) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { CoinTxType, LedgerDirection, LevelType, WalletCurrencyType } from "@prisma/client";
+import { CoinTxType, LedgerDirection, Prisma, WalletCurrencyType } from "@prisma/client";
 
 const applyRecharge = vi.fn();
 const refreshCacheAfterRecharge = vi.fn();
@@ -28,11 +28,12 @@ vi.mock("../../src/services/user-level.service", () => ({
   },
 }));
 
+const adjustCoinBalanceCache = vi.fn();
 vi.mock("../../src/services/wallet.service", () => ({
   walletService: {
     getCachedIdemResponse: vi.fn().mockResolvedValue(null),
     acquireIdemKey: vi.fn().mockResolvedValue(true),
-    adjustCoinBalanceCache: vi.fn().mockResolvedValue(undefined),
+    adjustCoinBalanceCache: (...a: unknown[]) => adjustCoinBalanceCache(...a),
     resolveIdemKey: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -54,14 +55,15 @@ vi.mock("../../src/repositories/coin-ledger.repository", () => ({
   },
 }));
 
-const findFirstOrder = vi.fn();
+const findUniqueOrder = vi.fn();
 const txFindFirst = vi.fn();
 const txTopupUpdate = vi.fn();
+const txTopupUpdateMany = vi.fn();
 
 vi.mock("../../src/config/database", () => ({
   prisma: {
     coinTopupOrder: {
-      findFirst: (...a: unknown[]) => findFirstOrder(...a),
+      findUnique: (...a: unknown[]) => findUniqueOrder(...a),
     },
     $transaction: vi.fn(),
   },
@@ -70,22 +72,29 @@ vi.mock("../../src/config/database", () => ({
 import { prisma } from "../../src/config/database";
 import { coinWalletService } from "../../src/services/coin-wallet.service";
 
-describe("confirmTopup rich-tier wiring", () => {
+const PAID = {
+  epayOrderNo: "EP-1",
+  epayStatus: "7",
+  paidAmount: new Prisma.Decimal("2.99"),
+  paidCurrency: "USD",
+};
+
+describe("creditPaidTopup (Epay-confirmed personal top-up)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    findFirstOrder.mockResolvedValue({
+    findUniqueOrder.mockResolvedValue({
       id: "ord-1",
       userId: "user-1",
       coins: 50,
       packageId: "pkg-1",
       status: "PENDING",
+      gatewayRef: null,
+      merchantOrderNo: "CP261120ABCDEF0123456789",
     });
     txFindFirst.mockResolvedValue(null);
     txTopupUpdate.mockResolvedValue({});
-    insertLedger.mockResolvedValue({
-      id: "ledger-1",
-      balanceAfter: 50n,
-    });
+    txTopupUpdateMany.mockResolvedValue({ count: 1 });
+    insertLedger.mockResolvedValue({ id: "ledger-1", balanceAfter: 50n });
     applyRecharge.mockResolvedValue({ year: 2026, month: 5 });
     wealthGetSnapshot.mockResolvedValue({
       currentLevel: 2,
@@ -102,18 +111,29 @@ describe("confirmTopup rich-tier wiring", () => {
       async (fn: (tx: unknown) => Promise<unknown>) => {
         const tx = {
           coinLedgerEntry: { findFirst: txFindFirst },
-          coinTopupOrder: { update: txTopupUpdate },
+          coinTopupOrder: { update: txTopupUpdate, updateMany: txTopupUpdateMany },
         };
         return fn(tx);
       },
     );
   });
 
-  it("calls applyRecharge inside $transaction, then getSnapshot (read-only) and refreshCacheAfterRecharge — no wealth applyCredit", async () => {
+  it("claims PENDING→PAID in the same tx, credits TOPUP with the epay ledger key, then rich tier", async () => {
     const seq: string[] = [];
+    txTopupUpdateMany.mockImplementation(async () => {
+      seq.push("claim");
+      return { count: 1 };
+    });
+    insertLedger.mockImplementation(async () => {
+      seq.push("ledger");
+      return { id: "ledger-1", balanceAfter: 50n };
+    });
     applyRecharge.mockImplementation(async () => {
       seq.push("applyRecharge");
       return { year: 2026, month: 5 };
+    });
+    refreshCacheAfterRecharge.mockImplementation(async () => {
+      seq.push("richRefresh");
     });
     wealthGetSnapshot.mockImplementation(async () => {
       seq.push("wealthSnapshot");
@@ -123,46 +143,54 @@ describe("confirmTopup rich-tier wiring", () => {
         distanceToUpgrade: "0",
         leveledUp: false,
         previousLevel: 2,
-        nextLevelThreshold: null,
-        progressNumerator: "0",
-        progressDenominator: null,
       };
     });
-    refreshCacheAfterRecharge.mockImplementation(async () => {
-      seq.push("richRefresh");
+
+    const out = await coinWalletService.creditPaidTopup("ord-1", PAID);
+
+    expect(txTopupUpdateMany).toHaveBeenCalledWith({
+      where: { id: "ord-1", status: "PENDING" },
+      data: expect.objectContaining({
+        status: "PAID",
+        gatewayRef: "EP-1",
+        epayStatus: "7",
+        paidCurrency: "USD",
+      }),
     });
-
-    await coinWalletService.confirmTopup(
-      "user-1",
-      "ord-1",
-      "gw-1",
-      "idem-1",
-    );
-
     expect(insertLedger).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         txType: CoinTxType.TOPUP,
         direction: LedgerDirection.CREDIT,
+        amount: 50n,
+        idempotencyKey: "epay-personal-topup:ord-1",
       }),
     );
-    expect(applyRecharge).toHaveBeenCalledWith(
-      "user-1",
-      50n,
-      expect.anything(),
-    );
-    expect(seq).toEqual(["applyRecharge", "richRefresh", "wealthSnapshot"]);
+    expect(applyRecharge).toHaveBeenCalledWith("user-1", 50n, expect.anything());
+    expect(seq).toEqual(["claim", "ledger", "applyRecharge", "richRefresh", "wealthSnapshot"]);
     expect(lockForUpdate).toHaveBeenCalled();
+    expect(adjustCoinBalanceCache).toHaveBeenCalledWith("user-1", 50n);
+    expect(out).toMatchObject({ ledgerEntryId: "ledger-1", coins: 50 });
   });
 
-  it("passes wallet getOrCreate with COIN currency", async () => {
-    const { walletRepository } = await import(
-      "../../src/repositories/wallet.repository"
-    );
-    await coinWalletService.confirmTopup("user-1", "ord-1", "gw-1", "idem-2");
-    expect(walletRepository.getOrCreate).toHaveBeenCalledWith(
-      "user-1",
-      WalletCurrencyType.COIN,
-    );
+  it("uses the COIN wallet", async () => {
+    const { walletRepository } = await import("../../src/repositories/wallet.repository");
+    await coinWalletService.creditPaidTopup("ord-1", PAID);
+    expect(walletRepository.getOrCreate).toHaveBeenCalledWith("user-1", WalletCurrencyType.COIN);
+  });
+
+  it("a concurrent runner that loses the claim credits nothing", async () => {
+    txTopupUpdateMany.mockResolvedValue({ count: 0 });
+    const out = await coinWalletService.creditPaidTopup("ord-1", PAID);
+    expect(out).toBeNull();
+    expect(insertLedger).not.toHaveBeenCalled();
+    expect(applyRecharge).not.toHaveBeenCalled();
+    expect(adjustCoinBalanceCache).not.toHaveBeenCalled();
+  });
+
+  it("an order that is no longer PENDING is skipped without a transaction", async () => {
+    findUniqueOrder.mockResolvedValue({ id: "ord-1", userId: "user-1", coins: 50, status: "PAID" });
+    expect(await coinWalletService.creditPaidTopup("ord-1", PAID)).toBeNull();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

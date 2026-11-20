@@ -2,12 +2,14 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { AppError } from '../../middlewares/errorHandler'
 import { verifyLiveWebhookSecret } from '../../middlewares/liveWebhookAuth.middleware'
-import { epayClient } from '../../lib/epay.client'
-import { coinWalletService } from '../../services/coin-wallet.service'
-import { coinTradingService } from '../../services/coinTrading.service'
+import {
+  isEpayConfigured,
+  parseEpayCallbackBody,
+  verifyEpayCallback,
+} from '../../lib/epay/epay-gateway.client'
+import { epayOrderKindOf } from '../../lib/epay/epay-order-no'
+import { epayPayinService } from '../../services/epay-payin.service'
 import { liveSessionService } from '../../services/liveSession.service'
-import { enqueueWebhookRetry } from '../../queues/epay-webhook.queue'
-import { prisma } from '../../config/database'
 
 const LiveSessionStartSchema = z.object({
   hostUserId: z.string().min(1),
@@ -31,43 +33,65 @@ const ModerationNotifySchema = z.object({
   performedByAdminId: z.string().min(1),
 })
 
+/** Flatten a parsed callback body (form or JSON) into the string fields Epay signed. */
+function callbackFields(body: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!body || typeof body !== 'object') return out
+  for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+    if (v == null) continue
+    out[k] = typeof v === 'object' ? JSON.stringify(v) : String(v)
+  }
+  return out
+}
+
 export async function webhooksRoutes(app: FastifyInstance) {
+  // Epay notifies with application/x-www-form-urlencoded. Registered inside this plugin only
+  // (Fastify encapsulation), so no other route starts accepting form bodies.
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string', bodyLimit: 64 * 1024 },
+    (_request, body, done) => {
+      try {
+        done(null, parseEpayCallbackBody(body as string))
+      } catch (err) {
+        done(err as Error, undefined)
+      }
+    },
+  )
+
+  /**
+   * Epay async notification (pay-in and payout). Flow: verify `sign` with the key for the
+   * order's direction → settle from Epay's OWN status query (the callback body is never
+   * trusted for amounts) → reply plain `success` so Epay stops retrying. Any non-`success`
+   * answer makes Epay retry (16 times over ~4 h), which is what we want on transient errors;
+   * the epay-reconcile job is the backstop either way.
+   */
   app.post('/epay', async (request: FastifyRequest, reply: FastifyReply) => {
-    const signature = String(request.headers['x-epay-signature'] ?? '')
-    const raw = Buffer.from(JSON.stringify(request.body ?? {}))
-    if (!epayClient.verifyWebhookSignature(raw, signature)) {
+    if (!isEpayConfigured()) {
+      throw new AppError(503, 'Epay is not enabled', 'EPAY_DISABLED')
+    }
+    const fields = callbackFields(request.body)
+    const merchantOrderNo = fields.merchantOrderNo
+    const kind = epayOrderKindOf(merchantOrderNo)
+    if (!kind) {
+      request.log.warn({ merchantOrderNo }, 'epay callback: unknown merchantOrderNo')
+      throw new AppError(400, 'Unknown order', 'EPAY_UNKNOWN_ORDER')
+    }
+    const keyKind = kind === 'WITHDRAWAL_PAYOUT' ? 'PAYOUT' : 'PAYIN'
+    if (!verifyEpayCallback(fields, keyKind)) {
+      request.log.warn({ merchantOrderNo, kind }, 'epay callback: invalid signature')
       throw new AppError(401, 'Invalid signature', 'INVALID_WEBHOOK_SIGNATURE')
     }
-    const payload = request.body as {
-      orderType: 'PERSONAL_TOPUP' | 'TRADING_TOPUP'
-      orderId: string
-      gatewayRef: string
-      amountUsd: number
-      userId?: string
+
+    if (kind === 'WITHDRAWAL_PAYOUT') {
+      const { epayPayoutService } = await import('../../services/epay-payout.service')
+      const result = await epayPayoutService.settlePayout(merchantOrderNo, 'callback')
+      request.log.info({ merchantOrderNo, result }, 'epay payout callback handled')
+    } else {
+      const result = await epayPayinService.settlePayin(merchantOrderNo, 'callback')
+      request.log.info({ merchantOrderNo, result }, 'epay pay-in callback handled')
     }
-    try {
-      if (payload.orderType === 'PERSONAL_TOPUP') {
-        const order = await prisma.coinTopupOrder.findUnique({ where: { id: payload.orderId } })
-        if (order?.userId) {
-          await coinWalletService.confirmTopup(
-            order.userId,
-            payload.orderId,
-            payload.gatewayRef,
-            `epay-personal-topup:${payload.orderId}`,
-          )
-        }
-      } else {
-        const order = await prisma.coinTradingTopupOrder.findUnique({
-          where: { id: payload.orderId },
-        })
-        if (order) {
-          await coinTradingService.confirmTopup(order, payload)
-        }
-      }
-    } catch (_err) {
-      await enqueueWebhookRetry(payload, payload.orderType)
-    }
-    return reply.send({ ok: true })
+    return reply.type('text/plain').send('success')
   })
 
   // Live session events (from LiveKit backend server)
