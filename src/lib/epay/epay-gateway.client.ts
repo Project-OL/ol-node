@@ -75,13 +75,49 @@ export class EpayRejectedError extends AppError {
   }
 }
 
-/** Raised for transport failures where the outcome of the call is unknown. */
+/**
+ * Transport failure. `outcome` says whether Epay could have acted on the request:
+ *  - NOT_SENT: the request provably never reached Epay's application (connection refused,
+ *    DNS failure, HTTP 4xx rejection e.g. IP not whitelisted, circuit open). Safe to treat as
+ *    "nothing happened" and retry with a new order.
+ *  - UNKNOWN: it may have been processed (timeout, connection reset mid-request, HTTP 5xx).
+ *    Money-moving callers must query before doing anything else.
+ */
+export type EpayTransportOutcome = 'NOT_SENT' | 'UNKNOWN'
+
 export class EpayUnavailableError extends AppError {
-  constructor(path: string, cause: string) {
-    super(502, 'Epay gateway error', 'EPAY_GATEWAY_ERROR', { path, cause })
+  constructor(
+    path: string,
+    cause: string,
+    public readonly outcome: EpayTransportOutcome = 'UNKNOWN',
+  ) {
+    super(502, 'Epay gateway error', 'EPAY_GATEWAY_ERROR', { path, cause, outcome })
     this.name = 'EpayUnavailableError'
     Object.setPrototypeOf(this, new.target.prototype)
   }
+}
+
+/** Socket-level errors raised before any byte of the request reached the server. */
+const NOT_SENT_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ERR_INVALID_URL',
+])
+
+export function classifyTransportError(err: unknown): EpayTransportOutcome {
+  const status = (err as { response?: { status?: number } })?.response?.status
+  if (status != null) return status >= 400 && status < 500 ? 'NOT_SENT' : 'UNKNOWN'
+  const code = (err as { code?: string })?.code
+  return code && NOT_SENT_ERROR_CODES.has(code) ? 'NOT_SENT' : 'UNKNOWN'
+}
+
+/** True when a create call failed in a way that guarantees Epay did not act on it. */
+export function isDefinitelyNotSent(err: unknown): boolean {
+  if (err instanceof EpayUnavailableError) return err.outcome === 'NOT_SENT'
+  return err instanceof AppError && err.code === 'EPAY_CIRCUIT_OPEN'
 }
 
 export function isEpayConfigured(): boolean {
@@ -180,8 +216,12 @@ async function call<T>(
   }
   epayCircuitBreaker.recordFailure()
   const cause = lastErr instanceof Error ? lastErr.message : String(lastErr)
-  logger.error({ epayPath: path, merchantOrderNo: orderNo, cause }, 'epay: transport failure')
-  throw new EpayUnavailableError(path, cause)
+  const outcome = classifyTransportError(lastErr)
+  logger.error(
+    { epayPath: path, merchantOrderNo: orderNo, cause, outcome },
+    'epay: transport failure',
+  )
+  throw new EpayUnavailableError(path, cause, outcome)
 }
 
 // ── Response shapes (kept loose: Epay says "trust the live response, not the doc") ──

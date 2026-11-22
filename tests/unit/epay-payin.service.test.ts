@@ -112,7 +112,7 @@ describe('epayPayinService.settlePayin', () => {
     expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('REVIEW')
     expect(creditPersonal).not.toHaveBeenCalled()
     const call = personalUpdateMany.mock.calls[0][0]
-    expect(call.where).toEqual({ id: 'ord-1', status: 'PENDING' })
+    expect(call.where).toEqual({ id: 'ord-1', status: { in: ['PENDING'] } })
     expect(call.data.status).toBe('REVIEW')
     expect(call.data.failureReason).toMatch(reason)
   })
@@ -184,6 +184,66 @@ describe('epayPayinService.settlePayin', () => {
     queryPayin.mockResolvedValue({ status: '7', amount: '2.99', currency: 'USD' })
     creditPersonal.mockResolvedValue(null)
     expect(await epayPayinService.settlePayin(CP, 'reconcile')).toBe('ALREADY_FINAL')
+  })
+})
+
+describe('late payment (order closed before Epay confirmed it)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    personalUpdateMany.mockResolvedValue({ count: 1 })
+    creditPersonal.mockResolvedValue({ ledgerEntryId: 'l1' })
+  })
+
+  it.each(['FAILED', 'EXPIRED'])(
+    'callback on a %s order + Epay status 7 + exact match → credited',
+    async (status) => {
+      personalFindUnique.mockResolvedValue(personalOrder({ status, createdAt: minutesAgo(26 * 60) }))
+      queryPayin.mockResolvedValue({ status: '7', amount: '2.99', currency: 'USD', epayOrderNo: 'EP-L' })
+      expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('CREDITED')
+      expect(creditPersonal).toHaveBeenCalledWith('ord-1', expect.objectContaining({ epayOrderNo: 'EP-L' }))
+    },
+  )
+
+  it('late callback but Epay does not say 7 → nothing changes', async () => {
+    personalFindUnique.mockResolvedValue(personalOrder({ status: 'EXPIRED' }))
+    queryPayin.mockResolvedValue({ status: '8' })
+    expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('ALREADY_FINAL')
+    expect(personalUpdateMany).not.toHaveBeenCalled()
+    expect(creditPersonal).not.toHaveBeenCalled()
+  })
+
+  it('late callback, status 7 but amount mismatch → REVIEW (from the closed status), not credited', async () => {
+    personalFindUnique.mockResolvedValue(personalOrder({ status: 'FAILED' }))
+    queryPayin.mockResolvedValue({ status: '7', amount: '1.00', currency: 'USD' })
+    expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('REVIEW')
+    const call = personalUpdateMany.mock.calls[0][0]
+    expect(call.where).toEqual({ id: 'ord-1', status: { in: ['FAILED'] } })
+    expect(call.data.status).toBe('REVIEW')
+    expect(call.data.failureReason).toMatch(/^LATE_AMOUNT_MISMATCH/)
+    expect(creditPersonal).not.toHaveBeenCalled()
+  })
+
+  it('reconcile and poll never re-open closed orders (no Epay query)', async () => {
+    personalFindUnique.mockResolvedValue(personalOrder({ status: 'EXPIRED' }))
+    expect(await epayPayinService.settlePayin(CP, 'reconcile')).toBe('ALREADY_FINAL')
+    expect(await epayPayinService.settlePayin(CP, 'poll')).toBe('ALREADY_FINAL')
+    expect(queryPayin).not.toHaveBeenCalled()
+  })
+
+  it('PAID and REVIEW are never re-opened, even by a callback', async () => {
+    for (const status of ['PAID', 'REVIEW']) {
+      personalFindUnique.mockResolvedValue(personalOrder({ status }))
+      expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('ALREADY_FINAL')
+    }
+    expect(queryPayin).not.toHaveBeenCalled()
+  })
+
+  it('a dropped Epay connection during a late re-check propagates (callback is retried)', async () => {
+    personalFindUnique.mockResolvedValue(personalOrder({ status: 'EXPIRED' }))
+    queryPayin.mockRejectedValue(new EpayUnavailableError('/q', 'timeout'))
+    await expect(epayPayinService.settlePayin(CP, 'callback')).rejects.toBeInstanceOf(
+      EpayUnavailableError,
+    )
   })
 })
 

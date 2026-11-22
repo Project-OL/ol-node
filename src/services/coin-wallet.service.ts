@@ -27,6 +27,14 @@ import { epayGateway, EpayRejectedError, isEpayConfigured } from '../lib/epay/ep
 import { makeEpayMerchantOrderNo } from '../lib/epay/epay-order-no'
 import { redisClient, RedisKeys } from '../config/redis'
 
+/**
+ * Order statuses a VERIFIED Epay payment (status 7 + exact match) may still credit.
+ * FAILED / EXPIRED are our own closes ("no payment seen yet"); if Epay later confirms the user
+ * did pay (late payment, lost link, slow channel), the money is ours, so the coins must be too.
+ * PAID / COMPLETED (already credited) and REVIEW (human decision) are never claimable.
+ */
+export const PAYIN_CREDITABLE_STATUSES = ['PENDING', 'FAILED', 'EXPIRED'] as const
+
 /** What a verified Epay "paid" result records on the order. */
 export interface EpayPaidFields {
   epayOrderNo: string | null
@@ -136,14 +144,17 @@ export const coinWalletService = {
           remark: `${pkg.coins} coins`,
         })
       } catch (err) {
-        if (err instanceof EpayRejectedError) {
-          await prisma.coinTopupOrder.updateMany({
-            where: { id: order.id, status: 'PENDING' },
-            data: { status: 'FAILED', failureReason: 'EPAY_CREATE_REJECTED' },
-          })
-        }
-        // Transport failure: outcome unknown, the order stays PENDING and the reconcile job
-        // queries Epay and closes it. The user never got a payment URL, so nothing was paid.
+        // The user never got a payment URL, so this order can't have been paid: close it now
+        // (any failure, incl. timeout) instead of re-querying a dead order for 24 h. If Epay
+        // did create it and a payment somehow lands, the late-payment path credits it.
+        await prisma.coinTopupOrder.updateMany({
+          where: { id: order.id, status: 'PENDING' },
+          data: {
+            status: 'FAILED',
+            failureReason:
+              err instanceof EpayRejectedError ? 'EPAY_CREATE_REJECTED' : 'EPAY_CREATE_FAILED',
+          },
+        })
         throw err
       }
 
@@ -224,7 +235,7 @@ export const coinWalletService = {
   async creditPaidTopup(orderId: string, epay: EpayPaidFields) {
     const order = await prisma.coinTopupOrder.findUnique({ where: { id: orderId } })
     if (!order) throw new AppError(404, 'Order not found', 'ORDER_NOT_FOUND')
-    if (order.status !== 'PENDING') return null
+    if (!(PAYIN_CREDITABLE_STATUSES as readonly string[]).includes(order.status)) return null
     const userId = order.userId
     const idempotencyKey = `epay-personal-topup:${order.id}`
     const gatewayRef = epay.epayOrderNo ?? order.gatewayRef ?? order.merchantOrderNo ?? order.id
@@ -236,7 +247,7 @@ export const coinWalletService = {
     const result = await prisma.$transaction(
       async (tx) => {
         const claimed = await tx.coinTopupOrder.updateMany({
-          where: { id: order.id, status: 'PENDING' },
+          where: { id: order.id, status: { in: [...PAYIN_CREDITABLE_STATUSES] } },
           data: {
             status: 'PAID',
             gatewayRef,

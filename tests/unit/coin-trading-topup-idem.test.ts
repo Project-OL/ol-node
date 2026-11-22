@@ -24,11 +24,13 @@ vi.mock('../../src/services/wallet.service', () => ({
 }))
 const orderCreate = vi.fn()
 const orderUpdate = vi.fn()
+const orderUpdateMany = vi.fn().mockResolvedValue({ count: 1 })
 vi.mock('../../src/config/database', () => ({
   prisma: {
     coinTradingTopupOrder: {
       create: (...a: unknown[]) => orderCreate(...a),
       update: (...a: unknown[]) => orderUpdate(...a),
+      updateMany: (...a: unknown[]) => orderUpdateMany(...a),
     },
   },
   prismaRead: {},
@@ -97,6 +99,16 @@ describe('coinTradingService.initiateTopup idempotency', () => {
     })
     expect(acquireIdemKey).not.toHaveBeenCalled()
     expect(orderCreate).not.toHaveBeenCalled()
+  })
+
+  it('network drop while creating the Epay order → order closed FAILED (no link reached the agent)', async () => {
+    createOrder.mockRejectedValue(new Error('socket hang up'))
+    await expect(coinTradingService.initiateTopup('agent-1', input)).rejects.toThrow('socket hang up')
+    expect(orderUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'order-1', status: 'PENDING' },
+      data: { status: 'FAILED', failureReason: 'EPAY_CREATE_FAILED' },
+    })
+    expect(redisDel).toHaveBeenCalled() // idempotency key released: a retry can start fresh
   })
 
   it('rejects non-USD before any write', async () => {

@@ -19,6 +19,8 @@ const {
   verifyEpayCallback,
   EpayRejectedError,
   EpayUnavailableError,
+  classifyTransportError,
+  isDefinitelyNotSent,
   __resetEpayHttpForTests,
 } = await import('../../src/lib/epay/epay-gateway.client')
 const { epaySign } = await import('../../src/lib/epay/epay-sign')
@@ -129,6 +131,54 @@ describe('epay gateway client', () => {
     breaker.shouldSkip.mockReturnValue(true)
     await expect(epayGateway.queryPayin('CP1')).rejects.toMatchObject({ code: 'EPAY_CIRCUIT_OPEN' })
     expect(post).not.toHaveBeenCalled()
+  })
+})
+
+describe('transport failure classification (network drop safety)', () => {
+  it.each([
+    [{ code: 'ECONNREFUSED' }, 'NOT_SENT'],
+    [{ code: 'ENOTFOUND' }, 'NOT_SENT'],
+    [{ code: 'EAI_AGAIN' }, 'NOT_SENT'],
+    [{ response: { status: 403 } }, 'NOT_SENT'],
+    [{ response: { status: 400 } }, 'NOT_SENT'],
+    [{ code: 'ECONNABORTED' }, 'UNKNOWN'],
+    [{ code: 'ETIMEDOUT' }, 'UNKNOWN'],
+    [{ code: 'ECONNRESET' }, 'UNKNOWN'],
+    [{ response: { status: 502 } }, 'UNKNOWN'],
+    [new Error('socket hang up'), 'UNKNOWN'],
+  ])('%o → %s', (err, expected) => {
+    expect(classifyTransportError(err)).toBe(expected)
+  })
+
+  beforeEach(() => {
+    breaker.shouldSkip.mockReset().mockReturnValue(false)
+  })
+
+  it('a refused connection on a money-moving call carries outcome NOT_SENT', async () => {
+    for (const k of Object.keys(env)) delete env[k]
+    Object.assign(env, ENABLED_ENV)
+    __resetEpayHttpForTests()
+    post.mockReset().mockRejectedValue(Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }))
+    const err = await epayGateway
+      .createEpayTransfer({ merchantOrderNo: 'WD1', amount: '1.00', currency: 'USD', receiveEpayAccount: 'a@b.c' })
+      .catch((e) => e)
+    expect(err).toBeInstanceOf(EpayUnavailableError)
+    expect(err.outcome).toBe('NOT_SENT')
+    expect(isDefinitelyNotSent(err)).toBe(true)
+  })
+
+  it('a timeout carries outcome UNKNOWN; circuit-open counts as not sent', async () => {
+    post.mockReset().mockRejectedValue(Object.assign(new Error('timeout'), { code: 'ECONNABORTED' }))
+    const err = await epayGateway
+      .createEpayTransfer({ merchantOrderNo: 'WD1', amount: '1.00', currency: 'USD', receiveEpayAccount: 'a@b.c' })
+      .catch((e) => e)
+    expect(err.outcome).toBe('UNKNOWN')
+    expect(isDefinitelyNotSent(err)).toBe(false)
+
+    breaker.shouldSkip.mockReturnValueOnce(true)
+    const open = await epayGateway.queryPayout('WD1').catch((e) => e)
+    expect(open.code).toBe('EPAY_CIRCUIT_OPEN')
+    expect(isDefinitelyNotSent(open)).toBe(true)
   })
 })
 

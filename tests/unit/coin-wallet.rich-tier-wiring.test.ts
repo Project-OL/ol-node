@@ -149,7 +149,7 @@ describe("creditPaidTopup (Epay-confirmed personal top-up)", () => {
     const out = await coinWalletService.creditPaidTopup("ord-1", PAID);
 
     expect(txTopupUpdateMany).toHaveBeenCalledWith({
-      where: { id: "ord-1", status: "PENDING" },
+      where: { id: "ord-1", status: { in: ["PENDING", "FAILED", "EXPIRED"] } },
       data: expect.objectContaining({
         status: "PAID",
         gatewayRef: "EP-1",
