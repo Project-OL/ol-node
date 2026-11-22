@@ -49,6 +49,24 @@ async function handleMaster(job: Job<{ weekStart?: string; force?: boolean }>): 
   }
 }
 
+/**
+ * Miss count carried into `weekStart` from the user's previous evaluation. A fresh streak
+ * starts at 0 when that evaluation revoked the tag, or is not the week right before
+ * (the user was untagged in between, so an admin granted the tag again).
+ */
+function carriedMissCount(
+  priorEval: {
+    weekStart: Date
+    consecutiveMissCountAfterThisWeek: number
+    tagRevokedAfterThisWeek: boolean
+  } | null,
+  weekStart: Date,
+): number {
+  if (!priorEval || priorEval.tagRevokedAfterThisWeek) return 0
+  if (priorEval.weekStart.getTime() !== addUtcDays(weekStart, -7).getTime()) return 0
+  return priorEval.consecutiveMissCountAfterThisWeek
+}
+
 async function handleBatch(job: Job<{ weekStart: string; userIds: string[] }>): Promise<void> {
   const weekStart = new Date(job.data.weekStart)
   const weekEnd = addUtcDays(weekStart, 7)
@@ -63,7 +81,7 @@ async function handleBatch(job: Job<{ weekStart: string; userIds: string[] }>): 
     if (!user) continue
 
     const targetMet = earningsTotal >= config.autoRevokeEarningThresholdBigInt
-    const priorMissCount = priorEval?.consecutiveMissCountAfterThisWeek ?? 0
+    const priorMissCount = carriedMissCount(priorEval, weekStart)
     const consecutiveMissCountAfterThisWeek = targetMet ? 0 : priorMissCount + 1
     const stillTagged = hasRoyalHostTag(user.adminTags)
     const shouldRevoke =

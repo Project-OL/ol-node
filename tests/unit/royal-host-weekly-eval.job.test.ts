@@ -46,6 +46,16 @@ import { processRoyalHostWeeklyEvalJob } from '../../src/jobs/royal-host-weekly-
 import { ROYAL_HOST_JOB_BATCH, ROYAL_HOST_JOB_MASTER } from '../../src/queues/royalHost.constants'
 
 const WEEK = '2026-10-04'
+const PREV_WEEK = new Date('2026-09-27')
+
+function priorEval(missCount: number, overrides: Record<string, unknown> = {}) {
+  return {
+    weekStart: PREV_WEEK,
+    consecutiveMissCountAfterThisWeek: missCount,
+    tagRevokedAfterThisWeek: false,
+    ...overrides,
+  }
+}
 
 function batchJob(userIds: string[]): Job {
   return { name: ROYAL_HOST_JOB_BATCH, data: { weekStart: WEEK, userIds } } as unknown as Job
@@ -99,7 +109,7 @@ describe('royal-host weekly eval job', () => {
 
   it('third consecutive miss revokes the tag, matching it case-insensitively', async () => {
     getQualifyingEarningsForRange.mockResolvedValue(999_999n)
-    getLatestEvaluation.mockResolvedValue({ consecutiveMissCountAfterThisWeek: 2 })
+    getLatestEvaluation.mockResolvedValue(priorEval(2))
     userFindUnique.mockResolvedValue({ adminTags: ['Agency', ' Royal Host '] })
 
     await processRoyalHostWeeklyEvalJob(batchJob(['u1']))
@@ -115,7 +125,7 @@ describe('royal-host weekly eval job', () => {
 
   it('meeting the target resets the miss count', async () => {
     getQualifyingEarningsForRange.mockResolvedValue(1_000_000n)
-    getLatestEvaluation.mockResolvedValue({ consecutiveMissCountAfterThisWeek: 2 })
+    getLatestEvaluation.mockResolvedValue(priorEval(2))
     userFindUnique.mockResolvedValue({ adminTags: ['royal host'] })
 
     await processRoyalHostWeeklyEvalJob(batchJob(['u1']))
@@ -124,5 +134,47 @@ describe('royal-host weekly eval job', () => {
       expect.objectContaining({ targetMet: true, consecutiveMissCountAfterThisWeek: 0, tagRevokedAfterThisWeek: false }),
     )
     expect(setTags).not.toHaveBeenCalled()
+  })
+
+  it('after a revoke and an admin re-grant, the next miss starts a fresh streak (prod 34222754)', async () => {
+    // Previous week is the revoke week (count 3); the admin granted the tag again since.
+    getQualifyingEarningsForRange.mockResolvedValue(5_400n)
+    getLatestEvaluation.mockResolvedValue(priorEval(3, { tagRevokedAfterThisWeek: true }))
+    userFindUnique.mockResolvedValue({ adminTags: ['royal host'] })
+
+    await processRoyalHostWeeklyEvalJob(batchJob(['u1']))
+
+    expect(upsertEvaluation).toHaveBeenCalledWith(
+      expect.objectContaining({ consecutiveMissCountAfterThisWeek: 1, tagRevokedAfterThisWeek: false }),
+    )
+    expect(setTags).not.toHaveBeenCalled()
+  })
+
+  it('a gap since the previous evaluation (untagged in between) starts a fresh streak', async () => {
+    getQualifyingEarningsForRange.mockResolvedValue(0n)
+    getLatestEvaluation.mockResolvedValue(
+      priorEval(2, { weekStart: new Date('2026-09-13'), tagRevokedAfterThisWeek: false }),
+    )
+    userFindUnique.mockResolvedValue({ adminTags: ['royal host'] })
+
+    await processRoyalHostWeeklyEvalJob(batchJob(['u1']))
+
+    expect(upsertEvaluation).toHaveBeenCalledWith(
+      expect.objectContaining({ consecutiveMissCountAfterThisWeek: 1, tagRevokedAfterThisWeek: false }),
+    )
+    expect(setTags).not.toHaveBeenCalled()
+  })
+
+  it('back-to-back weeks keep counting, so the 3rd miss still revokes', async () => {
+    getQualifyingEarningsForRange.mockResolvedValue(0n)
+    getLatestEvaluation.mockResolvedValue(priorEval(2))
+    userFindUnique.mockResolvedValue({ adminTags: ['royal host'] })
+
+    await processRoyalHostWeeklyEvalJob(batchJob(['u1']))
+
+    expect(upsertEvaluation).toHaveBeenCalledWith(
+      expect.objectContaining({ consecutiveMissCountAfterThisWeek: 3, tagRevokedAfterThisWeek: true }),
+    )
+    expect(setTags).toHaveBeenCalledWith('u1', [])
   })
 })

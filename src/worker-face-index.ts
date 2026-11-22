@@ -16,7 +16,7 @@ import { registerCrashHandlers } from './utils/crashHandlers'
 import { withShutdownTimeout } from './utils/shutdownTimeout'
 import { ensureCollectionExists } from './lib/rekognition.client'
 import { runFaceIndexPollOnce } from './jobs/face-index-poll.job'
-import { processLivePhotoWorkerJob } from './jobs/live-photo-verify.job'
+import { onLivePhotoVerifyJobFailed, processLivePhotoWorkerJob } from './jobs/live-photo-verify.job'
 import {
   onFaceRegistrationVerifyJobFailed,
   processFaceRegistrationWorkerJob,
@@ -59,6 +59,9 @@ async function main() {
 
   livePhotoVerifyWorker.on('failed', (job, err) => {
     console.error('[face-rekognition-worker] Live photo verify job failed:', job?.id, err)
+    void onLivePhotoVerifyJobFailed(job, err).catch((handlerErr) => {
+      console.error('[face-rekognition-worker] Live photo failure handler error', handlerErr)
+    })
   })
   faceRegistrationWorker.on('failed', (job, err) => {
     void onFaceRegistrationVerifyJobFailed(job, err).catch((handlerErr) => {

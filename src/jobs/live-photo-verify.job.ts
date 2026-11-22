@@ -20,6 +20,17 @@ import { rootLogger } from '../utils/rootLogger'
 
 const log = rootLogger.child({ module: 'live-photo-verify.job' })
 
+/** Another run holds the per-user verify lock; thrown so BullMQ retries the job. */
+export class LivePhotoVerifyLockContendedError extends Error {
+  constructor() {
+    super('live_photo_verify_lock_contended')
+    this.name = 'LivePhotoVerifyLockContendedError'
+  }
+}
+
+/** Failure code stored when a verify job exhausts its retries on an unexpected error. */
+export const LIVE_PHOTO_VERIFY_JOB_FAILED_REASON = 'verify_job_failed'
+
 const MODERATION_REJECT_REASONS = new Set<string>([
   FACE_REGISTRATION_ERRORS.FACE_QUALITY_INDECENT,
   FACE_REGISTRATION_ERRORS.FACE_QUALITY_CONTENT_POLICY,
@@ -73,9 +84,11 @@ export async function processLivePhotoVerifyJob(
   const lockKey = RedisKeys.livePhotoVerifyLock(userId)
   const lockOk = await redisClient.set(lockKey, '1', 'EX', env.LIVE_PHOTO_VERIFY_LOCK_TTL_SEC, 'NX')
   if (!lockOk) {
+    // Throw (not return) so BullMQ retries. Returning marked the job completed with
+    // no work done, which left the row in PROCESSING forever after a worker crash
+    // re-ran a stalled job while the dead run's lock was still held.
     log.warn({ userId, generation, requestId }, 'live_photo_verify_lock_contended')
-    livePhotoMetrics.verifyStaleSkipped += 1
-    return
+    throw new LivePhotoVerifyLockContendedError()
   }
   try {
     const row = await livePhotoRepository.findByUserId(userId)
@@ -104,7 +117,25 @@ export async function processLivePhotoVerifyJob(
     if (isLivePhotoModerationEnabled()) {
       const { checkImageForNudity, checkContentPolicy } =
         await import('../services/face-registration/face-registration-moderation.service')
-      const nudity = await checkImageForNudity(s3Key, { forceEnabled: true })
+      let nudity: Awaited<ReturnType<typeof checkImageForNudity>>
+      let policy: Awaited<ReturnType<typeof checkContentPolicy>>
+      try {
+        nudity = await checkImageForNudity(s3Key, { forceEnabled: true })
+        policy = nudity.isNudityDetected
+          ? { violated: false, labels: [], isViolenceOrWeapons: false, isHateSymbols: false }
+          : await checkContentPolicy(s3Key, { forceEnabled: true })
+      } catch (err) {
+        // An unreadable image is a terminal user error, same as in DetectFaces below.
+        // Uncaught, it burned all retries and left the row stuck in PROCESSING.
+        if (isRekognitionInvalidImageFormatError(err)) {
+          log.warn({ err, userId, requestId, s3Key }, 'live_photo_moderation_invalid_image_format')
+          await failAndAudit(userId, row.id, s3Key, 'invalid_image_format', null, t0, null, null, {
+            stage: 'moderation',
+          })
+          return
+        }
+        throw err
+      }
       if (nudity.isNudityDetected) {
         await failAndAudit(
           userId,
@@ -119,7 +150,6 @@ export async function processLivePhotoVerifyJob(
         )
         return
       }
-      const policy = await checkContentPolicy(s3Key, { forceEnabled: true })
       if (policy.violated) {
         await failAndAudit(
           userId,
@@ -388,6 +418,52 @@ async function recordAttemptEnd(input: {
     rekognitionLatencyMs: input.rekognitionLatencyMs,
     metadata: input.metadata,
   })
+}
+
+/**
+ * BullMQ `failed` listener. On the final attempt, settle the row the same way a handled
+ * failure does (replace → keep old photo; first upload → FAILED) so it never stays in
+ * PROCESSING, which blocks every later upload-url with a 409.
+ */
+export async function onLivePhotoVerifyJobFailed(
+  job: Job<{ userId: string; s3Key: string; generation: number; requestId?: string }> | undefined,
+  err: Error,
+): Promise<void> {
+  if (!job || job.name !== LIVE_PHOTO_VERIFY_JOB) return
+  const maxAttempts = typeof job.opts.attempts === 'number' ? job.opts.attempts : 1
+  if (job.attemptsMade < maxAttempts) return
+
+  const { userId, s3Key, generation, requestId } = job.data
+  const row = await livePhotoRepository.findByUserId(userId)
+  if (
+    !row ||
+    row.verifyGeneration !== generation ||
+    row.verificationState !== 'PROCESSING' ||
+    (row.s3Key !== s3Key && row.pendingS3Key !== s3Key)
+  ) {
+    return
+  }
+  const reason = isRekognitionInvalidImageFormatError(err)
+    ? 'invalid_image_format'
+    : LIVE_PHOTO_VERIFY_JOB_FAILED_REASON
+  log.error(
+    { err, userId, generation, requestId, attemptsMade: job.attemptsMade, reason },
+    'live_photo_verify_retries_exhausted',
+  )
+  await failAndAudit(
+    userId,
+    row.id,
+    s3Key,
+    reason,
+    null,
+    job.timestamp || Date.now(),
+    null,
+    null,
+    {
+      retriesExhausted: true,
+      error: String(err?.message ?? err).slice(0, 500),
+    },
+  )
 }
 
 export async function processLivePhotoS3PurgeJob(job: Job<{ keys: string[] }>): Promise<void> {

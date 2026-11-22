@@ -50,7 +50,11 @@ export const royalHostRewardRepository = {
     return prismaRead.royalHostWeeklyEvaluation.findFirst({
       where: { userId, weekStart: { lt: beforeWeekStart } },
       orderBy: { weekStart: 'desc' },
-      select: { consecutiveMissCountAfterThisWeek: true },
+      select: {
+        weekStart: true,
+        consecutiveMissCountAfterThisWeek: true,
+        tagRevokedAfterThisWeek: true,
+      },
     })
   },
 
