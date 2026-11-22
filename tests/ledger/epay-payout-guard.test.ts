@@ -201,6 +201,49 @@ describe('Epay payout guard (real Postgres)', () => {
     expect(rows[0].status).toBe('SUBMITTED')
   })
 
+  it('DB blip after Epay paid: refund is refused, and the reconcile repair moves it to WAITING', async () => {
+    const { w, wallet } = await epayWithdrawal()
+    // Simulate: Epay confirmed (attempt SUCCESS) but the withdrawal step never ran.
+    await prisma.epayPayoutOrder.create({
+      data: {
+        withdrawalId: w.id,
+        merchantOrderNo: `WD261122${rid().toUpperCase()}${rid().toUpperCase().slice(0, 4)}`,
+        epayOrderNo: `EP${rid()}`,
+        receiveEpayAccount: 'x@example.invalid',
+        amount: w.hostPayoutUsd!,
+        status: 'SUCCESS',
+        completedAt: new Date(),
+      },
+    })
+
+    await expect(withdrawalService.adminReverseWithdrawal(ADMIN, w.id, 'test')).rejects.toMatchObject({
+      code: 'EPAY_PAYOUT_ALREADY_SENT',
+    })
+    expect(await refunds(wallet.id)).toBe(0)
+
+    expect(await epayPayoutService.repairUnfinalizedSuccesses()).toBeGreaterThanOrEqual(1)
+    const after = await prisma.withdrawal.findUniqueOrThrow({ where: { id: w.id } })
+    expect(after.status).toBe('WAITING')
+    expect(after.payoutRef).toMatch(/^EPAY:EP/)
+  })
+
+  it('connection refused on the transfer → attempt FAILED at once, and a retry is allowed', async () => {
+    const { EpayUnavailableError } = await import('../../src/lib/epay/epay-gateway.client')
+    const { w } = await epayWithdrawal()
+    createEpayTransfer.mockRejectedValueOnce(new EpayUnavailableError('/c', 'ECONNREFUSED', 'NOT_SENT'))
+    const first = await epayPayoutService.payWithdrawalViaEpay(ADMIN, w.id)
+    expect(first.status).toBe('FAILED')
+
+    createEpayTransfer.mockResolvedValueOnce({ status: '7', epayOrderNo: `EP${rid()}` })
+    const second = await epayPayoutService.payWithdrawalViaEpay(ADMIN, w.id)
+    expect(second.status).toBe('SUCCESS')
+    const rows = await prisma.epayPayoutOrder.findMany({
+      where: { withdrawalId: w.id },
+      orderBy: { createdAt: 'asc' },
+    })
+    expect(rows.map((r) => r.status)).toEqual(['FAILED', 'SUCCESS'])
+  })
+
   it('"pay" racing "refund": never both a transfer and a refund', async () => {
     for (let i = 0; i < 5; i++) {
       const { w, wallet } = await epayWithdrawal()

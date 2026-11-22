@@ -76,6 +76,7 @@ async function closeOrder(
   order: LoadedOrder,
   status: 'FAILED' | 'EXPIRED' | 'REVIEW',
   data: { epayStatus?: string | null; failureReason: string },
+  fromStatuses: string[] = ['PENDING'],
 ): Promise<boolean> {
   const update = {
     status,
@@ -84,16 +85,11 @@ async function closeOrder(
     lastQueriedAt: new Date(),
     queryAttempts: { increment: 1 },
   }
+  const where = { id: order.id, status: { in: fromStatuses } }
   const res =
     order.kind === 'PERSONAL_TOPUP'
-      ? await prisma.coinTopupOrder.updateMany({
-          where: { id: order.id, status: 'PENDING' },
-          data: update,
-        })
-      : await prisma.coinTradingTopupOrder.updateMany({
-          where: { id: order.id, status: 'PENDING' },
-          data: update,
-        })
+      ? await prisma.coinTopupOrder.updateMany({ where, data: update })
+      : await prisma.coinTradingTopupOrder.updateMany({ where, data: update })
   return res.count > 0
 }
 
@@ -155,6 +151,53 @@ export function checkPaidMatchesOrder(
   }
 }
 
+async function creditVerified(order: LoadedOrder, paid: EpayPaidFields): Promise<boolean> {
+  return order.kind === 'PERSONAL_TOPUP'
+    ? (await coinWalletService.creditPaidTopup(order.id, paid)) != null
+    : coinTradingService.creditPaidTopup(order.id, paid)
+}
+
+/**
+ * A callback arrived for an order we had already closed as FAILED / EXPIRED. Nothing changes
+ * unless Epay's own query says status 7: then an exact match credits (money received must
+ * never strand the user), a mismatch goes to REVIEW. Any other answer leaves the order as is.
+ */
+async function settleLatePayment(
+  order: LoadedOrder,
+  merchantOrderNo: string,
+): Promise<PayinSettleResult> {
+  let data: EpayOrderData
+  try {
+    data = await epayGateway.queryPayin(merchantOrderNo)
+  } catch (err) {
+    if (err instanceof EpayRejectedError) return 'ALREADY_FINAL'
+    throw err
+  }
+  const epayStatus = data?.status == null ? null : String(data.status)
+  if (classifyEpayStatus(epayStatus) !== 'SUCCESS') return 'ALREADY_FINAL'
+
+  const check = checkPaidMatchesOrder(order, merchantOrderNo, data)
+  if (!check.ok) {
+    await closeOrder(order, 'REVIEW', { epayStatus, failureReason: `LATE_${check.reason}` }, [
+      order.status,
+    ])
+    log.error(
+      { merchantOrderNo, previousStatus: order.status, reason: check.reason },
+      'epay LATE payment does not match the order: held for review, NOT credited',
+    )
+    return 'REVIEW'
+  }
+  const credited = await creditVerified(order, check.paid)
+  if (credited) {
+    log.warn(
+      { merchantOrderNo, previousStatus: order.status },
+      'epay LATE payment credited (order had been closed before Epay confirmed it)',
+    )
+    return 'CREDITED'
+  }
+  return 'ALREADY_FINAL'
+}
+
 export const epayPayinService = {
   /**
    * Bring one pay-in order to its true state. Never trusts the caller's payload: the outcome
@@ -174,7 +217,13 @@ export const epayPayinService = {
     if (kind !== 'PERSONAL_TOPUP' && kind !== 'TRADING_TOPUP') return 'UNKNOWN_ORDER'
     const order = await loadOrder(kind, merchantOrderNo)
     if (!order) return 'UNKNOWN_ORDER'
-    if (order.status !== 'PENDING') return 'ALREADY_FINAL'
+
+    // Late payment: we closed the order (FAILED / EXPIRED = "no payment seen yet") but Epay
+    // is now calling back about it. Re-check with Epay; if it really was paid, credit it.
+    // Only a callback triggers this (reconcile/poll never re-open closed orders).
+    const isLate = order.status === 'FAILED' || order.status === 'EXPIRED'
+    if (order.status !== 'PENDING' && !(isLate && source === 'callback')) return 'ALREADY_FINAL'
+    if (isLate) return settleLatePayment(order, merchantOrderNo)
 
     const ageMs = Date.now() - order.createdAt.getTime()
     let data: EpayOrderData
@@ -230,10 +279,7 @@ export const epayPayinService = {
       return 'REVIEW'
     }
 
-    const credited =
-      kind === 'PERSONAL_TOPUP'
-        ? (await coinWalletService.creditPaidTopup(order.id, check.paid)) != null
-        : await coinTradingService.creditPaidTopup(order.id, check.paid)
+    const credited = await creditVerified(order, check.paid)
     if (credited) {
       log.info({ merchantOrderNo, source, kind }, 'epay pay-in credited')
       return 'CREDITED'

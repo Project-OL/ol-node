@@ -31,7 +31,7 @@ import { auditService } from './audit.service'
 import { userRepository } from '../repositories/user.repository'
 import { epayGateway, EpayRejectedError, isEpayConfigured } from '../lib/epay/epay-gateway.client'
 import { makeEpayMerchantOrderNo } from '../lib/epay/epay-order-no'
-import type { EpayPaidFields } from './coin-wallet.service'
+import { PAYIN_CREDITABLE_STATUSES, type EpayPaidFields } from './coin-wallet.service'
 import { prisma } from '../config/database'
 import {
   PERSONAL_COIN_EXCHANGE_RATES,
@@ -587,13 +587,16 @@ export const coinTradingService = {
         remark: 'Trading coin top-up',
       })
     } catch (err) {
-      if (err instanceof EpayRejectedError) {
-        await prisma.coinTradingTopupOrder.updateMany({
-          where: { id: order.id, status: 'PENDING' },
-          data: { status: 'FAILED', failureReason: 'EPAY_CREATE_REJECTED' },
-        })
-      }
-      // Transport failure: stays PENDING; the reconcile job queries Epay and closes it.
+      // No payment URL reached the agent, so nothing can have been paid: close it now.
+      // A payment that somehow lands anyway is credited by the late-payment path.
+      await prisma.coinTradingTopupOrder.updateMany({
+        where: { id: order.id, status: 'PENDING' },
+        data: {
+          status: 'FAILED',
+          failureReason:
+            err instanceof EpayRejectedError ? 'EPAY_CREATE_REJECTED' : 'EPAY_CREATE_FAILED',
+        },
+      })
       throw err
     }
     await prisma.coinTradingTopupOrder.update({
@@ -648,7 +651,7 @@ export const coinTradingService = {
   async creditPaidTopup(orderId: string, epay: EpayPaidFields): Promise<boolean> {
     const order = await prisma.coinTradingTopupOrder.findUnique({ where: { id: orderId } })
     if (!order) throw new AppError(404, 'Order not found', 'ORDER_NOT_FOUND')
-    if (order.status !== 'PENDING') return false
+    if (!(PAYIN_CREDITABLE_STATUSES as readonly string[]).includes(order.status)) return false
     const gatewayRef = epay.epayOrderNo ?? order.epayRef ?? order.merchantOrderNo ?? order.id
     const wallet = await walletRepository.getOrCreate(
       order.agentUserId,
@@ -658,7 +661,7 @@ export const coinTradingService = {
     const credited = await prisma.$transaction(
       async (tx) => {
         const claimed = await tx.coinTradingTopupOrder.updateMany({
-          where: { id: order.id, status: 'PENDING' },
+          where: { id: order.id, status: { in: [...PAYIN_CREDITABLE_STATUSES] } },
           data: {
             status: 'COMPLETED',
             epayRef: gatewayRef,

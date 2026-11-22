@@ -213,6 +213,23 @@ export async function lockWithdrawalAndAssertNoLiveEpayPayout(
       'EPAY_PAYOUT_IN_FLIGHT',
     )
   }
+  // Epay already paid it, but the withdrawal step has not caught up yet (DB blip / crash):
+  // refunding or hand-completing now would pay the host twice. The reconcile job moves it
+  // to WAITING within minutes; after that the normal admin actions apply again.
+  const w = await tx.withdrawal.findUnique({
+    where: { id: withdrawalId },
+    select: { status: true },
+  })
+  if (w?.status === 'PENDING_PLATFORM') {
+    const sent = await tx.epayPayoutOrder.count({ where: { withdrawalId, status: 'SUCCESS' } })
+    if (sent > 0) {
+      throw new AppError(
+        409,
+        'Epay already paid this withdrawal; it is being finalized',
+        'EPAY_PAYOUT_ALREADY_SENT',
+      )
+    }
+  }
 }
 
 /**

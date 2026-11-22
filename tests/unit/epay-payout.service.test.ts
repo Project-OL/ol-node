@@ -6,6 +6,8 @@ vi.mock('../../src/config/env', () => ({ env }))
 
 const payoutCreate = vi.fn()
 const payoutCount = vi.fn()
+const payoutFindMany = vi.fn()
+const withdrawalFindMany = vi.fn()
 const payoutUpdateMany = vi.fn()
 const payoutFindUnique = vi.fn()
 const payoutFindUniqueOrThrow = vi.fn()
@@ -25,7 +27,9 @@ vi.mock('../../src/config/database', () => {
   return {
     prisma: {
       $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+      withdrawal: { findMany: (...a: unknown[]) => withdrawalFindMany(...a) },
       epayPayoutOrder: {
+        findMany: (...a: unknown[]) => payoutFindMany(...a),
         updateMany: (...a: unknown[]) => payoutUpdateMany(...a),
         findUnique: (...a: unknown[]) => payoutFindUnique(...a),
         findUniqueOrThrow: (...a: unknown[]) => payoutFindUniqueOrThrow(...a),
@@ -45,6 +49,7 @@ vi.mock('../../src/lib/epay/epay-gateway.client', async () => {
     classifyEpayStatus: actual.classifyEpayStatus,
     EpayRejectedError: actual.EpayRejectedError,
     EpayUnavailableError: actual.EpayUnavailableError,
+    isDefinitelyNotSent: actual.isDefinitelyNotSent,
     isEpayConfigured: () => epayEnabled(),
     epayGateway: {
       createEpayTransfer: (...a: unknown[]) => createEpayTransfer(...a),
@@ -203,6 +208,23 @@ describe('epayPayoutService.payWithdrawalViaEpay', () => {
     expect(markSent).not.toHaveBeenCalled()
   })
 
+  it('connection refused / 4xx (never reached Epay) → FAILED right away, safe to retry', async () => {
+    createEpayTransfer.mockRejectedValue(new EpayUnavailableError('/c', 'ECONNREFUSED', 'NOT_SENT'))
+    const out = await epayPayoutService.payWithdrawalViaEpay('admin-1', W)
+    expect(out.status).toBe('FAILED')
+    expect(out.failureReason).toMatch(/^NOT_SENT/)
+    expect(payoutUpdateMany.mock.calls[0][0].data.status).toBe('FAILED')
+    expect(markSent).not.toHaveBeenCalled()
+  })
+
+  it('circuit open (Epay down, call skipped) → FAILED, not UNKNOWN', async () => {
+    const { AppError } = await import('../../src/middlewares/errorHandler')
+    createEpayTransfer.mockRejectedValue(new AppError(502, 'open', 'EPAY_CIRCUIT_OPEN'))
+    const out = await epayPayoutService.payWithdrawalViaEpay('admin-1', W)
+    expect(out.status).toBe('FAILED')
+    expect(createEpayTransfer).toHaveBeenCalledTimes(1)
+  })
+
   it('non-final status → SUBMITTED; the reconcile job finishes it', async () => {
     createEpayTransfer.mockResolvedValue({ status: '1', epayOrderNo: 'EP-1' })
     const out = await epayPayoutService.payWithdrawalViaEpay('admin-1', W)
@@ -251,6 +273,17 @@ describe('epayPayoutService.settlePayout', () => {
     )
     expect(queryPayout).not.toHaveBeenCalled()
     expect(markSent).toHaveBeenCalledTimes(1)
+  })
+
+  it('repairUnfinalizedSuccesses: paid at Epay but withdrawal still PENDING_PLATFORM → finalized', async () => {
+    payoutFindMany.mockResolvedValue([
+      payoutRow({ status: 'SUCCESS', epayOrderNo: 'EP-9', withdrawalId: W }),
+      payoutRow({ id: 'po-2', status: 'SUCCESS', withdrawalId: 'other-w' }),
+    ])
+    withdrawalFindMany.mockResolvedValue([{ id: W }])
+    expect(await epayPayoutService.repairUnfinalizedSuccesses()).toBe(1)
+    expect(markSent).toHaveBeenCalledTimes(1)
+    expect(markSent).toHaveBeenCalledWith(W, expect.objectContaining({ payoutRef: 'EPAY:EP-9' }))
   })
 
   it('FAILED rows are left alone', async () => {

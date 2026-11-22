@@ -6,6 +6,7 @@ import {
   classifyEpayStatus,
   EpayRejectedError,
   epayGateway,
+  isDefinitelyNotSent,
   isEpayConfigured,
   type EpayOrderData,
 } from '../lib/epay/epay-gateway.client'
@@ -203,6 +204,14 @@ export const epayPayoutService = {
         log.warn({ withdrawalId, merchantOrderNo, reason }, 'epay payout rejected; nothing sent')
         return { merchantOrderNo, status: 'FAILED' as const, failureReason: reason }
       }
+      if (isDefinitelyNotSent(err)) {
+        // Never reached Epay (connection refused / DNS / 4xx / circuit open): nothing moved,
+        // so the admin may retry right away instead of waiting for the not-found grace.
+        const reason = `NOT_SENT:${(err as Error).message}`.slice(0, 255)
+        await moveLive(row.id, { status: 'FAILED', failureReason: reason })
+        log.warn({ withdrawalId, merchantOrderNo, reason }, 'epay payout not sent; safe to retry')
+        return { merchantOrderNo, status: 'FAILED' as const, failureReason: reason }
+      }
       // Outcome unknown: Epay may or may not have the order. Never resend; query later.
       await moveLive(row.id, {
         status: 'UNKNOWN',
@@ -342,7 +351,46 @@ export const epayPayoutService = {
         )
       }
     })
+    const repaired = await epayPayoutService.repairUnfinalizedSuccesses()
+    if (repaired > 0) results.REPAIRED_WITHDRAWAL = repaired
     return { checked: rows.length, results }
+  },
+
+  /**
+   * Crash / DB-blip repair: Epay confirmed the transfer (attempt SUCCESS) but the withdrawal
+   * step (PENDING_PLATFORM → WAITING) did not run. Without this, only a later callback would
+   * fix it. Looks back 7 days; cheap (indexed by status, small result).
+   */
+  async repairUnfinalizedSuccesses(): Promise<number> {
+    const successes = await prisma.epayPayoutOrder.findMany({
+      where: { status: 'SUCCESS', completedAt: { gte: new Date(Date.now() - 7 * 86_400_000) } },
+      orderBy: { completedAt: 'desc' },
+      take: 200,
+    })
+    if (!successes.length) return 0
+    const stuck = await prisma.withdrawal.findMany({
+      where: { id: { in: successes.map((s) => s.withdrawalId) }, status: 'PENDING_PLATFORM' },
+      select: { id: true },
+    })
+    const stuckIds = new Set(stuck.map((w) => w.id))
+    let repaired = 0
+    for (const row of successes) {
+      if (!stuckIds.has(row.withdrawalId)) continue
+      try {
+        await finalizeSuccess(row)
+        repaired++
+        log.warn(
+          { merchantOrderNo: row.merchantOrderNo, withdrawalId: row.withdrawalId },
+          'epay payout: repaired a paid withdrawal that was still PENDING_PLATFORM',
+        )
+      } catch (err) {
+        log.error(
+          { merchantOrderNo: row.merchantOrderNo, err: (err as Error).message },
+          'epay payout: repair failed (retried next run)',
+        )
+      }
+    }
+    return repaired
   },
 
   /** Admin view: every Epay attempt for a withdrawal, newest first. */
