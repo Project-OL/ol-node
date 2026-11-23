@@ -4,6 +4,8 @@ import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
 import {
   classifyEpayStatus,
+  EPAY_CODE,
+  epayCodeOf,
   EpayRejectedError,
   epayGateway,
   isDefinitelyNotSent,
@@ -198,6 +200,28 @@ export const epayPayoutService = {
         remark: 'Withdrawal',
       })
     } catch (err) {
+      const code = epayCodeOf(err)
+      if (code === EPAY_CODE.DUPLICATE_ORDER) {
+        // "The Order has been exist": Epay already HAS this order, so money may have moved.
+        // Never treat it as failed (that would allow a second payout); query it instead.
+        await moveLive(row.id, { status: 'UNKNOWN', failureReason: 'DUPLICATE_ORDER_AT_EPAY' })
+        log.error({ withdrawalId, merchantOrderNo }, 'epay payout: duplicate order; querying')
+        return { merchantOrderNo, status: 'UNKNOWN' as const }
+      }
+      if (code === EPAY_CODE.INSUFFICIENT_BALANCE) {
+        // Our merchant balance is too low. Nothing moved; the withdrawal stays queued
+        // (PENDING_PLATFORM) and can be paid once finance tops up.
+        await moveLive(row.id, { status: 'FAILED', failureReason: 'INSUFFICIENT_MERCHANT_BALANCE' })
+        log.error(
+          { withdrawalId, merchantOrderNo, amount: row.amount.toFixed(2) },
+          'epay payout: merchant balance insufficient - top up the Epay account',
+        )
+        return {
+          merchantOrderNo,
+          status: 'FAILED' as const,
+          failureReason: 'INSUFFICIENT_MERCHANT_BALANCE',
+        }
+      }
       if (err instanceof EpayRejectedError) {
         const reason = `EPAY_REJECTED:${String(err.epayCode)}:${err.epayMessage ?? ''}`
         await moveLive(row.id, { status: 'FAILED', failureReason: reason.slice(0, 255) })
@@ -273,7 +297,12 @@ export const epayPayoutService = {
       data = await epayGateway.queryPayout(merchantOrderNo)
     } catch (err) {
       if (err instanceof EpayRejectedError) {
-        if (Date.now() - row.createdAt.getTime() > PAYOUT_NOT_FOUND_GRACE_MS) {
+        // Only "order doesn't exist" (1013) after the grace period proves nothing moved.
+        // Any other refusal (e.g. 5000 System Error) proves nothing: keep asking.
+        if (
+          epayCodeOf(err) === EPAY_CODE.ORDER_NOT_FOUND &&
+          Date.now() - row.createdAt.getTime() > PAYOUT_NOT_FOUND_GRACE_MS
+        ) {
           const reason = `EPAY_QUERY_REJECTED:${String(err.epayCode)}`
           await moveLive(row.id, { status: 'FAILED', failureReason: reason })
           log.warn({ merchantOrderNo, source, reason }, 'epay payout closed: unknown at Epay')

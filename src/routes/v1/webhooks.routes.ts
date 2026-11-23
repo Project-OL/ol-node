@@ -8,6 +8,8 @@ import {
   verifyEpayCallback,
 } from '../../lib/epay/epay-gateway.client'
 import { epayOrderKindOf } from '../../lib/epay/epay-order-no'
+import { env } from '../../config/env'
+import { clientIp } from '../../utils/client-ip'
 import { epayPayinService } from '../../services/epay-payin.service'
 import { liveSessionService } from '../../services/liveSession.service'
 
@@ -69,6 +71,17 @@ export async function webhooksRoutes(app: FastifyInstance) {
   app.post('/epay', async (request: FastifyRequest, reply: FastifyReply) => {
     if (!isEpayConfigured()) {
       throw new AppError(503, 'Epay is not enabled', 'EPAY_DISABLED')
+    }
+    // Source-IP allowlist (defence in depth; the signature check below is the real gate).
+    const allowed = env.EPAY_CALLBACK_IPS
+    if (env.EPAY_CALLBACK_IP_MODE !== 'off' && allowed.length > 0) {
+      const ip = clientIp(request)
+      if (!ip || !allowed.includes(ip)) {
+        request.log.warn({ ip, mode: env.EPAY_CALLBACK_IP_MODE }, 'epay callback: unlisted IP')
+        if (env.EPAY_CALLBACK_IP_MODE === 'enforce') {
+          throw new AppError(403, 'Forbidden', 'EPAY_CALLBACK_IP_FORBIDDEN')
+        }
+      }
     }
     const fields = callbackFields(request.body)
     const merchantOrderNo = fields.merchantOrderNo

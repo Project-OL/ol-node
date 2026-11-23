@@ -50,6 +50,8 @@ vi.mock('../../src/lib/epay/epay-gateway.client', async () => {
     EpayRejectedError: actual.EpayRejectedError,
     EpayUnavailableError: actual.EpayUnavailableError,
     isDefinitelyNotSent: actual.isDefinitelyNotSent,
+    EPAY_CODE: actual.EPAY_CODE,
+    epayCodeOf: actual.epayCodeOf,
     isEpayConfigured: () => epayEnabled(),
     epayGateway: {
       createEpayTransfer: (...a: unknown[]) => createEpayTransfer(...a),
@@ -208,6 +210,24 @@ describe('epayPayoutService.payWithdrawalViaEpay', () => {
     expect(markSent).not.toHaveBeenCalled()
   })
 
+  it('duplicate order at Epay (1015) on create → UNKNOWN (query), never FAILED', async () => {
+    createEpayTransfer.mockRejectedValue(new EpayRejectedError('/c', 1015, 'The Order has been exist'))
+    const out = await epayPayoutService.payWithdrawalViaEpay('admin-1', W)
+    expect(out.status).toBe('UNKNOWN')
+    expect(payoutUpdateMany.mock.calls[0][0].data).toMatchObject({
+      status: 'UNKNOWN',
+      failureReason: 'DUPLICATE_ORDER_AT_EPAY',
+    })
+    expect(markSent).not.toHaveBeenCalled()
+  })
+
+  it('insufficient merchant balance (10015) → FAILED with a clear reason, withdrawal untouched', async () => {
+    createEpayTransfer.mockRejectedValue(new EpayRejectedError('/c', 10015, 'insufficient balance'))
+    const out = await epayPayoutService.payWithdrawalViaEpay('admin-1', W)
+    expect(out).toMatchObject({ status: 'FAILED', failureReason: 'INSUFFICIENT_MERCHANT_BALANCE' })
+    expect(markSent).not.toHaveBeenCalled()
+  })
+
   it('connection refused / 4xx (never reached Epay) → FAILED right away, safe to retry', async () => {
     createEpayTransfer.mockRejectedValue(new EpayUnavailableError('/c', 'ECONNREFUSED', 'NOT_SENT'))
     const out = await epayPayoutService.payWithdrawalViaEpay('admin-1', W)
@@ -256,8 +276,17 @@ describe('epayPayoutService.settlePayout', () => {
     expect(markSent).not.toHaveBeenCalled()
   })
 
-  it('"no such order" only closes the attempt after the grace period', async () => {
-    queryPayout.mockRejectedValue(new EpayRejectedError('/q', 0, 'not exist'))
+  it('a 5000 System Error on query never closes the attempt, however old', async () => {
+    queryPayout.mockRejectedValue(new EpayRejectedError('/q', 5000, 'System Error'))
+    payoutFindUnique.mockResolvedValue(
+      payoutRow({ status: 'UNKNOWN', createdAt: new Date(Date.now() - 60 * 60_000) }),
+    )
+    expect(await epayPayoutService.settlePayout('WD261120ABCDEF0123456789', 'reconcile')).toBe('PENDING')
+    expect(payoutUpdateMany.mock.calls[0][0].data.status).toBeUndefined()
+  })
+
+  it('"no such order" (1013) only closes the attempt after the grace period', async () => {
+    queryPayout.mockRejectedValue(new EpayRejectedError('/q', 1013, 'The Order doesn`t exist'))
     payoutFindUnique.mockResolvedValue(payoutRow({ status: 'UNKNOWN' }))
     expect(await epayPayoutService.settlePayout('WD261120ABCDEF0123456789', 'reconcile')).toBe('PENDING')
     payoutFindUnique.mockResolvedValue(

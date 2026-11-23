@@ -21,6 +21,8 @@ const {
   EpayUnavailableError,
   classifyTransportError,
   isDefinitelyNotSent,
+  EPAY_CODE,
+  epayCodeOf,
   __resetEpayHttpForTests,
 } = await import('../../src/lib/epay/epay-gateway.client')
 const { epaySign } = await import('../../src/lib/epay/epay-sign')
@@ -131,6 +133,49 @@ describe('epay gateway client', () => {
     breaker.shouldSkip.mockReturnValue(true)
     await expect(epayGateway.queryPayin('CP1')).rejects.toMatchObject({ code: 'EPAY_CIRCUIT_OPEN' })
     expect(post).not.toHaveBeenCalled()
+  })
+})
+
+describe('response signature + balance (shapes confirmed in the sandbox 2026-11-23)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    breaker.shouldSkip.mockReset().mockReturnValue(false)
+    for (const k of Object.keys(env)) delete env[k]
+    Object.assign(env, ENABLED_ENV)
+    __resetEpayHttpForTests()
+  })
+
+  const signedEnvelope = (data: Record<string, unknown>, key: string) => ({
+    data: { code: 1, message: 'success', sign: epaySign(data as never, key), data },
+  })
+
+  it('accepts a response whose sign matches the data object (PAYOUT key)', async () => {
+    const data = { merchantOrderNo: 'WD1', epayOrderNo: 'E1', status: '7', amount: '1.00', fee: '0.29', extendFields: null }
+    post.mockResolvedValueOnce(signedEnvelope(data, 'PAYOUTKEY'))
+    await expect(epayGateway.queryPayout('WD1')).resolves.toMatchObject({ status: '7' })
+  })
+
+  it('a tampered response (sign mismatch) is never trusted: UNKNOWN, not a result', async () => {
+    const data = { merchantOrderNo: 'WD1', status: '6', amount: '1.00' }
+    const env_ = signedEnvelope(data, 'PAYOUTKEY')
+    ;(env_.data.data as Record<string, unknown>).status = '7' // altered after signing
+    post.mockResolvedValueOnce(env_)
+    const err = await epayGateway.queryPayout('WD1').catch((e) => e)
+    expect(err).toBeInstanceOf(EpayUnavailableError)
+    expect(err.outcome).toBe('UNKNOWN')
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it('getBalance sends currency and reads [{currency, balance}]', async () => {
+    post.mockResolvedValueOnce(ok([{ currency: 'USD', balance: '3762737.42' }]))
+    await expect(epayGateway.getBalance()).resolves.toEqual({ currency: 'USD', balance: '3762737.42' })
+    expect(post.mock.calls[0][1].param.currency).toBe('USD')
+  })
+
+  it('epayCodeOf reads the business code of a rejection', () => {
+    expect(epayCodeOf(new EpayRejectedError('/x', 1015, 'dup'))).toBe(EPAY_CODE.DUPLICATE_ORDER)
+    expect(epayCodeOf(new EpayRejectedError('/x', '10015', 'low'))).toBe(EPAY_CODE.INSUFFICIENT_BALANCE)
+    expect(epayCodeOf(new Error('x'))).toBeNull()
   })
 })
 

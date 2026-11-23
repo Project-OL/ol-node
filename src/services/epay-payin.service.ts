@@ -4,6 +4,8 @@ import { redisClient, RedisKeys } from '../config/redis'
 import { mapPool } from '../utils/map-pool'
 import {
   classifyEpayStatus,
+  EPAY_CODE,
+  epayCodeOf,
   EpayRejectedError,
   epayGateway,
   isEpayConfigured,
@@ -231,9 +233,10 @@ export const epayPayinService = {
       data = await epayGateway.queryPayin(merchantOrderNo)
     } catch (err) {
       if (err instanceof EpayRejectedError) {
-        // Epay answered but has no usable order (typically "not found": the create call
-        // failed in transit). Give it a grace period, then close.
-        if (ageMs > PAYIN_NOT_FOUND_GRACE_MS) {
+        // Only "order doesn't exist" (1013) may close an order, after a grace period (the
+        // create call failed in transit). Any other refusal (e.g. 5000 System Error) is
+        // Epay having a bad moment: leave it PENDING and ask again next run.
+        if (epayCodeOf(err) === EPAY_CODE.ORDER_NOT_FOUND && ageMs > PAYIN_NOT_FOUND_GRACE_MS) {
           const reason = `EPAY_QUERY_REJECTED:${String(err.epayCode)}`
           await closeOrder(order, 'FAILED', { failureReason: reason })
           log.warn({ merchantOrderNo, source, reason }, 'epay pay-in closed: unknown at Epay')
