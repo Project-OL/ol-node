@@ -27,6 +27,8 @@ vi.mock('../../src/lib/epay/epay-gateway.client', async () => {
     classifyEpayStatus: actual.classifyEpayStatus,
     EpayRejectedError: actual.EpayRejectedError,
     EpayUnavailableError: actual.EpayUnavailableError,
+    EPAY_CODE: actual.EPAY_CODE,
+    epayCodeOf: actual.epayCodeOf,
     isEpayConfigured: () => true,
     epayGateway: { queryPayin: (...a: unknown[]) => queryPayin(...a) },
   }
@@ -137,11 +139,18 @@ describe('epayPayinService.settlePayin', () => {
     expect(creditPersonal).not.toHaveBeenCalled()
   })
 
-  it('Epay "no such order": PENDING inside the grace period, FAILED after it', async () => {
-    queryPayin.mockRejectedValue(new EpayRejectedError('/q', 0, 'order not exist'))
+  it('Epay "no such order" (1013): PENDING inside the grace period, FAILED after it', async () => {
+    queryPayin.mockRejectedValue(new EpayRejectedError('/q', 1013, 'The Order doesn`t exist'))
     expect(await epayPayinService.settlePayin(CP, 'reconcile')).toBe('PENDING')
     personalFindUnique.mockResolvedValue(personalOrder({ createdAt: minutesAgo(45) }))
     expect(await epayPayinService.settlePayin(CP, 'reconcile')).toBe('FAILED')
+  })
+
+  it('any other refusal (5000 System Error) never closes an order, however old', async () => {
+    queryPayin.mockRejectedValue(new EpayRejectedError('/q', 5000, 'System Error'))
+    personalFindUnique.mockResolvedValue(personalOrder({ createdAt: minutesAgo(45) }))
+    expect(await epayPayinService.settlePayin(CP, 'reconcile')).toBe('PENDING')
+    expect(personalUpdateMany.mock.calls[0][0].data.status).toBeUndefined()
   })
 
   it('transport error propagates (callback must answer non-2xx so Epay retries)', async () => {

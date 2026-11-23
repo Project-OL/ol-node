@@ -509,6 +509,21 @@ const envSchema = z
       .string()
       .optional()
       .transform((s) => s === 'true'),
+    /**
+     * Epay callback source IPs (comma-separated). Sandbox: 47.242.34.120. Production:
+     * 47.237.182.23, 8.222.205.106 (Epay, 2026-11-23). Extra layer on top of the signature check.
+     */
+    EPAY_CALLBACK_IPS: z
+      .string()
+      .optional()
+      .transform((s) =>
+        (s ?? '')
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean),
+      ),
+    /** off = ignore the list; log = warn on unknown IPs (default); enforce = 403 them. */
+    EPAY_CALLBACK_IP_MODE: z.enum(['off', 'log', 'enforce']).default('log'),
     EPAY_API_VERSION: z.string().min(1).default('V2.0.0'),
     EPAY_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
 

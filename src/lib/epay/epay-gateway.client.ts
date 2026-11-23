@@ -40,6 +40,25 @@ export const EPAY_STATUS = {
 
 const FINAL_FAILURE_STATUSES = new Set<string>(['5', '6', '8', '20'])
 
+/** Business `code`s seen in the sandbox / confirmed by Epay (2026-11-23). 1 = success. */
+export const EPAY_CODE = {
+  SUCCESS: 1,
+  /** "The Order doesn`t exist" (query of an unknown merchantOrderNo). */
+  ORDER_NOT_FOUND: 1013,
+  /** "The Order has been exist" (create with a merchantOrderNo Epay already has). */
+  DUPLICATE_ORDER: 1015,
+  /** Merchant balance too low for a payout (Epay, 2026-11-23). */
+  INSUFFICIENT_BALANCE: 10015,
+  /** Generic "System Error, Please contact Epay team". */
+  SYSTEM_ERROR: 5000,
+} as const
+
+export function epayCodeOf(err: unknown): number | null {
+  if (!(err instanceof EpayRejectedError)) return null
+  const n = Number(err.epayCode)
+  return Number.isFinite(n) ? n : null
+}
+
 export type EpayOutcome = 'SUCCESS' | 'FAILED' | 'PENDING'
 
 /** Only 7 is success; 5/6/8/20 are final failures; everything else (0/1/9/11/19/unknown) waits. */
@@ -204,9 +223,25 @@ async function call<T>(
         )
         throw new EpayRejectedError(path, envelope?.code, envelope?.message)
       }
+      // Epay signs successful responses over the `data` object with the same scheme as
+      // requests (verified in the sandbox 2026-11-23). A mismatch means we can't trust what we
+      // read, so treat it like a lost reply: callers query before acting on money.
+      if (
+        envelope.sign &&
+        envelope.data &&
+        typeof envelope.data === 'object' &&
+        !verifyEpaySign(
+          { ...(envelope.data as EpaySignParams), sign: envelope.sign },
+          epayKey(kind),
+        )
+      ) {
+        logger.error({ epayPath: path, merchantOrderNo: orderNo }, 'epay: response sign mismatch')
+        throw new EpayUnavailableError(path, 'response signature mismatch', 'UNKNOWN')
+      }
       return envelope.data
     } catch (err) {
       if (err instanceof EpayRejectedError) throw err
+      if (err instanceof EpayUnavailableError) throw err
       lastErr = err
       const status = transportStatus(err)
       // 4xx from the HTTP layer is not transient: stop retrying.
@@ -323,9 +358,21 @@ export const epayGateway = {
     })
   },
 
-  /** Merchant balance; shape varies by account, returned raw. */
-  async getBalance(): Promise<unknown> {
-    return call<unknown>('/payoutApi/getBalance', {}, 'PAYOUT', { retries: 2 })
+  /**
+   * Available (cash) balance of our merchant account in one currency. Epay requires
+   * `currency` (without it: code 5000) and returns `[{ currency, balance }]`.
+   */
+  async getBalance(currency = 'USD'): Promise<{ currency: string; balance: string } | null> {
+    const data = await call<Array<{ currency?: string; balance?: string }> | null>(
+      '/payoutApi/getBalance',
+      { currency },
+      'PAYOUT',
+      { retries: 2 },
+    )
+    const row = Array.isArray(data)
+      ? data.find((r) => String(r?.currency).toUpperCase() === currency.toUpperCase())
+      : null
+    return row?.balance != null ? { currency, balance: String(row.balance) } : null
   },
 }
 
