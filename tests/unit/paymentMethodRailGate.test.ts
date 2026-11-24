@@ -14,14 +14,22 @@ vi.mock('../../src/config/redis', () => ({
 
 const getPublicConfig = vi.fn()
 const getBankFieldRules = vi.fn()
+const isAgentUser = vi.fn()
 
-vi.mock('../../src/services/withdrawalPayoutRailConfig.service', () => ({
-  withdrawalPayoutRailConfigService: {
-    assertRailEnabled: (...a: unknown[]) => assertRailEnabled(...a),
-    getPublicConfig: (...a: unknown[]) => getPublicConfig(...a),
-    getBankFieldRules: (...a: unknown[]) => getBankFieldRules(...a),
-  },
-}))
+vi.mock('../../src/services/withdrawalPayoutRailConfig.service', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../src/services/withdrawalPayoutRailConfig.service')
+  >('../../src/services/withdrawalPayoutRailConfig.service')
+  return {
+    railEnabledFor: actual.railEnabledFor,
+    withdrawalPayoutRailConfigService: {
+      assertRailEnabled: (...a: unknown[]) => assertRailEnabled(...a),
+      getPublicConfig: (...a: unknown[]) => getPublicConfig(...a),
+      getBankFieldRules: (...a: unknown[]) => getBankFieldRules(...a),
+      isAgentUser: (...a: unknown[]) => isAgentUser(...a),
+    },
+  }
+})
 
 vi.mock('../../src/services/security-password.service', () => ({
   securityPasswordService: {
@@ -97,6 +105,12 @@ describe('userPaymentMethodService bind rail gate', () => {
     )
   })
 
+  it('bindEpay checks the rail for the calling user', async () => {
+    assertRailEnabled.mockResolvedValue(undefined)
+    await userPaymentMethodService.bindEpay('u1', { epayEmail: 'a@b.com' }, 'pin')
+    expect(assertRailEnabled).toHaveBeenCalledWith('EPAY', 'u1')
+  })
+
   it('bindEpay rejects when rail disabled', async () => {
     assertRailEnabled.mockRejectedValue(
       new AppError(403, 'EPAY payment method is currently disabled', 'PAYMENT_METHOD_DISABLED'),
@@ -135,11 +149,49 @@ describe('userPaymentMethodService.getMyMethods', () => {
     vi.mocked(mapPaymentMethodFull).mockReset()
   })
 
+  const railsAgentsOnly = {
+    epay: {
+      feeRateBp: 600,
+      feePercent: 6,
+      arrivalTime: 'Within 24 hours',
+      enabled: true,
+      enabledForAgents: true,
+      enabledForUsers: false,
+    },
+    bank: { feeRateBp: 700, feePercent: 7, arrivalTime: '3-5 days', enabled: true },
+    bankFields: [],
+    updatedAt: '2026-08-09T00:00:00.000Z',
+  }
+
+  it('EPAY enabled is per caller: on for an agent, off for a user', async () => {
+    const { redisClient } = await import('../../src/config/redis')
+    vi.mocked(redisClient.get).mockResolvedValue(JSON.stringify([]))
+    getPublicConfig.mockResolvedValue(railsAgentsOnly)
+
+    isAgentUser.mockResolvedValue(true)
+    const agent = await userPaymentMethodService.getMyMethods('agent-1')
+    expect(agent.methods[0]).toMatchObject({ methodType: 'EPAY', enabled: true })
+    expect(agent.methods[0]).not.toHaveProperty('enabledForUsers')
+
+    isAgentUser.mockResolvedValue(false)
+    const user = await userPaymentMethodService.getMyMethods('user-1')
+    expect(user.methods[0]).toMatchObject({ methodType: 'EPAY', enabled: false })
+    expect(user.methods[1]).toMatchObject({ methodType: 'BANK', enabled: true })
+  })
+
   it('always returns EPAY and BANK including disabled unbound rail with fees', async () => {
     const { redisClient } = await import('../../src/config/redis')
     vi.mocked(redisClient.get).mockResolvedValue(null)
+    isAgentUser.mockResolvedValue(false)
     getPublicConfig.mockResolvedValue({
-      epay: { feeRateBp: 600, feePercent: 6, arrivalTime: 'Within 24 hours', enabled: false },
+      epay: {
+        feeRateBp: 600,
+        feePercent: 6,
+        arrivalTime: 'Within 24 hours',
+        enabled: false,
+        enabledForAgents: false,
+        enabledForUsers: false,
+      },
       bank: { feeRateBp: 700, feePercent: 7, arrivalTime: '3-5 days', enabled: true },
       bankFields: [],
       updatedAt: '2026-08-09T00:00:00.000Z',

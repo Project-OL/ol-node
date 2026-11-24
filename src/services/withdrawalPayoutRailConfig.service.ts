@@ -1,3 +1,4 @@
+import { prisma } from '../config/database'
 import { redisClient, RedisKeys, PAYOUT_RAIL_CONFIG_TTL } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import { withdrawalPayoutRailConfigRepository } from '../repositories/withdrawalPayoutRailConfig.repository'
@@ -11,25 +12,31 @@ import {
   type BankFieldRules,
 } from '../utils/bank-field-rules'
 
+type RailDto = {
+  feeRateBp: number
+  feePercent: number
+  arrivalTime: string
+  enabled: boolean
+}
+
 export type PayoutRailPublicDto = {
-  epay: {
-    feeRateBp: number
-    feePercent: number
-    arrivalTime: string
-    enabled: boolean
+  /**
+   * EPAY is switched per audience. `enabled` is true when it is on for anyone
+   * (agents OR users); the per-caller value is in GET /payment-methods.
+   */
+  epay: RailDto & {
+    /** Users with `is_agent = true`. Stored in `epay_enabled`. */
+    enabledForAgents: boolean
+    /** Everyone else (hosts and plain users). Stored in `epay_users_enabled`. */
+    enabledForUsers: boolean
   }
-  bank: {
-    feeRateBp: number
-    feePercent: number
-    arrivalTime: string
-    enabled: boolean
-  }
+  bank: RailDto
   /** BANK bind-form field rules (required / format toggles), in form order. */
   bankFields: BankFieldRuleDto[]
   updatedAt: string
 }
 
-function toRailDto(feeRateBp: number, arrivalTime: string, enabled: boolean) {
+function toRailDto(feeRateBp: number, arrivalTime: string, enabled: boolean): RailDto {
   return {
     feeRateBp,
     feePercent: feeRateBp / 100,
@@ -42,6 +49,7 @@ function serialize(row: {
   epayFeeRateBp: number
   epayArrivalTime: string
   epayEnabled: boolean
+  epayUsersEnabled: boolean
   bankFeeRateBp: number
   bankArrivalTime: string
   bankEnabled: boolean
@@ -49,11 +57,25 @@ function serialize(row: {
   updatedAt: Date
 }): PayoutRailPublicDto {
   return {
-    epay: toRailDto(row.epayFeeRateBp, row.epayArrivalTime, row.epayEnabled),
+    epay: {
+      ...toRailDto(row.epayFeeRateBp, row.epayArrivalTime, row.epayEnabled || row.epayUsersEnabled),
+      enabledForAgents: row.epayEnabled,
+      enabledForUsers: row.epayUsersEnabled,
+    },
     bank: toRailDto(row.bankFeeRateBp, row.bankArrivalTime, row.bankEnabled),
     bankFields: toBankFieldRuleDtos(resolveBankFieldRules(row.bankFieldRules)),
     updatedAt: row.updatedAt.toISOString(),
   }
+}
+
+/** Whether a rail is open for a caller; EPAY depends on the caller being an agent. */
+export function railEnabledFor(
+  config: PayoutRailPublicDto,
+  methodType: 'EPAY' | 'BANK',
+  isAgent: boolean,
+): boolean {
+  if (methodType === 'BANK') return config.bank.enabled
+  return isAgent ? config.epay.enabledForAgents : config.epay.enabledForUsers
 }
 
 export const withdrawalPayoutRailConfigService = {
@@ -63,15 +85,18 @@ export const withdrawalPayoutRailConfigService = {
       const hit = await redisClient.get(key)
       if (hit) {
         const parsed = JSON.parse(hit) as PayoutRailPublicDto
-        // Back-compat for warm cache written before `enabled` existed.
-        if (parsed.epay && typeof parsed.epay.enabled !== 'boolean') {
-          parsed.epay.enabled = true
-        }
         if (parsed.bank && typeof parsed.bank.enabled !== 'boolean') {
           parsed.bank.enabled = true
         }
-        // Warm cache written before `bankFields` existed: treat as a miss and reload.
-        if (Array.isArray(parsed.bankFields)) return parsed
+        // Warm cache written before `bankFields` or the per-audience EPAY switch
+        // existed: treat as a miss and reload, never guess the users' EPAY state.
+        if (
+          Array.isArray(parsed.bankFields) &&
+          typeof parsed.epay?.enabledForAgents === 'boolean' &&
+          typeof parsed.epay?.enabledForUsers === 'boolean'
+        ) {
+          return parsed
+        }
       }
     } catch {
       /* miss */
@@ -91,11 +116,21 @@ export const withdrawalPayoutRailConfigService = {
     await redisClient.del(RedisKeys.payoutRailConfig())
   },
 
-  /** Throws 403 PAYMENT_METHOD_DISABLED when the rail is admin-disabled. */
-  async assertRailEnabled(methodType: 'EPAY' | 'BANK'): Promise<void> {
+  /**
+   * Fresh `is_agent` read (primary, one PK lookup). Not cached: the flag flips when
+   * an agency is created or removed. A missing user counts as a non-agent.
+   */
+  async isAgentUser(userId: string): Promise<boolean> {
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { isAgent: true } })
+    return u?.isAgent === true
+  },
+
+  /** Throws 403 PAYMENT_METHOD_DISABLED when the rail is admin-disabled for this user. */
+  async assertRailEnabled(methodType: 'EPAY' | 'BANK', userId: string): Promise<void> {
     const config = await withdrawalPayoutRailConfigService.getPublicConfig()
-    const rail = methodType === 'EPAY' ? config.epay : config.bank
-    if (!rail.enabled) {
+    const isAgent =
+      methodType === 'EPAY' ? await withdrawalPayoutRailConfigService.isAgentUser(userId) : false
+    if (!railEnabledFor(config, methodType, isAgent)) {
       throw new AppError(
         403,
         `${methodType} payment method is currently disabled`,
@@ -115,48 +150,29 @@ export const withdrawalPayoutRailConfigService = {
   async updateConfig(
     adminUserId: string,
     updates: {
-      epay?: { feeRateBp?: number; arrivalTime?: string; enabled?: boolean }
+      epay?: {
+        feeRateBp?: number
+        arrivalTime?: string
+        /** Legacy single switch: maps to the agents' switch only, never to users. */
+        enabled?: boolean
+        enabledForAgents?: boolean
+        enabledForUsers?: boolean
+      }
       bank?: { feeRateBp?: number; arrivalTime?: string; enabled?: boolean }
       bankFields?: Partial<Record<BankFieldKey, Partial<BankFieldRule>>>
     },
   ): Promise<PayoutRailPublicDto> {
     const current = await withdrawalPayoutRailConfigRepository.getOrCreate()
-    const data: {
-      epayFeeRateBp?: number
-      epayArrivalTime?: string
-      epayEnabled?: boolean
-      bankFeeRateBp?: number
-      bankArrivalTime?: string
-      bankEnabled?: boolean
-      updatedByUserId: string
-    } = { updatedByUserId: adminUserId }
-
-    if (updates.epay?.feeRateBp != null) {
-      data.epayFeeRateBp = updates.epay.feeRateBp
-    }
-    if (updates.epay?.arrivalTime != null) {
-      data.epayArrivalTime = updates.epay.arrivalTime
-    }
-    if (updates.epay?.enabled != null) {
-      data.epayEnabled = updates.epay.enabled
-    }
-    if (updates.bank?.feeRateBp != null) {
-      data.bankFeeRateBp = updates.bank.feeRateBp
-    }
-    if (updates.bank?.arrivalTime != null) {
-      data.bankArrivalTime = updates.bank.arrivalTime
-    }
-    if (updates.bank?.enabled != null) {
-      data.bankEnabled = updates.bank.enabled
-    }
+    const epayAgents = updates.epay?.enabledForAgents ?? updates.epay?.enabled
 
     const row = await withdrawalPayoutRailConfigRepository.update({
-      epayFeeRateBp: data.epayFeeRateBp ?? current.epayFeeRateBp,
-      epayArrivalTime: data.epayArrivalTime ?? current.epayArrivalTime,
-      epayEnabled: data.epayEnabled ?? current.epayEnabled,
-      bankFeeRateBp: data.bankFeeRateBp ?? current.bankFeeRateBp,
-      bankArrivalTime: data.bankArrivalTime ?? current.bankArrivalTime,
-      bankEnabled: data.bankEnabled ?? current.bankEnabled,
+      epayFeeRateBp: updates.epay?.feeRateBp ?? current.epayFeeRateBp,
+      epayArrivalTime: updates.epay?.arrivalTime ?? current.epayArrivalTime,
+      epayEnabled: epayAgents ?? current.epayEnabled,
+      epayUsersEnabled: updates.epay?.enabledForUsers ?? current.epayUsersEnabled,
+      bankFeeRateBp: updates.bank?.feeRateBp ?? current.bankFeeRateBp,
+      bankArrivalTime: updates.bank?.arrivalTime ?? current.bankArrivalTime,
+      bankEnabled: updates.bank?.enabled ?? current.bankEnabled,
       ...(updates.bankFields && {
         bankFieldRules: applyBankFieldRuleUpdates(
           resolveBankFieldRules(current.bankFieldRules),

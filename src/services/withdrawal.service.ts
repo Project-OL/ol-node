@@ -616,7 +616,7 @@ export const withdrawalService = {
     }
 
     const methodType = method.methodType === 'BANK' ? 'BANK' : 'EPAY'
-    await withdrawalPayoutRailConfigService.assertRailEnabled(methodType)
+    await withdrawalPayoutRailConfigService.assertRailEnabled(methodType, userId)
 
     // Multiple open withdrawals are allowed (v2). Spending is capped by the
     // host's AVAILABLE points (totalPoints − unconfirmedPoints), enforced under

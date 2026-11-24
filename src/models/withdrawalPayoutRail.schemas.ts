@@ -29,8 +29,14 @@ const BankFieldRulesUpdateSchema = z
   })
   .strict()
 
+/** EPAY is switched per audience; legacy `enabled` maps to the agents' switch only. */
+const EpayRailUpdateSchema = RailUpdateSchema.extend({
+  enabledForAgents: z.boolean().optional(),
+  enabledForUsers: z.boolean().optional(),
+})
+
 export const PayoutRailConfigUpdateSchema = z.object({
-  epay: RailUpdateSchema.optional(),
+  epay: EpayRailUpdateSchema.optional(),
   bank: RailUpdateSchema.optional(),
   bankFields: BankFieldRulesUpdateSchema.optional(),
 })
