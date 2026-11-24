@@ -14,29 +14,34 @@ import {
 } from '../utils/payment-method-mask'
 import type { BindBankInput } from '../models/paymentMethod.schemas'
 import type { PayoutRailPublicDto } from './withdrawalPayoutRailConfig.service'
-import { withdrawalPayoutRailConfigService } from './withdrawalPayoutRailConfig.service'
+import {
+  railEnabledFor,
+  withdrawalPayoutRailConfigService,
+} from './withdrawalPayoutRailConfig.service'
 import { isUniqueViolation } from '../utils/txRetry'
 import { validateBankFields } from '../utils/bank-field-rules'
 
 export { maskAccountNumber, maskEmail, maskPaymentMethodForDisplay }
 
+/** `enabled` is the caller's own state (EPAY differs for agents and users). */
 function railFieldsForType(
   methodType: MethodType,
   rails: PayoutRailPublicDto,
+  isAgent: boolean,
 ): { feeRateBp: number; feePercent: number; arrivalTime: string; enabled: boolean } {
   const rail = methodType === 'EPAY' ? rails.epay : rails.bank
   return {
     feeRateBp: rail.feeRateBp,
     feePercent: rail.feePercent,
     arrivalTime: rail.arrivalTime,
-    enabled: rail.enabled,
+    enabled: railEnabledFor(rails, methodType, isAgent),
   }
 }
 
 export const userPaymentMethodService = {
   async bindEpay(userId: string, body: { epayEmail: string }, securityPassword: string) {
     await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
-    await withdrawalPayoutRailConfigService.assertRailEnabled('EPAY')
+    await withdrawalPayoutRailConfigService.assertRailEnabled('EPAY', userId)
     // Native ON CONFLICT upsert on (userId, methodType) is race-safe; the
     // retry-once covers Prisma's emulated-upsert fallback where a parallel
     // first bind can surface P2002 instead of converging to an update.
@@ -58,7 +63,7 @@ export const userPaymentMethodService = {
   },
 
   async bindBank(userId: string, body: BindBankInput, securityPassword: string) {
-    await withdrawalPayoutRailConfigService.assertRailEnabled('BANK')
+    await withdrawalPayoutRailConfigService.assertRailEnabled('BANK', userId)
     // Field checks run before the PIN so a form mistake never counts as a failed PIN attempt.
     const rules = await withdrawalPayoutRailConfigService.getBankFieldRules()
     const { values, issues } = validateBankFields(body, rules)
@@ -99,7 +104,10 @@ export const userPaymentMethodService = {
    */
   async getMyMethods(userId: string) {
     const cacheKey = RedisKeys.userPaymentMethods(userId)
-    const rails = await withdrawalPayoutRailConfigService.getPublicConfig()
+    const [rails, isAgent] = await Promise.all([
+      withdrawalPayoutRailConfigService.getPublicConfig(),
+      withdrawalPayoutRailConfigService.isAgentUser(userId),
+    ])
     const cached = await redisClient.get(cacheKey)
     let bound: ReturnType<typeof userPaymentMethodService.serializeOwnerList>
     if (cached) {
@@ -112,7 +120,7 @@ export const userPaymentMethodService = {
 
     const byType = new Map(bound.map((m) => [m.methodType, m]))
     const methods = (['EPAY', 'BANK'] as const).map((methodType) => {
-      const rail = railFieldsForType(methodType, rails)
+      const rail = railFieldsForType(methodType, rails, isAgent)
       const existing = byType.get(methodType)
       if (existing) {
         return { ...existing, bound: true as const, ...rail }
