@@ -9,6 +9,8 @@
 import { randomBytes } from 'crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const railMin = vi.hoisted(() => ({ epayUsd: 1 }))
+
 vi.hoisted(() => {
   process.env.EPAY_PAYOUT_ENABLED = 'true'
 })
@@ -17,7 +19,11 @@ vi.mock('../../src/repositories/faceVerification.repository', () => ({
   faceVerificationRepository: { isIndexedForUser: vi.fn().mockResolvedValue(true) },
 }))
 vi.mock('../../src/services/withdrawalPayoutRailConfig.service', () => ({
-  withdrawalPayoutRailConfigService: { assertRailEnabled: vi.fn().mockResolvedValue(undefined) },
+  withdrawalPayoutRailConfigService: {
+    assertRailEnabled: vi.fn().mockResolvedValue(undefined),
+    // EPAY minimum: small for these suites; the $1,000 default has its own test.
+    getPublicConfig: vi.fn(async () => ({ epay: { minWithdrawalUsd: railMin.epayUsd } })),
+  },
 }))
 vi.mock('../../src/queues/platform-message.queue', () => ({
   enqueuePlatformWithdrawalMessage: vi.fn().mockResolvedValue(undefined),
@@ -100,6 +106,52 @@ async function epayWithdrawal() {
   expect(w.hostPayoutUsd?.gt(0)).toBe(true)
   return { user, wallet, method, w }
 }
+
+describe('EPAY minimum withdrawal (real Postgres)', () => {
+  it('the $1,000 EPAY minimum refuses $20 with a clear error; exactly $1,000 goes through', async () => {
+    railMin.epayUsd = 1000
+    try {
+      const publicId = BigInt(10_000_000 + Math.floor(Math.random() * 89_999_999))
+      const user = await prisma.user.create({
+        data: { username: `m_${rid()}`, publicId, defaultPublicId: publicId, country: 'IN' },
+      })
+      const wallet = await prisma.wallet.create({ data: { userId: user.id, currencyType: 'POINT' } })
+      await prisma.pointLedgerEntry.create({
+        data: {
+          walletId: wallet.id,
+          direction: 'CREDIT',
+          txType: 'ADJUSTMENT',
+          amount: 20_000_000n,
+          balanceAfter: 20_000_000n,
+          idempotencyKey: `seed-${rid()}`,
+        },
+      })
+      const method = await prisma.userPaymentMethod.create({
+        data: { userId: user.id, methodType: 'EPAY', epayEmail: `${rid()}@example.invalid` },
+      })
+      await expect(
+        withdrawalService.createWithdrawal(user.id, {
+          grossPoints: GROSS, // $20
+          paymentMethodId: method.id,
+          idempotencyKey: `k-${rid()}`,
+        }),
+      ).rejects.toMatchObject({
+        code: 'BELOW_MIN_WITHDRAWAL',
+        message: 'Minimum Epay withdrawal is $1,000',
+      })
+      expect(await prisma.withdrawal.count({ where: { userId: user.id } })).toBe(0)
+
+      const ok = await withdrawalService.createWithdrawal(user.id, {
+        grossPoints: 10_000_000n, // $1,000
+        paymentMethodId: method.id,
+        idempotencyKey: `k-${rid()}`,
+      })
+      expect(ok.withdrawalId).toBeTruthy()
+    } finally {
+      railMin.epayUsd = 1
+    }
+  })
+})
 
 const refunds = (walletId: string) =>
   prisma.pointLedgerEntry.count({ where: { walletId, txType: 'WITHDRAWAL_REFUND' } })

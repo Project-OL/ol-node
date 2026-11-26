@@ -2509,6 +2509,9 @@ model WithdrawalPayoutRailConfig {
   epayEnabled     Boolean  @default(true) @map("epay_enabled")
   /// EPAY switch for everyone else (hosts and plain users); business rule keeps it off.
   epayUsersEnabled Boolean @default(false) @map("epay_users_enabled")
+  /// Minimum gross USD for an EPAY withdrawal (USD and USDT alike). Replaces
+  /// `payroll_config.min_withdrawal_usd` for EPAY only; BANK keeps the payroll minimum.
+  epayMinWithdrawalUsd Decimal @default(1000.00) @map("epay_min_withdrawal_usd") @db.Decimal(18, 2)
   bankFeeRateBp   Int      @default(600) @map("bank_fee_rate_bp")
   bankArrivalTime String   @default("3-5 business days") @map("bank_arrival_time") @db.VarChar(200)
   bankEnabled     Boolean  @default(true) @map("bank_enabled")

@@ -29,7 +29,10 @@ import {
   withdrawalPayoutRailConfigService,
 } from '../../src/services/withdrawalPayoutRailConfig.service'
 
+import { Prisma } from '@prisma/client'
+
 const baseRow = {
+  epayMinWithdrawalUsd: new Prisma.Decimal('1000.00'),
   epayFeeRateBp: 600,
   epayArrivalTime: 'Within 24 hours',
   epayEnabled: true,
@@ -48,6 +51,7 @@ function cachedDto(epay: { enabledForAgents: boolean; enabledForUsers: boolean }
       feePercent: 6,
       arrivalTime: 'x',
       enabled: epay.enabledForAgents || epay.enabledForUsers,
+      minWithdrawalUsd: 1000,
       ...epay,
     },
     bank: { feeRateBp: 600, feePercent: 6, arrivalTime: 'y', enabled: bankEnabled },

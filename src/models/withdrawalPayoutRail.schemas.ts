@@ -33,6 +33,8 @@ const BankFieldRulesUpdateSchema = z
 const EpayRailUpdateSchema = RailUpdateSchema.extend({
   enabledForAgents: z.boolean().optional(),
   enabledForUsers: z.boolean().optional(),
+  /** EPAY-only minimum gross USD per withdrawal (USD and USDT). BANK uses the payroll minimum. */
+  minWithdrawalUsd: z.number().positive().max(10_000_000).optional(),
 })
 
 export const PayoutRailConfigUpdateSchema = z.object({

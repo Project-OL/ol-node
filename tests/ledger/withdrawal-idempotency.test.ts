@@ -6,11 +6,17 @@
 import { randomBytes } from 'crypto'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
+const railMin = vi.hoisted(() => ({ epayUsd: 1 }))
+
 vi.mock('../../src/repositories/faceVerification.repository', () => ({
   faceVerificationRepository: { isIndexedForUser: vi.fn().mockResolvedValue(true) },
 }))
 vi.mock('../../src/services/withdrawalPayoutRailConfig.service', () => ({
-  withdrawalPayoutRailConfigService: { assertRailEnabled: vi.fn().mockResolvedValue(undefined) },
+  withdrawalPayoutRailConfigService: {
+    assertRailEnabled: vi.fn().mockResolvedValue(undefined),
+    // EPAY minimum: small for these suites; the $1,000 default has its own test.
+    getPublicConfig: vi.fn(async () => ({ epay: { minWithdrawalUsd: railMin.epayUsd } })),
+  },
 }))
 vi.mock('../../src/queues/platform-message.queue', () => ({
   enqueuePlatformWithdrawalMessage: vi.fn().mockResolvedValue(undefined),

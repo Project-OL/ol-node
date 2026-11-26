@@ -31,6 +31,10 @@ vi.mock('../../src/services/withdrawalPayoutRailConfig.service', async () => {
   }
 })
 
+vi.mock('../../src/services/withdrawal.service', () => ({
+  withdrawalService: { getPayrollConfig: vi.fn().mockResolvedValue({ minWithdrawalUsd: 10 }) },
+}))
+
 vi.mock('../../src/services/security-password.service', () => ({
   securityPasswordService: {
     verifyCurrentPassword: (...a: unknown[]) => verifyCurrentPassword(...a),
@@ -157,6 +161,7 @@ describe('userPaymentMethodService.getMyMethods', () => {
       enabled: true,
       enabledForAgents: true,
       enabledForUsers: false,
+      minWithdrawalUsd: 1000,
     },
     bank: { feeRateBp: 700, feePercent: 7, arrivalTime: '3-5 days', enabled: true },
     bankFields: [],
@@ -179,6 +184,16 @@ describe('userPaymentMethodService.getMyMethods', () => {
     expect(user.methods[1]).toMatchObject({ methodType: 'BANK', enabled: true })
   })
 
+  it('each method carries its own minimum: EPAY rail minimum, BANK payroll minimum', async () => {
+    const { redisClient } = await import('../../src/config/redis')
+    vi.mocked(redisClient.get).mockResolvedValue(JSON.stringify([]))
+    getPublicConfig.mockResolvedValue(railsAgentsOnly)
+    isAgentUser.mockResolvedValue(true)
+    const r = await userPaymentMethodService.getMyMethods('agent-1')
+    expect(r.methods[0]).toMatchObject({ methodType: 'EPAY', minWithdrawalUsd: 1000 })
+    expect(r.methods[1]).toMatchObject({ methodType: 'BANK', minWithdrawalUsd: 10 })
+  })
+
   it('always returns EPAY and BANK including disabled unbound rail with fees', async () => {
     const { redisClient } = await import('../../src/config/redis')
     vi.mocked(redisClient.get).mockResolvedValue(null)
@@ -191,6 +206,7 @@ describe('userPaymentMethodService.getMyMethods', () => {
         enabled: false,
         enabledForAgents: false,
         enabledForUsers: false,
+        minWithdrawalUsd: 1000,
       },
       bank: { feeRateBp: 700, feePercent: 7, arrivalTime: '3-5 days', enabled: true },
       bankFields: [],

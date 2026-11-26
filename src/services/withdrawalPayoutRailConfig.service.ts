@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from '../config/database'
 import { redisClient, RedisKeys, PAYOUT_RAIL_CONFIG_TTL } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
@@ -29,6 +30,11 @@ export type PayoutRailPublicDto = {
     enabledForAgents: boolean
     /** Everyone else (hosts and plain users). Stored in `epay_users_enabled`. */
     enabledForUsers: boolean
+    /**
+     * Minimum gross USD for an EPAY withdrawal (USD and USDT alike); default 1000.
+     * BANK keeps `payroll_config.min_withdrawal_usd`.
+     */
+    minWithdrawalUsd: number
   }
   bank: RailDto
   /** BANK bind-form field rules (required / format toggles), in form order. */
@@ -50,6 +56,7 @@ function serialize(row: {
   epayArrivalTime: string
   epayEnabled: boolean
   epayUsersEnabled: boolean
+  epayMinWithdrawalUsd: Prisma.Decimal
   bankFeeRateBp: number
   bankArrivalTime: string
   bankEnabled: boolean
@@ -61,6 +68,7 @@ function serialize(row: {
       ...toRailDto(row.epayFeeRateBp, row.epayArrivalTime, row.epayEnabled || row.epayUsersEnabled),
       enabledForAgents: row.epayEnabled,
       enabledForUsers: row.epayUsersEnabled,
+      minWithdrawalUsd: row.epayMinWithdrawalUsd.toNumber(),
     },
     bank: toRailDto(row.bankFeeRateBp, row.bankArrivalTime, row.bankEnabled),
     bankFields: toBankFieldRuleDtos(resolveBankFieldRules(row.bankFieldRules)),
@@ -93,7 +101,8 @@ export const withdrawalPayoutRailConfigService = {
         if (
           Array.isArray(parsed.bankFields) &&
           typeof parsed.epay?.enabledForAgents === 'boolean' &&
-          typeof parsed.epay?.enabledForUsers === 'boolean'
+          typeof parsed.epay?.enabledForUsers === 'boolean' &&
+          typeof parsed.epay?.minWithdrawalUsd === 'number'
         ) {
           return parsed
         }
@@ -157,6 +166,7 @@ export const withdrawalPayoutRailConfigService = {
         enabled?: boolean
         enabledForAgents?: boolean
         enabledForUsers?: boolean
+        minWithdrawalUsd?: number
       }
       bank?: { feeRateBp?: number; arrivalTime?: string; enabled?: boolean }
       bankFields?: Partial<Record<BankFieldKey, Partial<BankFieldRule>>>
@@ -170,6 +180,10 @@ export const withdrawalPayoutRailConfigService = {
       epayArrivalTime: updates.epay?.arrivalTime ?? current.epayArrivalTime,
       epayEnabled: epayAgents ?? current.epayEnabled,
       epayUsersEnabled: updates.epay?.enabledForUsers ?? current.epayUsersEnabled,
+      epayMinWithdrawalUsd:
+        updates.epay?.minWithdrawalUsd != null
+          ? new Prisma.Decimal(updates.epay.minWithdrawalUsd).toDecimalPlaces(2)
+          : current.epayMinWithdrawalUsd,
       bankFeeRateBp: updates.bank?.feeRateBp ?? current.bankFeeRateBp,
       bankArrivalTime: updates.bank?.arrivalTime ?? current.bankArrivalTime,
       bankEnabled: updates.bank?.enabled ?? current.bankEnabled,
