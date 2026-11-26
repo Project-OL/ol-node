@@ -33,6 +33,7 @@ import { epayGateway, EpayRejectedError, isEpayConfigured } from '../lib/epay/ep
 import { makeEpayMerchantOrderNo } from '../lib/epay/epay-order-no'
 import { PAYIN_CREDITABLE_STATUSES, type EpayPaidFields } from './coin-wallet.service'
 import { prisma } from '../config/database'
+import { paymentTransactionsService } from './payment-transactions.service'
 import {
   PERSONAL_COIN_EXCHANGE_RATES,
   type RateTierUsd,
@@ -694,6 +695,23 @@ export const coinTradingService = {
         await tx.coinTradingTopupOrder.update({
           where: { id: fresh.id },
           data: { ledgerEntryId: entry.id },
+        })
+        await paymentTransactionsService.recordInTx(tx, {
+          channel: 'EPAY',
+          kind: 'PURCHASE',
+          status: 'SUCCEEDED',
+          externalId: fresh.merchantOrderNo ?? fresh.id,
+          providerRef: epay.epayOrderNo,
+          userId: fresh.agentUserId,
+          walletCurrency: 'TRADING_COIN',
+          amount: epay.paidAmount,
+          currency: epay.paidCurrency,
+          units: fresh.tradingCoinsAwarded,
+          sourceTable: 'coin_trading_topup_orders',
+          sourceId: fresh.id,
+          ledgerEntryId: entry.id,
+          metadata: { packageId: fresh.packageId },
+          occurredAt: new Date(),
         })
         return true
       },

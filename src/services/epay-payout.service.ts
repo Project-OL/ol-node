@@ -17,6 +17,7 @@ import { isUniqueViolation } from '../utils/txRetry'
 import { mapPool } from '../utils/map-pool'
 import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
+import { paymentTransactionsService } from './payment-transactions.service'
 import {
   EPAY_PAYOUT_LIVE_STATUSES,
   isPlatformHandledWithdrawal,
@@ -78,6 +79,9 @@ async function finalizeSuccess(row: PayoutRow): Promise<void> {
     adminUserId: row.requestedByAdminId,
     merchantOrderNo: row.merchantOrderNo,
   })
+  // Payment transaction list row. Idempotent; a failure throws, so the callback / reconcile
+  // retries and this (idempotent) step runs again.
+  await paymentTransactionsService.recordEpayPayoutSuccess(row.id)
 }
 
 function logAmountDrift(row: PayoutRow, data: EpayOrderData) {

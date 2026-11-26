@@ -1,6 +1,7 @@
 import { isEpayConfigured } from '../lib/epay/epay-gateway.client'
 import { epayPayinService } from '../services/epay-payin.service'
 import { epayPayoutService } from '../services/epay-payout.service'
+import { paymentRefundService } from '../services/payment-refund.service'
 import { rootLogger } from '../utils/rootLogger'
 
 export const EPAY_RECONCILE_QUEUE = 'epay-reconcile'
@@ -15,6 +16,11 @@ const log = rootLogger.child({ module: 'epay-reconcile' })
  * settled. No-op while Epay is disabled.
  */
 export async function runEpayReconcileJob(): Promise<void> {
+  // Channel-agnostic: finish payment refunds whose after-commit steps (session revoke,
+  // withdrawal cancel, admin alert) failed. Runs even while Epay is off (store refunds).
+  const refundsFinished = await paymentRefundService.retryPendingActions()
+  if (refundsFinished > 0) log.warn({ refundsFinished }, 'payment refund post-actions finished')
+
   if (!isEpayConfigured()) return
   const payin = await epayPayinService.reconcilePending()
   const payout = await epayPayoutService.reconcileLive()

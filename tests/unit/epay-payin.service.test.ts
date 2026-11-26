@@ -42,6 +42,10 @@ const creditTrading = vi.fn()
 vi.mock('../../src/services/coinTrading.service', () => ({
   coinTradingService: { creditPaidTopup: (...a: unknown[]) => creditTrading(...a) },
 }))
+const applyRefund = vi.fn()
+vi.mock('../../src/services/payment-refund.service', () => ({
+  paymentRefundService: { applyRefund: (...a: unknown[]) => applyRefund(...a) },
+}))
 const redisSet = vi.fn()
 vi.mock('../../src/config/redis', () => ({
   redisClient: { set: (...a: unknown[]) => redisSet(...a) },
@@ -160,10 +164,14 @@ describe('epayPayinService.settlePayin', () => {
     )
   })
 
-  it('already-final orders are not queried again', async () => {
+  it('already-final orders are not re-credited', async () => {
     personalFindUnique.mockResolvedValue(personalOrder({ status: 'PAID' }))
+    // A callback on a PAID order only checks for a refund; no refundOrder → nothing changes.
+    queryPayin.mockResolvedValueOnce({ status: '7', amount: '2.99', currency: 'USD' })
     expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('ALREADY_FINAL')
-    expect(queryPayin).not.toHaveBeenCalled()
+    expect(personalUpdateMany).not.toHaveBeenCalled()
+    expect(queryPayin).toHaveBeenCalledTimes(1)
+    expect(creditPersonal).not.toHaveBeenCalled()
   })
 
   it('unknown / foreign order numbers are ignored without a query', async () => {
@@ -240,11 +248,40 @@ describe('late payment (order closed before Epay confirmed it)', () => {
   })
 
   it('PAID and REVIEW are never re-opened, even by a callback', async () => {
-    for (const status of ['PAID', 'REVIEW']) {
-      personalFindUnique.mockResolvedValue(personalOrder({ status }))
-      expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('ALREADY_FINAL')
-    }
+    // REVIEW: never queried. PAID: queried only for a refund, never re-credited.
+    personalFindUnique.mockResolvedValue(personalOrder({ status: 'REVIEW' }))
+    expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('ALREADY_FINAL')
     expect(queryPayin).not.toHaveBeenCalled()
+    personalFindUnique.mockResolvedValue(personalOrder({ status: 'PAID' }))
+    queryPayin.mockResolvedValueOnce({ status: '7', amount: '2.99', currency: 'USD' })
+    expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('ALREADY_FINAL')
+    expect(creditPersonal).not.toHaveBeenCalled()
+    expect(applyRefund).not.toHaveBeenCalled()
+  })
+
+  it('a callback on a PAID order with a completed refundOrder applies the refund policy', async () => {
+    personalFindUnique.mockResolvedValue(personalOrder({ status: 'PAID' }))
+    queryPayin.mockResolvedValueOnce({
+      status: '7',
+      amount: '2.99',
+      currency: 'USD',
+      refundOrder: { status: '7', amount: '2.99', currency: 'USD' },
+    })
+    applyRefund.mockResolvedValueOnce({ outcome: 'APPLIED', refundTxnId: 'r1', userId: 'u1' })
+    expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('REFUNDED')
+    expect(applyRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: 'EPAY', purchaseExternalId: CP }),
+    )
+    const call = personalUpdateMany.mock.calls[0][0]
+    expect(call.where).toEqual({ id: 'ord-1', status: { in: ['PAID', 'COMPLETED'] } })
+    expect(call.data.status).toBe('REFUNDED')
+  })
+
+  it('a refund still in progress (refundOrder status 1) changes nothing', async () => {
+    personalFindUnique.mockResolvedValue(personalOrder({ status: 'PAID' }))
+    queryPayin.mockResolvedValueOnce({ status: '7', refundOrder: { status: '1' } })
+    expect(await epayPayinService.settlePayin(CP, 'callback')).toBe('ALREADY_FINAL')
+    expect(applyRefund).not.toHaveBeenCalled()
   })
 
   it('a dropped Epay connection during a late re-check propagates (callback is retried)', async () => {

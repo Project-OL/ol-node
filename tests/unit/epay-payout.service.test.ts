@@ -70,6 +70,9 @@ vi.mock('../../src/services/withdrawal.service', () => ({
   },
 }))
 vi.mock('../../src/services/audit.service', () => ({ auditService: { logAdmin: vi.fn() } }))
+vi.mock('../../src/services/payment-transactions.service', () => ({
+  paymentTransactionsService: { recordEpayPayoutSuccess: vi.fn().mockResolvedValue(undefined) },
+}))
 vi.mock('../../src/utils/rootLogger', () => {
   const l = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
   return { rootLogger: { child: () => l } }

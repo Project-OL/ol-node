@@ -15,6 +15,7 @@ import { epayOrderKindOf } from '../lib/epay/epay-order-no'
 import { rootLogger } from '../utils/rootLogger'
 import { coinWalletService, type EpayPaidFields } from './coin-wallet.service'
 import { coinTradingService } from './coinTrading.service'
+import { paymentRefundService } from './payment-refund.service'
 
 const log = rootLogger.child({ module: 'epay-payin' })
 
@@ -34,6 +35,7 @@ export type PayinSettleResult =
   | 'EXPIRED'
   | 'PENDING'
   | 'REVIEW'
+  | 'REFUNDED'
   | 'UNKNOWN_ORDER'
 
 type Kind = 'PERSONAL_TOPUP' | 'TRADING_TOPUP'
@@ -200,6 +202,71 @@ async function settleLatePayment(
   return 'ALREADY_FINAL'
 }
 
+/** Order statuses meaning "coins were credited" (personal = PAID, trading = COMPLETED). */
+const PAYIN_CREDITED_STATUSES: readonly string[] = ['PAID', 'COMPLETED']
+
+/** Epay's `refundOrder` (an object, or a JSON string in form-encoded payloads). */
+export function parseEpayRefundOrder(v: unknown): Record<string, unknown> | null {
+  if (v == null || v === '') return null
+  if (typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
+  if (typeof v === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(v)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/**
+ * Epay refunds a payment only when we ask, or for risk / compliance. It then shows a
+ * `refundOrder` in the query and sends another callback. A completed refund (status 7) takes
+ * the coins back and suspends + freezes the account (see payment-refund.service).
+ */
+async function settleRefundIfAny(
+  order: LoadedOrder,
+  merchantOrderNo: string,
+): Promise<PayinSettleResult> {
+  let data: EpayOrderData
+  try {
+    data = await epayGateway.queryPayin(merchantOrderNo)
+  } catch (err) {
+    if (err instanceof EpayRejectedError) return 'ALREADY_FINAL'
+    throw err
+  }
+  const refund = parseEpayRefundOrder(data?.refundOrder)
+  if (!refund || String(refund.status ?? '') !== '7') return 'ALREADY_FINAL'
+
+  const refundNo =
+    [refund.refundOrderNo, refund.merchantRefundNo, refund.epayRefundNo, refund.orderNo].find(
+      (x): x is string => typeof x === 'string' && x.length > 0,
+    ) ?? null
+  const result = await paymentRefundService.applyRefund({
+    channel: 'EPAY',
+    purchaseExternalId: merchantOrderNo,
+    refundExternalId: refundNo ? `${merchantOrderNo}:${refundNo}` : null,
+    providerRef: refundNo,
+    refundAmount: parseDecimal(refund.amount),
+    reason: 'Epay refundOrder status 7',
+    metadata: { refundOrder: refund as Prisma.InputJsonValue },
+  })
+  if (result.outcome === 'PURCHASE_NOT_FOUND') return 'ALREADY_FINAL'
+
+  const where = { id: order.id, status: { in: [...PAYIN_CREDITED_STATUSES] } }
+  const data2 = { status: 'REFUNDED', failureReason: 'EPAY_REFUNDED' }
+  if (order.kind === 'PERSONAL_TOPUP') {
+    await prisma.coinTopupOrder.updateMany({ where, data: data2 })
+  } else {
+    await prisma.coinTradingTopupOrder.updateMany({ where, data: data2 })
+  }
+  log.warn({ merchantOrderNo, outcome: result.outcome }, 'epay pay-in refunded')
+  return 'REFUNDED'
+}
+
 export const epayPayinService = {
   /**
    * Bring one pay-in order to its true state. Never trusts the caller's payload: the outcome
@@ -219,6 +286,12 @@ export const epayPayinService = {
     if (kind !== 'PERSONAL_TOPUP' && kind !== 'TRADING_TOPUP') return 'UNKNOWN_ORDER'
     const order = await loadOrder(kind, merchantOrderNo)
     if (!order) return 'UNKNOWN_ORDER'
+
+    // A callback on an order we already credited: Epay sends another callback when it refunds
+    // a payment, so re-check for a completed refund and apply the refund policy.
+    if (PAYIN_CREDITED_STATUSES.includes(order.status) && source === 'callback') {
+      return settleRefundIfAny(order, merchantOrderNo)
+    }
 
     // Late payment: we closed the order (FAILED / EXPIRED = "no payment seen yet") but Epay
     // is now calling back about it. Re-check with Epay; if it really was paid, credit it.

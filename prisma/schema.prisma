@@ -2031,6 +2031,99 @@ model EpayPayoutOrder {
   @@map("epay_payout_orders")
 }
 
+/// Payment channel of a `payment_transactions` row.
+enum PaymentChannel {
+  EPAY
+  GOOGLE_PLAY
+  APPLE
+}
+
+/// What a `payment_transactions` row records.
+enum PaymentTxnKind {
+  PURCHASE
+  REFUND
+  PAYOUT
+  PAYOUT_REVERSAL
+}
+
+/// One row per money event with an outside payment provider (Epay, Google Play, Apple):
+/// purchases, refunds, payouts and payout reversals. Written in the same DB transaction as the
+/// coin credit / refund, so the list never disagrees with the ledger. Unique per
+/// (channel, kind, externalId): a provider event can only ever be recorded (and applied) once.
+/// No FK to users on purpose: financial history must survive any user cleanup.
+model PaymentTransaction {
+  id             String         @id @default(uuid()) @db.Uuid
+  channel        PaymentChannel
+  kind           PaymentTxnKind
+  /// PURCHASE: SUCCEEDED | REFUNDED. REFUND: APPLIED. PAYOUT: SUCCEEDED | REVERSED.
+  status         String         @db.VarChar(20)
+  /// Our id for the event at the provider: Epay merchantOrderNo, store transaction id, or
+  /// `<purchase externalId>:refund` when the provider has no own refund id.
+  externalId     String         @map("external_id") @db.VarChar(128)
+  /// The provider's own id (Epay epayOrderNo, Google orderId, Apple transactionId).
+  providerRef    String?        @map("provider_ref") @db.VarChar(128)
+  /// REFUND / PAYOUT_REVERSAL → the PURCHASE / PAYOUT row it reverses.
+  parentId       String?        @map("parent_id") @db.Uuid
+  userId         String         @map("user_id") @db.Uuid
+  /// COIN | TRADING_COIN | POINT — the wallet the event moved.
+  walletCurrency String         @map("wallet_currency") @db.VarChar(16)
+  amount         Decimal        @db.Decimal(18, 6)
+  currency       String         @db.VarChar(10)
+  /// Coins / trading coins / points moved by this event (positive).
+  units          BigInt?
+  /// Source row: coin_topup_orders | coin_trading_topup_orders | epay_payout_orders | …
+  sourceTable    String?        @map("source_table") @db.VarChar(64)
+  sourceId       String?        @map("source_id") @db.Uuid
+  ledgerEntryId  String?        @map("ledger_entry_id") @db.Uuid
+  reason         String?        @db.Text
+  metadata       Json?
+  /// When the provider says it happened (paid / refunded / paid out).
+  occurredAt     DateTime       @map("occurred_at")
+  /// REFUND only: when the after-commit steps (sessions, withdrawals, admin alert) finished.
+  actionsDoneAt  DateTime?      @map("actions_done_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  @@unique([channel, kind, externalId])
+  @@index([userId, occurredAt(sort: Desc)])
+  @@index([channel, occurredAt(sort: Desc)])
+  @@index([kind, occurredAt(sort: Desc)])
+  @@index([parentId])
+  @@index([sourceTable, sourceId])
+  @@map("payment_transactions")
+}
+
+/// Suspect list: identities (phone, email, device, user) tied to a payment refund or other
+/// payment abuse. An admin flag only for now; automation (e.g. blocking signups) comes later.
+/// One row per identity; a repeat hit bumps `hitCount` and `lastFlaggedAt`.
+model PaymentSuspect {
+  id               String    @id @default(uuid()) @db.Uuid
+  /// PHONE | EMAIL | DEVICE | USER
+  identityType     String    @map("identity_type") @db.VarChar(16)
+  /// Normalized: email lower-cased, phone E.164, device id as sent, user id (uuid).
+  identityValue    String    @map("identity_value") @db.VarChar(255)
+  /// The user this identity was seen on when last flagged.
+  userId           String    @map("user_id") @db.Uuid
+  /// e.g. PAYMENT_REFUND
+  reason           String    @db.VarChar(64)
+  /// The payment_transactions row (REFUND) that last flagged it.
+  sourceTxnId      String?   @map("source_txn_id") @db.Uuid
+  /// ACTIVE | CLEARED
+  status           String    @default("ACTIVE") @db.VarChar(16)
+  hitCount         Int       @default(1) @map("hit_count")
+  note             String?   @db.Text
+  lastFlaggedAt    DateTime  @default(now()) @map("last_flagged_at")
+  clearedAt        DateTime? @map("cleared_at")
+  clearedByAdminId String?   @map("cleared_by_admin_id") @db.VarChar(64)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@unique([identityType, identityValue])
+  @@index([status, lastFlaggedAt(sort: Desc)])
+  @@index([userId])
+  @@map("payment_suspects")
+}
+
 enum CompanyCashDirection {
   IN
   OUT
@@ -3468,6 +3561,8 @@ enum ModerationNotificationType {
   LIVE_AUDIO_MUTE
   MESSAGING_DISABLE
   PROFILE_PICTURE_REMOVED
+  /// A purchase was refunded: account suspended + wallets frozen automatically.
+  PAYMENT_REFUND_SUSPENSION
 }
 
 model SuperAdminNotification {
