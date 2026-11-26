@@ -26,6 +26,7 @@ import { RECHARGE_TX_TYPES, richTierService } from './rich-tier.service'
 import { epayGateway, EpayRejectedError, isEpayConfigured } from '../lib/epay/epay-gateway.client'
 import { makeEpayMerchantOrderNo } from '../lib/epay/epay-order-no'
 import { redisClient, RedisKeys } from '../config/redis'
+import { paymentTransactionsService } from './payment-transactions.service'
 
 /**
  * Order statuses a VERIFIED Epay payment (status 7 + exact match) may still credit.
@@ -291,6 +292,24 @@ export const coinWalletService = {
         await tx.coinTopupOrder.update({
           where: { id: orderId },
           data: { ledgerEntryId: entry.id },
+        })
+
+        await paymentTransactionsService.recordInTx(tx, {
+          channel: 'EPAY',
+          kind: 'PURCHASE',
+          status: 'SUCCEEDED',
+          externalId: order.merchantOrderNo ?? order.id,
+          providerRef: epay.epayOrderNo,
+          userId,
+          walletCurrency: 'COIN',
+          amount: epay.paidAmount,
+          currency: epay.paidCurrency,
+          units: BigInt(order.coins),
+          sourceTable: 'coin_topup_orders',
+          sourceId: order.id,
+          ledgerEntryId: entry.id,
+          metadata: { packageId: order.packageId },
+          occurredAt: new Date(),
         })
 
         const richMonth = RECHARGE_TX_TYPES.has(txType)
@@ -717,6 +736,12 @@ export const coinWalletService = {
        * for admin reversals, which claw back from a wallet that is often frozen for that reason.
        */
       freezeCheck?: boolean
+      /**
+       * When true (default), reject with INSUFFICIENT_COINS if the balance is below `amount`.
+       * Set false ONLY for payment-refund clawbacks, which must take the coins back even when
+       * that leaves a negative balance (every normal debit then fails until it is repaid).
+       */
+      balanceCheck?: boolean
     },
   ): Promise<{
     ledgerEntryId: string
@@ -765,7 +790,7 @@ export const coinWalletService = {
       select: { balanceAfter: true },
     })
     const balance = last?.balanceAfter ?? 0n
-    if (balance < amount) {
+    if (options.balanceCheck !== false && balance < amount) {
       throw new AppError(402, 'Insufficient coins', 'INSUFFICIENT_COINS', {
         required: amount.toString(),
         balance: balance.toString(),

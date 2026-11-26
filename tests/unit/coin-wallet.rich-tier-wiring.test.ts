@@ -21,6 +21,11 @@ vi.mock("../../src/services/audit.service", () => ({
   auditService: { log: vi.fn() },
 }));
 
+const recordPaymentTxn = vi.fn().mockResolvedValue("ptx-1");
+vi.mock("../../src/services/payment-transactions.service", () => ({
+  paymentTransactionsService: { recordInTx: (...a: unknown[]) => recordPaymentTxn(...a) },
+}));
+
 vi.mock("../../src/services/user-level.service", () => ({
   walletLevelService: {
     applyCredit: vi.fn(),

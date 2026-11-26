@@ -246,6 +246,12 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
     'POST /admin/notifications/push/broadcast',
     'GET /admin/users/search',
   ],
+  PaymentsView: [
+    'GET /admin/payments/transactions',
+    'GET /admin/payments/suspects',
+    'PATCH /admin/payments/suspects/:id',
+    'POST /admin/payments/refunds',
+  ],
   LedgerAuditView: [
     'GET /admin/ledger-audit/flags',
     'PATCH /admin/ledger-audit/flags/:id',

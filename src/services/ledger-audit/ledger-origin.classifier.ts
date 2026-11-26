@@ -36,6 +36,8 @@ export const APP_LEDGER_IDEM_PREFIXES = [
   'videocall-',
   'livestream-reward:',
   'epay-personal-topup:',
+  // Payment-refund clawback (ADJUSTMENT debit, may leave a negative balance).
+  'payment-refund:',
 ] as const
 
 /** Coin / point tx types that are always produced by product flows (even with client-raw keys). */

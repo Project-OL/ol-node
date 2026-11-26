@@ -34,6 +34,7 @@ const COMPANY_FINANCE_ROUTES: RegExp[] = [
   /^\/admin\/ledger(\/|$)/,
   /^\/admin\/ledger-audit(\/|$)/,
   /^\/admin\/agency\/payroll(\/|$)/,
+  /^\/admin\/payments(\/|$)/,
 ]
 
 /** Prisma filter for a user relation inside the admin's countries. */
