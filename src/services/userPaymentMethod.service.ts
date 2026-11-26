@@ -23,18 +23,29 @@ import { validateBankFields } from '../utils/bank-field-rules'
 
 export { maskAccountNumber, maskEmail, maskPaymentMethodForDisplay }
 
-/** `enabled` is the caller's own state (EPAY differs for agents and users). */
+/**
+ * `enabled` is the caller's own state (EPAY differs for agents and users).
+ * `minWithdrawalUsd`: EPAY's own minimum, or the payroll minimum for BANK (additive field).
+ */
 function railFieldsForType(
   methodType: MethodType,
   rails: PayoutRailPublicDto,
   isAgent: boolean,
-): { feeRateBp: number; feePercent: number; arrivalTime: string; enabled: boolean } {
+  bankMinWithdrawalUsd: number,
+): {
+  feeRateBp: number
+  feePercent: number
+  arrivalTime: string
+  enabled: boolean
+  minWithdrawalUsd: number
+} {
   const rail = methodType === 'EPAY' ? rails.epay : rails.bank
   return {
     feeRateBp: rail.feeRateBp,
     feePercent: rail.feePercent,
     arrivalTime: rail.arrivalTime,
     enabled: railEnabledFor(rails, methodType, isAgent),
+    minWithdrawalUsd: methodType === 'EPAY' ? rails.epay.minWithdrawalUsd : bankMinWithdrawalUsd,
   }
 }
 
@@ -104,9 +115,11 @@ export const userPaymentMethodService = {
    */
   async getMyMethods(userId: string) {
     const cacheKey = RedisKeys.userPaymentMethods(userId)
-    const [rails, isAgent] = await Promise.all([
+    const { withdrawalService } = await import('./withdrawal.service')
+    const [rails, isAgent, payroll] = await Promise.all([
       withdrawalPayoutRailConfigService.getPublicConfig(),
       withdrawalPayoutRailConfigService.isAgentUser(userId),
+      withdrawalService.getPayrollConfig(),
     ])
     const cached = await redisClient.get(cacheKey)
     let bound: ReturnType<typeof userPaymentMethodService.serializeOwnerList>
@@ -120,7 +133,7 @@ export const userPaymentMethodService = {
 
     const byType = new Map(bound.map((m) => [m.methodType, m]))
     const methods = (['EPAY', 'BANK'] as const).map((methodType) => {
-      const rail = railFieldsForType(methodType, rails, isAgent)
+      const rail = railFieldsForType(methodType, rails, isAgent, payroll.minWithdrawalUsd)
       const existing = byType.get(methodType)
       if (existing) {
         return { ...existing, bound: true as const, ...rail }

@@ -359,6 +359,30 @@ async function loadCountryRates(
   return rows.map((row) => formatCountryFxDto(row))
 }
 
+/**
+ * EPAY has its own minimum (`withdrawal_payout_rail_config.epay_min_withdrawal_usd`, default
+ * $1,000, USD and USDT alike) in place of the payroll minimum; BANK keeps the payroll one.
+ * Throws a clear 400 BELOW_MIN_WITHDRAWAL with the EPAY minimum in `details`.
+ */
+async function configForMethod(
+  config: PayrollConfigSnapshot,
+  methodType: WithdrawalMethodType,
+  grossPoints: bigint,
+): Promise<PayrollConfigSnapshot> {
+  if (methodType !== 'EPAY') return config
+  const rails = await withdrawalPayoutRailConfigService.getPublicConfig()
+  const min = rails.epay.minWithdrawalUsd
+  if (Number(grossPoints) / 10000 < min - 1e-9) {
+    throw new AppError(
+      400,
+      `Minimum Epay withdrawal is $${min.toLocaleString('en-US')}`,
+      'BELOW_MIN_WITHDRAWAL',
+      { methodType: 'EPAY', minWithdrawalUsd: min },
+    )
+  }
+  return { ...config, minWithdrawalUsd: min }
+}
+
 async function loadPayrollConfigRow(): Promise<PayrollConfigSnapshot> {
   const row = await prismaRead.payrollConfig.findUnique({ where: { id: 1 } })
   if (!row) {
@@ -626,7 +650,11 @@ export const withdrawalService = {
       withdrawalService.getPayrollConfig(),
       prismaRead.user.findUnique({ where: { id: userId }, select: { country: true } }),
     ])
-    const amounts = calculateWithdrawalAmounts(params.grossPoints, config, methodType)
+    const amounts = calculateWithdrawalAmounts(
+      params.grossPoints,
+      await configForMethod(config, methodType, params.grossPoints),
+      methodType,
+    )
     const payoutHandler = payoutHandlerForMethod(methodType)
 
     const withdrawalId = randomUUID()
