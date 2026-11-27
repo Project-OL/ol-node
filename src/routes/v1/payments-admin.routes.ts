@@ -10,6 +10,7 @@ import {
 } from '../../models/payments-admin.schemas'
 import { auditService } from '../../services/audit.service'
 import { paymentRefundService } from '../../services/payment-refund.service'
+import { paymentAttentionService } from '../../services/payment-attention.service'
 import { paymentSuspectsService } from '../../services/payment-suspects.service'
 import { paymentTransactionsService } from '../../services/payment-transactions.service'
 import { parseRequest } from '../../utils/zod-request'
@@ -37,6 +38,19 @@ export default async function paymentsAdminRoutes(app: FastifyInstance) {
       const q = parseRequest(paymentTxnListQuerySchema, request.query ?? {})
       return reply.send(await paymentTransactionsService.list(q))
     },
+  )
+
+  app.get(
+    '/payments/attention',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Payments'],
+        description:
+          'Payments that need a person: Epay pay-ins held for REVIEW, payouts with an unknown outcome (> 10 min) and payouts refused for low merchant balance (withdrawal still unpaid).',
+      },
+    },
+    async (_request, reply) => reply.send(await paymentAttentionService.list()),
   )
 
   app.get(

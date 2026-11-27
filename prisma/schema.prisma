@@ -2133,6 +2133,10 @@ enum CompanyCashReason {
   AGENCY_TRADING_PURCHASE
   EPAY_PAYOUT
   PAYROLL_TAKEOVER_PAYOUT
+  /// Fee Epay charged us (pay-in fee or payout fee). OUT.
+  EPAY_FEE
+  /// Money returned to a payer by an Epay refund. OUT.
+  EPAY_REFUND
 }
 
 /// Off-system fiat in/out paired with mint, EPAY payouts, and BANK takeover.
@@ -3566,6 +3570,10 @@ enum ModerationNotificationType {
   PROFILE_PICTURE_REMOVED
   /// A purchase was refunded: account suspended + wallets frozen automatically.
   PAYMENT_REFUND_SUSPENSION
+  /// An Epay pay-in was paid but does not match its order: held for an admin decision.
+  PAYMENT_REVIEW_NEEDED
+  /// An Epay payout needs a look: outcome unknown, or refused for low merchant balance.
+  EPAY_PAYOUT_ATTENTION
 }
 
 model SuperAdminNotification {

@@ -34,6 +34,7 @@ import { makeEpayMerchantOrderNo } from '../lib/epay/epay-order-no'
 import { PAYIN_CREDITABLE_STATUSES, type EpayPaidFields } from './coin-wallet.service'
 import { prisma } from '../config/database'
 import { paymentTransactionsService } from './payment-transactions.service'
+import { epayBookkeeping } from './epay-bookkeeping'
 import {
   PERSONAL_COIN_EXCHANGE_RATES,
   type RateTierUsd,
@@ -710,8 +711,15 @@ export const coinTradingService = {
           sourceTable: 'coin_trading_topup_orders',
           sourceId: fresh.id,
           ledgerEntryId: entry.id,
-          metadata: { packageId: fresh.packageId },
+          metadata: { packageId: fresh.packageId, fee: epay.fee?.toString() ?? null },
           occurredAt: new Date(),
+        })
+        await epayBookkeeping.tradingTopupPaid(tx, {
+          agentUserId: fresh.agentUserId,
+          merchantOrderNo: fresh.merchantOrderNo ?? fresh.id,
+          paidAmount: epay.paidAmount,
+          tradingCoins: fresh.tradingCoinsAwarded,
+          fee: epay.fee,
         })
         return true
       },

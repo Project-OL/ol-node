@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { prisma } from '../config/database'
+import { env } from '../config/env'
 import { AppError } from '../middlewares/errorHandler'
 import { walletRepository } from '../repositories/wallet.repository'
 import { coinLedgerRepository } from '../repositories/coin-ledger.repository'
@@ -27,6 +28,7 @@ import { epayGateway, EpayRejectedError, isEpayConfigured } from '../lib/epay/ep
 import { makeEpayMerchantOrderNo } from '../lib/epay/epay-order-no'
 import { redisClient, RedisKeys } from '../config/redis'
 import { paymentTransactionsService } from './payment-transactions.service'
+import { epayBookkeeping } from './epay-bookkeeping'
 
 /**
  * Order statuses a VERIFIED Epay payment (status 7 + exact match) may still credit.
@@ -42,6 +44,8 @@ export interface EpayPaidFields {
   epayStatus: string
   paidAmount: Prisma.Decimal
   paidCurrency: string
+  /** Fee Epay charged us for this pay-in (from its query), when it reports one. */
+  fee?: Prisma.Decimal | null
 }
 import { enqueuePlatformLedgerMessage } from '../queues/platform-message.queue'
 import { isDiamondLedgerMovement } from '../config/diamond-ledger'
@@ -90,6 +94,14 @@ export const coinWalletService = {
   async initiateTopup(userId: string, packageId: string, idempotencyKey: string) {
     if (!isEpayConfigured()) {
       throw new AppError(503, 'Coin purchase is not available right now', 'EPAY_DISABLED')
+    }
+    // Epay is for agents' trading coins only; personal coins are bought in the app stores.
+    if (!env.EPAY_PERSONAL_TOPUP_ENABLED) {
+      throw new AppError(
+        403,
+        'Coin purchase with Epay is not available',
+        'EPAY_PERSONAL_TOPUP_DISABLED',
+      )
     }
     const cached = await walletService.getCachedIdemResponse(idempotencyKey)
     if (cached) return cached
@@ -308,8 +320,14 @@ export const coinWalletService = {
           sourceTable: 'coin_topup_orders',
           sourceId: order.id,
           ledgerEntryId: entry.id,
-          metadata: { packageId: order.packageId },
+          metadata: { packageId: order.packageId, fee: epay.fee?.toString() ?? null },
           occurredAt: new Date(),
+        })
+        await epayBookkeeping.fee(tx, {
+          fee: epay.fee,
+          counterpartyUserId: userId,
+          ledgerRefId: order.merchantOrderNo ?? order.id,
+          description: 'Epay pay-in fee (personal top-up)',
         })
 
         const richMonth = RECHARGE_TX_TYPES.has(txType)

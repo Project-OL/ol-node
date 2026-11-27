@@ -1,5 +1,6 @@
 import { Prisma, type PaymentChannel, type PaymentTxnKind } from '@prisma/client'
 import { prisma, prismaRead } from '../config/database'
+import { epayBookkeeping } from './epay-bookkeeping'
 
 /**
  * The payment transaction list: one row per money event with an outside provider
@@ -106,25 +107,37 @@ export const paymentTransactionsService = {
       select: { userId: true, amountPoints: true },
     })
     if (!w) return
-    await paymentTransactionsService.recordInTx(prisma, {
-      channel: 'EPAY',
-      kind: 'PAYOUT',
-      status: 'SUCCEEDED',
-      externalId: p.merchantOrderNo,
-      providerRef: p.epayOrderNo,
-      userId: w.userId,
-      walletCurrency: 'POINT',
-      amount: p.amount,
-      currency: p.currency,
-      units: w.amountPoints,
-      sourceTable: 'epay_payout_orders',
-      sourceId: p.id,
-      metadata: {
-        withdrawalId: p.withdrawalId,
-        fee: p.fee?.toString() ?? null,
-        receiveEpayAccount: p.receiveEpayAccount,
-      },
-      occurredAt: p.completedAt ?? new Date(),
+    await prisma.$transaction(async (tx) => {
+      const id = await paymentTransactionsService.recordInTx(tx, {
+        channel: 'EPAY',
+        kind: 'PAYOUT',
+        status: 'SUCCEEDED',
+        externalId: p.merchantOrderNo,
+        providerRef: p.epayOrderNo,
+        userId: w.userId,
+        walletCurrency: 'POINT',
+        amount: p.amount,
+        currency: p.currency,
+        units: w.amountPoints,
+        sourceTable: 'epay_payout_orders',
+        sourceId: p.id,
+        metadata: {
+          withdrawalId: p.withdrawalId,
+          fee: p.fee?.toString() ?? null,
+          receiveEpayAccount: p.receiveEpayAccount,
+        },
+        occurredAt: p.completedAt ?? new Date(),
+      })
+      // First recording only: the fee is booked exactly once, with the row.
+      if (id) {
+        await epayBookkeeping.fee(tx, {
+          fee: p.fee,
+          counterpartyUserId: w.userId,
+          ledgerRefId: p.merchantOrderNo,
+          withdrawalId: p.withdrawalId,
+          description: 'Epay payout fee',
+        })
+      }
     })
   },
 
