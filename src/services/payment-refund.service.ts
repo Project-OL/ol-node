@@ -10,6 +10,7 @@ import { prisma } from '../config/database'
 import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
 import { coinWalletService } from './coin-wallet.service'
+import { epayBookkeeping } from './epay-bookkeeping'
 import { paymentTransactionsService } from './payment-transactions.service'
 import { collectUserIdentities, paymentSuspectsService } from './payment-suspects.service'
 
@@ -201,6 +202,13 @@ export const paymentRefundService = {
           where: { id: purchase.id },
           data: { status: 'REFUNDED' },
         })
+        if (input.channel === 'EPAY') {
+          await epayBookkeeping.refund(tx, {
+            amount: input.refundAmount ?? purchase.amount,
+            counterpartyUserId: purchase.userId,
+            ledgerRefId: refundExternalId,
+          })
+        }
 
         // Suspend indefinitely (never downgrade a ban / deletion) and freeze every wallet.
         await tx.user.updateMany({

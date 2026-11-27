@@ -510,6 +510,15 @@ const envSchema = z
       .optional()
       .transform((s) => s === 'true'),
     /**
+     * Personal COIN purchase through Epay (`POST /wallet/coins/topup/initiate`). Default OFF:
+     * business rule (2026-11-26) = Epay is for agents' TRADING coins only; personal coins come
+     * from Google Play / Apple. Late callbacks for orders created earlier still settle.
+     */
+    EPAY_PERSONAL_TOPUP_ENABLED: z
+      .string()
+      .optional()
+      .transform((s) => s === 'true'),
+    /**
      * Epay callback source IPs (comma-separated). Sandbox: 47.242.34.120. Production:
      * 47.237.182.23, 8.222.205.106 (Epay, 2026-11-23). Extra layer on top of the signature check.
      */

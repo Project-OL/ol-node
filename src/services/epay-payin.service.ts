@@ -16,6 +16,7 @@ import { rootLogger } from '../utils/rootLogger'
 import { coinWalletService, type EpayPaidFields } from './coin-wallet.service'
 import { coinTradingService } from './coinTrading.service'
 import { paymentRefundService } from './payment-refund.service'
+import { paymentAttentionService } from './payment-attention.service'
 
 const log = rootLogger.child({ module: 'epay-payin' })
 
@@ -23,6 +24,11 @@ const log = rootLogger.child({ module: 'epay-payin' })
 export const PAYIN_EXPIRE_AFTER_MS = 24 * 60 * 60 * 1000
 /** If Epay still says "no such order" this long after we created it, it never got created. */
 export const PAYIN_NOT_FOUND_GRACE_MS = 30 * 60 * 1000
+/** Reconcile backoff: orders younger than this are re-queried every PAYIN_REQUERY_YOUNG_MS… */
+export const PAYIN_YOUNG_ORDER_MS = 60 * 60 * 1000
+export const PAYIN_REQUERY_YOUNG_MS = 2 * 60 * 1000
+/** …older ones every PAYIN_REQUERY_OLD_MS (until EXPIRED at 24 h). */
+export const PAYIN_REQUERY_OLD_MS = 15 * 60 * 1000
 /** The buyer's status poll triggers a fresh Epay query at most this often per order. */
 export const PAYIN_POLL_QUERY_MIN_INTERVAL_MS = 5_000
 
@@ -43,6 +49,7 @@ type Kind = 'PERSONAL_TOPUP' | 'TRADING_TOPUP'
 interface LoadedOrder {
   kind: Kind
   id: string
+  userId: string
   status: string
   createdAt: Date
   expectedAmount: Prisma.Decimal
@@ -56,6 +63,7 @@ async function loadOrder(kind: Kind, merchantOrderNo: string): Promise<LoadedOrd
     return {
       kind,
       id: o.id,
+      userId: o.userId,
       status: o.status,
       createdAt: o.createdAt,
       // priceCents is an integer; dividing by 100 is exact in Decimal.
@@ -68,6 +76,7 @@ async function loadOrder(kind: Kind, merchantOrderNo: string): Promise<LoadedOrd
   return {
     kind,
     id: o.id,
+    userId: o.agentUserId,
     status: o.status,
     createdAt: o.createdAt,
     expectedAmount: o.amountUsd,
@@ -151,8 +160,18 @@ export function checkPaidMatchesOrder(
       epayStatus: String(data.status),
       paidAmount: amount,
       paidCurrency: currency,
+      fee: parseDecimal(data.fee),
     },
   }
+}
+
+/** Bell alert for super admins, once: only the runner whose REVIEW claim won calls this. */
+function alertReview(order: LoadedOrder, merchantOrderNo: string, reason: string): void {
+  paymentAttentionService.alert(
+    'PAYMENT_REVIEW_NEEDED',
+    order.userId,
+    `Epay ${order.kind === 'TRADING_TOPUP' ? 'trading' : 'personal'} top-up ${merchantOrderNo} paid but held for review: ${reason}`,
+  )
 }
 
 async function creditVerified(order: LoadedOrder, paid: EpayPaidFields): Promise<boolean> {
@@ -182,9 +201,13 @@ async function settleLatePayment(
 
   const check = checkPaidMatchesOrder(order, merchantOrderNo, data)
   if (!check.ok) {
-    await closeOrder(order, 'REVIEW', { epayStatus, failureReason: `LATE_${check.reason}` }, [
-      order.status,
-    ])
+    const held = await closeOrder(
+      order,
+      'REVIEW',
+      { epayStatus, failureReason: `LATE_${check.reason}` },
+      [order.status],
+    )
+    if (held) alertReview(order, merchantOrderNo, `LATE_${check.reason}`)
     log.error(
       { merchantOrderNo, previousStatus: order.status, reason: check.reason },
       'epay LATE payment does not match the order: held for review, NOT credited',
@@ -341,7 +364,8 @@ export const epayPayinService = {
 
     const check = checkPaidMatchesOrder(order, merchantOrderNo, data)
     if (!check.ok) {
-      await closeOrder(order, 'REVIEW', { epayStatus, failureReason: check.reason })
+      const held = await closeOrder(order, 'REVIEW', { epayStatus, failureReason: check.reason })
+      if (held) alertReview(order, merchantOrderNo, check.reason)
       log.error(
         {
           merchantOrderNo,
@@ -372,14 +396,28 @@ export const epayPayinService = {
   ) {
     if (!isEpayConfigured()) return { checked: 0, results: {} as Record<string, number> }
     const minAgeMs = opts.minAgeMs ?? 60_000
-    const requeryAfterMs = opts.requeryAfterMs ?? 120_000
+    const requeryAfterMs = opts.requeryAfterMs ?? PAYIN_REQUERY_YOUNG_MS
     const limit = opts.limit ?? 50
     const now = Date.now()
+    const youngSince = new Date(now - PAYIN_YOUNG_ORDER_MS)
+    // Backoff: an unpaid order is re-queried every 2 min during its first hour (most payments
+    // land in seconds), then every 15 min until it expires (24 h). One staging order that was
+    // never paid had been queried 139 times in 9 h with a flat 2-min interval.
     const where = {
       status: 'PENDING',
       merchantOrderNo: { not: null },
       createdAt: { lt: new Date(now - minAgeMs) },
-      OR: [{ lastQueriedAt: null }, { lastQueriedAt: { lt: new Date(now - requeryAfterMs) } }],
+      OR: [
+        { lastQueriedAt: null },
+        {
+          createdAt: { gte: youngSince },
+          lastQueriedAt: { lt: new Date(now - requeryAfterMs) },
+        },
+        {
+          createdAt: { lt: youngSince },
+          lastQueriedAt: { lt: new Date(now - PAYIN_REQUERY_OLD_MS) },
+        },
+      ],
     }
     const [personal, trading] = await Promise.all([
       prisma.coinTopupOrder.findMany({

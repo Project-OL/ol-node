@@ -18,6 +18,7 @@ import { mapPool } from '../utils/map-pool'
 import { rootLogger } from '../utils/rootLogger'
 import { auditService } from './audit.service'
 import { paymentTransactionsService } from './payment-transactions.service'
+import { paymentAttentionService } from './payment-attention.service'
 import {
   EPAY_PAYOUT_LIVE_STATUSES,
   isPlatformHandledWithdrawal,
@@ -82,6 +83,17 @@ async function finalizeSuccess(row: PayoutRow): Promise<void> {
   // Payment transaction list row. Idempotent; a failure throws, so the callback / reconcile
   // retries and this (idempotent) step runs again.
   await paymentTransactionsService.recordEpayPayoutSuccess(row.id)
+}
+
+/** Bell alert for super admins about one payout (looks up the withdrawer; never throws). */
+function alertPayout(withdrawalId: string, reason: string): void {
+  void (async () => {
+    const w = await prisma.withdrawal.findUnique({
+      where: { id: withdrawalId },
+      select: { userId: true },
+    })
+    if (w) paymentAttentionService.alert('EPAY_PAYOUT_ATTENTION', w.userId, reason)
+  })().catch(() => {})
 }
 
 function logAmountDrift(row: PayoutRow, data: EpayOrderData) {
@@ -220,6 +232,10 @@ export const epayPayoutService = {
           { withdrawalId, merchantOrderNo, amount: row.amount.toFixed(2) },
           'epay payout: merchant balance insufficient - top up the Epay account',
         )
+        alertPayout(
+          row.withdrawalId,
+          `Epay payout ${merchantOrderNo} ($${row.amount.toFixed(2)}) refused: our Epay balance is too low. Top up, then pay again.`,
+        )
         return {
           merchantOrderNo,
           status: 'FAILED' as const,
@@ -248,6 +264,10 @@ export const epayPayoutService = {
       log.error(
         { withdrawalId, merchantOrderNo, err: (err as Error).message },
         'epay payout: create outcome unknown; reconcile will query',
+      )
+      alertPayout(
+        row.withdrawalId,
+        `Epay payout ${merchantOrderNo} ($${row.amount.toFixed(2)}): outcome unknown (network error). It is re-checked every 2 min; do not pay it by hand.`,
       )
       return { merchantOrderNo, status: 'UNKNOWN' as const }
     }
