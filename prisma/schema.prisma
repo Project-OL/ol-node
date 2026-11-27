@@ -2031,6 +2031,31 @@ model EpayPayoutOrder {
   @@map("epay_payout_orders")
 }
 
+/// Automatic Epay payouts (singleton). OFF by default: while off, EPAY withdrawals wait for an
+/// admin's "Pay via Epay" exactly as before. When on, the `epay-auto-payout` job pays eligible
+/// PENDING_PLATFORM EPAY withdrawals oldest first, through the same guarded payout path.
+/// Windows are rolling 24 h. Amounts are USD (gross payout = withdrawal.host_payout_usd).
+model EpayAutoPayoutConfig {
+  id                  Int      @id @default(1)
+  enabled             Boolean  @default(false)
+  /// A single payout above this goes to an admin instead.
+  maxSinglePayoutUsd  Decimal  @default(5000.00) @map("max_single_payout_usd") @db.Decimal(18, 2)
+  /// Per user, rolling 24 h (payouts sent or in flight); above it → admin.
+  userDailyCapUsd     Decimal  @default(10000.00) @map("user_daily_cap_usd") @db.Decimal(18, 2)
+  /// Whole platform, rolling 24 h; above it → the run stops (admins pay the rest).
+  platformDailyCapUsd Decimal  @default(50000.00) @map("platform_daily_cap_usd") @db.Decimal(18, 2)
+  /// Wait after the Epay email was bound or changed before paying it automatically.
+  emailChangeHoldHours Int     @default(48) @map("email_change_hold_hours")
+  /// Keep at least this much USD in the merchant balance after a payout (plus the fee reserve).
+  minBalanceBufferUsd Decimal  @default(0.00) @map("min_balance_buffer_usd") @db.Decimal(18, 2)
+  /// Reserved per payout for Epay's fee when checking the balance (seen: $0.29).
+  feeReserveUsd       Decimal  @default(1.00) @map("fee_reserve_usd") @db.Decimal(18, 2)
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  updatedByAdminId    String?  @map("updated_by_admin_id") @db.VarChar(64)
+
+  @@map("epay_auto_payout_config")
+}
+
 /// Payment channel of a `payment_transactions` row.
 enum PaymentChannel {
   EPAY
@@ -2415,6 +2440,9 @@ model UserPaymentMethod {
   registeredPhone        String?   @map("registered_phone") @db.VarChar(30)
   registeredEmail        String?   @map("registered_email") @db.VarChar(255)
   lastUsedAt             DateTime? @map("last_used_at")
+  /// EPAY: when the bound Epay email was first set or last changed (automatic payouts wait
+  /// `epay_auto_payout_config.email_change_hold_hours` after it). Null = never an EPAY row.
+  epayEmailChangedAt     DateTime? @map("epay_email_changed_at")
   createdAt              DateTime  @default(now()) @map("created_at")
   updatedAt              DateTime  @updatedAt @map("updated_at")
 

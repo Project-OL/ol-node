@@ -249,6 +249,8 @@ export const DEFAULT_ADMIN_VIEWS: Record<string, string[]> = {
   PaymentsView: [
     'GET /admin/payments/transactions',
     'GET /admin/payments/attention',
+    'GET /admin/payments/auto-payout',
+    'PUT /admin/payments/auto-payout',
     'GET /admin/payments/suspects',
     'PATCH /admin/payments/suspects/:id',
     'POST /admin/payments/refunds',

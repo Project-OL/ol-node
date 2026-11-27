@@ -1,3 +1,4 @@
+import { prisma } from '../config/database'
 import { redisClient, RedisKeys, WALLET_BALANCE_TTL } from '../config/redis'
 import { AppError } from '../middlewares/errorHandler'
 import {
@@ -53,6 +54,10 @@ export const userPaymentMethodService = {
   async bindEpay(userId: string, body: { epayEmail: string }, securityPassword: string) {
     await securityPasswordService.verifyCurrentPassword(userId, securityPassword)
     await withdrawalPayoutRailConfigService.assertRailEnabled('EPAY', userId)
+    const previous = await prisma.userPaymentMethod.findUnique({
+      where: { userId_methodType: { userId, methodType: 'EPAY' } },
+      select: { epayEmail: true },
+    })
     // Native ON CONFLICT upsert on (userId, methodType) is race-safe; the
     // retry-once covers Prisma's emulated-upsert fallback where a parallel
     // first bind can surface P2002 instead of converging to an update.
@@ -68,6 +73,16 @@ export const userPaymentMethodService = {
         userId,
         methodType: 'EPAY',
         epayEmail: body.epayEmail,
+      })
+    }
+    // A new or different Epay email restarts the automatic-payout hold (anti account takeover).
+    const changed =
+      !previous?.epayEmail ||
+      previous.epayEmail.trim().toLowerCase() !== body.epayEmail.trim().toLowerCase()
+    if (changed) {
+      await prisma.userPaymentMethod.update({
+        where: { userId_methodType: { userId, methodType: 'EPAY' } },
+        data: { epayEmailChangedAt: new Date() },
       })
     }
     await redisClient.del(RedisKeys.userPaymentMethods(userId))
