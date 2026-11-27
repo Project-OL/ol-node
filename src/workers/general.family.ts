@@ -62,6 +62,12 @@ import {
   runEpayReconcileJob,
 } from '../jobs/epay-reconcile.job'
 import {
+  EPAY_AUTO_PAYOUT_EVERY_MS,
+  EPAY_AUTO_PAYOUT_JOB,
+  EPAY_AUTO_PAYOUT_QUEUE,
+  runEpayAutoPayoutJob,
+} from '../jobs/epay-auto-payout.job'
+import {
   PAYROLL_SLA_JOB,
   PAYROLL_SLA_QUEUE,
   PAYROLL_SAFETY_NET_JOB,
@@ -569,6 +575,29 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
     { connection, concurrency: 1 },
   )
 
+  // Automatic Epay payouts (no-op while epay_auto_payout_config.enabled is false). Fixed repeat
+  // id + concurrency 1: one run at a time cluster-wide; payouts are guarded in the DB anyway.
+  const epayAutoPayoutQueue = new Queue(EPAY_AUTO_PAYOUT_QUEUE, { connection })
+  await epayAutoPayoutQueue.add(
+    EPAY_AUTO_PAYOUT_JOB,
+    {},
+    {
+      jobId: 'epay-auto-payout-1min',
+      repeat: { every: EPAY_AUTO_PAYOUT_EVERY_MS },
+      attempts: 1,
+      removeOnComplete: true,
+      removeOnFail: 50,
+    },
+  )
+  const epayAutoPayoutWorker = new Worker(
+    EPAY_AUTO_PAYOUT_QUEUE,
+    async (job: Job) => {
+      if (job.name !== EPAY_AUTO_PAYOUT_JOB) return
+      await runEpayAutoPayoutJob()
+    },
+    { connection, concurrency: 1 },
+  )
+
   await liveSessionQueue.add(
     LIVE_SESSION_JOBS.SAFETY_NET_CRON,
     {},
@@ -680,6 +709,7 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
   agencyLeaveWorker.on('failed', onFail('Agency leave auto-approve'))
   agencyLevelRecomputeWorker.on('failed', onFail('Agency level recompute'))
   epayReconcileWorker.on('failed', onFail('Epay reconcile'))
+  epayAutoPayoutWorker.on('failed', onFail('Epay auto payout'))
   payrollSlaWorker.on('failed', onFail('Payroll SLA'))
   liveSessionWorker.on('failed', onFail('Live session'))
   ledgerAuditWorker.on('failed', onFail('Ledger audit'))
@@ -704,6 +734,8 @@ export async function startGeneralWorkerFamily(connection: Redis): Promise<Worke
       await payrollSlaQueue.close()
       await epayReconcileWorker.close()
       await epayReconcileQueue.close()
+      await epayAutoPayoutWorker.close()
+      await epayAutoPayoutQueue.close()
       await agencyLevelRecomputeWorker.close()
       await agencyLevelRecomputeQueue.close()
       await agencyLeaveWorker.close()

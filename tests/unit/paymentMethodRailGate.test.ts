@@ -31,6 +31,17 @@ vi.mock('../../src/services/withdrawalPayoutRailConfig.service', async () => {
   }
 })
 
+const methodFindUnique = vi.fn().mockResolvedValue(null)
+const methodUpdate = vi.fn().mockResolvedValue({})
+vi.mock('../../src/config/database', () => ({
+  prisma: {
+    userPaymentMethod: {
+      findUnique: (...a: unknown[]) => methodFindUnique(...a),
+      update: (...a: unknown[]) => methodUpdate(...a),
+    },
+  },
+}))
+
 vi.mock('../../src/services/withdrawal.service', () => ({
   withdrawalService: { getPayrollConfig: vi.fn().mockResolvedValue({ minWithdrawalUsd: 10 }) },
 }))
@@ -113,6 +124,19 @@ describe('userPaymentMethodService bind rail gate', () => {
     assertRailEnabled.mockResolvedValue(undefined)
     await userPaymentMethodService.bindEpay('u1', { epayEmail: 'a@b.com' }, 'pin')
     expect(assertRailEnabled).toHaveBeenCalledWith('EPAY', 'u1')
+  })
+
+  it('bindEpay restarts the auto-payout hold only when the email changes', async () => {
+    assertRailEnabled.mockResolvedValue(undefined)
+    methodUpdate.mockClear()
+    methodFindUnique.mockResolvedValueOnce({ epayEmail: 'A@b.com' })
+    await userPaymentMethodService.bindEpay('u1', { epayEmail: 'a@b.com' }, 'pin')
+    expect(methodUpdate).not.toHaveBeenCalled() // same email, different case
+    methodFindUnique.mockResolvedValueOnce({ epayEmail: 'a@b.com' })
+    await userPaymentMethodService.bindEpay('u1', { epayEmail: 'new@b.com' }, 'pin')
+    expect(methodUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { epayEmailChangedAt: expect.any(Date) } }),
+    )
   })
 
   it('bindEpay rejects when rail disabled', async () => {

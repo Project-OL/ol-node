@@ -44,5 +44,25 @@ export const adminPaymentRefundBodySchema = z.object({
   reason: z.string().trim().min(3).max(500),
 })
 
+const usd = z.number().min(0).max(10_000_000)
+
+/** Automatic Epay payouts: partial update; every field optional. */
+export const autoPayoutConfigPatchSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    maxSinglePayoutUsd: usd.positive().optional(),
+    userDailyCapUsd: usd.positive().optional(),
+    platformDailyCapUsd: usd.positive().optional(),
+    emailChangeHoldHours: z
+      .number()
+      .int()
+      .min(0)
+      .max(24 * 30)
+      .optional(),
+    minBalanceBufferUsd: usd.optional(),
+    feeReserveUsd: usd.max(100).optional(),
+  })
+  .strict()
+
 export type PaymentTxnListQuery = z.infer<typeof paymentTxnListQuerySchema>
 export type PaymentSuspectListQuery = z.infer<typeof paymentSuspectListQuerySchema>

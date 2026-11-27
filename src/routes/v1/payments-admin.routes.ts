@@ -4,6 +4,7 @@ import { authenticateAdmin } from '../../middlewares/adminAuth.middleware'
 import { AppError } from '../../middlewares/errorHandler'
 import {
   adminPaymentRefundBodySchema,
+  autoPayoutConfigPatchSchema,
   paymentSuspectListQuerySchema,
   paymentSuspectPatchBodySchema,
   paymentTxnListQuerySchema,
@@ -11,6 +12,7 @@ import {
 import { auditService } from '../../services/audit.service'
 import { paymentRefundService } from '../../services/payment-refund.service'
 import { paymentAttentionService } from '../../services/payment-attention.service'
+import { epayAutoPayoutService } from '../../services/epay-auto-payout.service'
 import { paymentSuspectsService } from '../../services/payment-suspects.service'
 import { paymentTransactionsService } from '../../services/payment-transactions.service'
 import { parseRequest } from '../../utils/zod-request'
@@ -51,6 +53,50 @@ export default async function paymentsAdminRoutes(app: FastifyInstance) {
       },
     },
     async (_request, reply) => reply.send(await paymentAttentionService.list()),
+  )
+
+  app.get(
+    '/payments/auto-payout',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Payments'],
+        description:
+          'Automatic Epay payout settings + the last run (paid, skipped with reasons, why it stopped).',
+      },
+    },
+    async (_request, reply) => {
+      const [config, lastRun] = await Promise.all([
+        epayAutoPayoutService.getConfig(),
+        epayAutoPayoutService.lastRun(),
+      ])
+      return reply.send({ config, lastRun })
+    },
+  )
+
+  app.put(
+    '/payments/auto-payout',
+    {
+      preHandler: [authenticateAdmin],
+      schema: {
+        tags: ['Admin', 'Payments'],
+        description:
+          'Update automatic Epay payout settings (partial). enabled=false stops new automatic payouts at the next run.',
+      },
+    },
+    async (request, reply) => {
+      const adminUserId = request.adminUser?.id
+      if (!adminUserId) throw new AppError(401, 'Unauthorized', 'UNAUTHORIZED')
+      const patch = parseRequest(autoPayoutConfigPatchSchema, request.body ?? {})
+      const config = await epayAutoPayoutService.updateConfig(adminUserId, patch)
+      auditService.logAdmin({
+        adminUserId,
+        actionType: 'ADMIN_EPAY_AUTO_PAYOUT_CONFIG',
+        actionStatus: 'success',
+        actionDetails: patch as Record<string, unknown>,
+      })
+      return reply.send({ config })
+    },
   )
 
   app.get(
